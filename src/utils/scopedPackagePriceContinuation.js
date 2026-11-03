@@ -5,7 +5,8 @@
 // *bounded* exchange "all of them" refers to that treatment's package options,
 // not the clinic-wide service catalog. Never use ad/CRM/model labels alone.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
-const { hasExplicitPriceRequest, hasCustomerServiceEnquiry } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, hasCustomerServiceEnquiry,
+  hasExplicitPackageOptionsRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { getActivePromotions, promotionPackages } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
@@ -145,4 +146,85 @@ function resolveScopedPackagePriceContinuation({
   });
 }
 
-module.exports = { resolveScopedPackagePriceContinuation };
+
+// A customer may explicitly ACCEPT the ONE treatment package offer in the
+// immediately preceding AI reply. This is stronger evidence than the model's
+// guessed label or an ad's creative and is independent of Meta ad origin.
+// Example: user "Any package?" -> bot "We have pelvic packages" ->
+// user "Could you please share". The last user turn authorizes quoting the
+// offered service, not sending a list of every clinic treatment.
+const SHARE_CURRENT_OFFER =
+  /^(?:(?:yes|sure|okay|ok)[,\s.!]*)?(?:could|can|would|may)?\s*(?:you\s+)?(?:please\s+)?(?:share|send|show|let\s+me\s+see)(?:\s+(?:them|it|the\s+(?:packages?|options?|details?|offers?)|with\s+me|please))?[\s?.!！]*$|^(?:(?:可以|麻烦|麻煩|请|請)\s*)?(?:发|發|分享|给|給|看看|看下|看一下)(?:我|来|來|一下|给我|給我|看|哦|吗|嗎|下)?[\s?？。!！]*$|^(?:boleh\s+(?:share|hantar|tunjuk)(?:\s+(?:pakej|saya|itu|semua))?|(?:share|hantar)\s+(?:pakej|ya|please))[\s?.!]*$/iu;
+const OFFERED_PACKAGE = /(?:\b(?:packages?|offers?|options?|plans?)\b|配套|套餐|优惠|優惠|pakej|promosi)/iu;
+const PREVIOUS_PACKAGE_REQUEST =
+  /(?:\b(?:any|what|which|available|have|got|show|list)\b.{0,32}\b(?:packages?|offers?|options?)\b|\b(?:charges?|prices?|pricing|costs?|fees?)\b|配套|套餐|价钱|價錢|价格|價格|费用|費用|harga|pakej)/iu;
+
+// Only use this for an explicit customer confirmation after the immediately
+// preceding bot offered packages for one configured service. Older staff
+// activity, untrusted timestamps, a changed treatment, or a broad request
+// cannot be used as permission to quote or send a graphic.
+function resolveCurrentThreadPackageRequest({
+  customerText, conversationHistory = [], services = [],
+  serviceAliases = [], promotions = [], now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!current || current.length > 90 || !SHARE_CURRENT_OFFER.test(current) ||
+      EXPLICIT_ALL_SERVICES.test(current) || STOP_OR_SWITCH.test(current) ||
+      hasClinicalMediaRisk(current) || !Number.isFinite(now)) return null;
+
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(turn => ["user", "assistant"].includes(turn?.role));
+  if (turns.length < 4 || turns.at(-1)?.role !== "user" ||
+      messageText(turns.at(-1)) !== current ||
+      turns.at(-2)?.role !== "assistant" ||
+      turns.at(-3)?.role !== "user") return null;
+
+  const offered = turns.at(-2), previousRequest = messageText(turns.at(-3));
+  const offerText = messageText(offered);
+  if (isVerifiedStaffTurn(offered) || !OFFERED_PACKAGE.test(offerText) ||
+      !previousRequest || previousRequest.length > 160 ||
+      !PREVIOUS_PACKAGE_REQUEST.test(previousRequest) ||
+      !(hasExplicitPriceRequest(previousRequest) ||
+        hasExplicitPackageOptionsRequest(previousRequest) ||
+        /\bany\s+packages?\b/iu.test(previousRequest)) ||
+      STOP_OR_SWITCH.test(previousRequest) || hasClinicalMediaRisk(previousRequest))
+    return null;
+
+  const candidates = serviceCandidates(services, serviceAliases);
+  const namedInOffer = findServicesInText(offerText, candidates);
+  const selected = safeServiceFromCustomer(offerText, services, serviceAliases);
+  if (!selected || namedInOffer.length !== 1 ||
+      namedInOffer[0] !== selected.name) return null;
+
+  // All evidence must come from this continuous 24-hour customer thread, and
+  // no earlier user in the recent thread can have selected a different service.
+  const recentStart = Math.max(0, turns.length - 12);
+  if (!hasRecentContinuousPricingHistory(turns, recentStart, now)) return null;
+  for (const turn of turns.slice(recentStart, -1)) {
+    const value = messageText(turn);
+    if (!value || isVerifiedStaffTurn(turn)) return null;
+    if (turn.role !== "user") continue;
+    if (STOP_OR_SWITCH.test(value) || EXPLICIT_ALL_SERVICES.test(value)) return null;
+    const named = findServicesInText(value, candidates);
+    if (named.some(name => name !== selected.name)) return null;
+  }
+
+  const active = getActivePromotions(promotions).filter(p =>
+    p.linkedService === selected.name && p.sendOnPriceQuery === true);
+  if (active.length !== 1) return null;
+  const packages = promotionPackages(active[0]);
+  if (packages.length < 2 || packages.length > 4) return null;
+  const prices = verifiedPricesForService(
+    selected.name, promotions, current, conversationHistory,
+    { clarifiedPriceService: selected.name });
+  if (!prices || prices.length !== packages.length ||
+      prices.some(item => !packages.some(p => p.name === item.name))) return null;
+  return Object.freeze({
+    type: "price", treatment: selected.name,
+    source: "confirmed_current_thread_package_offer",
+    clarifiedPriceService: selected.name, prices, servicePrice: null,
+  });
+}
+
+module.exports = { resolveScopedPackagePriceContinuation,
+  resolveCurrentThreadPackageRequest };
