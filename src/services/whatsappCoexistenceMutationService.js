@@ -120,8 +120,9 @@ async function runOnce({database=pool,env=process.env,limit=20}={}){
    [senderId]
  );
  const pending=await database.query(
-   "SELECT id FROM whatsapp_sender_coexistence_mutations WHERE sender_id=$1 "+
-   "AND status='pending' ORDER BY created_at LIMIT $2",
+   "SELECT id FROM whatsapp_sender_coexistence_mutations j WHERE sender_id=$1 "+
+   "AND status='pending' AND "+ACTIONABLE_TARGET_SQL+
+   " ORDER BY created_at LIMIT $2",
    [senderId,Math.max(1,Math.min(30,Number(limit)||20))]
  );
  let applied=0;
@@ -130,14 +131,28 @@ async function runOnce({database=pool,env=process.env,limit=20}={}){
  }
  return{disabled:false,applied};
 }
-// Only inspect this account's unresolved edits/deletes when deciding whether
-// to retain the original one-minute recovery cadence.
+// A deletion/edit can arrive before its original Business App echo. Such an
+// unmatched event must remain durable, but checking it every minute cannot
+// make progress. Resume immediately when the original echo is committed.
+const ACTIONABLE_TARGET_SQL=`EXISTS (
+  SELECT 1 FROM contacts c
+  JOIN whatsapp_sender_conversations sc
+    ON sc.contact_id=c.id AND sc.sender_id=j.sender_id AND sc.state='bound'
+  JOIN messages m
+    ON m.contact_id=c.id AND m.whatsapp_message_id=j.target_wamid
+    AND m.role='assistant' AND m.sent_by_username='WhatsApp Business App'
+  JOIN whatsapp_sender_message_context mc
+    ON mc.message_id=m.id AND mc.conversation_id=sc.id
+  WHERE c.id=j.contact_id AND c.whatsapp_sender_id=j.sender_id
+)`;
+// Only immediately retry work that can actually be applied. Missing targets
+// are retained for the normal 30-minute sweep and seven-day expiry.
 const PENDING_SQL=`SELECT EXISTS(
    SELECT 1 FROM whatsapp_sender_coexistence_mutations j
    JOIN whatsapp_sender_accounts sender ON sender.id=j.sender_id
    WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
      AND sender.meta_account_id=$3 AND sender.state='active'
-     AND j.status='pending'
+     AND j.status='pending' AND ${ACTIONABLE_TARGET_SQL}
  ) AS has_work`;
 async function hasPendingWork({database=pool,env=process.env}={}){
  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true")return false;
@@ -164,4 +179,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={LOOKUP_SQL,PENDING_SQL,record,applyPending,runOnce,hasPendingWork,start,wake,stop};
+module.exports={LOOKUP_SQL,ACTIONABLE_TARGET_SQL,PENDING_SQL,record,applyPending,runOnce,hasPendingWork,start,wake,stop};
