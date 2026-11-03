@@ -2411,13 +2411,13 @@ function ConversationList({
       <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5"
         onScroll={(event)=>{
           const element=event.currentTarget;
-          if (element.scrollHeight-element.scrollTop-element.clientHeight<220) {
-            if (visibleRowCount<filteredConversations.length) {
-              setVisibleRowCount(current=>current+60);
-            } else if (paging?.hasMore && !olderPageLoading && !pageLoading) {
-              setVisibleRowCount(current=>current+100);
-              void onLoadMore?.();
-            }
+          // Keep the Show more button stable while touch scrolling or when
+          // Playwright scrolls it into view to click. Only fetch a NEW server
+          // page automatically after every currently loaded row is visible.
+          if (paging?.hasMore && !olderPageLoading && !pageLoading &&
+              visibleRowCount>=filteredConversations.length &&
+              element.scrollHeight-element.scrollTop-element.clientHeight<180) {
+            void onLoadMore?.();
           }
         }}>
         {!conversations && <ConversationListSkeleton />}
