@@ -170,3 +170,21 @@ test("explicit 3D First Trial price request returns RM488 and only the matching 
     }
   });
 });
+
+test("verified facial First Trial offers are not presented as recurring package rates",()=>{
+ for(const treatment of ["3D 小颜术","9D 逆龄抗衰"]){
+   const answer=ensureVerifiedPriceReply({
+     customerText:treatment+"多少钱",reply:"请问你想知道什么",
+     treatment,services,serviceAliases,promotions,resultMedia:[],language:"zh",
+   });
+   assert.equal(answer.restored,true);
+   assert.match(answer.reply,/First Trial 体验优惠价是 RM488/);
+   assert.doesNotMatch(answer.reply,/目前的配套价格/);
+ }
+ const pelvic=ensureVerifiedPriceReply({
+   customerText:"骨盆多少钱",reply:"请问你想知道什么",
+   treatment:"骨盆调理",services,serviceAliases,promotions,resultMedia:[],language:"zh",
+ });
+ assert.match(pelvic.reply,/Package A/);
+ assert.doesNotMatch(pelvic.reply,/First Trial/);
+});
