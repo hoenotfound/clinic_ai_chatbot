@@ -39,3 +39,26 @@ test("do not change first clarification, staff-owned or unrelated replies",()=>{
  assert.equal(run("3D多少钱",[{role:"assistant",content:generic}],"请稍等我们的团队").changed,false);
  assert.equal(run("价钱",[{role:"assistant",content:generic}]).changed,false);
 });
+
+test("4 Nov treatment continuity: current 3D explanation is not lost at the first price follow-up",()=>{
+ const history=[
+  {role:"user",content:"Pm"},
+  {role:"assistant",content:"3D 小颜术主要是徒手做的脸型和轮廓护理哦"},
+  {role:"user",content:"如何做的"},
+  {role:"assistant",content:"3D 小颜术会先看你的面部比例，然后做徒手护理"},
+  {role:"user",content:"多少钱"},
+ ];
+ const response=run("多少钱",history);
+ assert.equal(response.changed,true);
+ assert.match(response.reply,/3D 小颜术/);
+ assert.doesNotMatch(response.reply,/RM\d+/u);
+});
+test("first bare price and mixed treatment threads still fail closed",()=>{
+ assert.equal(run("多少钱",[{role:"user",content:"多少钱"}]).changed,false);
+ const both=[
+  {role:"user",content:"想了解3D和9D"},
+  {role:"assistant",content:"3D和9D都可以选择"},
+  {role:"user",content:"一次多少钱"},
+ ];
+ assert.equal(run("一次多少钱",both).changed,false);
+});
