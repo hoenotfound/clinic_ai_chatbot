@@ -59,7 +59,16 @@ function isStaffVisitAcknowledgement(message) {
   const value = String(message || "").trim();
   if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
   if (/cancel|maybe|if you|如果|可能|取消|改期|not confirmed/iu.test(value)) return false;
-  return /see\s*(?:u|you)\s*[,，]?\s*(?:tmr|tomorrow|next\s+(?:mon|tue|wed|thu|fri|sat|sun)|(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?)|(?:明天|後天|后天|星期[一二三四五六日天]).{0,18}(?:见|見)|(?:confirmed|booked|已确认|已確認|已订好|已訂好).{0,50}(?:\d{1,2}[/-]\d{1,2}).{0,35}(?:\d{1,2}[:：.]\d{2})/iu.test(value);
+  // Recognise ordinary Business App confirmations such as "Comfirm this sat
+  // 3.30pm" and "OK 29/11, 3pm". Without the year and an independently
+  // verified appointment record, these are booking HOLDS for staff review,
+  // never confirmed CRM appointments or auto-generated calendar slots.
+  const visitAcknowledged = /see\s*(?:u|you)\s*[,，]?\s*(?:tmr|tomorrow|next\s+(?:mon|tue|wed|thu|fri|sat|sun)|(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?)|(?:明天|後天|后天|星期[一二三四五六日天]).{0,18}(?:见|見)|(?:confirmed|booked|已确认|已確認|已订好|已訂好).{0,50}(?:\d{1,2}[/-]\d{1,2}).{0,35}(?:\d{1,2}[:：.]\d{2})/iu.test(value);
+  if (visitAcknowledged) return true;
+  const affirmative = /^(?:ok(?:ay)?|confirm(?:ed)?|comfirm(?:ed)?|booked|确认|確認|确定|確定|已订好|已訂好)(?:\b|[\s,，:：])/iu.test(value);
+  const day = /\b(?:this\s+|next\s+)?(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]20\d{2})?\b|(?:这|這|下)?(?:个|個)?星期[一二三四五六日天]/iu.test(value);
+  const time = /\b(?:[01]?\d|2[0-3])(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b|\b(?:1[3-9]|2[0-3])[:.]\d{2}\b|(?:上午|下午|早上|傍晚)\s*\d{1,2}[点點]/iu.test(value);
+  return affirmative && day && time;
 }
 
 function createStaffBookingConfirmationService({
