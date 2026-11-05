@@ -134,6 +134,39 @@ function verifiedServiceAnchor({
         (UNRELATED.test(text) && !isBriefLocationHoursQuestion(text))) return null;
     bridge = true;
   }
+
+  // The customer may describe their symptoms over two replies before
+  // asking "这种调理...想了解价钱看看". Reuse ONLY a recent, explicitly
+  // customer-named treatment, never symptoms, ads or the model's guess.
+  // Keep the existing topic-change and staff boundaries.
+  if (/(?:这种|這種|这个|這個|这项|這項|this|that)\s*(?:调理|調理|疗程|療程|护理|護理|治疗|治療|treatment|care)/iu.test(current)) {
+    const prior = history.filter(turn => turn?.role === "user" &&
+      String(turn.content || "").trim() !== current).slice(-3);
+    const concerned = /(?:腰|背|小腹|臀|屁股|骨头|骨頭|久坐|躺|床|酸|痛|紧|緊|体态|體態|姿势|姿勢|posture|back|hip|pain|aching|sitting)/iu;
+    const first = prior[0];
+    const firstText = String(first?.content || "").trim();
+    const selected = safeServiceFromCustomer(firstText, services, serviceAliases);
+    const selectedAt = Number(first?.pricingCreatedAtMs);
+    if (prior.length >= 2 && selected &&
+        Number.isFinite(selectedAt) && selectedAt <= Date.now() + 60_000 &&
+        Date.now() - selectedAt <= 3 * 60 * 60 * 1000 &&
+        findServicesInText(firstText, candidates).length === 1 &&
+        !history.some(turn => turn?.role === "assistant" &&
+          STAFF_PREFIX.test(String(turn.content || "").trim())) &&
+        prior.slice(1).every(turn => {
+          const answer = String(turn.content || "").trim();
+          return answer.length > 0 && answer.length <= 150 &&
+            concerned.test(answer) && !RESET.test(answer) &&
+            !REFUSAL.test(answer) && !AD_BROAD_TOPIC.test(answer) &&
+            !hasClinicalMediaRisk(answer) &&
+            findServicesInText(answer, candidates).length === 0;
+        }) &&
+        !history.some(turn => turn?.role === "assistant" &&
+          findServicesInText(String(turn.content || ""), candidates)
+            .some(name => name !== selected.name))) {
+      return { treatment: selected.name, source: "recent_customer" };
+    }
+  }
   return null;
 }
 
