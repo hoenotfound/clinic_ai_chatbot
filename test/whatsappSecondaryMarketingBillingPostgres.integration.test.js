@@ -22,7 +22,7 @@ const env={
  WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
  WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
 };
-test("migration 109 requires approved secondary MARKETING attempt for billable 48/72 template",{
+test("approved secondary marketing billing requires one claimed attempt for each supported slot",{
  skip:!cs,
 },async()=>{
  const db=new Client({connectionString:cs});
@@ -135,6 +135,70 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
   assert.equal(audit.billing_authorization_source,"operator_approved_marketing_template");
   assert.equal(audit.billing_review_claim_hash,null);
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM whatsapp_free_only_send_gate")).rows[0].n,0);
+
+  // Every configured slot must pass the same sender-owned, claimed-attempt
+  // billing checks. Independent contacts prevent one held reservation from
+  // interfering with another test case. The 72-hour legacy slot stays valid.
+  for (const slot of [66,72,96,144]) {
+   const waId="6012555"+String(slot).padStart(4,"0");
+   const templateName="approved_neutro_"+slot;
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+    "VALUES($1,$2,TRUE,$3,'zh_CN',$4,TRUE) "+
+    "ON CONFLICT (sender_id,slot_hours,language_code) DO UPDATE SET "+
+    "enabled=EXCLUDED.enabled,template_name=EXCLUDED.template_name,"+
+    "template_signature=EXCLUDED.template_signature,"+
+    "operator_billing_approved=EXCLUDED.operator_billing_approved",
+    [sender,slot,templateName,hash]);
+   const nextContact=(await db.query(
+    "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) "+
+    "VALUES('whatsapp',$1,$2) RETURNING id",[waId,sender])).rows[0].id;
+   const nextConversation=(await db.query(
+    "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+    "VALUES($1,$2,$3,'bound') RETURNING id",
+    [sender,waId,nextContact])).rows[0].id;
+   const nextInbound=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) "+
+    "VALUES($1,'user','Please contact me about my treatment',$2) RETURNING id",
+    [nextContact,"wamid.inbound_"+slot])).rows[0].id;
+   await db.query(
+    "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [nextInbound,nextConversation]);
+   const nextMeta={
+    automatedSecondaryMarketingFollowup:true,
+    senderKey:"ariel",slotHours:slot,anchorMessageId:nextInbound,
+    templateSignature:hash,name:templateName,language:"zh_CN",
+   };
+   const nextMessage=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_template,is_automated_follow_up) "+
+    "VALUES($1,'assistant','Approved reminder',$2::jsonb,TRUE) RETURNING id",
+    [nextContact,JSON.stringify(nextMeta)])).rows[0].id;
+   await db.query(
+    "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [nextMessage,nextConversation]);
+   const reserveSlot=()=>billing.reserveSecondaryBillingAttempt({
+    contactId:nextContact,messageId:nextMessage,billableAuthorized:true,
+    expectedTemplateSignature:hash,
+   },{database:pool,env});
+   assert.equal((await reserveSlot()).code,"secondary_billing_template_review_unverified",
+    slot+"h must not send without a claimed, linked attempt");
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,message_id,status) "+
+    "VALUES($1,$2,$3,$4,$5,'claimed')",
+    [sender,nextContact,nextInbound,slot,nextMessage]);
+   const authorized=await reserveSlot();
+   assert.equal(authorized.reserved,true,slot+"h should reserve billing safely");
+   assert.equal(authorized.sendAuthorized,false,"reservation is never send authorization");
+   assert.equal((await reserveSlot()).code,"secondary_billing_previous_send_unresolved",
+    "cannot reserve the same message twice");
+   const auditSlot=(await db.query(
+    "SELECT billing_authorization_source FROM whatsapp_sender_billing_attempts "+
+    "WHERE message_id=$1",[nextMessage])).rows[0];
+   assert.equal(auditSlot.billing_authorization_source,"operator_approved_marketing_template");
+  }
+
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
