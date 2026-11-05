@@ -41,6 +41,7 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
+const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
@@ -1574,6 +1575,35 @@ async function processIncomingMessage(
       allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
     });
     const approvedPricingDecision = pricingApproval.decision;
+    // A customer who ALREADY received both configured pelvic package prices
+    // may ask for a comparison. This is information about an existing quote,
+    // NOT an independent request for new pricing or promotional graphics.
+    // Only the active configured offers and a trusted customer-led, quoted
+    // history can authorize this reply.
+    let pelvicPackageComparison = clinicConfig.businessType === "tcm_clinic" &&
+      /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+      (!flagged || (flagged && reviewRequired && reviewType === "information")) &&
+      !bookingReady && !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion
+      ? resolveNeutroPelvicPackageComparison({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions, language: mediaLanguage,
+        }) : null;
+    if (pelvicPackageComparison && flagged && reviewRequired && reviewType === "information") {
+      // Model uncertainty about already-quoted package contents is not a
+      // clinical incident, but an actual unresolved clinical review still
+      // blocks this otherwise independently verified commercial answer.
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+      } else {
+        pelvicPackageComparison = null;
+      }
+    }
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
         twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
@@ -1838,12 +1868,21 @@ async function processIncomingMessage(
       }
     }
 
+    // Restore only the independently verified, current configured package
+    // comparison AFTER all model price-heading and repeated-clarification
+    // guards have run. It must not license any fresh promo-media selection.
+    if (pelvicPackageComparison && !flagged && !bookingReady) {
+      reply = pelvicPackageComparison.reply;
+      console.info("[Package comparison] contact=" + contact.id +
+        " inbound=" + savedInbound.id + " decision=verified_text_only");
+    }
+
     // A first-trial image must be provider-accepted for this same treatment
     // before we suggest later-session packages. If the customer then repeats
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !flagged && !bookingReady &&
+    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -2109,6 +2148,12 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
+    if (pelvicPackageComparison) {
+      // Comparison answers are text-only, even if the model set packageQuery.
+      // Never resend recently delivered Package A/B graphics or Before/After.
+      await auditResultMediaEarlyExit("verified_package_comparison_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
       // Once the matching First Trial image has been accepted, package and
       // staff-handoff turns are strictly text only.
