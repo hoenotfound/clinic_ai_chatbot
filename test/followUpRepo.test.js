@@ -269,6 +269,20 @@ test("next follow-up due calculation excludes booked visited and closed latest l
 });
 
 
+test("primary final claim binds current customer inbound before checking staff and cancellation",async(t)=>{
+ const original=pool.query;
+ t.after(()=>{pool.query=original;});
+ pool.query=async(sql,params)=>{
+  assert.match(sql,/JOIN LATERAL \(\s*SELECT inbound\.id,inbound\.created_at/);
+  assert.match(sql,/\) latest_inbound ON true/);
+  assert.match(sql,/staff\.created_at>=latest_inbound\.created_at/);
+  assert.match(sql,/cancellation_review\.status='pending'/);
+  assert.deepEqual(params,[137,233]);
+  return {rows:[{eligible:false}]};
+ };
+ assert.equal(await followUpRepo.isClaimStillEligible({messageId:233,contactId:137}),false);
+});
+
 test("final claim eligibility rechecks newer messages and lead completion under the conversation lock", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
