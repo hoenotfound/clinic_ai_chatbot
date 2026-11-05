@@ -972,3 +972,54 @@ test("current colloquial price request plus permission for future offers remains
     conversationHistory:[{role:"user",content:futureOnly}],
   }),null);
 });
+
+
+test("Linda: compound pelvic session-and-price question selects both current promo graphics", async () => {
+  const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
+  const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
+  const now = Date.now();
+  const customerText = "那这种调理是做一次就行了吗？想了解价钱看看";
+  const h = [
+    { role:"user", content:"Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊", pricingCreatedAtMs:now-7*60_000 },
+    { role:"assistant", content:"想了解骨盆调理对吗？你目前比较困扰哪方面？", pricingCreatedAtMs:now-6*60_000 },
+    { role:"assistant", content:"这是我们的骨盆调理 Before & After", pricingCreatedAtMs:now-5*60_000 },
+    { role:"user", content:"小腹突、同时感觉躺着的时候屁股后面的骨头好像凸出来，导致腰不着地/床", pricingCreatedAtMs:now-4*60_000 },
+    { role:"assistant", content:"可以先做1对1的体态评估。你会腰酸或久坐吗？", pricingCreatedAtMs:now-3*60_000 },
+    { role:"user", content:"腰酸会，经常长时间久坐，背也会痛", pricingCreatedAtMs:now-2*60_000 },
+    { role:"assistant", content:"你一般比较方便安排平日还是周末过来呢？", pricingCreatedAtMs:now-60_000 },
+    { role:"user", content:customerText, pricingCreatedAtMs:now-1000 },
+  ];
+  const observed=decide({
+    priceQuery:false,treatment:null,customerText,conversationHistory:h,
+  });
+  assert.equal(observed?.treatment,"骨盆调理");
+  assert.deepEqual(observed?.prices?.map(p=>p.price),["RM388","RM288"]);
+  const shadow=resolveShadowPriceException({
+    customerText,conversationHistory:h,services,serviceAliases:aliases,
+    promotions:[pelvic],now,
+  });
+  assert.equal(shadow?.treatment,"骨盆调理");
+  const {decision,reason}=resolveApprovedPricingAssessment({
+    mode:"shadow",shadowException:shadow,customerText,conversationHistory:h,
+    services,serviceAliases:aliases,resultMedia:[],now,
+  });
+  assert.equal(reason,"approved");
+  assert.deepEqual(decision?.prices?.map(p=>p.price),["RM388","RM288"]);
+  await inAssessmentFirst(async()=>{
+    const media=await resolvePricePromotionForReply(mediaArgs(decision,{
+      customerText,conversationHistory:h,contactId:8940,
+    }));
+    assert.deepEqual(media?.packages?.map(p=>p.imageUrl),
+      ["https://example.test/a","https://example.test/b"]);
+  });
+  for(const other of [
+    "那这种调理是做一次就行了吗？",
+    "价钱太贵了",
+    "之后有优惠可以通知我",
+  ]) {
+    assert.equal(decide({
+      priceQuery:false,treatment:null,customerText:other,
+      conversationHistory:[...h.slice(0,-1),{role:"user",content:other,pricingCreatedAtMs:now-1000}],
+    }),null,other);
+  }
+});
