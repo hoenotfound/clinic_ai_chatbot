@@ -1025,7 +1025,8 @@ async function processIncomingMessage(
       // reach the staff review queue; suppress the bot's competing reply.
       if(isDefiniteAppointmentCancellation(text)){
         await contactsRepo.setAiReviewAttention(
-          contact.id,savedInbound.id,String(text).slice(0,350),"information");
+          contact.id,savedInbound.id,String(text).slice(0,350),
+          hasClinicalMediaRisk(text)?"clinical":"information");
       }
       console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
       return {wasFirstMessage,keywordReason};
