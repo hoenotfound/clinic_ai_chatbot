@@ -411,7 +411,73 @@ function canRecoverTwoPriceInformationReview({
     reviewType === "information" && pendingClinicalReview === false);
 }
 
+/**
+ * A direct price question can refer to an independently demonstrated single
+ * service without a new explicit service name. Never rely on ads, CRM tags
+ * or model-only intent as the authority.
+ *
+ * A: customer discusses one specifically explained treatment (e.g. asks
+ * "一次就可以了吗" after a 3D description) and immediately asks for its price.
+ * B: customer explicitly named one treatment, and later answers the bot's
+ * price-or-process invitation, despite the quiet period between turns.
+ */
+function resolveCustomerEngagedPrice({
+ customerText,conversationHistory=[],services=[],serviceAliases=[],now=Date.now(),
+}={}){
+ const current=String(customerText||"").trim();
+ if(!current||current.length>100||!hasExplicitPriceRequest(current)||
+    RESET.test(current)||BROAD.test(current)||ADMIN_FEE.test(current)||
+    hasClinicalMediaRisk(current))return null;
+ const turns=Array.isArray(conversationHistory)?conversationHistory:[];
+ if(!turns.length||turns.at(-1)?.role!=="user"||
+    pricingMessageText(turns.at(-1)).trim()!==current)return null;
+ const seen=turns.filter(t=>t?.role==="user"||t?.role==="assistant");
+ if(seen.some(t=>isVerifiedStaffTurn(t)||t.role==="user"&&
+     hasClinicalMediaRisk(pricingMessageText(t))))return null;
+ let previous=-Infinity;
+ for(const turn of seen){
+  const time=turn.pricingCreatedAtMs;
+  if(!Number.isFinite(time)||time<now-7*24*60*60*1000||
+     time>now+60_000||time<previous)return null;
+  previous=time;
+ }
+ const candidates=serviceCandidates(services,serviceAliases);
+ if(findServicesInText(current,candidates).length)return null;
+ const earlier=seen.slice(0,-1);
+ const previousUser=earlier.findLastIndex(t=>t.role==="user");
+ if(previousUser<0)return null;
+ const beforePrevious=earlier.slice(0,previousUser);
+ const lastAssistant=[...beforePrevious].reverse().find(t=>t.role==="assistant");
+ const isProcessFollowup=/^(?:一[次回]|1\s*次|一次就|做一次|几次|幾次|多久|如何做|怎么做|怎麼做|效果|有效|会不会|會不會|how\s+(?:does|long)|is\s+one|one\s+session|how\s+many).{0,50}[!！。?？\s]*$/iu;
+ // A: customer actively continued discussing a single explicitly named
+ // treatment after the assistant explained it.
+ if(lastAssistant&&isProcessFollowup.test(pricingMessageText(earlier[previousUser]).trim())&&
+    now-earlier[previousUser].pricingCreatedAtMs<3*60*60*1000){
+  const names=[...new Set(findServicesInText(pricingMessageText(lastAssistant),candidates))];
+  if(names.length===1&&
+     earlier.slice(previousUser+1).every(t=>t.role==="user"||
+       !findServicesInText(pricingMessageText(t),candidates).some(n=>n!==names[0]))){
+   const priorAssistant=beforePrevious.filter(t=>t.role==="assistant").slice(-3);
+   if(priorAssistant.filter(t=>findServicesInText(pricingMessageText(t),candidates).includes(names[0])).length>=1)
+    return services.find(s=>s.name===names[0])||null;
+  }
+ }
+ // B: previously specified ONE treatment, no subsequent customer switch,
+ // and the assistant explicitly asked whether to show that treatment's price.
+ const customers=earlier.filter(t=>t.role==="user");
+ if(customers.length!==1)return null;
+ const named=[...new Set(findServicesInText(pricingMessageText(customers[0]),candidates))];
+ if(named.length!==1)return null;
+ const name=named[0];
+ if(earlier.some(t=>t.role==="assistant"&&
+   findServicesInText(pricingMessageText(t),candidates).some(n=>n!==name)))return null;
+ const offered=earlier.some(t=>t.role==="assistant"&&
+   /(?:想先看价钱|想先看價錢|先看价格|先看價格|price\s+or|price\s+first|价格还是|價錢還是)/iu.test(pricingMessageText(t)));
+ if(!offered)return null;
+ return services.find(s=>s.name===name)||null;
+}
+
 module.exports = {
-  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
+  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
   resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview,
 };

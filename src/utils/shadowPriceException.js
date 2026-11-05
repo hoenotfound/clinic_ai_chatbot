@@ -15,7 +15,7 @@ const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalP
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const {
-  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
+  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
@@ -391,6 +391,17 @@ function resolveShadowPriceException({
   // A bounded customer-led discussion can have several normal Q&A turns
   // after the original treatment choice. A direct price question still refers
   // to that verified service, unless staff, a new topic or ambiguity intervened.
+  const engaged=resolveCustomerEngagedPrice({
+    customerText:text,conversationHistory,services,serviceAliases,now,
+  });
+  if(engaged){
+    const verified=shadowVerifiedPrice({
+      source:"customer_engaged_single_treatment",treatment:engaged.name,
+      customerText:text,conversationHistory:session,promotions,
+    });
+    if(verified)return verified;
+  }
+
   const established = resolveEstablishedTreatmentPrice({
     customerText:text, session, services, serviceAliases, now,
   });
