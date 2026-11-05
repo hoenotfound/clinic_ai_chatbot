@@ -672,7 +672,7 @@ function createMetaCommentAutomationService({
         const privateResult = await meta.sendPrivateReplyToComment(
           event.channel,
           event.commentId,
-          privateText
+          verifiedPrivateText
         );
         if (!privateResult.success && !privateResult.alreadySent) {
           throw new Error(privateResult.error || "Meta rejected the private comment reply.");
