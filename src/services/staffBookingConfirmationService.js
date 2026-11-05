@@ -101,6 +101,44 @@ function parseTerseStaffConfirmedSlot(message, now = new Date()) {
  return utc.toISOString();
 }
 
+function bookingTimeMinutes(text) {
+ const m=String(text||"").match(/\b(0?[1-9]|1[0-2])(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+ if(!m)return null;
+ let hour=Number(m[1])%12;
+ if(/^p/iu.test(m[3]))hour+=12;
+ const minute=Number(m[2]||0);
+ return minute<60?hour*60+minute:null;
+}
+function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
+ const local=new Date(new Date(appointmentAt).getTime()+8*60*60*1000);
+ const target=local.getUTCHours()*60+local.getUTCMinutes();
+ const at=new Date(staffAt).getTime();
+ if(!Number.isFinite(at)||!Array.isArray(turns))return false;
+ const history=turns.map(t=>({...t,at:new Date(t.created_at).getTime()}))
+   .filter(t=>Number.isFinite(t.at)&&t.at<at&&t.at>=at-7*24*60*60*1000)
+   .sort((a,b)=>b.at-a.at);
+ const latest=history.find(t=>t.role==="user");
+ if(!latest||at-latest.at>30*60*1000||
+    /(?:cannot|can't|not|no\s|cancel|取消|改期|不行|不要|不能)/iu.test(String(latest.content||"")))return false;
+ const date=String(staffText||"").match(/\b(\d{1,2})\/(\d{1,2})(?:\/20\d{2})?\b/u);
+ const day=String(staffText||"").match(/\bthis\s+(mon|tue|wed|thu|fri|sat|sun)(?:day)?\b/iu);
+ if(!date&&!day)return false;
+ const customerDate=date&&history.some(t=>t.role==="user"&&
+   new RegExp("\\b0?"+Number(date[1])+"\\/0?"+Number(date[2])+"(?:\\/20\\d{2})?\\b","u").test(String(t.content||"")));
+ // A customer proposed the exact time and earlier gave the calendar date.
+ if(date&&customerDate&&bookingTimeMinutes(latest.content)===target)return true;
+ // Or the customer accepted a specific staff proposal, including the
+ // identical time and date/weekday, before the staff confirmation.
+ const agreed=/^(?:yes(?:,?\s+can)?|yes,?\s+sure|ok(?:ay)?|sure|can|boleh|可以|好|没问题|沒問題)[\s.!！。😊👌]*$/iu
+   .test(String(latest.content||"").trim());
+ if(!agreed)return false;
+ return history.some(t=>t.role==="assistant"&&t.sent_by_username&&
+   t.at<latest.at&&latest.at-t.at<=30*60*1000&&
+   bookingTimeMinutes(t.content)===target&&
+   (date?new RegExp("\\b0?"+Number(date[1])+"\\/0?"+Number(date[2])+"\\b","u").test(String(t.content||""))
+    :new RegExp("\\bthis\\s+"+day[1]+"(?:day)?\\b","iu").test(String(t.content||""))));
+}
+
 function isStaffVisitAcknowledgement(message) {
   const value = String(message || "").trim();
   if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
@@ -126,25 +164,51 @@ function createStaffBookingConfirmationService({
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
-    const appointmentAt = parseStaffConfirmedSlot(staffText, now()) ||
-      (config.businessType === 'tcm_clinic' ? parseTerseStaffConfirmedSlot(staffText, now()) : null);
-    if (!appointmentAt) {
-      if (!isStaffVisitAcknowledgement(staffText)) return null;
-      const proof = await database.query(
-        "SELECT id FROM messages WHERE contact_id=$1 AND role='assistant' " +
-        "AND sent_by_username IS NOT NULL AND whatsapp_message_id IS NOT NULL " +
-        "AND is_automated_follow_up=false AND BTRIM(content)=BTRIM($2) " +
-        "AND created_at>=now()-interval '30 minutes' " +
-        "AND COALESCE(delivery_status,'pending') IN ('pending','sent','delivered','read') " +
-        "ORDER BY id DESC LIMIT 1",
+    const strictSlot=parseStaffConfirmedSlot(staffText,now());
+    const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
+      ?parseTerseStaffConfirmedSlot(staffText,now()):null;
+    let appointmentAt=strictSlot;
+    if(!strictSlot) {
+      if(!terseSlot&&!isStaffVisitAcknowledgement(staffText))return null;
+      // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
+      // provider-authenticated staff evidence and independent customer
+      // agreement on the same date and time. If missing, hold for review.
+      const proof=await database.query(
+        `SELECT staff.id,staff.created_at,
+           COALESCE((SELECT jsonb_agg(to_jsonb(prior_turn))
+             FROM (SELECT prior.role,prior.content,prior.sent_by_username,prior.created_at
+               FROM messages prior
+               WHERE prior.contact_id=staff.contact_id
+                 AND (prior.created_at,prior.id)<(staff.created_at,staff.id)
+                 AND prior.created_at>=staff.created_at-INTERVAL '7 days'
+                 AND (prior.role='user' OR (prior.role='assistant'
+                   AND prior.sent_by_username IS NOT NULL))
+               ORDER BY prior.created_at DESC,prior.id DESC LIMIT 50
+             ) prior_turn),'[]'::jsonb) AS prior_turns
+         FROM messages staff
+         WHERE staff.contact_id=$1 AND staff.role='assistant'
+           AND staff.sent_by_username IS NOT NULL
+           AND staff.sent_by_username NOT IN('Follow-up automation','Consent request automation')
+           AND staff.whatsapp_message_id IS NOT NULL
+           AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
+           AND staff.delivery_status IS DISTINCT FROM 'failed'
+           AND BTRIM(staff.content)=BTRIM($2)
+           AND staff.created_at>=NOW()-INTERVAL '30 minutes'
+         ORDER BY staff.created_at DESC,staff.id DESC LIMIT 1`,
         [contactId,staffText]
       );
-      if (!proof.rows?.[0]?.id) return null;
-      return markPendingBooking(contactId,proof.rows[0].id,{
-        reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
-        activityDescription:"Provider-verified staff visit acknowledgement; CRM confirmation still required.",
-        details:{appointmentPreference:staffText},
-      });
+      const recorded=proof.rows?.[0];
+      if(!recorded?.id)return null;
+      if(terseSlot&&isTerseBookingCorroborated(
+        staffText,terseSlot,recorded.prior_turns,recorded.created_at)){
+        appointmentAt=terseSlot;
+      } else {
+        return markPendingBooking(contactId,recorded.id,{
+          reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
+          activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
+          details:{appointmentPreference:staffText},
+        });
+      }
     }
     const lead = await pipeline.getActiveLeadForContact(contactId);
     if (!lead || lead.is_closed || ["visited", "cancelled"].includes(lead.appointment_status)) return null;
@@ -164,6 +228,7 @@ const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
   parseTerseStaffConfirmedSlot,
+  isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
