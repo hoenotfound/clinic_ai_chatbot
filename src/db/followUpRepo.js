@@ -15,7 +15,9 @@ function clinicRescheduleHoldSql() {
 // and unavailable-branch-only messages. Recheck before sending a claimed step.
 function customerFollowUpIntentGuardSql(contactAlias = "c") {
   if (!/^[a-z][a-z0-9_]*$/i.test(contactAlias)) throw new Error("Invalid contact alias");
-  if (clinicConfig.businessType !== "tcm_clinic") return "TRUE";
+  if (clinicConfig.businessType !== "tcm_clinic" ||
+      !/^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")))
+    return "TRUE";
   return `NOT EXISTS (
     SELECT 1 FROM messages terminal_inbound
     WHERE terminal_inbound.id=(
