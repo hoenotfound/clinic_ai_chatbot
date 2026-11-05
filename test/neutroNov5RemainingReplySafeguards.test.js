@@ -48,7 +48,7 @@ test("recent provider-verified human response blocks next Neutro AI reply withou
  assert.match(query,/30 minutes/);
  assert.match(query,/staff\.sent_by_username<>'Follow-up automation'/);
  assert.match(query,/INTERVAL '2 hours'/);
- assert.match(query,/NOT EXISTS\(/);
+ assert.match(query,/NOT EXISTS\s*\(/);
  assert.equal(await hasRecentStaffConversation("x",123),false);
  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
  assert.match(server,/messagesRepo\.hasRecentStaffConversation\(contact\.id,savedInbound\.id\)/);
