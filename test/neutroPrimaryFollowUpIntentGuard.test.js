@@ -6,8 +6,10 @@ const { customerFollowUpIntentGuardSql } = require("../src/db/followUpRepo");
 
 test("primary TCM followups exclude non-patient commercial outreaches", () => {
  const original = clinicConfig.businessType;
+ const originalName = clinicConfig.businessName;
  try {
    clinicConfig.businessType = "tcm_clinic";
+   clinicConfig.businessName = "Neutro Sense TCM Centre";
    const sql = customerFollowUpIntentGuardSql("c");
    assert.match(sql, /health\[\[:space:\]\]\+professional/);
    assert.match(sql, /谢谢/);
@@ -17,7 +19,11 @@ test("primary TCM followups exclude non-patient commercial outreaches", () => {
    assert.throws(() => customerFollowUpIntentGuardSql("c;DELETE"));
    clinicConfig.businessType = "retail";
    assert.equal(customerFollowUpIntentGuardSql("c"), "TRUE");
+   clinicConfig.businessType = "tcm_clinic";
+   clinicConfig.businessName = "Other TCM Centre";
+   assert.equal(customerFollowUpIntentGuardSql("c"), "TRUE");
  } finally {
    clinicConfig.businessType = original;
+   clinicConfig.businessName = originalName;
  }
 });
