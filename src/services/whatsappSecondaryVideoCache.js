@@ -6,6 +6,9 @@
 const { createCache } = require("./whatsappVideoMediaCache");
 
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+// This map holds only pending uploads, never provider tokens or media bytes.
+// The underlying cache deletes settled entries in finally.
+const secondaryInFlight = new Map();
 const uncertain = (code) => ({
   success: false, unknown: true, ambiguous: true, retryable: false, code,
 });
@@ -44,6 +47,7 @@ async function dispatchSecondaryFollowUpVideo({
     // The only uploader available here is the sender-reverified secondary
     // transport. It cannot borrow a primary WhatsApp Meta media ID/token.
     cache = cacheFactory({
+      inFlight: secondaryInFlight,
       phoneNumberId: () => env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
       mediaStorage: storage,
       whatsappApi: {
