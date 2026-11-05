@@ -78,9 +78,9 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
       !Array.isArray(body.entry) || body.entry.length < 1 ||
       body.entry.length > MAX_EVENTS) return invalid("invalid_envelope");
   const statuses = [];
-  // Compute one hash only for the signed, explicit unmatched-receipt path.
-  // This is never logged, retained as an identifier, or used to match a contact.
-  const batchHash = typeof onInvalidRecipient === "function" ? digest(rawBody) : null;
+  // Hash the raw batch only on the rare invalid-recipient path.
+  // No extra hashing is added to normal signed delivery receipts.
+  let invalidRecipientBatchHash = null;
   let statusCount = 0;
   for (const entry of body.entry) {
     if (!entry || clean(entry.id) !== clean(env.WHATSAPP_SECONDARY_WABA_ID) ||
@@ -128,9 +128,11 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           // Never infer a recipient from the WAMID, update a message,
           // release a billing reservation or resend the message.
           const category = classifyInvalidStatusRecipient(item.recipient_id);
+          if (invalidRecipientBatchHash === null)
+            invalidRecipientBatchHash = digest(rawBody);
           onInvalidRecipient({
             fingerprint: digest(JSON.stringify([
-              "unattributed_secondary_status_recipient", batchHash,
+              "unattributed_secondary_status_recipient", invalidRecipientBatchHash,
               env.WHATSAPP_SECONDARY_WABA_ID, env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
               item.id, item.status, category, clean(item.timestamp),
             ])),
