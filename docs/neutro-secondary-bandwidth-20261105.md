@@ -36,13 +36,18 @@ ORDER BY event_day DESC, phone_number_id;
 
 Set `DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED=true` on the Neutro service for a short observation period. The existing memory-diagnostics timer emits one compact `[Outbound payload diagnostics]` JSON line every five minutes. No new timers, external calls, database queries or stored telemetry are created.
 
-Three counters estimate **attempted upload payload bytes**, not actual Render-billed bandwidth:
+The counters estimate **attempted known request payloads**, not actual Render-billed bandwidth:
 
-- `meta_primary_media`: body file bytes sent to Meta by primary WhatsApp media-upload calls.
-- `meta_secondary_media`: body file bytes sent to Meta by sender-verified secondary transport.
-- `r2_object_upload`: body file bytes sent by the application's R2 PutObject calls.
+- `meta_primary_media`, `meta_secondary_media`: file bytes uploaded to Meta.
+- `r2_object_upload`: file bytes sent through R2 PutObject.
+- `meta_primary_json`, `meta_secondary_json`: JSON body bytes sent to Meta (not media uploads).
+- `telegram_json`, `anthropic_json`: JSON body bytes sent to Telegram or Claude.
+- `gemini_sdk`: SDK request **count only**, because SDK serialization is opaque. Its `payloadMiB` is 0, meaning unknown bytes rather than zero traffic.
+- `http503`: fixed buckets `startup`, `health`, `webhook`, `api`, `other` for Express HTTP 503 responses, counted without URL/query/customer information. This cannot count Render-generated proxy errors that never reached Express.
 
-These exclude multipart overhead, TCP/TLS, database traffic, AI/Telegram HTTP calls, R2 GETs (incoming to Render), and R2's internal object copies. The counters are directionally useful for finding the large-video sources; do **not** treat them as a billable Render breakdown. Zero requests in a five-minute period produce zeros. The log contains no URLs, phones, media IDs, keys, tokens, or message content.
+These **exclude** multipart/TCP/TLS overhead, SQL-wire traffic to Neon, Gemini SDK bytes, R2 response overhead, other app-specific APIs and any provider retries. This is not comprehensive wire accounting. R2 GET bytes enter Render, rather than leave it, although R2 provider fees and other destinations may still apply. Counters are directionally useful for isolating known sources; **do not** treat them as a billable Render breakdown. A zero counter may mean uninstrumented traffic. The diagnostic logs contain no URLs, patients, contact details, file keys, tokens, request bodies or message content.
+
+In-process simultaneous secondary sends of an identical video share a single pending upload without querying Neon repeatedly. Separate Render processes remain coordinated by the existing database lease. A reused upload does **not** bypass per-recipient cancellation or create a second provider send.
 
 Compare these five-minute upload figures with Render's hourly bandwidth metrics over similar traffic periods. Do not assume that eliminating Meta uploads alone will eliminate the entire service-initiated baseline.
 
@@ -51,3 +56,7 @@ Compare these five-minute upload figures with Render's hourly bandwidth metrics 
 Historical primary cache stats suggest common follow-up clips are roughly 12–14 MiB each. A reused Meta media ID saves virtually the whole upload even without re-encoding.
 
 For *new* clinic-approved videos, a separately reviewed H.264/AAC MP4 at 720p, around 24–30 fps, and a sensible bitrate may lower storage and first-upload bytes. Use a visual and caption/audio quality check before replacing configured assets, and preserve the R2 version/ETag-based cache invalidation. No automatic transcoding is introduced here: it would change customer-facing quality and consume CPU/RAM on the 512-MB Render instance.
+
+## 503 investigation
+
+Between November 1 and 5, Render reported hundreds of HTTP 503 responses across several days. An initial attempt to retrieve matching request logs returned no specific routes, and Render events did not establish an application crash as the cause. Do not silently convert these failures to HTTP 200, suppress Meta webhook retries or loosen startup readiness checks. When the optional diagnostics are enabled, compare 503 bucket totals with Render's hourly 503 metric. A mismatch indicates failures at the proxy or another uninstrumented layer; a high `webhook` count warrants investigation of durable ingress/database failures, while a high `startup` count warrants investigating cold starts and deploy windows. The change adds classification only, not a speculative behavior change.
