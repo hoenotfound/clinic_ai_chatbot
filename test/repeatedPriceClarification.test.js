@@ -62,3 +62,16 @@ test("first bare price and mixed treatment threads still fail closed",()=>{
  ];
  assert.equal(run("一次多少钱",both).changed,false);
 });
+
+test("generic clinic first-clarification behaviour remains unchanged",()=>{
+ const history=[
+  {role:"user",content:"想了解3D小颜术"},
+  {role:"assistant",content:"3D 小颜术是我们的面部护理项目"},
+  {role:"user",content:"多少钱"},
+ ];
+ const genericClinic=improveRepeatedPriceClarification({
+  customerText:"多少钱",reply:generic,conversationHistory:history,
+  services,serviceAliases:aliases,language:"zh",
+ });
+ assert.equal(genericClinic.changed,false);
+});
