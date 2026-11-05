@@ -17,10 +17,8 @@ function buildScopedReplyPrompt(options) {
   if (!knowledge.scoped) return original;
 
   const fullKnowledge = [
-    "FREQUENTLY ASKED QUESTIONS:",
-    format(config.faqs, faqLine, "No FAQs configured."),
-    "RULES (never break these):",
-    format(config.guardrails, ruleLine, "Do not invent business facts or confirmations."),
+    "FREQUENTLY ASKED QUESTIONS:\n" + format(config.faqs, faqLine, "No FAQs configured."),
+    "RULES (never break these):\n" + format(config.guardrails, ruleLine, "Do not invent business facts or confirmations."),
   ].join("\n\n");
   if (!original.includes(fullKnowledge)) return original;
 
