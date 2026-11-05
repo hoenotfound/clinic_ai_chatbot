@@ -96,6 +96,7 @@ test("two provider-authenticated terse staff confirmations have unambiguous date
  const now=new Date("2026-11-04T04:06:00Z");
  assert.equal(parseTerseStaffConfirmedSlot("Comfirm this sat 3.30pm 😊",now),"2026-11-07T07:30:00.000Z");
  assert.equal(parseTerseStaffConfirmedSlot("OK 29/11, 3pm",now),"2026-11-29T07:00:00.000Z");
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm","2026-11-29T07:00:00.000Z",[],"2026-11-04T04:47:31Z"),false);
  for(const value of ["this sat 3.30pm can?","29/11, 3pm?", "OK this sat 3pm", "Comfirm next sat 3.30pm","OK 29/11", "OK 29/11, 3pm maybe"]){
   assert.equal(parseTerseStaffConfirmedSlot(value,now),null,value);
  }
