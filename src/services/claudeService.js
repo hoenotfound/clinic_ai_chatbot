@@ -1,7 +1,8 @@
 const { trackClaudeRequest } = require("./claudeUsageTelemetry");
 const { recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { normalizeWorkspaceId } = require("./anthropicClient");
-const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
+const { normalizeOptions } = require("../utils/systemPrompt");
+const { buildScopedReplyPrompt } = require("../utils/scopedReplyPrompt");
 const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
@@ -254,7 +255,7 @@ async function getReply(
     body: {
       model: MODEL,
       max_tokens: maxTokens,
-      system: buildSystemPrompt(promptOptions),
+      system: buildScopedReplyPrompt(promptOptions),
       messages: buildClaudeMessages(messages),
       output_config: {
         effort: DEFAULT_REPLY_EFFORT,
