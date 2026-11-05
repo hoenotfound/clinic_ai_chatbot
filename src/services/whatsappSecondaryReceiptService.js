@@ -46,6 +46,17 @@ function validateMetaSignature(rawBody, signatureHeader, secret) {
 
 function digest(input) { return crypto.createHash("sha256").update(input).digest("hex"); }
 
+// A signed Meta callback can carry an opaque recipient. A masked recipient
+// is NEVER a verified customer ID: retain hashed unmatched evidence only.
+function normalizeStatusRecipient(value) {
+  if (typeof value !== "string" || !value.trim() || value.length > 64 ||
+      !/^[A-Za-z0-9._+*-]+$/.test(value.trim())) return null;
+  const raw=value.trim();
+  const e164=/^\+([0-9]{8,15})$/.exec(raw);
+  if (e164) return { recipient: e164[1], verified: true };
+  if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
+  return { recipient: raw, verified: false };
+}
 function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
   const invalid = reason => { onInvalid(reason); return null; };
   let body;
@@ -69,8 +80,8 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
         if (!item || !/^wamid\.[A-Za-z0-9._:+/-]{1,448}={0,2}$/.test(clean(item.id)))
           return invalid("status_id_invalid");
         if (!DELIVERY_STATUSES.has(item.status)) return invalid("status_value_unsupported");
-        if (!/^[0-9]{8,15}$/.test(clean(item.recipient_id)))
-          return invalid("status_recipient_invalid");
+        const recipient=normalizeStatusRecipient(item.recipient_id);
+        if (!recipient) return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
           return invalid("status_timestamp_invalid");
         if (item.pricing !== undefined && (item.pricing === null ||
@@ -86,7 +97,8 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
         const pricingCategory = clean(item.pricing?.category) || null;
         const event = {
           wamid: item.id,
-          recipient: item.recipient_id,
+          recipient: recipient.recipient,
+          recipientVerified: recipient.verified,
           deliveryStatus: item.status,
           pricingType, pricingBillable, pricingCategory,
           phoneId: env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
@@ -234,10 +246,14 @@ async function recordSignedSecondaryStatusBatch({
     const reconciledContactIds = new Set();
     const changedMessages = [];
     for (const event of events) {
-      const owner = await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
-        event.wamid,event.recipient,env.WHATSAPP_SECONDARY_SENDER_KEY,
-        event.phoneId,event.accountId,
-      ]);
+      // Never identify a customer or release a billing reservation by a
+      // WAMID alone when the signed provider recipient is opaque/masked.
+      const owner = event.recipientVerified
+        ? await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
+          event.wamid,event.recipient,env.WHATSAPP_SECONDARY_SENDER_KEY,
+          event.phoneId,event.accountId,
+        ])
+        : { rows: [] };
       const attempt = owner.rows?.length === 1 ? owner.rows[0] : null;
       const stored = await client.query(
         `INSERT INTO whatsapp_sender_status_receipts
@@ -602,6 +618,7 @@ async function inspectSecondaryRetryHold(reservationId, {
 
 module.exports = {
   validateMetaSignature,
+  normalizeStatusRecipient,
   normalizedSignedEvents,
   normalizedSecondarySubsetEvents,
   MATCH_SECONDARY_ATTEMPT_SQL,

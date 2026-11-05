@@ -352,6 +352,9 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
  videoSelection=selectApprovedTreatmentVideo,
+ // Inject only the existing, scoped AI-copy helper for deterministic tests.
+ personalize20h=createPersonalized20h,
+ onUnexpectedFailure=()=>{},
 }={}) {
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
@@ -414,6 +417,7 @@ async function runOnce({
     if(!id)continue;
     attempted++;
     let messageId=null;
+    let phase="initial_recheck";
     const fail=async(code)=>{
       await database.query(
         "UPDATE whatsapp_sender_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
@@ -435,6 +439,7 @@ async function runOnce({
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
+      phase="media_selection";
       const selectedVideo=!adFollowUpPolicy?.ambiguous &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
@@ -483,6 +488,7 @@ async function runOnce({
       // claim, and never send a static substitute when AI mode is explicitly on.
       let outboundText=localized;
       let aiMode=null;
+      phase="ai_generation";
       if(slot===20 && !adFollowUpPolicy?.ambiguous &&
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
@@ -495,11 +501,13 @@ async function runOnce({
       if(!await preSendCheck()){
         await fail("secondary_followup_policy_changed_after_ai");continue;
       }
+      phase="contact_lookup";
       const contact=await contacts.getContactById(candidate.contact_id);
       if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
          String(contact.whatsapp_sender_id)!==String(candidate.sender_id)){
         await fail("sender_followup_owner_changed");continue;
       }
+      phase="message_save";
       const saved=await store.saveMessage(candidate.contact_id,
         "assistant",outboundText,null,null,null,null,
         key?mediaMime:null,{
@@ -516,6 +524,7 @@ async function runOnce({
         "UPDATE whatsapp_sender_followup_attempts SET message_id=$2 WHERE id=$1",
         [id,messageId]
       );
+      phase="provider_dispatch";
       const result=await sendText({
         contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
@@ -525,6 +534,7 @@ async function runOnce({
           prefetchedBytes:bytes,
         })}:{}),
       },{env,database});
+      phase="provider_result_persist";
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
         await store.setWhatsappMessageId(messageId,result.wamid,{
           preserveVerifiedSecondaryReceipt:true,
@@ -539,7 +549,16 @@ async function runOnce({
         accepted++;
       } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
-      await fail("sender_followup_processing_unconfirmed").catch(()=>{});
+      // Never automatically replay this one-shot attempt. Report a fixed,
+      // content-free processing phase, not error messages or customer data.
+      const safePhases=new Set([
+        "initial_recheck","media_selection","ai_generation","contact_lookup",
+        "message_save","provider_dispatch","provider_result_persist",
+      ]);
+      const safePhase=safePhases.has(phase)?phase:"unknown";
+      try{onUnexpectedFailure({phase:safePhase,slot});}catch{}
+      const prefix=messageId?"sender_followup_after_save_":"sender_followup_before_save_";
+      await fail(prefix+safePhase).catch(()=>{});
     }
   }
   return {disabled:false,attempted,accepted};

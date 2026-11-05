@@ -346,3 +346,23 @@ test("revoked pre-send secondary image with an existing placeholder is cancelled
    assert.deepEqual(sent.map(e=>e.deliveryStatus),["cancelled"]);
  }finally{unsubscribe();}
 });
+
+test("outdated queued Before & After images retire without calling Meta or re-sending",async()=>{
+  const calls=[];
+  const db={query:async (sql,params)=>{
+    calls.push({sql,params});
+    assert.match(sql,/job.state='pending'/);
+    assert.match(sql,/job.expires_at<=NOW\(\)/);
+    assert.match(sql,/newer\.role='user'/);
+    assert.match(sql,/staff\.sent_by_username IS NOT NULL/);
+    assert.match(sql,/whatsapp_opt_out_at IS NOT NULL/);
+    assert.match(sql,/NOT EXISTS\(/);
+    assert.match(sql,/outbound_message_evidence/);
+    return{rows:[{retired:9,messages_cancelled:2,inbound_ids:[],changed_messages:[]}]};
+  }};
+  const result=await worker.cancelObsoletePending({database:db,env:approved});
+  assert.deepEqual(result,{disabled:false,cancelled:9});
+  assert.equal(calls.length,1);
+  // A cancelled pending media job is not requeued or provider-dispatched.
+  assert.doesNotMatch(calls[0].sql,/INSERT INTO whatsapp_sender_ai_media_jobs/);
+});
