@@ -221,3 +221,18 @@ test("PostgreSQL cancellation SQL parity with the reply detector and review life
   await client.end();
  }
 });
+
+test("cancellation mentioning pregnancy or surgery keeps clinical staff-review safety",()=>{
+ for(const phrase of [
+  "我要取消预约，我怀孕了",
+  "取消预约，我刚刚做完手术",
+  "Please cancel my appointment because I am pregnant",
+ ]){
+  assert.equal(isDefiniteAppointmentCancellation(phrase),true,phrase);
+  assert.equal(categorizeAiReview(phrase,"clinical"),"clinical",phrase);
+ }
+ assert.equal(categorizeAiReview("请帮我取消预约","clinical"),"information");
+ const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ assert.match(server,/!hasClinicalMediaRisk\(text\)&&isDefiniteAppointmentCancellation\(text\)/);
+ assert.match(server,/hasClinicalMediaRisk\(text\)\?"clinical":"information"/);
+});
