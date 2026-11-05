@@ -114,7 +114,9 @@ function repeatSlotCooldownSql(atSql){
    WHERE same_slot.sender_id=sa.id AND same_slot.contact_id=c.id
      AND same_slot.slot_hours=rule.slot_hours
      AND same_slot.status='accepted'
-     AND same_slot.completed_at > ${atSql} - INTERVAL '12 hours'
+     AND same_slot.completed_at > ${atSql} -
+       (CASE WHEN rule.slot_hours IN (2,6)
+        THEN INTERVAL '7 days' ELSE INTERVAL '12 hours' END)
  )`;
 }
 
