@@ -93,9 +93,10 @@ function correctUnsupportedBranchReply({
    typeof b.address==="string"&&b.address.trim());
  const current=String(customerText||"");
  const original=String(reply||"");
+ const misplacedChoice=/(?:最方便|最近|附近|哪[一家个個間]|nearest|closest|which|most\s+convenient).{0,18}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,12}(?:最方便|最近|哪[一家个個間]|nearest|closest|which)/iu.test(original);
  if(items.length!==1||!original.trim()||
-   !/(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan|lokasi|地址|在哪里|在哪裡|where|nearest|nearby)/iu.test(current)||
-   !/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu.test(original))return {reply:original,changed:false};
+   (!misplacedChoice&&!/(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan|lokasi|地址|在哪里|在哪裡|where|nearest|nearby)/iu.test(current))||
+   !misplacedChoice&&!/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu.test(original))return {reply:original,changed:false};
  const b=items[0],lang=String(language||"").toLowerCase();
  const value=lang.startsWith("en")?
   "Our currently confirmed location is "+b.name.trim()+". Address: "+b.address.trim()+". 😊":
