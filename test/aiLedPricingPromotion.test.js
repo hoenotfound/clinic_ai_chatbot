@@ -989,6 +989,15 @@ test("Linda: compound pelvic session-and-price question selects both current pro
     { role:"assistant", content:"你一般比较方便安排平日还是周末过来呢？", pricingCreatedAtMs:now-60_000 },
     { role:"user", content:customerText, pricingCreatedAtMs:now-1000 },
   ];
+  const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+  const { safeServiceFromCustomer } = require("../src/utils/initialOfferReplyGuard");
+  assert.equal(hasExplicitPriceRequest(customerText),true,"explicit wording");
+  assert.equal(safeServiceFromCustomer(h[0].content,services,aliases)?.name,
+    "骨盆调理","customer-selected treatment");
+  const namedText="骨盆调理想了解价钱看看";
+  assert.equal(decide({priceQuery:false,treatment:null,customerText:namedText,
+    conversationHistory:[{role:"user",content:namedText}]})?.treatment,
+    "骨盆调理","explicit new service plus price wording");
   const observed=decide({
     priceQuery:false,treatment:null,customerText,conversationHistory:h,
   });
