@@ -74,6 +74,22 @@ function isVerifiedStaffTurn(turn) {
   );
 }
 
+// A clinic may introduce a free assessment while explaining the treatment
+// the CUSTOMER selected. That is not a second paid-treatment recommendation.
+// Accept this one narrow exception only when the same assistant reply also
+// names the chosen treatment. A different paid service still breaks context.
+function assistantIntroducesCompetingPaidService(turn, chosenService, candidates) {
+  const message = pricingMessageText(turn);
+  const mentioned = [...new Set(findServicesInText(message, candidates))];
+  const freeIntroAssessment = chosenService !== "1对1体态评估" &&
+    mentioned.includes(chosenService) && mentioned.includes("1对1体态评估") &&
+    /(?:体态评估|體態評估)/iu.test(message) &&
+    /(?:免费|免費|complimentary|free|percuma)/iu.test(message) &&
+    !/\b(?:RM|MYR)\s*[1-9]\d{1,5}\b/iu.test(message);
+  return mentioned.some(name => name !== chosenService &&
+    !(freeIntroAssessment && name === "1对1体态评估"));
+}
+
 function isRecentPricingThread(turns, startIndex, now = Date.now()) {
   if (!Number.isFinite(now) || startIndex < 0 || startIndex >= turns.length)
     return false;
@@ -320,7 +336,9 @@ function resolveAnsweredConcernPriceService({
       const message = pricingMessageText(turn).trim();
       if (!message) return null;
       const mentions = [...new Set(findServicesInText(message, candidates))];
-      if (mentions.some(name => name !== selected.name)) return null;
+      if (turn.role === "assistant"
+        ? assistantIntroducesCompetingPaidService(turn, selected.name, candidates)
+        : mentions.some(name => name !== selected.name)) return null;
       if (turn.role === "assistant") {
         if (mentions.includes(selected.name)) confirmedByBot = true;
         if (PRICE_BOT_CONCERN_INVITATION.test(message)) invitedConcern = true;
@@ -475,6 +493,7 @@ function resolveVerifiedPriceFollowUpService({
 module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
+  assistantIntroducesCompetingPaidService,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
   resolveRecentFirstTreatmentPriceService, resolveBookingResponsePriceService,
   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
