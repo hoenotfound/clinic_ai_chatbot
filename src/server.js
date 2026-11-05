@@ -43,7 +43,8 @@ const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromis
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
-const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
+const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -1011,6 +1012,16 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // If WhatsApp Business App staff has just replied, keep the next customer
+    // turn manual for two hours rather than immediately letting AI interrupt.
+    // Do not silently change the contact's explicit AI/Human mode.
+    if(channel==="whatsapp"&&clinicConfig.businessType==="tcm_clinic"&&
+       /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
+       await messagesRepo.hasRecentStaffConversation(contact.id,savedInbound.id)){
+      console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
+      return {wasFirstMessage,keywordReason};
+    }
+
     // Earlier messages in the same typing burst are fully saved/transcribed and
     // included in history, but only the last one gets an AI response. This is
     // what turns three short chat bubbles into one coherent assistant reply.
@@ -1302,6 +1313,18 @@ async function processIncomingMessage(
         reviewType = "information";
         bookingReady = false;
       }
+    }
+
+    // A bare visit-planning question after Chinese New Year is not a
+    // diagnosis, suitability check or confirmed booking. If the model
+    // incorrectly chooses a staff review, answer cautiously and normally.
+    if(flagged&&reviewRequired&&!keywordReason&&!urgentSafety&&
+       !bookingReady&&isSimpleVisitTimingQuestion(text)){
+      aiReply=safeVisitTimingReply(mediaLanguage);
+      flagged=false;reviewRequired=false;reviewType=null;
+      clinicalAcknowledgement=null;
+      serviceQuery=false;priceQuery=false;packageQuery=false;
+      details=null;
     }
 
     // Full multi-turn information-review recovery remains Enabled-only.
@@ -1837,6 +1860,16 @@ async function processIncomingMessage(
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
       });
+    }
+
+    // Correct only an objectively false multi-branch claim against the
+    // clinic's single configured address. Never invent a second branch.
+    if(!flagged&&!marketingStopQuestion&&
+       clinicConfig.businessType==="tcm_clinic"){
+      const locationCorrection=correctUnsupportedBranchReply({
+        customerText:text,reply,branches:clinicConfig.branches,language:mediaLanguage,
+      });
+      if(locationCorrection.changed)reply=locationCorrection.reply;
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.

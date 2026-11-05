@@ -81,4 +81,28 @@ function appendRequestedBusinessFacts({
   return additional.length ? [source, ...additional].join("\n\n") : source;
 }
 
-module.exports = { appendRequestedBusinessFacts };
+
+// Do not tell a customer that this clinic has multiple branches when the
+// configured, verified location list contains only one. This correction
+// never chooses an address from an ad, AI guess or CRM text.
+function correctUnsupportedBranchReply({
+ customerText="",reply="",branches=[],language="zh",
+}={}){
+ const items=(Array.isArray(branches)?branches:[]).filter(b=>
+   b&&typeof b.name==="string"&&b.name.trim()&&
+   typeof b.address==="string"&&b.address.trim());
+ const current=String(customerText||"");
+ const original=String(reply||"");
+ if(items.length!==1||!original.trim()||
+   !/(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan|lokasi|地址|在哪里|在哪裡|where|nearest|nearby)/iu.test(current)||
+   !/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu.test(original))return {reply:original,changed:false};
+ const b=items[0],lang=String(language||"").toLowerCase();
+ const value=lang.startsWith("en")?
+  "Our currently confirmed location is "+b.name.trim()+". Address: "+b.address.trim()+". 😊":
+  lang.startsWith("ms")?
+   "Lokasi yang disahkan ialah "+b.name.trim()+". Alamat: "+b.address.trim()+". 😊":
+   "我们目前确认的门店在"+b.name.trim()+"哦 😊\n地址："+b.address.trim()+"。";
+ return {reply:value,changed:true};
+}
+
+module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply };

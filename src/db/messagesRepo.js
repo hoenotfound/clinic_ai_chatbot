@@ -1281,6 +1281,37 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
   return result.rows[0]?.has_staff_reply === true;
 }
 
+
+// A verified staff-originated WhatsApp reply owns the conversation briefly,
+// even if the operator has not clicked the Inbox takeover toggle. The next
+// inbound message during this 2h interval must stay in Inbox for staff.
+// This is only used for Neutro's direct AI replies, not a global CRM mode
+// change or a marketing-consent decision. Follow-up automation is not staff.
+async function hasRecentStaffConversation(contactId,inboundMessageId,query=pool.query.bind(pool)){
+ const id=Number(contactId),message=Number(inboundMessageId);
+ if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(message)||message<=0)return false;
+ const result=await query(`SELECT EXISTS(
+   SELECT 1 FROM messages inbound
+   JOIN messages staff ON staff.contact_id=inbound.contact_id
+     AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
+     AND staff.sent_by_username<>'Follow-up automation'
+     AND staff.whatsapp_message_id IS NOT NULL
+     AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff.delivery_status IS DISTINCT FROM 'failed'
+     AND (staff.created_at,staff.id)<(inbound.created_at,inbound.id)
+     AND staff.created_at>=inbound.created_at-INTERVAL '2 hours'
+   WHERE inbound.id=$2 AND inbound.contact_id=$1 AND inbound.role='user'
+     AND NOT EXISTS(
+       SELECT 1 FROM messages ai WHERE ai.contact_id=inbound.contact_id
+         AND ai.role='assistant' AND ai.sent_by_username IS NULL
+         AND ai.is_automated_follow_up IS DISTINCT FROM TRUE
+         AND (ai.created_at,ai.id)>(staff.created_at,staff.id)
+         AND (ai.created_at,ai.id)<(inbound.created_at,inbound.id)
+     )
+ ) AS staff_active`,[id,message]);
+ return result.rows[0]?.staff_active===true;
+}
+
 function normalizeReactionTimestamp(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
@@ -1856,6 +1887,7 @@ module.exports = {
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
+  hasRecentStaffConversation,
   isDeletedWhatsappReactionEvent,
   applyWhatsappReaction,
   reconcilePendingWhatsappReactionsForMessage,

@@ -89,6 +89,10 @@ function hasClinicalMediaRisk(customerText) {
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
+  // A time-planning enquiry is administrative, not clinical merely because
+  // the model labeled an unanswered question as a medical review.
+  const { isSimpleVisitTimingQuestion }=require('./plainVisitSchedulingReply');
+  if(isSimpleVisitTimingQuestion(customerText))return 'information';
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
   if (!ADMINISTRATIVE_QUESTION.test(text) ||
