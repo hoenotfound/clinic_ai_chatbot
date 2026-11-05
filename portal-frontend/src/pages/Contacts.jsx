@@ -15,6 +15,7 @@ import LeadAssignmentBadge, {
 } from "../components/LeadAssignmentBadge";
 
 const SEARCH_DEBOUNCE_MS = 300;
+const CONTACT_PAGE_SIZE = 60;
 const CONTACT_REALTIME_DEBOUNCE_MS = 150;
 
 const inputClass =
@@ -33,6 +34,11 @@ export default function Contacts() {
   const [contacts, setContacts] = useState(null);
   const [searchInput, setSearchInput] = useState("");
   const [loadedSearch, setLoadedSearch] = useState(null);
+  const [loadedAssignment, setLoadedAssignment] = useState(null);
+  const [contactTotal, setContactTotal] = useState(0);
+  const [hasMoreContacts, setHasMoreContacts] = useState(false);
+  const [loadingMoreContacts, setLoadingMoreContacts] = useState(false);
+  const [allOwnerOptions, setAllOwnerOptions] = useState([]);
   const [assignmentFilter, setAssignmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
@@ -40,26 +46,33 @@ export default function Contacts() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const searchInputRef = useRef(searchInput);
   const contactsRequestIdRef = useRef(0);
+  const assignmentFilterRef = useRef(assignmentFilter);
   searchInputRef.current = searchInput;
+  assignmentFilterRef.current = assignmentFilter;
 
-  async function refreshContacts(search) {
+  async function refreshContacts(search, assignment = assignmentFilterRef.current, offset = 0) {
     const requestId = ++contactsRequestIdRef.current;
+    if (offset > 0) setLoadingMoreContacts(true);
     try {
-      const data = await api.listContacts(search);
+      const data = await api.listContactsPage({
+        search, assignment, offset, limit: CONTACT_PAGE_SIZE,
+        includeOwners: offset === 0,
+      });
       if (requestId !== contactsRequestIdRef.current) return;
-      setContacts(data);
+      setContacts(previous => offset > 0 ? [...(previous || []), ...data.items] : data.items);
+      setContactTotal(data.total);
+      setHasMoreContacts(data.hasMore);
+      if (Array.isArray(data.ownerOptions)) setAllOwnerOptions(data.ownerOptions);
       setLoadedSearch(search);
+      setLoadedAssignment(assignment);
     } catch (err) {
       if (requestId !== contactsRequestIdRef.current) return;
       console.error("Failed to load contacts:", err);
       showToast("Couldn't load contacts. Please try again.", "error");
+    } finally {
+      if (requestId === contactsRequestIdRef.current) setLoadingMoreContacts(false);
     }
   }
-
-  useEffect(() => {
-    refreshContacts("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!showUnassignedAssignment && assignmentFilter === "unassigned") {
@@ -68,10 +81,12 @@ export default function Contacts() {
   }, [assignmentFilter, showUnassignedAssignment]);
 
   useEffect(() => {
-    const timer = setTimeout(() => refreshContacts(searchInput), SEARCH_DEBOUNCE_MS);
+    const timer = setTimeout(
+      () => refreshContacts(searchInput, assignmentFilter), SEARCH_DEBOUNCE_MS
+    );
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchInput]);
+  }, [searchInput, assignmentFilter]);
 
   useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
@@ -149,18 +164,22 @@ export default function Contacts() {
 
   const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
   const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
-  const exportViewReady = contacts !== null && loadedSearch === searchInput;
-  const currentViewCount = useMemo(
-    () => (contacts || []).filter(
-      (contact) => matchesLeadAssignment(contact, assignmentFilter, username)
-    ).length,
-    [assignmentFilter, contacts, username]
-  );
+  const exportViewReady = contacts !== null &&
+    loadedSearch === searchInput && loadedAssignment === assignmentFilter;
+  const currentViewCount = contactTotal;
 
   return (
     <div className="flex h-full min-w-0">
       <ContactList
         contacts={contacts}
+        contactTotal={contactTotal}
+        allOwnerOptions={allOwnerOptions}
+        hasMoreContacts={hasMoreContacts}
+        loadingMoreContacts={loadingMoreContacts}
+        onLoadMore={() => {
+          if (!loadingMoreContacts && hasMoreContacts)
+            refreshContacts(searchInput, assignmentFilter, contacts?.length || 0);
+        }}
         selectedId={selectedId}
         onSelect={handleSelect}
         onAddNew={handleAddNew}
@@ -248,6 +267,11 @@ export default function Contacts() {
 
 function ContactList({
   contacts,
+  contactTotal,
+  allOwnerOptions,
+  hasMoreContacts,
+  loadingMoreContacts,
+  onLoadMore,
   selectedId,
   onSelect,
   onAddNew,
@@ -265,10 +289,12 @@ function ContactList({
 }) {
   const contactList = useMemo(() => contacts || [], [contacts]);
   const assignmentOptions = useMemo(
-    () => buildLeadAssignmentFilterOptions(contactList, currentUsername, {
-      includeUnassigned: showUnassignedAssignment,
-    }),
-    [contactList, currentUsername, showUnassignedAssignment]
+        () => buildLeadAssignmentFilterOptions(
+      [...allOwnerOptions, ...contactList], currentUsername, {
+        includeUnassigned: showUnassignedAssignment,
+      }
+    ),
+    [allOwnerOptions, contactList, currentUsername, showUnassignedAssignment]
   );
   const filteredContacts = useMemo(
     () => contactList.filter((contact) => matchesLeadAssignment(contact, assignmentFilter, currentUsername)),
@@ -285,8 +311,8 @@ function ContactList({
             <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
               {contacts
                 ? assignmentFilterActive
-                  ? `${filteredContacts.length} shown from ${contactList.length}`
-                  : `${contactList.length} contact${contactList.length === 1 ? "" : "s"}`
+                  ? `${filteredContacts.length} shown of ${contactTotal} matching`
+                  : `${contactList.length} of ${contactTotal} contacts`
                 : "Loading…"}
             </p>
           </div>
@@ -388,6 +414,16 @@ function ContactList({
           </div>
         </button>
       ))}
+      {hasMoreContacts && (
+        <button
+          type="button"
+          onClick={onLoadMore}
+          disabled={loadingMoreContacts}
+          className="w-full border-t border-[var(--color-border)] px-4 py-3 text-center text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+        >
+          {loadingMoreContacts ? "Loading…" : "Load more contacts"}
+        </button>
+      )}
     </div>
   );
 }
