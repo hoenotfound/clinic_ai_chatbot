@@ -4,7 +4,7 @@
 // Do not wire it to Inbox/AI/templates/retries until sender-scoped billing,
 // status reconciliation and reply-window checks are implemented.
 const { pool } = require("../db/db");
-const { recordOutboundPayload } = require("../utils/outboundPayloadDiagnostics");
+const { recordOutboundPayload, recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { classifyWhatsappSendFailure, classifyWhatsappAcceptedResponse } = require("./whatsappService");
 const { safeNetworkCause } = require("./whatsappSecondaryMetaReadOnlyProbe");
 
@@ -124,6 +124,9 @@ function createSecondaryOutboundTransport(binding, {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
+      if (typeof options.body === "string") {
+        recordOutboundRequest("meta_secondary_json", Buffer.byteLength(options.body));
+      }
       const response = await fetchImpl(endpoint + suffix, { ...options, signal: controller.signal });
       const body = await response.text();
       if (!response.ok) return {
