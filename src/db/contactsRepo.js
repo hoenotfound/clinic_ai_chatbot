@@ -476,6 +476,126 @@ async function updateContactName(id, name) {
   return updated;
 }
 
+
+// The paged Contacts directory avoids transporting every contact and its
+// message aggregates to Render on every UI refresh. Existing exports retain
+// their independent full-result query and server-side access rules.
+async function listContactsPage({
+  search = "", assignment = "all", currentUsername = "",
+  offset = 0, limit = 60, includeOwners = false,
+  accessibleContactIds = null,
+} = {}) {
+  if (accessibleContactIds !== null &&
+      (!Array.isArray(accessibleContactIds) ||
+        accessibleContactIds.some(id => !Number.isSafeInteger(id) || id <= 0))) {
+    throw new TypeError("Invalid contact access scope.");
+  }
+  if (accessibleContactIds?.length === 0) {
+    return { items: [], total: 0, nextOffset: 0, hasMore: false, ownerOptions: [] };
+  }
+  const term = String(search || "").trim().slice(0, 100);
+  const allowedAssignment = assignment === "all" || assignment === "mine" ||
+    assignment === "unassigned" || (assignment.startsWith("owner:") && assignment.length > 6 && assignment.length <= 134);
+  if (!allowedAssignment) throw new TypeError("Invalid contact assignment filter.");
+  const start = Number(offset);
+  const pageSize = Number(limit);
+  if (!Number.isSafeInteger(start) || start < 0 || start > 100000 ||
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new TypeError("Invalid contacts page.");
+  }
+  const sql = `
+    WITH matched AS (
+      SELECT c.id, c.created_at, latest.created_at AS last_message_at,
+        lead.id AS lead_id, lead.owner_username,
+        COUNT(*) OVER()::int AS total
+      FROM contacts c
+      LEFT JOIN LATERAL (
+        SELECT l.id, l.owner_username FROM leads l
+        WHERE l.contact_id = c.id
+        ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC LIMIT 1
+      ) lead ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT m.created_at FROM messages m
+        WHERE m.contact_id = c.id
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+      ) latest ON TRUE
+      WHERE ($1::text = '' OR c.name ILIKE $2
+        OR c.whatsapp_profile_name ILIKE $2
+        OR c.whatsapp_number ILIKE $2
+        OR c.channel_user_id ILIKE $2
+)
+        AND ($7::integer[] IS NULL OR c.id = ANY($7::integer[]))
+        AND ($3::text = 'all'
+          OR ($3 = 'mine' AND lead.owner_username = $4)
+          OR ($3 = 'unassigned' AND lead.owner_username IS NULL)
+          OR ($3 LIKE 'owner:%'
+            AND lead.owner_username = SUBSTRING($3 FROM 7)))
+    ), page AS (
+      SELECT * FROM matched
+      ORDER BY last_message_at DESC NULLS LAST, created_at DESC, id DESC
+      LIMIT $5 OFFSET $6
+    )
+    SELECT
+      c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name,
+      c.mode, c.needs_attention, c.is_unread, c.needs_follow_up,
+      c.created_at, c.updated_at, c.whatsapp_opt_in_at,
+      c.whatsapp_opt_in_source, c.whatsapp_opt_out_at,
+      c.whatsapp_opt_out_source, c.whatsapp_marketing_opt_out_at,
+      c.whatsapp_marketing_opt_out_source, c.channel, c.channel_user_id,
+      c.photo_url, page.lead_id,
+      page.owner_username AS lead_owner_username,
+      COALESCE(lead_owner.display_name, page.owner_username)
+        AS lead_owner_display_name,
+      page.last_message_at, page.total,
+      msg_count.message_count, inbound.latest_inbound_at
+    FROM page JOIN contacts c ON c.id = page.id
+    LEFT JOIN users lead_owner ON lead_owner.username = page.owner_username
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS message_count FROM messages m
+      WHERE m.contact_id = c.id
+    ) msg_count ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(m.source_created_at, m.created_at) AS latest_inbound_at
+      FROM messages m WHERE m.contact_id = c.id AND m.role = 'user'
+      ORDER BY COALESCE(m.source_created_at, m.created_at) DESC, m.id DESC LIMIT 1
+    ) inbound ON TRUE
+    ORDER BY page.last_message_at DESC NULLS LAST, page.created_at DESC, c.id DESC
+  `;
+  const result = await pool.query(sql, [
+    term, `%${term}%`, assignment, String(currentUsername || ""), pageSize, start,
+    accessibleContactIds,
+  ]);
+  const total = Number(result.rows[0]?.total || 0);
+  const rows = result.rows.map(({ total: ignored, ...row }) => row);
+  const items = (await hydrateSocialContactRows(rows)).map(presentPortalContact);
+  let ownerOptions = null;
+  if (includeOwners) {
+    // Only usernames/labels are returned; the list never includes contacts
+    // or message contents and stays independent of the current page.
+    if (accessibleContactIds === null) {
+      const owners = await pool.query(`
+        SELECT DISTINCT l.owner_username AS lead_owner_username,
+          COALESCE(u.display_name, l.owner_username) AS lead_owner_display_name
+        FROM leads l LEFT JOIN users u ON u.username = l.owner_username
+        WHERE l.owner_username IS NOT NULL
+        ORDER BY lead_owner_username, lead_owner_display_name LIMIT 100
+      `);
+      ownerOptions = owners.rows;
+    } else {
+      // Restricted staff never receive assignment labels from other users.
+      ownerOptions = items.filter(item => item.lead_owner_username === currentUsername)
+        .slice(0, 1).map(item => ({
+          lead_owner_username: item.lead_owner_username,
+          lead_owner_display_name: item.lead_owner_display_name,
+        }));
+    }
+  }
+  return {
+    items, total, nextOffset: start + items.length,
+    hasMore: start + items.length < total, ownerOptions,
+  };
+}
+
 async function listContacts(search) {
   const term = (search || "").trim();
   const params = term ? [`%${term}%`] : [];
@@ -1593,6 +1713,7 @@ module.exports = {
   listConversations,
   searchConversationDirectory,
   listContacts,
+  listContactsPage,
   createContact,
   updateContact,
   normalizeWhatsappNumber,

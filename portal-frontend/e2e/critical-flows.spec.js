@@ -500,6 +500,40 @@ async function installApi(page, {
       return fulfill(route, { ok: true });
     }
 
+    if (path === "/api/contacts/paged" && method === "GET") {
+      const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
+      const assignment = String(url.searchParams.get("assignment") || "all");
+      const offset = Number(url.searchParams.get("offset") || "0");
+      const limit = Number(url.searchParams.get("limit") || "60");
+      let rows = contacts.filter(item =>
+        !search || [item.name, item.whatsapp_profile_name,
+          item.whatsapp_number, item.channel_user_id]
+          .some(value => String(value || "").toLowerCase().includes(search))
+      );
+      if (assignment === "mine") {
+        rows = rows.filter(item => item.lead_owner_username === authUser.username);
+      } else if (assignment === "unassigned") {
+        rows = rows.filter(item => !item.lead_owner_username);
+      } else if (assignment.startsWith("owner:")) {
+        rows = rows.filter(item =>
+          item.lead_owner_username === assignment.slice("owner:".length));
+      }
+      rows = rows.sort((a, b) =>
+        String(b.last_message_at || "").localeCompare(String(a.last_message_at || "")));
+      const total = rows.length;
+      const items = rows.slice(offset, offset + limit);
+      const owners = contacts.filter(item => item.lead_owner_username)
+        .map(item => ({
+          lead_owner_username: item.lead_owner_username,
+          lead_owner_display_name: item.lead_owner_display_name,
+        }));
+      return fulfill(route, {
+        items, total, nextOffset: offset + items.length,
+        hasMore: offset + items.length < total,
+        ownerOptions: url.searchParams.get("includeOwners") === "true" ? owners : null,
+      });
+    }
+
     if (path === "/api/contacts" && method === "GET") {
       const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
       const rows = search
@@ -1676,7 +1710,7 @@ test("Contacts export waits for the current search and downloads the filtered CS
 
   await search.fill("Alex");
   await expect(exportButton).toBeDisabled();
-  await expect(page.getByText("1 contact", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 of 1 contact", { exact: true })).toBeVisible();
   await expect(exportButton).toBeEnabled();
 
   await exportButton.click();

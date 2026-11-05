@@ -519,6 +519,15 @@ export const api = {
       body: JSON.stringify({ messages }),
     }),
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  listContactsPage: ({
+    search = "", assignment = "all", offset = 0, limit = 60, includeOwners = false,
+  } = {}) => {
+    const params = new URLSearchParams({
+      search, assignment, offset: String(offset), limit: String(limit),
+      includeOwners: String(includeOwners),
+    });
+    return request("/contacts/paged?" + params.toString(), { cache: "no-store" });
+  },
   downloadCustomerExport: ({ preset = "customer", scope = "current", search = "", assignment = "all" } = {}) => {
     const params = new URLSearchParams({ preset, scope });
     if (scope === "current") {

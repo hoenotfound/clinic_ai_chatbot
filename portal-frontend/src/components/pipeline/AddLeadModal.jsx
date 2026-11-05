@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import { useBusinessConfig } from "../../context/BusinessConfigContext";
 import { getBusinessTerminology } from "../../utils/businessTerminology";
@@ -18,6 +18,9 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
   const ui = getBusinessTerminology(config || {});
   const locationPlural = ui.locationPlural;
   const [contacts, setContacts] = useState(null);
+  const [hasMoreContacts, setHasMoreContacts] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const contactRequestId = useRef(0);
   const [branchOptions, setBranchOptions] = useState([]);
   const [search, setSearch] = useState("");
   const [contactId, setContactId] = useState(null);
@@ -34,20 +37,54 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  // Search the complete directory on the server instead of downloading the
+  // full 8,000+ contact list every time staff opens Add Lead.
   useEffect(() => {
-    let cancelled = false;
-
-    api.listContacts("")
-      .then((contactData) => {
-        if (!cancelled) setContacts(contactData);
-      })
-      .catch((err) => {
-        console.error("Failed to load contacts for lead creation:", err);
-        if (!cancelled) {
+    const requestId = ++contactRequestId.current;
+    setContacts(null);
+    setHasMoreContacts(false);
+    const timer = setTimeout(() => {
+      api.listContactsPage({ search, limit: 40 })
+        .then(page => {
+          if (requestId !== contactRequestId.current) return;
+          setContacts(page.items);
+          setHasMoreContacts(page.hasMore);
+        })
+        .catch(err => {
+          if (requestId !== contactRequestId.current) return;
+          console.error("Failed to search contacts for lead creation:", err);
           setContacts([]);
           onToast("Couldn't load contacts.", "error");
-        }
+        });
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      contactRequestId.current += 1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  async function loadMoreContacts() {
+    if (loadingMore || !hasMoreContacts || !contacts) return;
+    const requestId = contactRequestId.current;
+    setLoadingMore(true);
+    try {
+      const page = await api.listContactsPage({
+        search, limit: 40, offset: contacts.length,
       });
+      if (requestId !== contactRequestId.current) return;
+      setContacts(previous => [...(previous || []), ...page.items]);
+      setHasMoreContacts(page.hasMore);
+    } catch (err) {
+      if (requestId === contactRequestId.current)
+        onToast("Couldn't load more contacts.", "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
 
     api.getConfiguredBranches()
       .then((data) => {
@@ -131,6 +168,12 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
                 {Number(contactId) === Number(contact.id) && <span className="text-sm font-bold text-[var(--color-primary)]">✓</span>}
               </button>
             ))}
+            {hasMoreContacts && (
+              <button type="button" onClick={loadMoreContacts} disabled={loadingMore}
+                className="w-full px-4 py-3 text-center text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-bg)] disabled:opacity-50">
+                {loadingMore ? "Loading…" : "Load more matches"}
+              </button>
+            )}
           </div>
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
