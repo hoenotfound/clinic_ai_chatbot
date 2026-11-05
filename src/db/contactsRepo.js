@@ -525,7 +525,15 @@ async function listContactsPage({
       ORDER BY last_message_at DESC NULLS LAST, created_at DESC, id DESC
       LIMIT $5 OFFSET $6
     )
-    SELECT c.*, page.lead_id, page.owner_username AS lead_owner_username,
+    SELECT
+      c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name,
+      c.mode, c.needs_attention, c.is_unread, c.needs_follow_up,
+      c.created_at, c.updated_at, c.whatsapp_opt_in_at,
+      c.whatsapp_opt_in_source, c.whatsapp_opt_out_at,
+      c.whatsapp_opt_out_source, c.whatsapp_marketing_opt_out_at,
+      c.whatsapp_marketing_opt_out_source, c.channel, c.channel_user_id,
+      c.photo_url, page.lead_id,
+      page.owner_username AS lead_owner_username,
       COALESCE(lead_owner.display_name, page.owner_username)
         AS lead_owner_display_name,
       page.last_message_at, page.total,
