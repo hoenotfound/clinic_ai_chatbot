@@ -92,7 +92,9 @@ function categorizeAiReview(customerText, proposedCategory) {
   // A time-planning enquiry is administrative, not clinical merely because
   // the model labeled an unanswered question as a medical review.
   const { isSimpleVisitTimingQuestion }=require('./plainVisitSchedulingReply');
-  if(isSimpleVisitTimingQuestion(customerText))return 'information';
+  const {isDefiniteAppointmentCancellation}=require('./appointmentCancellationSafety');
+  if(isSimpleVisitTimingQuestion(customerText)||
+     isDefiniteAppointmentCancellation(customerText))return 'information';
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
   if (!ADMINISTRATIVE_QUESTION.test(text) ||

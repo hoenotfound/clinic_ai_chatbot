@@ -7,6 +7,7 @@ const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=
  require("../src/utils/appointmentCancellationSafety");
 const eligibility=require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const followup=require("../src/services/whatsappSecondaryFollowUpService");
+const {categorizeAiReview}=require("../src/utils/aiReviewPolicy");
 const fs=require("node:fs"),path=require("node:path");
 const now=Date.now();
 const t=(role,content,msAgo,staff=false)=>({
@@ -92,6 +93,7 @@ test("#8889: a customer cancellation is never a recorded completed CRM action",(
  for(const s of ["怎么取消预约？","如果我要取消预约怎么办","不用取消预约","Can I cancel my appointment?"])
   assert.equal(isDefiniteAppointmentCancellation(s),false,s);
  assert.match(cancellationReviewAcknowledgement("zh"),/还不能当作已经取消成功/);
+ assert.equal(categorizeAiReview("要取消预约","information"),"information");
  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
  assert.match(source,/isDefiniteAppointmentCancellation\(text\)/);
  assert.match(source,/clinicalAcknowledgement=aiReply/);
