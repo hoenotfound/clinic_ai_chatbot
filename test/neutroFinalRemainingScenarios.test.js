@@ -149,3 +149,75 @@ test("#8926: 2h and 6h repeated follow-up videos have seven-day cooldown",()=>{
   assert.match(sql,/same_slot\.status='accepted'/);
  }
 });
+
+
+// Keep the SQL follow-up hold in sync with the live customer-message detector.
+// This guards against accepting a cancellation for review while a 2h/6h/20h,
+// 48h/66h or primary reminder proceeds because the SQL missed the wording.
+const cancellationPhrases=[
+ ["Please cancel my appointment",true],
+ ["Please cancel my slot",true],
+ ["cancel my temujanji",true],
+ ["Batal slot saya",true],
+ ["Batal temujanji saya",true],
+ ["Saya nak batalkan janji temu",true],
+ ["我想取消预约",true],
+ ["请帮我取消预定",true],
+ ["预约要取消",true],
+ ["不要取消预约",false],
+ ["Please don't cancel my appointment",false],
+ ["Jangan batal slot saya",false],
+ ["Can I cancel my appointment?",false],
+ ["How to cancel my slot?",false],
+ ["Boleh tak batal temujanji?",false],
+ ["Saya nak tahu harga trial",false],
+];
+test("cancellation wording parity: slots, temujanji, Chinese, and explicit exclusions",()=>{
+ for(const [phrase,expected] of cancellationPhrases)
+  assert.equal(isDefiniteAppointmentCancellation(phrase),expected,phrase);
+ const sql=pendingCancellationFollowupAllowedSql("c");
+ assert.match(sql,/\bslot\b/);
+ assert.match(sql,/temujanji/);
+ assert.match(sql,/janji temu/);
+ assert.match(sql,/not\[\[:space:\]\]\+cancel/);
+ assert.match(sql,/cancellation_review\.status='pending'/);
+ assert.throws(()=>pendingCancellationFollowupAllowedSql("c;DROP TABLE contacts"),/Invalid contact SQL alias/);
+});
+test("PostgreSQL cancellation SQL parity with the reply detector and review lifecycle",
+ {skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const {Client}=require("pg");
+ const client=new Client({connectionString:process.env.TEST_DATABASE_URL});
+ await client.connect();
+ try{
+  await client.query("BEGIN");
+  await client.query("CREATE TEMP TABLE contacts (id INT PRIMARY KEY)");
+  await client.query("CREATE TEMP TABLE messages (id INT PRIMARY KEY,contact_id INT,role TEXT,content TEXT)");
+  await client.query("CREATE TEMP TABLE ai_review_items (contact_id INT,inbound_message_id INT,status TEXT,category TEXT)");
+  await client.query("INSERT INTO contacts(id) VALUES(1),(2)");
+  await client.query("INSERT INTO messages(id,contact_id,role,content) VALUES(10,1,'user','')");
+  await client.query("INSERT INTO ai_review_items(contact_id,inbound_message_id,status,category) VALUES(1,10,'pending','information')");
+  const query=`SELECT ${pendingCancellationFollowupAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`;
+  for(const [phrase,expectedHold] of cancellationPhrases){
+   await client.query("UPDATE messages SET content=$1 WHERE id=10",[phrase]);
+   const result=await client.query(query);
+   assert.equal(result.rows[0].allowed,!expectedHold,`SQL parity failed for: ${phrase}`);
+  }
+  await client.query("UPDATE messages SET content='Please cancel my slot' WHERE id=10");
+  for(const [status,category,shouldAllow] of [
+   ["resolved","information",true],
+   ["pending","clinical",true],
+   ["pending","information",false],
+  ]){
+   await client.query("UPDATE ai_review_items SET status=$1,category=$2 WHERE inbound_message_id=10",
+    [status,category]);
+   const result=await client.query(query);
+   assert.equal(result.rows[0].allowed,shouldAllow,`${status}/${category}`);
+  }
+  await client.query("UPDATE ai_review_items SET contact_id=2 WHERE inbound_message_id=10");
+  const other=await client.query(query);
+  assert.equal(other.rows[0].allowed,true,"Review for another contact must not block this one");
+ }finally{
+  await client.query("ROLLBACK").catch(()=>{});
+  await client.end();
+ }
+});
