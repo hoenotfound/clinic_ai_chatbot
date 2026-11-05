@@ -1,4 +1,5 @@
 const { trackClaudeRequest } = require("./claudeUsageTelemetry");
+const { recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { normalizeWorkspaceId } = require("./anthropicClient");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
@@ -181,6 +182,8 @@ async function createClaudeMessage({
   }
 
   const resolvedWorkspaceId = normalizeWorkspaceId(workspaceId);
+  const requestBody = JSON.stringify(body);
+  recordOutboundRequest("anthropic_json", Buffer.byteLength(requestBody));
   const response = await fetchImpl(ANTHROPIC_MESSAGES_URL, {
     method: "POST",
     headers: {
@@ -191,7 +194,7 @@ async function createClaudeMessage({
         ? { "anthropic-workspace-id": resolvedWorkspaceId }
         : {}),
     },
-    body: JSON.stringify(body),
+    body: requestBody,
     ...(signal ? { signal } : {}),
   });
 
