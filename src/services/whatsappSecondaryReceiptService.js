@@ -49,15 +49,31 @@ function digest(input) { return crypto.createHash("sha256").update(input).digest
 // A signed Meta callback can carry an opaque recipient. A masked recipient
 // is NEVER a verified customer ID: retain hashed unmatched evidence only.
 function normalizeStatusRecipient(value) {
-  if (typeof value !== "string" || !value.trim() || value.length > 64 ||
-      !/^[A-Za-z0-9._+*-]+$/.test(value.trim())) return null;
-  const raw=value.trim();
+  // Never turn a modified/malformed recipient into a verified phone number by
+  // trimming whitespace or control characters from the original Meta value.
+  if (typeof value !== "string" || !value || value.length > 64 ||
+      value !== value.trim() ||
+      !/^[A-Za-z0-9._+*-]+$/.test(value)) return null;
+  const raw=value;
   const e164=/^\+([0-9]{8,15})$/.exec(raw);
   if (e164) return { recipient: e164[1], verified: true };
   if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
   return { recipient: raw, verified: false };
 }
-function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupported = null) {
+// Only the HMAC-verified live webhook may supply onInvalidRecipient. The
+// public parser remains strict and will continue rejecting malformed IDs.
+function classifyInvalidStatusRecipient(value) {
+  if (value === undefined) return "missing";
+  if (value === null) return "null";
+  if (typeof value !== "string") return "non_string";
+  if (!value.trim()) return "blank";
+  if (value.length > 64) return "oversize";
+  if (/[\x00-\x1f\x7f]/.test(value)) return "control";
+  if (/[^\x20-\x7e]/.test(value)) return "non_ascii";
+  return "unrecognized_format";
+}
+function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
+    onUnsupported = null, onInvalidRecipient = null) {
   const invalid = reason => { onInvalid(reason); return null; };
   let body;
   try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
@@ -90,7 +106,8 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupporte
           return invalid("status_value_unsupported");
         if (++statusCount > MAX_EVENTS) return invalid("status_batch_too_large");
         const recipient=normalizeStatusRecipient(item.recipient_id);
-        if (!recipient) return invalid("status_recipient_invalid");
+        if (!recipient && typeof onInvalidRecipient !== "function")
+          return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
           return invalid("status_timestamp_invalid");
         if (item.pricing !== undefined && (item.pricing === null ||
@@ -104,6 +121,32 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupporte
         const pricingBillable = typeof item.pricing?.billable === "boolean" ?
           item.pricing.billable : null;
         const pricingCategory = clean(item.pricing?.category) || null;
+        if (!recipient) {
+          // Signed, sender-pinned status with an unusable recipient is not
+          // evidence of delivery to any contact. Save only an idempotent
+          // hash and a bounded format category in existing quarantine.
+          // Never infer a recipient from the WAMID, update a message,
+          // release a billing reservation or resend the message.
+          const category = classifyInvalidStatusRecipient(item.recipient_id);
+          onInvalidRecipient({
+            // Fingerprint the *event*, not the envelope. Meta may replay a
+            // status in a differently grouped webhook batch. Replays must
+            // not create duplicate billable alarms or quarantine evidence.
+            // Raw values are included only inside the SHA-256 input and are
+            // never logged or persisted.
+            fingerprint: digest(JSON.stringify([
+              "unattributed_secondary_status_recipient",
+              env.WHATSAPP_SECONDARY_WABA_ID, env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+              item.id, item.status, category, item.recipient_id,
+              clean(item.timestamp), pricingType, pricingBillable,
+              pricingCategory, item.errors ?? null,
+            ])),
+            field: "messages.status_recipient_invalid." + category,
+            wamidHash: digest(item.id),
+            pricingBillable,
+          });
+          continue;
+        }
         const event = {
           wamid: item.id,
           recipient: recipient.recipient,
@@ -138,7 +181,9 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupporte
       }
     }
   }
-  return statuses.length || (statusCount && typeof onUnsupported === "function")
+  return statuses.length ||
+    (statusCount && (typeof onUnsupported === "function" ||
+                     typeof onInvalidRecipient === "function"))
     ? statuses : invalid("empty_status_batch");
 }
 
@@ -146,7 +191,8 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupporte
 // HMAC-authenticated POST. Select only secondary statuses AFTER validating
 // the HMAC over the entire original byte stream. Never reinterpret primary
 // statuses as secondary, and reject mismatched account/phone combinations.
-function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}, onUnsupported = null) {
+function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {},
+    onUnsupported = null, onInvalidRecipient = null) {
   const invalid = reason => { onInvalid(reason); return null; };
   let body;
   try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
@@ -181,7 +227,8 @@ function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}, onU
   }
   if (!entry.length) return [];
   return normalizedSignedEvents(
-    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env, onInvalid, onUnsupported
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env, onInvalid,
+    onUnsupported, onInvalidRecipient
   );
 }
 
@@ -227,14 +274,21 @@ async function recordSignedSecondaryStatusBatch({
   let invalidReason = "unknown_validation_error";
   const reportInvalid = reason => { invalidReason = reason; };
   const unsupported = [];
+  const invalidRecipients = [];
   // This opt-in path only runs after exact Meta HMAC verification. The normal
   // public parser stays fail-closed for unsupported status values.
   const collectUnsupported = item => unsupported.push(item);
+  // A real webhook passed exact raw-body HMAC verification above. Only that
+  // entrypoint can quarantine an invalid recipient rather than request a
+  // provider retry for an event we can never attribute to a customer.
+  const collectInvalidRecipient = item => invalidRecipients.push(item);
   const events = subsetFromVerifiedWebhook ?
-    normalizedSecondarySubsetEvents(rawBody, env, reportInvalid, collectUnsupported) :
+    normalizedSecondarySubsetEvents(rawBody, env, reportInvalid,
+      collectUnsupported, collectInvalidRecipient) :
     normalizedSignedEvents(rawBody, env, reportInvalid, collectUnsupported);
   if (!events) return blocked("secondary_receipt_batch_invalid", invalidReason);
-  if (events.length === 0 && unsupported.length === 0) return {
+  if (events.length === 0 && unsupported.length === 0 &&
+      invalidRecipients.length === 0) return {
     accepted: true, matched: 0, unmatched: 0, replayed: 0, held: 0,
     sendAuthorized: false, autoRetryAllowed: false,
   };
@@ -274,7 +328,7 @@ async function recordSignedSecondaryStatusBatch({
     // Record unsupported but structurally valid, HMAC-signed secondary
     // statuses in the existing append-only quarantine ledger. A replay
     // cannot generate a new charge alarm or delivery state transition.
-    for (const audit of unsupported) {
+    for (const audit of [...unsupported, ...invalidRecipients]) {
       const stored = await client.query(
         `INSERT INTO whatsapp_sender_quarantined_events
            (fingerprint,reason,event_field,meta_account_id,meta_phone_number_id)
