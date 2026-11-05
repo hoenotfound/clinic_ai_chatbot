@@ -7,6 +7,7 @@
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
+const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
@@ -189,6 +190,7 @@ const CANDIDATES_SQL=`
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
+   AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('$4::timestamptz')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
@@ -304,6 +306,7 @@ const RECHECK_SQL=`
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
+   AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('NOW()')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
