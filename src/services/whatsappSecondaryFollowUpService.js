@@ -150,8 +150,21 @@ const CANDIDATES_SQL=`
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+ -- The 24h service-window requirement below means every viable
+ -- candidate must have a recent inbound. Materialize that inexpensive,
+ -- indexed contact shortlist FIRST, instead of running many correlated
+ -- history/consent checks for all of the sender's old conversations.
+ -- This is a necessary-condition filter only: the original latest-inbound,
+ -- sender, consent, booking and pre-send guards remain authoritative.
+ JOIN (
+   SELECT DISTINCT recent.contact_id
+   FROM messages recent
+   WHERE recent.created_at > $4::timestamptz - INTERVAL '24 hours'
+     AND recent.role='user'
+     AND recent.whatsapp_message_id IS NOT NULL
+ ) recent_contact ON TRUE
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
-   AND sc.state='bound'
+   AND sc.state='bound' AND sc.contact_id=recent_contact.contact_id
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL (
