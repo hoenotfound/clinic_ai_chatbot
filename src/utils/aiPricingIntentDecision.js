@@ -57,13 +57,20 @@ const TOPIC_SWITCH_TO_NEW_SERVICE =
 const PRICE_QUESTION_CLAUSE =
   /(?:[价價](?:格|钱|錢|位)|收[费費]|费[用]?|費用)\s*(?:(?:是|要|大约|大概|约|約|先|呢|吗|嗎|呀|啊|多少|几多|幾多|什么|什麼|多少呢)\s*){0,5}[?？]/iu;
 
+// An explicit request to see today's price can be phrased as "想了解价钱看看"
+// without "多少钱" or a final question mark. An unrelated price opinion
+// cannot pass the independent explicit-price and objection checks.
+const DIRECT_PRICE_LOOKUP =
+  /(?:想(?:要|先)?(?:了解|知道|问|問|看看|看)|(?:可以|能|请|請)?(?:告诉|告訴|报|報|发|發)(?:我)?|麻烦|麻煩)\s*.{0,12}(?:[价價](?:格|钱|錢|位)|收[费費]|费[用]?|費用)(?=\s*(?:多少|大概|一下|看看|看|先|呢|呀|啊|吗|嗎|[?？!！。]|$))/iu;
+
 function hasCurrentPriceAmountRequest(customerText) {
   const current = String(customerText || "").trim();
   // This shared customer-evidence gate prevents an AI priceQuery hint from
   // turning "一次多少人/部位" or benefit questions into a paid quote.
   return hasExplicitPriceRequest(current) && (
     CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
-    PRICE_QUESTION_CLAUSE.test(current) || isFirstTrialAmountQuestion(current) ||
+    PRICE_QUESTION_CLAUSE.test(current) || DIRECT_PRICE_LOOKUP.test(current) ||
+    isFirstTrialAmountQuestion(current) ||
     LOCAL_WHATSAPP_PRICE.test(current)
   );
 }
