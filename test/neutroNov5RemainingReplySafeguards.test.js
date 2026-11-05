@@ -84,6 +84,12 @@ test("single-branch correction preserves independent treatment and booking detai
  assert.match(reply.reply,/可以先安排评估/);
  assert.match(reply.reply,/Section 19\/1/);
  assert.doesNotMatch(reply.reply,/多个分行/);
+ const mixed=correctUnsupportedBranchReply({customerText:"First Trial 多少钱",
+  reply:"3D First Trial 是 RM488，我们有多个分行，你想去哪家？",
+  branches,language:"zh"});
+ assert.match(mixed.reply,/RM488/);
+ assert.match(mixed.reply,/Petaling Jaya/);
+ assert.doesNotMatch(mixed.reply,/多个分行/);
  const area=correctUnsupportedBranchReply({customerText:"Hi",
   reply:"你好！你比较靠近哪一区？我帮你看看最方便的分行安排中医师。",
   branches});
