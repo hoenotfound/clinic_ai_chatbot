@@ -1014,6 +1014,14 @@ test("Linda: compound pelvic session-and-price question selects both current pro
   });
   assert.equal(reason,"approved");
   assert.deepEqual(decision?.prices?.map(p=>p.price),["RM388","RM288"]);
+  const safeReply=ensureVerifiedPriceReply({
+    customerText,reply:"需要根据你的情况评估哦",treatment:"骨盆调理",
+    pricingDecision:decision,priceRequested:true,services,
+    serviceAliases:aliases,promotions:[pelvic],conversationHistory:h,language:"zh",
+  });
+  assert.match(safeReply.reply,/具体做几次需要中医师评估/);
+  assert.match(safeReply.reply,/RM388/);
+  assert.match(safeReply.reply,/RM288/);
   await inAssessmentFirst(async()=>{
     const media=await resolvePricePromotionForReply(mediaArgs(decision,{
       customerText,conversationHistory:h,contactId:8940,
