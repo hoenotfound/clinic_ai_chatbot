@@ -107,8 +107,20 @@ const CANDIDATES_SQL=`
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+ -- Every sendable 48h/66h slot needs a customer inbound in the
+ -- last seven days. The separate Day4/Day6 query can refer to a verified
+ -- ad origin up to 24h before its first reply, so use NINE days as the
+ -- necessary-only shortlist for BOTH paths. Keep the existing exact latest
+ -- inbound and provider/consent/booking/billing checks unchanged.
+ JOIN (
+   SELECT DISTINCT recent.contact_id
+   FROM messages recent
+   WHERE recent.created_at > $4::timestamptz - INTERVAL '9 days'
+     AND recent.role='user'
+     AND recent.whatsapp_message_id IS NOT NULL
+ ) recent_contact ON TRUE
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
-   AND sc.state='bound'
+   AND sc.state='bound' AND sc.contact_id=recent_contact.contact_id
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
