@@ -81,9 +81,6 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
       !Array.isArray(body.entry) || body.entry.length < 1 ||
       body.entry.length > MAX_EVENTS) return invalid("invalid_envelope");
   const statuses = [];
-  // Hash the raw batch only on the rare invalid-recipient path.
-  // No extra hashing is added to normal signed delivery receipts.
-  let invalidRecipientBatchHash = null;
   let statusCount = 0;
   for (const entry of body.entry) {
     if (!entry || clean(entry.id) !== clean(env.WHATSAPP_SECONDARY_WABA_ID) ||
@@ -131,13 +128,18 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           // Never infer a recipient from the WAMID, update a message,
           // release a billing reservation or resend the message.
           const category = classifyInvalidStatusRecipient(item.recipient_id);
-          if (invalidRecipientBatchHash === null)
-            invalidRecipientBatchHash = digest(rawBody);
           onInvalidRecipient({
+            // Fingerprint the *event*, not the envelope. Meta may replay a
+            // status in a differently grouped webhook batch. Replays must
+            // not create duplicate billable alarms or quarantine evidence.
+            // Raw values are included only inside the SHA-256 input and are
+            // never logged or persisted.
             fingerprint: digest(JSON.stringify([
-              "unattributed_secondary_status_recipient", invalidRecipientBatchHash,
+              "unattributed_secondary_status_recipient",
               env.WHATSAPP_SECONDARY_WABA_ID, env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-              item.id, item.status, category, clean(item.timestamp),
+              item.id, item.status, category, item.recipient_id,
+              clean(item.timestamp), pricingType, pricingBillable,
+              pricingCategory, item.errors ?? null,
             ])),
             field: "messages.status_recipient_invalid." + category,
             wamidHash: digest(item.id),
