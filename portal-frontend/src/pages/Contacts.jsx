@@ -321,7 +321,7 @@ function ContactList({
               {contacts
                 ? assignmentFilterActive
                   ? `${filteredContacts.length} shown of ${contactTotal} matching`
-                  : `${contactList.length} of ${contactTotal} contacts`
+                  : `${contactList.length} of ${contactTotal} contact${contactTotal === 1 ? "" : "s"}`
                 : "Loading…"}
             </p>
           </div>
