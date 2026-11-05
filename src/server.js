@@ -1782,6 +1782,8 @@ async function processIncomingMessage(
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
         language: mediaLanguage,
+        allowFirstContext: clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")),
       });
       if (repeated.changed) {
         console.warn("[Reply guard] Avoided repeated pricing clarification.");
