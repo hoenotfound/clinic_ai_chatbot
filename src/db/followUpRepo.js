@@ -1228,6 +1228,12 @@ async function isClaimStillEligible({ messageId, contactId }) {
        JOIN messages anchor
          ON anchor.id = claim.trigger_message_id
         AND anchor.contact_id = claim.contact_id
+       JOIN LATERAL (
+         SELECT inbound.id,inbound.created_at
+         FROM messages inbound
+         WHERE inbound.contact_id=c.id AND inbound.role='user'
+         ORDER BY inbound.created_at DESC,inbound.id DESC LIMIT 1
+       ) latest_inbound ON true
        LEFT JOIN LATERAL (
          SELECT
            l.id,
