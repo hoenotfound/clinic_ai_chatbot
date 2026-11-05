@@ -436,3 +436,48 @@ test("full AI retains AI replies with verified staff text and image dispatch",as
  assert.equal(blocked.code,"secondary_staff_send_disabled");
  assert.equal(calls.reserved,3);
 });
+
+
+test("consecutive secondary staff pictures wait for prior receipt before sending the next",async()=>{
+  const {opts,calls}=setup();
+  let reservations=0, providerCalls=0;
+  const result=await sendSecondaryStaffText({
+    ...data,text:"[staff media]",origin:"staff",
+    dispatchTransport:async()=>{providerCalls++;return {success:true,wamid:"wamid.second-picture"};},
+    preSendCheck:async()=>true,
+  },{
+    ...opts,waitForPriorSettlement:async()=>{},
+    billingRepo:{
+      ...opts.billingRepo,
+      reserveSecondaryBillingAttempt:async()=>{
+        reservations++;
+        return reservations < 3
+          ? {reserved:false,code:"secondary_billing_previous_send_unresolved"}
+          : {reserved:true,reservationId};
+      },
+    },
+  });
+  assert.equal(reservations,3);
+  assert.equal(providerCalls,1);
+  assert.equal(result.success,true);
+  assert.equal(result.wamid,"wamid.second-picture");
+  assert.equal(calls.mark.length,1);
+});
+
+test("unresolved previous secondary picture never bypasses billing gate or reaches Meta",async()=>{
+  const {opts,calls}=setup({billingDenied:true});
+  let providerCalls=0,waits=0;
+  const result=await sendSecondaryStaffText({
+    ...data,text:"[staff media]",origin:"staff",
+    dispatchTransport:async()=>{providerCalls++;return {success:true,wamid:"wamid.should-not-send"};},
+    preSendCheck:async()=>true,
+  },{
+    ...opts,waitForPriorSettlement:async()=>{waits++;},
+  });
+  assert.equal(result.code,"secondary_billing_previous_send_unresolved");
+  assert.match(result.error,/previous WhatsApp message is still being confirmed/i);
+  assert.equal(waits,4);
+  assert.equal(providerCalls,0);
+  assert.equal(calls.reserved,5);
+  assert.equal(calls.mark.length,0);
+});
