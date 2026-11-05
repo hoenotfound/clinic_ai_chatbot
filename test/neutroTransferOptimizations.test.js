@@ -29,7 +29,8 @@ test("Contacts page uses bounded SQL with server-side search and assignment filt
     assert.match(sql, /LIMIT \$5 OFFSET \$6/);
     assert.match(sql, /lead\.owner_username = \$4/);
     assert.match(sql, /JOIN contacts c ON c\.id = page\.id/);
-    assert.deepEqual(params, ["Sarah", "%Sarah%", "mine", "staff1", 2, 0]);
+    assert.match(sql, /\$7::integer\[\] IS NULL OR c\.id = ANY\(\$7::integer\[\]\)/);
+    assert.deepEqual(params, ["Sarah", "%Sarah%", "mine", "staff1", 2, 0, [9, 10]]);
     return { rows: [
       { id: 10, channel: "whatsapp", whatsapp_number: "601100000010", total: 9, message_count: 3 },
       { id: 9, channel: "whatsapp", whatsapp_number: "601100000009", total: 9, message_count: 1 },
@@ -37,7 +38,7 @@ test("Contacts page uses bounded SQL with server-side search and assignment filt
   };
   const page = await contactsRepo.listContactsPage({
     search: "Sarah", assignment: "mine", currentUsername: "staff1",
-    limit: 2, offset: 0,
+    limit: 2, offset: 0, accessibleContactIds: [9, 10],
   });
   assert.equal(page.total, 9);
   assert.equal(page.hasMore, true);
@@ -60,6 +61,22 @@ test("Contacts page returns empty pages and rejects invalid limits without query
   await assert.rejects(contactsRepo.listContactsPage({ offset: -1 }), /Invalid contacts page/);
   await assert.rejects(contactsRepo.listContactsPage({ assignment: "other" }), /Invalid contact assignment filter/);
   assert.equal(calls, 1);
+});
+
+test("restricted staff cannot request an unscoped page or unrelated owners", async (t) => {
+  const original = pool.query;
+  t.after(() => { pool.query = original; });
+  let calls = 0;
+  pool.query = async () => { calls++; throw new Error("Must not query"); };
+  const empty = await contactsRepo.listContactsPage({
+    accessibleContactIds: [], includeOwners: true,
+  });
+  assert.equal(empty.total, 0);
+  assert.deepEqual(empty.ownerOptions, []);
+  await assert.rejects(contactsRepo.listContactsPage({
+    accessibleContactIds: [0],
+  }), /Invalid contact access scope/);
+  assert.equal(calls, 0);
 });
 
 test("Inbox page index caches unscoped results only while the WAL revision stays identical", async (t) => {
