@@ -361,3 +361,42 @@ test("secondary reminders exclude closed, non-patient and out-of-area enquiries 
   assert.match(worker.CANDIDATES_SQL,/same_slot\.completed_at > \$4::timestamptz/);
   assert.match(worker.RECHECK_SQL,/same_slot\.completed_at > NOW\(\)/);
 });
+
+
+test("20h secondary follow-up invokes existing personalized generator and saves exactly one message",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:20,media_key:null}]});
+  let calls=0;
+  const result=await worker.runOnce({
+    ...f,
+    env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+    personalize20h:async ({candidate:row})=>{
+      calls++;
+      assert.equal(row.slot_hours,20);
+      return {ok:true,message:"您好，我们可以安排一对一体态评估，方便告诉我您较关注哪方面吗？",mode:"ai_personalized"};
+    },
+  });
+  assert.equal(calls,1);
+  assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
+  assert.equal(f.sends,1);
+  assert.equal(f.calls.filter(x=>x.save).length,1);
+  assert.equal(f.calls.filter(x=>x.sql?.includes("status='accepted'")).length,1);
+});
+
+test("20h pre-save AI exception records fixed phase and never sends or retries",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:20,media_key:null}]});
+  const phases=[];
+  const result=await worker.runOnce({
+    ...f,
+    env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+    personalize20h:async()=>{throw Error("test secret that must never reach logs");},
+    onUnexpectedFailure:({phase,slot})=>phases.push({phase,slot}),
+  });
+  assert.equal(result.attempted,1);
+  assert.equal(result.accepted,0);
+  assert.equal(f.sends,0);
+  assert.deepEqual(phases,[{phase:"ai_generation",slot:20}]);
+  assert.equal(f.calls.filter(x=>x.save).length,0);
+  const failed=f.calls.find(x=>x.sql?.includes("SET status='unknown'"));
+  assert.equal(failed?.args?.[1],"sender_followup_before_save_ai_generation");
+  assert.equal(JSON.stringify(f.calls).includes("test secret"),false);
+});
