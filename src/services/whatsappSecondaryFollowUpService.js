@@ -1,13 +1,15 @@
 "use strict";
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
-// Neutro's follow-up queue, template billing, retry worker or media ID cache.
+// Neutro's follow-up queue, template billing or retry worker.
+// Its media upload cache may be reused only with the distinct secondary phone ID.
 // A claimed slot is one-shot even after timeout, worker crash or uncertain
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
+const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
@@ -454,6 +456,9 @@ async function runOnce({
       if(key && (mediaType!=="video" || !liveVideoApproval())){
         await fail("sender_followup_video_approval_revoked");continue;
       }
+      const useSharedVideoCache=Boolean(key && secondaryVideoCacheEligible({
+        env,storage,mediaKey:key,
+      }));
       let bytes=null;
       if(key){
         const mime=mediaMime;
@@ -463,9 +468,14 @@ async function runOnce({
           !/^[A-Za-z0-9._ -]{1,180}$/.test(String(filename||""))){
           await fail("sender_followup_media_invalid");continue;
         }
-        bytes=await storage.downloadMedia(key,{maxBytes:MAX_MEDIA});
-        if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>MAX_MEDIA){
-          await fail("sender_followup_media_unavailable");continue;
+        // Preserve the existing pre-save media validation when cache is OFF.
+        // With the cache ON, a HEAD validates the object before any reuse,
+        // avoiding a full R2 download on each approved follow-up.
+        if(!useSharedVideoCache){
+          bytes=await storage.downloadMedia(key,{maxBytes:MAX_MEDIA});
+          if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>MAX_MEDIA){
+            await fail("sender_followup_media_unavailable");continue;
+          }
         }
       }
       // This is the PRIMARY Neutro follow-up AI generator, using only
@@ -509,21 +519,11 @@ async function runOnce({
       const result=await sendText({
         contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
-        ...(bytes?{dispatchTransport:async transport=>{
-          if(!liveVideoApproval() || !await preSendCheck())
-            return {success:false,unknown:true,ambiguous:true,retryable:false};
-          const uploaded=await transport.uploadMedia(bytes,
-            mediaMime,mediaFilename);
-          if(!uploaded?.success || !uploaded.mediaId)return{
-            success:false,ambiguous:true,retryable:false,
-          };
-          if(!liveVideoApproval() || !await preSendCheck())return{
-            success:false,ambiguous:true,retryable:false,
-          };
-          return transport.sendMediaById(mediaType,
-            uploaded.mediaId,{caption:outboundText,
-              filename:mediaFilename,voice:false});
-        }}:{}),
+        ...(key?{dispatchTransport:async transport=>dispatchSecondaryFollowUpVideo({
+          transport,mediaKey:key,mimeType:mediaMime,filename:mediaFilename,
+          caption:outboundText,env,storage,preSendCheck,liveVideoApproval,
+          prefetchedBytes:bytes,
+        })}:{}),
       },{env,database});
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
         await store.setWhatsappMessageId(messageId,result.wamid,{

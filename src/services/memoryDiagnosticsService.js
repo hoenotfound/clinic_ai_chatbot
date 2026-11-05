@@ -4,6 +4,7 @@
 // Node heap and container usage to distinguish JS retention from large buffers
 // or native allocations. No request body, contact, phone or message is logged.
 const { readFileSync } = require("node:fs");
+const { takeOutboundPayloadSnapshot } = require("../utils/outboundPayloadDiagnostics");
 const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
 const { snapshot: getWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
 
@@ -98,6 +99,9 @@ function startMemoryDiagnostics({
             .map(item => ({ key: item.key, count: item.last5Minutes })),
         };
         logger.info?.(`[Refresh/wake diagnostics] ${JSON.stringify(summary)}`);
+        if (env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
+          logger.info?.(`[Outbound payload diagnostics] ${JSON.stringify(takeOutboundPayloadSnapshot())}`);
+        }
       }
     } catch (error) {
       // Diagnostics never interrupt primary WhatsApp or other service workers.
