@@ -6,6 +6,7 @@
 // authority for a new customer's first pricing enquiry.
 const { getActivePromotions, promotionPackages } = require("./activePromotion");
 const { recentVerifiedPricingSession } = require("./shadowPriceException");
+const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
@@ -30,6 +31,96 @@ function includedItems(item, locale) {
     .map(s => s.replace(/^✅\s*/u, "").trim())
     .filter(s => s && s.length <= 110);
   return points.length >= 2 && points.length <= 8 ? points : null;
+}
+
+// A manual WhatsApp Business App reply does not necessarily switch an
+// otherwise AI-owned conversation to human mode. It must never grant pricing
+// authority, but should not erase a PRIOR verified AI quote when a customer
+// asks to compare the same two prices. This exception is text-only and does
+// not alter the general price or media authorization rules.
+const STAFF_AUTOMATION_STOP = /(?:人工(?:接手|处理|處理)|已?接手|暂停|暫停|停用|不要自[动動]|别自[动動]|別自[动動]|停止自[动動]|交给人工|交給人工|\b(?:take[\s-]?over|human[\s-]?agent|stop[\s-]?bot|pause[\s-]?bot|manual[\s-]?only)\b)/iu;
+
+function verifiedComparisonSessionWithStaffNote({
+  customerText, conversationHistory, services, serviceAliases,
+  a, b, now,
+} = {}) {
+  const strict = recentVerifiedPricingSession(conversationHistory, customerText, now);
+  if (strict) return strict;
+  const turns = Array.isArray(conversationHistory) ? conversationHistory
+    .filter(t => t?.role === "user" || t?.role === "assistant") : [];
+  const notes = turns.filter(isVerifiedStaffTurn);
+  if (notes.length !== 1 || turns.at(-1)?.role !== "user" ||
+      String(turns.at(-1)?.content || "").trim() !== String(customerText || "").trim())
+    return null;
+  // Verify the actual DB chronology, including the staff message. Stripping
+  // staff cannot conceal stale, missing or out-of-order evidence.
+  let previousTime = -Infinity;
+  for (const turn of turns) {
+    const when = turn?.pricingCreatedAtMs;
+    if (!Number.isFinite(when) ||
+        when < now - MAX_QUOTE_AGE_MS || when > now + 60_000 ||
+        when < previousTime) return null;
+    previousTime = when;
+  }
+  const note = notes[0];
+  const noteText = String(note.content || "");
+  if (STAFF_AUTOMATION_STOP.test(noteText) ||
+      hasClinicalMediaRisk(noteText) ||
+      noteText.length > 800) return null;
+  // A manual change to pricing, or a different paid-treatment discussion,
+  // is a reason to leave the customer with staff. Package inclusions are not
+  // an independent treatment switch.
+  const amounts = [...noteText.matchAll(AMOUNT)].map(m => Number(m[1]));
+  if (amounts.some(n => n !== safeOffer(a) && n !== safeOffer(b))) return null;
+  const permittedInclusions = [a, b].flatMap(item =>
+    ["zh", "en", "ms"].flatMap(locale => includedItems(item, locale) || [])
+  ).join("\n").toLocaleLowerCase();
+  const candidateServices = serviceCandidates(services, serviceAliases);
+  const isAlreadyListedInclusion = (name) => {
+    // The configured package may list "子宫护理" while the service catalog
+    // calls that other service "子宫调理". Match ONLY exact configured
+    // display/alias terms that appear in both the note AND current package
+    // inclusions. This cannot make a new treatment or package authoritative.
+    const terms = [name, ...(Array.isArray(serviceAliases) ? serviceAliases : [])
+      .filter(item => item?.officialService === name)
+      .flatMap(item => String(item.alias || "").split(/[|;,，、]+/u))]
+      .map(term => String(term || "").trim().toLocaleLowerCase())
+      .filter(term => term.length >= 2);
+    const text = noteText.toLocaleLowerCase();
+    return terms.some(term => text.includes(term) && permittedInclusions.includes(term));
+  };
+  if (findServicesInText(noteText, candidateServices).some(name =>
+    name !== TREATMENT && !isAlreadyListedInclusion(name))) return null;
+
+  // A manual note alone is NEVER sufficient. Recover only customer and AI
+  // messages, then verify that the AI had already issued BOTH package prices
+  // before the manual message. The current package data is checked separately.
+  const aiOnly = recentVerifiedPricingSession(
+    turns.filter(t => !isVerifiedStaffTurn(t)), customerText, now
+  );
+  if (!aiOnly) return null;
+  const verifiedQuote = aiOnly.find(t => t.role === "assistant" &&
+    t.pricingCreatedAtMs < note.pricingCreatedAtMs &&
+    String(t.content || "").includes(TREATMENT) &&
+    String(t.content || "").includes("Package A") &&
+    String(t.content || "").includes("Package B") &&
+    String(t.content || "").includes("RM" + safeOffer(a)) &&
+    String(t.content || "").includes("RM" + safeOffer(b)));
+  if (!verifiedQuote) return null;
+  const selectedBeforeQuote = aiOnly.some(t =>
+    t.role === "user" && t.pricingCreatedAtMs < verifiedQuote.pricingCreatedAtMs &&
+    safeServiceFromCustomer(t.content, services, serviceAliases)?.name === TREATMENT
+  );
+  if (!selectedBeforeQuote) return null;
+  // Later customer messages must not have switched to a different treatment.
+  if (aiOnly.some(t => t.role === "user" &&
+      t.pricingCreatedAtMs > verifiedQuote.pricingCreatedAtMs &&
+      t.pricingCreatedAtMs < turns.at(-1).pricingCreatedAtMs &&
+      (FORBIDDEN.test(String(t.content || "")) ||
+       hasClinicalMediaRisk(String(t.content || "")) ||
+       findServicesInText(String(t.content || ""), candidateServices)
+         .some(name => name !== TREATMENT)))) return null;
+  return aiOnly;
 }
 
 function resolveNeutroPelvicPackageComparison({
@@ -66,7 +157,9 @@ function resolveNeutroPelvicPackageComparison({
   // The customer must have explicitly chosen pelvic treatment in this
   // verified session, and the AI must ALREADY have quoted both live prices
   // together. We cannot infer a purchase decision from a price pair alone.
-  const session = recentVerifiedPricingSession(conversationHistory, customerText, now);
+  const session = verifiedComparisonSessionWithStaffNote({
+    customerText, conversationHistory, services, serviceAliases, a, b, now,
+  });
   if (!session || session.length < 4) return null;
   const previous = session.slice(0, -1);
   const recentCustomerSelection = previous.some(t => t.role === "user" &&
