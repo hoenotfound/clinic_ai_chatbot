@@ -57,7 +57,7 @@ function normalizeStatusRecipient(value) {
   if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
   return { recipient: raw, verified: false };
 }
-function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
+function normalizedSignedEvents(rawBody, env, onInvalid = () => {}, onUnsupported = null) {
   const invalid = reason => { onInvalid(reason); return null; };
   let body;
   try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
@@ -65,6 +65,7 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
       !Array.isArray(body.entry) || body.entry.length < 1 ||
       body.entry.length > MAX_EVENTS) return invalid("invalid_envelope");
   const statuses = [];
+  let statusCount = 0;
   for (const entry of body.entry) {
     if (!entry || clean(entry.id) !== clean(env.WHATSAPP_SECONDARY_WABA_ID) ||
         !Array.isArray(entry.changes) || !entry.changes.length) return invalid("sender_scope_mismatch");
@@ -79,7 +80,15 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
       for (const item of change.value.statuses) {
         if (!item || !/^wamid\.[A-Za-z0-9._:+/-]{1,448}={0,2}$/.test(clean(item.id)))
           return invalid("status_id_invalid");
-        if (!DELIVERY_STATUSES.has(item.status)) return invalid("status_value_unsupported");
+        const supported=DELIVERY_STATUSES.has(item.status);
+        // Unknown statuses are not delivery receipts. The signed webhook
+        // handler may opt into durable, hash-only quarantine, but the ordinary
+        // parser remains strictly limited to supported delivery states.
+        if (!supported && (typeof onUnsupported !== "function" ||
+            typeof item.status !== "string" ||
+            !/^[a-z][a-z0-9_]{0,63}$/.test(item.status)))
+          return invalid("status_value_unsupported");
+        if (++statusCount > MAX_EVENTS) return invalid("status_batch_too_large");
         const recipient=normalizeStatusRecipient(item.recipient_id);
         if (!recipient) return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
@@ -113,19 +122,31 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
         ];
         event.fingerprint = digest(JSON.stringify(signatureMaterial));
         event.wamidHash = digest(event.wamid);
+        if (!supported) {
+          // Only fixed-format metadata and a SHA-256 fingerprint are persisted.
+          // Never reinterpret this status as delivered/read/failed and never
+          // attach it to a recipient, message, reservation or billing release.
+          onUnsupported({
+            fingerprint: digest(JSON.stringify(["unsupported_secondary_status", ...signatureMaterial])),
+            field: "messages.status." + item.status,
+            wamidHash: event.wamidHash,
+            pricingBillable: event.pricingBillable,
+          });
+          continue;
+        }
         statuses.push(event);
-        if (statuses.length > MAX_EVENTS) return invalid("status_batch_too_large");
       }
     }
   }
-  return statuses.length ? statuses : invalid("empty_status_batch");
+  return statuses.length || (statusCount && typeof onUnsupported === "function")
+    ? statuses : invalid("empty_status_batch");
 }
 
 // The real /webhook body can contain primary and secondary entries in one
 // HMAC-authenticated POST. Select only secondary statuses AFTER validating
 // the HMAC over the entire original byte stream. Never reinterpret primary
 // statuses as secondary, and reject mismatched account/phone combinations.
-function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}) {
+function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}, onUnsupported = null) {
   const invalid = reason => { onInvalid(reason); return null; };
   let body;
   try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
@@ -160,7 +181,7 @@ function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}) {
   }
   if (!entry.length) return [];
   return normalizedSignedEvents(
-    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env, onInvalid
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env, onInvalid, onUnsupported
   );
 }
 
@@ -205,11 +226,15 @@ async function recordSignedSecondaryStatusBatch({
   }
   let invalidReason = "unknown_validation_error";
   const reportInvalid = reason => { invalidReason = reason; };
+  const unsupported = [];
+  // This opt-in path only runs after exact Meta HMAC verification. The normal
+  // public parser stays fail-closed for unsupported status values.
+  const collectUnsupported = item => unsupported.push(item);
   const events = subsetFromVerifiedWebhook ?
-    normalizedSecondarySubsetEvents(rawBody, env, reportInvalid) :
-    normalizedSignedEvents(rawBody, env, reportInvalid);
+    normalizedSecondarySubsetEvents(rawBody, env, reportInvalid, collectUnsupported) :
+    normalizedSignedEvents(rawBody, env, reportInvalid, collectUnsupported);
   if (!events) return blocked("secondary_receipt_batch_invalid", invalidReason);
-  if (events.length === 0) return {
+  if (events.length === 0 && unsupported.length === 0) return {
     accepted: true, matched: 0, unmatched: 0, replayed: 0, held: 0,
     sendAuthorized: false, autoRetryAllowed: false,
   };
@@ -243,8 +268,41 @@ async function recordSignedSecondaryStatusBatch({
     let replayed = 0;
     let held = 0;
     let autoReconciled = 0;
+    let quarantined = 0;
     const reconciledContactIds = new Set();
     const changedMessages = [];
+    // Record unsupported but structurally valid, HMAC-signed secondary
+    // statuses in the existing append-only quarantine ledger. A replay
+    // cannot generate a new charge alarm or delivery state transition.
+    for (const audit of unsupported) {
+      const stored = await client.query(
+        `INSERT INTO whatsapp_sender_quarantined_events
+           (fingerprint,reason,event_field,meta_account_id,meta_phone_number_id)
+         VALUES($1,'unsupported_whatsapp_event',$2,$3,$4)
+         ON CONFLICT(fingerprint) DO NOTHING RETURNING fingerprint`,
+        [audit.fingerprint,audit.field,
+         env.WHATSAPP_SECONDARY_WABA_ID,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID]
+      );
+      if (stored.rowCount !== 1) {
+        replayed++;
+        continue;
+      }
+      quarantined++;
+      // Unexpected Meta billability must stay in human review, regardless
+      // of whether the delivery state is known. Alarm only once per audit.
+      if (audit.pricingBillable === true) {
+        await client.query(
+          `INSERT INTO whatsapp_sender_billing_alarms
+             (sender_id,reservation_id,reason,latest_wamid_hash)
+           VALUES($1,NULL,'unmatched_provider_billable',$2)
+           ON CONFLICT(sender_id) DO UPDATE SET
+             observed_count=whatsapp_sender_billing_alarms.observed_count+1,
+             last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
+          [senderId,audit.wamidHash]
+        );
+        held++;
+      }
+    }
     for (const event of events) {
       // Never identify a customer or release a billing reservation by a
       // WAMID alone when the signed provider recipient is opaque/masked.
@@ -567,6 +625,7 @@ async function recordSignedSecondaryStatusBatch({
     return {
       accepted: true, sendAuthorized: false, autoRetryAllowed: false,
       matched, unmatched, replayed, held,
+      ...(quarantined ? { quarantined } : {}),
       ...(env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true"
         ? { autoReconciled } : {}),
     };
