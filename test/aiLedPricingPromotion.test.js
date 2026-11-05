@@ -1040,3 +1040,205 @@ test("Linda: compound pelvic session-and-price question selects both current pro
     }),null,other);
   }
 });
+
+
+test("Caden live pelvic price enquiry: free 1-to-1 assessment is not a treatment switch", async () => {
+  const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
+  const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
+  const { guardUnconfirmedMediaPromise } = require("../src/utils/unconfirmedMediaPromiseGuard");
+  const now = Date.now();
+  const liveServices = [
+    ...services, { name: "1对1体态评估" },
+    { name: "徒手体态调理" }, { name: "产后调理" },
+  ];
+  const liveAliases = [
+    ...aliases,
+    { alias: "体态评估", officialService: "1对1体态评估" },
+    { alias: "整骨", officialService: "徒手体态调理" },
+    { alias: "产后", officialService: "产后调理" },
+  ];
+  const customerText = "那这种调理是做一次就行了吗？想了解价钱看看";
+  const contents = [
+    ["user", "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"],
+    ["user", "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"],
+    ["user", "📎 [Customer sent an unsupported revoke message]"],
+    ["assistant", "可以呀～骨盆调理主要是中医师用徒手手法来调整体态与骨盆平衡，像久坐腰酸、假胯宽、小腹凸或产后体态这类情况都会有帮助 😊\n\n你平时主要是哪一部分觉得比较困扰呢？"],
+    ["user", "我对你们的骨盆调理有兴趣，想了解一下。"],
+    ["assistant", "没问题呀～骨盆调理主要帮大家看体态和骨盆平衡。中医师会先帮你做一个1对1的体态评估+体验，这个是免费的哦！"],
+    ["assistant", "这个是我们顾客护理后的 Before & After 😊\n从照片可以参考她当次在骨盆/下半身线条和整体体态视觉上的变化。"],
+    ["user", "我平时久坐，腰有点酸，小腹也比较突出。"],
+    ["assistant", "哦哦，了解～像久坐、腰酸加上小腹比较突出，确实蛮多人会想让中医师从骨盆和整体体态方向看看的 😊 中医师会先帮你做一个1对1的体态评估+体验（是免费的哦），到时也会看你的实际状态。你有比较倾向哪几天吗？"],
+    ["user", customerText],
+  ];
+  const h = contents.map(([role, content], i) => ({
+    role, content, pricingCreatedAtMs: now - (contents.length - i) * 12_000,
+  }));
+  const observed = resolveAiPricingDecision({
+    priceQuery: true, packageQuery: false, treatment: "骨盆调理",
+    customerText, conversationHistory: h,
+    services: liveServices, serviceAliases: liveAliases,
+    promotions: [pelvic], now,
+  });
+  assert.equal(observed?.treatment, "骨盆调理");
+  assert.deepEqual(observed?.prices.map(p => p.price), ["RM388", "RM288"]);
+
+  const shadow = resolveShadowPriceException({
+    customerText, conversationHistory: h,
+    services: liveServices, serviceAliases: liveAliases,
+    promotions: [pelvic], now,
+  });
+  assert.equal(shadow?.treatment, "骨盆调理");
+  const assessment = resolveApprovedPricingAssessment({
+    mode: "shadow", shadowException: shadow,
+    customerText, conversationHistory: h,
+    services: liveServices, serviceAliases: liveAliases,
+    resultMedia: [], now,
+  });
+  assert.equal(assessment.reason, "approved");
+  const safe = ensureVerifiedPriceReply({
+    customerText, reply: "一般建议4–6次，我发给你参考看看 😊",
+    treatment: "骨盆调理", pricingDecision: assessment.decision,
+    priceRequested: true, services: liveServices,
+    serviceAliases: liveAliases, promotions: [pelvic],
+    conversationHistory: h, language: "zh",
+  });
+  assert.match(safe.reply, /RM388/);
+  assert.match(safe.reply, /RM288/);
+  await inAssessmentFirst(async () => {
+    const bundle = await resolvePricePromotionForReply(mediaArgs(assessment.decision, {
+      customerText, conversationHistory: h, contactId: 8921,
+      services: liveServices, serviceAliases: liveAliases,
+    }));
+    assert.deepEqual(bundle?.packages.map(p => p.imageUrl),
+      ["https://example.test/a", "https://example.test/b"]);
+  });
+
+  const unsentPromise = guardUnconfirmedMediaPromise(
+    "一般会建议先以 4–6次作为一个基础调整阶段。\n\n骨盆调理目前有当期限时配套优惠，我发给你参考看看 😊",
+    "zh"
+  );
+  assert.equal(unsentPromise.changed, true);
+  assert.doesNotMatch(unsentPromise.reply, /我发给你参考看看/);
+  assert.match(unsentPromise.reply, /骨盆调理目前有当期限时配套优惠/);
+
+  // The exception applies ONLY to a complimentary assessment offered
+  // alongside the chosen treatment, not another paid service or staff handoff.
+  const changedService = h.map((turn, index) => index === 8
+    ? { ...turn, content: turn.content + " 你也可以做9D逆龄抗衰。" }
+    : turn);
+  assert.equal(resolveShadowPriceException({
+    customerText, conversationHistory: changedService,
+    services: liveServices, serviceAliases: liveAliases,
+    promotions: [pelvic], now,
+  }), null, "different paid treatment must prevent a pelvic quote");
+  const interveningStaff = h.map((turn, index) => index === 8
+    ? { ...turn, content: "[Verified STAFF message] " + turn.content,
+        pricingStaffAuthored: true } : turn);
+  assert.equal(resolveShadowPriceException({
+    customerText, conversationHistory: interveningStaff,
+    services: liveServices, serviceAliases: liveAliases,
+    promotions: [pelvic], now,
+  }), null, "staff takeover must prevent automated pricing");
+});
+
+test("unconfirmed promo shorthand is removed without removing an amount or a negation", () => {
+  const { guardUnconfirmedMediaPromise } = require("../src/utils/unconfirmedMediaPromiseGuard");
+  const draft = guardUnconfirmedMediaPromise(
+    "骨盆调理 Package A RM388，Package B RM288，我发给你参考看看 😊", "zh");
+  assert.equal(draft.changed, true);
+  assert.match(draft.reply, /RM388/);
+  assert.match(draft.reply, /RM288/);
+  assert.doesNotMatch(draft.reply, /我发给你参考看看/);
+  const noPromise = guardUnconfirmedMediaPromise(
+    "我还不能发给你参考看看，因为需要先核对价格", "zh");
+  assert.equal(noPromise.changed, false);
+});
+
+
+test("fresh secondary pelvic conversation 8943: actual assessment and postpartum context quotes both package prices", async () => {
+  const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
+  const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
+  const now = Date.now();
+  const liveServices = [
+    ...services, { name: "1对1体态评估" },
+    { name: "徒手体态调理" }, { name: "产后调理" },
+  ];
+  const liveAliases = [
+    ...aliases,
+    { alias: "体态评估", officialService: "1对1体态评估" },
+    { alias: "产后", officialService: "产后调理" },
+    { alias: "徒手调理", officialService: "徒手体态调理" },
+  ];
+  const priceQuestion = "那这种调理是做一次就行了吗？想了解价钱看看";
+  // Exact message sequence and text from the 5 Nov 2026 fresh test, including
+  // the two Before & After captions and free-assessment wording that does NOT
+  // always contain the word "免费". Old simplified tests missed this variant.
+  const rows = [
+    ["user", "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"],
+    ["assistant", "Hi 你好 👋 欢迎来到 Neutro Sense TCM～\n\n我们的骨盆调理主要是通过中医师的手法来调整骨盆和整体体态，比较多顾客会因为久坐、腰酸腰臀紧、小腹突出或产后体态变化来了解 😊\n\n请问你目前主要是想改善哪一部分，比如体态、腰酸小腹，还是产后调理呢？\n\n可以先免费来做中医师1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊"],
+    ["assistant", "这个是我们顾客护理后的 Before & After 😊\n从照片可以参考她当次在骨盆/下半身线条和整体体态视觉上的变化。每个人基础状态不同，实际变化会不一样哦～"],
+    ["assistant", "再给你看一个顾客护理后的 Before & After 😊\n可以参考她当次在体态、下半身线条和整体视觉上的变化。实际效果还是会看每个人本身的状态哦～"],
+    ["user", "我对你们的骨盆调理有兴趣，想了解一下。"],
+    ["assistant", "我们的骨盆调理主要是中医师用徒手手法进行体态和骨盆调整，一次大约30–40分钟 😊 像平时容易久坐、腰酸腰臀紧、小腹明显或产后体态改变，都会比较多人来调理。\n\n中医师会先帮你做一个1对1的体态评估+体验，看看整体状态再决定适合的方向～请问你目前最想改善的是哪一块呢？"],
+    ["user", "我平时久坐，腰有点酸，小腹也比较突出。"],
+    ["assistant", "长期久坐确实容易让腰臀肌肉变紧，骨盆和体态受影响后，小腹也会显得比较明显～\n\n你可以先让中医师帮你做一个1对1的体态评估+体验，看看目前的体态和骨盆状态。你平时一般是周日还是周末比较方便过来呢？😊"],
+    ["user", priceQuestion],
+  ];
+  const h = rows.map(([role, content], i) =>
+    ({ role, content, pricingCreatedAtMs: now - (rows.length - i) * 12_000 }));
+  const inputs = {
+    customerText: priceQuestion, conversationHistory: h,
+    services: liveServices, serviceAliases: liveAliases,
+    promotions: [pelvic], now,
+  };
+  const shadow = resolveShadowPriceException(inputs);
+  assert.equal(shadow?.treatment, "骨盆调理",
+    "intro assessment and postpartum body-change examples do not change the customer's chosen treatment");
+  assert.deepEqual(shadow?.prices.map(p => p.price), ["RM388", "RM288"]);
+  const observed = resolveAiPricingDecision({
+    ...inputs, priceQuery: true, packageQuery: false, treatment: "骨盆调理",
+  });
+  assert.equal(observed?.treatment, "骨盆调理");
+  assert.deepEqual(observed?.prices.map(p => p.price), ["RM388", "RM288"]);
+  const assessment = resolveApprovedPricingAssessment({
+    mode: "shadow", shadowException: shadow,
+    customerText: priceQuestion, conversationHistory: h,
+    services: liveServices, serviceAliases: liveAliases,
+    resultMedia: [], now,
+  });
+  assert.equal(assessment.reason, "approved");
+  const priced = ensureVerifiedPriceReply({
+    customerText: priceQuestion, reply: "这项收费我无法核对准确金额",
+    treatment: "骨盆调理", pricingDecision: assessment.decision,
+    priceRequested: true, services: liveServices,
+    serviceAliases: liveAliases, promotions: [pelvic],
+    conversationHistory: h, language: "zh",
+  });
+  assert.match(priced.reply, /RM388/);
+  assert.match(priced.reply, /RM288/);
+  await inAssessmentFirst(async () => {
+    const media = await resolvePricePromotionForReply(mediaArgs(assessment.decision, {
+      customerText: priceQuestion, conversationHistory: h,
+      contactId: 8943, services: liveServices, serviceAliases: liveAliases,
+      promotions: [pelvic],
+    }));
+    assert.deepEqual(media?.packages.map(p => p.imageUrl),
+      ["https://example.test/a", "https://example.test/b"]);
+  });
+
+  // A direct competing paid-service recommendation must still stop automatic
+  // carryover. Do not confuse "产后体态改变" with "产后调理".
+  const switchByBot = h.map((turn, i) => i === 5
+    ? { ...turn, content: turn.content + "\n我们还建议你考虑产后调理疗程。" }
+    : turn);
+  assert.equal(resolveShadowPriceException({ ...inputs, conversationHistory: switchByBot }),
+    null, "actual postpartum treatment recommendation is different from a body-change example");
+  const paidAssessment = h.map((turn, i) => i === 7
+    ? { ...turn, content: turn.content + " 体态评估收费RM80。" } : turn);
+  assert.equal(resolveShadowPriceException({ ...inputs, conversationHistory: paidAssessment }),
+    null, "paid assessment is not an approved second service");
+  const staff = h.map((turn, i) => i === 7
+    ? { ...turn, pricingStaffAuthored: true } : turn);
+  assert.equal(resolveShadowPriceException({ ...inputs, conversationHistory: staff }),
+    null, "staff handoff still blocks automated pricing");
+});

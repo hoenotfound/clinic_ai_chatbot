@@ -15,6 +15,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
+const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
 const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|不需要(?:报价|報價|价格|價格|價錢|价钱)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
@@ -325,6 +326,14 @@ function resolveAiPricingDecision({
   const continued = type === "price" ? resolveContinuedTreatmentPriceService({
     customerText: current, conversationHistory, services, serviceAliases, promotions,
   }) : null;
+  // A verified, timestamped customer-led thread can continue through a
+  // complimentary introductory assessment. This must not be treated as a
+  // second paid-treatment choice or rely on a model/CRM/ad-only guess.
+  const established = type === "price" && hasExplicitPriceRequest(current)
+    ? resolveEstablishedTreatmentPrice({
+        customerText: current, session: conversationHistory,
+        services, serviceAliases, now,
+      }) : null;
   const anchor = independentRequest
     ? { treatment: independentRequest.treatment, source: "current_customer" }
     : continued
@@ -332,6 +341,8 @@ function resolveAiPricingDecision({
     : concernContinuation || bothContinuation
       ? { treatment: (concernContinuation || bothContinuation).name,
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
+    : established
+      ? { treatment: established.name, source: "customer_established_treatment" }
     : verifiedServiceAnchor({
         customerText: current, conversationHistory, services, serviceAliases,
         modelTreatment: treatment,

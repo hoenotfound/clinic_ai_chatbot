@@ -56,7 +56,16 @@ function hasNegatedChineseSend(text, verbIndex) {
   return CN_NEGATION_BEFORE_DELIVERY.test(prefix);
 }
 
+// A common shorthand omits the noun "picture": "我发给你参考看看".
+// In a price reply this still promises an optional send that might be blocked.
+// Require an explicit first-person transfer to the recipient AND "参考看看"
+// so ordinary factual statements and questions are left untouched.
+const CN_SHORT_SEND_PROMISE =
+  /(?:我|我们|我們|这边|這邊)(?:会|會|现在|現在|马上|馬上|这就|這就|先)?\s*(?:发|發|发送|發送|传|傳)(?:给|給)(?:你|您)\s*(?:参考|參考)(?:看(?:看)?|一下)/u;
+
 function claimsChineseMediaDelivery(value) {
+  if (CN_SHORT_SEND_PROMISE.test(value) &&
+      !hasNegatedChineseSend(value, value.search(/(?:发|發|传|傳)/u))) return true;
   if (!CN_MEDIA_OBJECT.test(value)) return false;
   for (const rule of CN_DELIVERY_RULES) {
     for (const match of value.matchAll(rule)) {

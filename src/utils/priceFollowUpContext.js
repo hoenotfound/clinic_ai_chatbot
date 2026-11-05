@@ -74,6 +74,35 @@ function isVerifiedStaffTurn(turn) {
   );
 }
 
+// A clinic may introduce a free assessment while explaining the treatment
+// the CUSTOMER selected. That is not a second paid-treatment recommendation.
+// Accept this one narrow exception only when the same assistant reply also
+// names the chosen treatment. A different paid service still breaks context.
+function assistantIntroducesCompetingPaidService(turn, chosenService, candidates) {
+  const message = pricingMessageText(turn);
+  // "产后体态改变" describes a possible concern, not a customer or bot
+  // selection of the separately configured "产后调理" paid treatment.
+  // Strip ONLY these exact concern phrases; an actual "产后调理" mention
+  // continues to block automated prices for a different service.
+  const serviceMentions = message.replace(
+    /(?:产后|產後)(?:的)?(?:体态|體態|身材)(?:改变|改變|变化|變化)/gu, " "
+  );
+  const mentioned = [...new Set(findServicesInText(serviceMentions, candidates))];
+  // Neutro's normal replies often say "先做1对1体态评估+体验" without
+  // repeating the word "免费". This introductory assessment is not a
+  // competing paid treatment if it appears alongside the selected treatment.
+  // A charge, another paid-service mention, or assessment without a clear
+  // introductory cue still blocks price carryover.
+  const assessmentIntro = /(?:先|首先).{0,36}(?:体态评估|體態評估).{0,12}(?:体验|體驗)/iu.test(message);
+  const freeAssessment = /(?:免费|免費|complimentary|free|percuma)/iu.test(message);
+  const safeIntroAssessment = chosenService !== "1对1体态评估" &&
+    mentioned.includes(chosenService) && mentioned.includes("1对1体态评估") &&
+    (assessmentIntro || freeAssessment) &&
+    !/\b(?:RM|MYR)\s*[1-9]\d{1,5}\b/iu.test(message);
+  return mentioned.some(name => name !== chosenService &&
+    !(safeIntroAssessment && name === "1对1体态评估"));
+}
+
 function isRecentPricingThread(turns, startIndex, now = Date.now()) {
   if (!Number.isFinite(now) || startIndex < 0 || startIndex >= turns.length)
     return false;
@@ -320,7 +349,9 @@ function resolveAnsweredConcernPriceService({
       const message = pricingMessageText(turn).trim();
       if (!message) return null;
       const mentions = [...new Set(findServicesInText(message, candidates))];
-      if (mentions.some(name => name !== selected.name)) return null;
+      if (turn.role === "assistant"
+        ? assistantIntroducesCompetingPaidService(turn, selected.name, candidates)
+        : mentions.some(name => name !== selected.name)) return null;
       if (turn.role === "assistant") {
         if (mentions.includes(selected.name)) confirmedByBot = true;
         if (PRICE_BOT_CONCERN_INVITATION.test(message)) invitedConcern = true;
@@ -475,6 +506,7 @@ function resolveVerifiedPriceFollowUpService({
 module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
+  assistantIntroducesCompetingPaidService,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
   resolveRecentFirstTreatmentPriceService, resolveBookingResponsePriceService,
   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,

@@ -9,7 +9,8 @@ const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
-const { pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread } = require("./priceFollowUpContext");
+const { pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
+  assistantIntroducesCompetingPaidService } = require("./priceFollowUpContext");
 
 const MAX_CONTEXT_MS = 3 * 60 * 60 * 1000;
 const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外想|想改做|改做其他|改做其它|改选|改選|其他疗程|其它疗程|其他療程|其它療程|不要|不想(?:做|了解)|退订|退訂|\b(?:stop|unsubscribe|opt\s*out|switch|instead|another\s+treatment|not\s+interested|don't\s+want)\b)/iu;
@@ -206,8 +207,7 @@ function resolveEstablishedTreatmentPrice({
     // interrupts the single-service topic. Only a NEW customer selection can
     // then authorize a specific treatment price.
     if (since.some(turn => turn.role === "assistant" &&
-      findServicesInText(pricingMessageText(turn),candidates)
-        .some(service => service !== named.name))) return null;
+      assistantIntroducesCompetingPaidService(turn, named.name, candidates))) return null;
     if (!since.some(turn => turn.role === "assistant" &&
         findServicesInText(pricingMessageText(turn),candidates).includes(named.name)))
       continue;
