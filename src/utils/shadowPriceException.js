@@ -18,6 +18,7 @@ const {
   resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
+const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -370,6 +371,21 @@ function resolveShadowPriceException({
       customerText: text, conversationHistory: session, promotions,
     });
     if (result) return result;
+  }
+
+  // A customer choosing "脸型" in the bot's explicit 3D-vs-9D menu,
+  // followed by a 3D-only explanation, is a verified current selection.
+  // This is the Nov 5 contact #685 regression; the new helper never trusts
+  // CRM interest, ad labels or model-selected treatments by themselves.
+  const facialChoice=resolveNeutroFacialConcernPrice({
+    customerText:text,session,services,serviceAliases,now,
+  });
+  if(facialChoice){
+    const verified=shadowVerifiedPrice({
+      source:"customer_facial_concern_selection",treatment:facialChoice.name,
+      customerText:text,conversationHistory:session,promotions,
+    });
+    if(verified)return verified;
   }
 
   // A bounded customer-led discussion can have several normal Q&A turns
