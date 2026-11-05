@@ -3,7 +3,7 @@
 const test=require("node:test");
 const assert=require("node:assert/strict");
 const {
-  IDLE_RECHECK_MS,ERROR_RETRY_MS,
+  IDLE_RECHECK_MS,ERROR_RETRY_MS,DELIVERY_RECEIPT_WAKE_DELAY_MS,
   nextAllowedClinicTime,nextSecondaryDueDelay,
   createSecondaryDueScheduler,measureSecondaryWorkerRun,
   secondaryEventRequiresWake,
@@ -41,6 +41,25 @@ test("sender due hints keep all consent, ad, history and one-shot gates",()=>{
  assert.match(marketing.POTENTIAL_DUE_SQL,/NOT EXISTS \(\s*SELECT 1 FROM whatsapp_sender_marketing_followup_attempts/);
  assert.match(service.CANDIDATES_SQL,/BETWEEN 7 AND 23/);
  assert.match(marketing.CANDIDATES_SQL,/BETWEEN 7 AND 23/);
+});
+
+test("service candidate and hint only scan recent inbound contacts before the original safety checks",()=>{
+ for(const sql of [service.CANDIDATES_SQL,service.POTENTIAL_DUE_SQL]){
+  assert.match(sql,/SELECT DISTINCT recent\.contact_id/);
+  assert.match(sql,/FROM messages recent[\s\S]*?recent\.created_at > \$4::timestamptz - INTERVAL '24 hours'/);
+  assert.match(sql,/recent\.role='user'/);
+  assert.match(sql,/recent\.whatsapp_message_id IS NOT NULL/);
+  assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
+  assert.match(sql,/ORDER BY m\.created_at DESC,m\.id DESC LIMIT 1/,
+   "sender-bound latest inbound still decides eligibility; shortlist is not an authorizer");
+  assert.match(sql,/whatsapp_sender_coexistence_history_messages/);
+  assert.match(sql,/whatsapp_opt_out_at IS NULL/);
+  assert.match(sql,/appointment_status/);
+  assert.match(sql,/whatsapp_sender_followup_attempts/);
+ }
+ assert.match(service.RECHECK_SQL,/whatsapp_sender_followup_attempts attempt/);
+ assert.doesNotMatch(service.RECHECK_SQL,/recent_contact/,
+   "last provider recheck stays keyed to the exact reserved inbound");
 });
 
 test("scheduler shifts due sends during Malaysia quiet hours to 07:00 without delaying daytime slots",()=>{
@@ -143,6 +162,51 @@ test("exact due timer sleeps, booking/opt-out events wake immediately, and stop 
  assert.equal(events.listenerCount("conversation_changed"),0);
  assert.equal(events.listenerCount("pipeline_changed"),0);
  assert.equal(events.listenerCount("secondary_followup_rules_changed"),0);
+ assert.equal(clock.scheduled.size,0);
+});
+
+test("secondary delivery status bursts defer one query but booked, opted-out and new messages wake immediately",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ const env={WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"};
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary receipt burst test",env,database:{},events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async()=>{runs++;return{attempted:0,accepted:0};},
+  readNextDue:async()=>({next_due_at:"2026-11-02T03:00:00Z",has_overdue:false}),
+ });
+ const status={reason:"delivery_status",channel:"whatsapp",
+  businessPhoneNumberId:"1318355951360575",deliveryStatus:"delivered"};
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1);
+ events.publish("conversation_changed",status);
+ await Promise.resolve();
+ assert.equal(scheduler.state().dueAt,clock.now()+DELIVERY_RECEIPT_WAKE_DELAY_MS);
+ await clock.advance(1000);
+ events.publish("conversation_changed",{...status,deliveryStatus:"read"});
+ await Promise.resolve();
+ assert.equal(scheduler.state().dueAt,
+  time("2026-11-02T00:00:00Z")+DELIVERY_RECEIPT_WAKE_DELAY_MS);
+ await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS-1001);
+ assert.equal(runs,1,"repeated receipt updates must not repeatedly scan the database");
+ await clock.advance(1);
+ assert.equal(runs,2,"first receipt group triggers one bounded-delay check");
+ events.publish("conversation_changed",status);
+ await Promise.resolve();
+ events.publish("pipeline_changed",{reason:"appointment_set"});
+ await Promise.resolve();
+ await clock.advance(0);
+ assert.equal(runs,3,"booking updates override a pending receipt delay");
+ events.publish("conversation_changed",status);await Promise.resolve();
+ events.publish("conversation_changed",{reason:"whatsapp_opt_out"});await Promise.resolve();
+ await clock.advance(0);
+ assert.equal(runs,4,"opt-outs override a pending receipt delay");
+ events.publish("conversation_changed",status);await Promise.resolve();
+ events.publish("conversation_changed",{reason:"message",channel:"whatsapp",
+  businessPhoneNumberId:"1318355951360575"});await Promise.resolve();
+ await clock.advance(0);
+ assert.equal(runs,5,"new customer messages remain immediate");
+ scheduler.stop();
  assert.equal(clock.scheduled.size,0);
 });
 
