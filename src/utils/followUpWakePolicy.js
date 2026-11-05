@@ -19,13 +19,21 @@ function createCoalescedImmediateWake(wake, scheduleMicrotask = queueMicrotask) 
   };
 }
 
-function followUpChangeRequiresWake(payload) {
-  // Reacting to a message or updating only a profile photo/name does not
-  // affect whether a scheduled follow-up is allowed or due. Other events,
-  // including delivery-status and attention/mode updates, always re-check.
+function followUpChangeRequiresWake(payload, env = process.env) {
+  // Reacting or changing presentation-only state cannot affect a follow-up.
   if (payload?.reason === "reaction") return false;
   if (payload?.reason === "contact_state" &&
       payload?.followUpStateUnchanged === true) return false;
+  // Signed secondary delivery receipts change only the *secondary* message's
+  // status. They must not launch a new primary follow-up scan. Require both
+  // configured numbers and a verified sender; unknown events, real messages,
+  // booking and opt-out changes still wake immediately.
+  if (payload?.reason === "delivery_status" &&
+      payload?.channel === "whatsapp" &&
+      env.WHATSAPP_PHONE_NUMBER_ID && env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+      String(env.WHATSAPP_PHONE_NUMBER_ID) !== String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
+      String(payload.businessPhoneNumberId || "") ===
+        String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)) return false;
   return true;
 }
 

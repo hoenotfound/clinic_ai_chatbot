@@ -6,6 +6,8 @@
 // A claimed slot is one-shot even after timeout, worker crash or uncertain
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
+const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
+const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
@@ -41,6 +43,18 @@ function serviceFollowupParityActivation(env=process.env) {
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
+const SLOW_QUERY_WARNING_MS=3000;
+// Report only materially slow SQL; never log contact IDs, message bodies,
+// bound parameters or provider identifiers. Does not change retry behaviour.
+async function monitoredFollowUpRead(database,sql,params,label){
+ const started=performance.now();
+ try{return await database.query(sql,params);}
+ finally {
+   const elapsedMs=Math.round(performance.now()-started);
+   if(elapsedMs>=SLOW_QUERY_WARNING_MS)
+     console.warn("[Secondary WhatsApp follow-ups] slow "+label+" query:",elapsedMs+"ms");
+ }
+}
 const ALLOWED_MIME={
   video:new Set(["video/mp4","video/3gpp"]),
   image:new Set(["image/jpeg","image/png"]),
@@ -113,7 +127,9 @@ function repeatSlotCooldownSql(atSql){
    WHERE same_slot.sender_id=sa.id AND same_slot.contact_id=c.id
      AND same_slot.slot_hours=rule.slot_hours
      AND same_slot.status='accepted'
-     AND same_slot.completed_at > ${atSql} - INTERVAL '12 hours'
+     AND same_slot.completed_at > ${atSql} -
+       (CASE WHEN rule.slot_hours IN (2,6)
+        THEN INTERVAL '7 days' ELSE INTERVAL '12 hours' END)
  )`;
 }
 
@@ -146,8 +162,21 @@ const CANDIDATES_SQL=`
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+ -- The 24h service-window requirement below means every viable
+ -- candidate must have a recent inbound. Materialize that inexpensive,
+ -- indexed contact shortlist FIRST, instead of running many correlated
+ -- history/consent checks for all of the sender's old conversations.
+ -- This is a necessary-condition filter only: the original latest-inbound,
+ -- sender, consent, booking and pre-send guards remain authoritative.
+ JOIN (
+   SELECT DISTINCT recent.contact_id
+   FROM messages recent
+   WHERE recent.created_at > $4::timestamptz - INTERVAL '24 hours'
+     AND recent.role='user'
+     AND recent.whatsapp_message_id IS NOT NULL
+ ) recent_contact ON TRUE
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
-   AND sc.state='bound'
+   AND sc.state='bound' AND sc.contact_id=recent_contact.contact_id
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL (
@@ -185,6 +214,8 @@ const CANDIDATES_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   AND NOT ${temporaryStaffConversationSql('c','inbound')}
+   AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('$4::timestamptz')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
@@ -299,6 +330,8 @@ const RECHECK_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   AND NOT ${temporaryStaffConversationSql('c','inbound')}
+   AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('NOW()')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
@@ -359,14 +392,14 @@ async function runOnce({
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
-  const items=(await database.query(CANDIDATES_SQL,[
+  const items=(await monitoredFollowUpRead(database,CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
-  ])).rows||[];
+  ],"candidate")).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
@@ -567,14 +600,14 @@ async function runOnce({
 async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
- const result=await database.query(POTENTIAL_DUE_SQL,[
+ const result=await monitoredFollowUpRead(database,POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
    serviceFollowupParityActivation(env),
- ]);
+ ],"due-time hint");
  return result.rows?.[0]||null;
 }
 

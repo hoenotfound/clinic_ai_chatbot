@@ -2,6 +2,7 @@ const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql")
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { terminalFollowUpDecisionSql, continuableFollowUpSkipSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
+const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 const clinicConfig = require("../config/clinicConfig");
@@ -18,7 +19,7 @@ function customerFollowUpIntentGuardSql(contactAlias = "c") {
   if (clinicConfig.businessType !== "tcm_clinic" ||
       !/^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")))
     return "TRUE";
-  return `NOT EXISTS (
+  return `(NOT EXISTS (
     SELECT 1 FROM messages terminal_inbound
     WHERE terminal_inbound.id=(
       SELECT recent_user.id FROM messages recent_user
@@ -37,7 +38,7 @@ function customerFollowUpIntentGuardSql(contactAlias = "c") {
           '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
       )
     )
-  )`;
+  ) AND (${contactAlias}.channel <> 'whatsapp' OR NOT ${temporaryStaffConversationSql(contactAlias,'latest_inbound')}))`;
 }
 
 function reserveFinalPricingWindow() {
@@ -1227,6 +1228,12 @@ async function isClaimStillEligible({ messageId, contactId }) {
        JOIN messages anchor
          ON anchor.id = claim.trigger_message_id
         AND anchor.contact_id = claim.contact_id
+       JOIN LATERAL (
+         SELECT inbound.id,inbound.created_at
+         FROM messages inbound
+         WHERE inbound.contact_id=c.id AND inbound.role='user'
+         ORDER BY inbound.created_at DESC,inbound.id DESC LIMIT 1
+       ) latest_inbound ON true
        LEFT JOIN LATERAL (
          SELECT
            l.id,

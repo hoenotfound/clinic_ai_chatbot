@@ -13,6 +13,10 @@ const { recordWorkerWake } = require("./refreshWakeDiagnostics");
 const IDLE_RECHECK_MS = 60 * 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
 const BACKLOG_RECHECK_MS = 10 * 1000;
+// A signed delivery receipt can complete the first AI reply's eligibility,
+// but multiple status ticks need only one short deferred check. Booking,
+// opt-out, new messages and rule changes still wake immediately.
+const DELIVERY_RECEIPT_WAKE_DELAY_MS = 3 * 1000;
 const CLINIC_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -132,8 +136,10 @@ function createSecondaryDueScheduler({
   }
   let timer = null;
   let subscriptions = [];
-  function wake() { return timer?.wake(0) || false; }
-  const coalescedWake = createCoalescedImmediateWake(wake);
+  function wake(delayMs=0) { return timer?.wake(delayMs) || false; }
+  const coalescedWake = createCoalescedImmediateWake(() => wake(0));
+  const coalescedReceiptWake = createCoalescedImmediateWake(
+    () => wake(DELIVERY_RECEIPT_WAKE_DELAY_MS));
   const lane = label === "Secondary WhatsApp marketing followup scheduler"
     ? "secondary_marketing" : "secondary_service";
   function observeEvent(type, payload, eligible) {
@@ -143,8 +149,11 @@ function createSecondaryDueScheduler({
       recordWorkerWake(lane, type, payload, "ignored", env);
       return;
     }
+    const statusOnly = type === "conversation_changed" &&
+      payload?.reason === "delivery_status";
+    const signal = statusOnly ? coalescedReceiptWake : coalescedWake;
     recordWorkerWake(lane, type, payload,
-      coalescedWake() ? "queued" : "coalesced", env);
+      signal() ? "queued" : "coalesced", env);
   }
   function start() {
     if (timer && !timer.state().stopped) return false;
@@ -193,6 +202,7 @@ function createSecondaryDueScheduler({
 
 module.exports = {
   IDLE_RECHECK_MS, ERROR_RETRY_MS, BACKLOG_RECHECK_MS,
+  DELIVERY_RECEIPT_WAKE_DELAY_MS,
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
   nextSecondaryDueDelay, measureSecondaryWorkerRun, createSecondaryDueScheduler,
   secondaryEventRequiresWake,
