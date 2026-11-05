@@ -97,6 +97,15 @@ const CANDIDATES_SQL=`
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
    AND sc.state='bound'
+ -- Narrow the scheduler to contacts with recent provider-backed activity
+ -- before evaluating sender-owned history, consent and booking safeguards.
+ -- The original latest-inbound and pre-send checks are unchanged.
+ JOIN (
+   SELECT DISTINCT recent.contact_id FROM messages recent
+   WHERE recent.role='user'
+     AND recent.whatsapp_message_id IS NOT NULL
+     AND recent.created_at > $4::timestamptz - INTERVAL '7 days'
+ ) recent_inbound_contacts ON recent_inbound_contacts.contact_id=sc.contact_id
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
@@ -113,6 +122,7 @@ const CANDIDATES_SQL=`
    JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user' AND m.whatsapp_message_id IS NOT NULL
+     AND m.created_at > $4::timestamptz - INTERVAL '7 days'
      AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
        WHERE h.sender_id=sa.id AND h.message_id=m.id)
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
