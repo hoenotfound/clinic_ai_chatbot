@@ -19,8 +19,7 @@ Only the verified, sender-pinned secondary **live webhook** may capture a status
 2. Count new unmatched recipient formats without exposing recipient or customer details:
 
 ```sql
-SELECT event_field, COUNT(*)::int AS unique_events,
-       SUM(seen_count)::int AS occurrences
+SELECT event_field, COUNT(*)::int AS unique_events
 FROM whatsapp_sender_quarantined_events
 WHERE reason='unsupported_whatsapp_event'
   AND event_field LIKE 'messages.status_recipient_invalid.%'
@@ -28,10 +27,10 @@ WHERE reason='unsupported_whatsapp_event'
 GROUP BY event_field ORDER BY unique_events DESC;
 ```
 
-3. Compare aggregate Render 503 metrics and `status_recipient_invalid` app logs before and after. Do not mistake reduced 503 for proof of delivery; quarantined receipts remain **unmatched**.
+3. Quarantine uses `ON CONFLICT DO NOTHING`, so replay attempts are not counted in `seen_count`. Compare aggregate Render 503 metrics and `status_recipient_invalid` app logs before and after. Do not mistake reduced 503 for proof of delivery; quarantined receipts remain **unmatched**.
 4. Verify ordinary secondary `sent`, `delivered`, `read`, `failed` receipts still reconcile only to exact authorized sender + recipient + WAMID. Confirm AI replies (all-contact secondary), both WhatsApp numbers, promo/result media, staff handoff, booking and 2h/6h/20h/48h/66h/Day4/Day6 follow-ups, including opt-outs and delivery uncertainty.
 5. Review new `unmatched_provider_billable` alarms and the existing unknown billing gate manually. Never auto-resend, backfill, settle, or clear unknown outcomes.
 6. Keep disabled history imports as-is. Historical events may still trigger 503. Handle those only in a separately authorized workflow that is demonstrably independent of secondary live AI and customer imports.
 
 ## Expected overhead
-Constant-time validation and SHA-256 hashing of an already-bounded signed request; one sender-locked transaction and existing quarantine insert only when a signed, structurally verified status has an unusable recipient. This may add small DB work for the first rejected callback, but repeated Meta retries should reduce. No extra Gemini tokens, context-window growth, prompt changes or recurring Neon queries.
+Constant-time recipient classification and one SHA-256 hash of the already-bounded signed request only on the invalid-recipient path; one sender-locked transaction and existing quarantine insert only when a signed, structurally verified status has an unusable recipient. This may add small DB work for the first rejected callback, but repeated Meta retries should reduce. No extra Gemini tokens, context-window growth, prompt changes or recurring Neon queries.
