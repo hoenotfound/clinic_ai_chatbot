@@ -483,7 +483,16 @@ async function updateContactName(id, name) {
 async function listContactsPage({
   search = "", assignment = "all", currentUsername = "",
   offset = 0, limit = 60, includeOwners = false,
+  accessibleContactIds = null,
 } = {}) {
+  if (accessibleContactIds !== null &&
+      (!Array.isArray(accessibleContactIds) ||
+        accessibleContactIds.some(id => !Number.isSafeInteger(id) || id <= 0))) {
+    throw new TypeError("Invalid contact access scope.");
+  }
+  if (accessibleContactIds?.length === 0) {
+    return { items: [], total: 0, nextOffset: 0, hasMore: false, ownerOptions: [] };
+  }
   const term = String(search || "").trim().slice(0, 100);
   const allowedAssignment = assignment === "all" || assignment === "mine" ||
     assignment === "unassigned" || (assignment.startsWith("owner:") && assignment.length > 6 && assignment.length <= 134);
@@ -515,6 +524,7 @@ async function listContactsPage({
         OR c.whatsapp_number ILIKE $2
         OR c.channel_user_id ILIKE $2
 )
+        AND ($7::integer[] IS NULL OR c.id = ANY($7::integer[]))
         AND ($3::text = 'all'
           OR ($3 = 'mine' AND lead.owner_username = $4)
           OR ($3 = 'unassigned' AND lead.owner_username IS NULL)
@@ -553,6 +563,7 @@ async function listContactsPage({
   `;
   const result = await pool.query(sql, [
     term, `%${term}%`, assignment, String(currentUsername || ""), pageSize, start,
+    accessibleContactIds,
   ]);
   const total = Number(result.rows[0]?.total || 0);
   const rows = result.rows.map(({ total: ignored, ...row }) => row);
@@ -561,14 +572,23 @@ async function listContactsPage({
   if (includeOwners) {
     // Only usernames/labels are returned; the list never includes contacts
     // or message contents and stays independent of the current page.
-    const owners = await pool.query(`
-      SELECT DISTINCT l.owner_username AS lead_owner_username,
-        COALESCE(u.display_name, l.owner_username) AS lead_owner_display_name
-      FROM leads l LEFT JOIN users u ON u.username = l.owner_username
-      WHERE l.owner_username IS NOT NULL
-      ORDER BY lead_owner_username, lead_owner_display_name LIMIT 100
-    `);
-    ownerOptions = owners.rows;
+    if (accessibleContactIds === null) {
+      const owners = await pool.query(`
+        SELECT DISTINCT l.owner_username AS lead_owner_username,
+          COALESCE(u.display_name, l.owner_username) AS lead_owner_display_name
+        FROM leads l LEFT JOIN users u ON u.username = l.owner_username
+        WHERE l.owner_username IS NOT NULL
+        ORDER BY lead_owner_username, lead_owner_display_name LIMIT 100
+      `);
+      ownerOptions = owners.rows;
+    } else {
+      // Restricted staff never receive assignment labels from other users.
+      ownerOptions = items.filter(item => item.lead_owner_username === currentUsername)
+        .slice(0, 1).map(item => ({
+          lead_owner_username: item.lead_owner_username,
+          lead_owner_display_name: item.lead_owner_display_name,
+        }));
+    }
   }
   return {
     items, total, nextOffset: start + items.length,
