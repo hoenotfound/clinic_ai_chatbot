@@ -21,7 +21,9 @@ function block(code) {
   return {
     success: false, wamid: null, policyBlocked: true,
     retryable: false, code,
-    error: "This WhatsApp number is not ready to send, or the sender-specific policy check failed.",
+    error: code === "secondary_billing_previous_send_unresolved"
+      ? "The previous WhatsApp message is still being confirmed. Check its delivery before another send."
+      : "This WhatsApp number is not ready to send, or the sender-specific policy check failed.",
   };
 }
 const ALLOWED_RESERVATION_SQL = `
@@ -48,6 +50,7 @@ async function sendSecondaryStaffText({
   createTransport = createVerifiedSecondaryOutboundTransport,
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
+  waitForPriorSettlement = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
   audienceEligible=isSecondaryAdsOnlyEligible,
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
@@ -239,7 +242,7 @@ async function sendSecondaryStaffText({
   if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");
   if (justBefore.policyAllowed !== true) return block(justBefore.code || "secondary_staff_policy_blocked");
 
-  const reserved = await billingRepo.reserveSecondaryBillingAttempt({
+  let reserved = await billingRepo.reserveSecondaryBillingAttempt({
     contactId: cid, messageId: mid,
     // Freeform service messages may be charged after Meta's monthly free
     // allowance. Operator acknowledgment is separate from a template's
@@ -248,6 +251,32 @@ async function sendSecondaryStaffText({
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
   }, { database, env });
+  // Consecutive staff photos can race the signed receipt for the previous
+  // photo. The NEXT message has not reached Meta or reserved billing yet.
+  // Give that previous accepted send a short chance to reconcile, while
+  // never retrying a provider request or releasing an unknown billing hold.
+  if (origin === "staff" && typeof dispatchTransport === "function" &&
+      !reserved.reserved &&
+      reserved.code === "secondary_billing_previous_send_unresolved") {
+    for (let i = 0; i < 4; i++) {
+      await waitForPriorSettlement(750);
+      if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
+        return { ...block("secondary_send_cancelled"), cancelled: true };
+      }
+      if (!await stillEligible()) return block("secondary_ads_only_contact_ineligible");
+      const currentPolicy = await preview();
+      if (currentPolicy.policyAllowed !== true) {
+        return block(currentPolicy.code || "secondary_staff_policy_changed");
+      }
+      reserved = await billingRepo.reserveSecondaryBillingAttempt({
+        contactId: cid, messageId: mid,
+        billableAuthorized: Boolean(templateRequest) ||
+          env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
+        expectedTemplateSignature: templateRequest?.expectedSignature || null,
+      }, { database, env });
+      if (reserved.reserved || reserved.code !== "secondary_billing_previous_send_unresolved") break;
+    }
+  }
   if (!reserved.reserved || !reserved.reservationId) {
     return block(reserved.code || "secondary_staff_billing_blocked");
   }
