@@ -4,6 +4,7 @@
 // Do not wire it to Inbox/AI/templates/retries until sender-scoped billing,
 // status reconciliation and reply-window checks are implemented.
 const { pool } = require("../db/db");
+const { recordOutboundPayload } = require("../utils/outboundPayloadDiagnostics");
 const { classifyWhatsappSendFailure, classifyWhatsappAcceptedResponse } = require("./whatsappService");
 const { safeNetworkCause } = require("./whatsappSecondaryMetaReadOnlyProbe");
 
@@ -170,6 +171,7 @@ function createSecondaryOutboundTransport(binding, {
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
+    recordOutboundPayload("meta_secondary_media", buffer.length);
     const result = await request("/media", {
       method: "POST",
       headers: { Authorization: "Bearer " + token },
