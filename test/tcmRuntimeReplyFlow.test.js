@@ -11,7 +11,8 @@ const { categorizeAiReview, hasClinicalMediaRisk } = require("../src/utils/aiRev
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
-const { appendRequestedBusinessFacts } = require("../src/utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");
+const { isSimpleVisitTimingQuestion, safeVisitTimingReply } = require("../src/utils/plainVisitSchedulingReply");
 const { scopeForPersistedContact } = require("../src/utils/verifiedWhatsAppEventScope");
 
 // Execute the actual production handler and tracked text-sending functions,
@@ -117,6 +118,7 @@ function harness({ failDelivery = false } = {}) {
       isRecoverableAiReplyFailure: () => false,
     },
     parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
+    correctUnsupportedBranchReply, isSimpleVisitTimingQuestion, safeVisitTimingReply,
     bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply,
     getAiOwnedContact: async (contact) => state.mode === "ai" ? contact : null,
     categorizeAiReview,
