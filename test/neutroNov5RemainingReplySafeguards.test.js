@@ -114,6 +114,20 @@ test("false-branch correction keeps verified prices and visit invitations after 
   if(language==="en")assert.match(corrected.reply,/When can you visit/,reply);
   if(language==="ms")assert.match(corrected.reply,/boleh datang Sabtu/,reply);
  }
+ const branchQuestion=correctUnsupportedBranchReply({
+  customerText:"3D price?",
+  reply:"我们有多个分行，你靠近哪里？3D First Trial 是 RM488。",
+  branches,language:"zh",
+ });
+ assert.match(branchQuestion.reply,/RM488/);
+ assert.doesNotMatch(branchQuestion.reply,/靠近哪里|多个分行/);
+ const selectQuestion=correctUnsupportedBranchReply({
+  customerText:"3D price?",
+  reply:"3D First Trial 是 RM488，我们有多个分行，你想去哪家？",
+  branches,language:"zh",
+ });
+ assert.match(selectQuestion.reply,/RM488/);
+ assert.doesNotMatch(selectQuestion.reply,/你想去哪家|多个分行/);
  const booking=correctUnsupportedBranchReply({
   customerText:"Hi",
   reply:"我们有多个分行，3D First Trial 是 RM488。可以先安排评估。",
