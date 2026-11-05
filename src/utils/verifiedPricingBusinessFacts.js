@@ -103,9 +103,14 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
  // Discard only the misleading branch-selection sentences. Never discard
  // independent service descriptions, treatment advice or appointment details.
  const sentences=original.match(/[^。.!！?？\n]+[。.!！?？\n]*/gu)||[original];
- const retained=sentences.filter(part=>
-   !FALSE_BRANCHES.test(part)&&!FALSE_BRANCH_CHOICE.test(part)&&
-   !(choice&&UNNECESSARY_AREA.test(part))).join("").trim();
+ const retained=sentences.map(part=>{
+   if(choice&&UNNECESSARY_AREA.test(part))return "";
+   const bad=[FALSE_BRANCHES.exec(part),FALSE_BRANCH_CHOICE.exec(part)].filter(Boolean);
+   if(!bad.length)return part;
+   const cutoff=Math.min(...bad.map(match=>match.index));
+   const prefix=part.slice(0,cutoff).replace(/[\s，,；;:：]+$/u,"").trim();
+   return prefix?prefix+"。":"";
+ }).join("").trim();
  const final=retained&&retained.toLocaleLowerCase().includes(b.address.trim().toLocaleLowerCase())
    ?retained:[retained,fact].filter(Boolean).join("\n\n");
  return {reply:final,changed:final!==original};
