@@ -1710,7 +1710,7 @@ test("Contacts export waits for the current search and downloads the filtered CS
 
   await search.fill("Alex");
   await expect(exportButton).toBeDisabled();
-  await expect(page.getByText("1 of 1 contacts", { exact: true })).toBeVisible();
+  await expect(page.getByText("1 of 1 contact", { exact: true })).toBeVisible();
   await expect(exportButton).toBeEnabled();
 
   await exportButton.click();
