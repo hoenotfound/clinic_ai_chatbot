@@ -102,7 +102,7 @@ test("receipt rejections identify only safe validation categories without touchi
  const samples=[
    [x=>{x.entry[0].changes[0].value.statuses[0].id="wamid.bad?identifier";},"status_id_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].status="unknown";},"status_value_unsupported"],
-   [x=>{x.entry[0].changes[0].value.statuses[0].recipient_id="hidden";},"status_recipient_invalid"],
+   [x=>{x.entry[0].changes[0].value.statuses[0].recipient_id="unsafe recipient?";},"status_recipient_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].timestamp="not-a-time";},"status_timestamp_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].pricing.billable="false";},"status_pricing_invalid"],
    [x=>{x.entry[0].id="other-account";},"mixed_sender_or_status_mismatch"],
@@ -237,4 +237,78 @@ test("signed secondary receipt reconciles only its own sender billing gate and a
  assert.match(s,/wakeAfterVerifiedReconciliation\(\{contactIds:\[\.\.\.reconciledContactIds\],database,env\}\)/);
  assert.match(s,/AS secondary_media_inbound_id/);
  assert.match(s,/\.reconcileSecondaryMediaAudit\(\{inboundMessageIds:mediaInbounds,database,env\}\)/);
+});
+
+test("verified E.164 +recipient normalizes only to the same numeric customer ID",()=>{
+  const normalized=receipt.normalizeStatusRecipient("+60125550000");
+  assert.deepEqual(normalized,{recipient:"60125550000",verified:true});
+  const packet=signed(body([status({recipient_id:"+60125550000"})]));
+  const event=receipt.normalizedSignedEvents(packet.rawBody,env)[0];
+  assert.equal(event.recipient,"60125550000");
+  assert.equal(event.recipientVerified,true);
+  assert.equal(receipt.normalizeStatusRecipient("60125550000").verified,true);
+});
+
+test("masked Meta recipient is never treated as a verified customer",()=>{
+  const opaque=receipt.normalizeStatusRecipient("hidden");
+  assert.deepEqual(opaque,{recipient:"hidden",verified:false});
+  assert.equal(receipt.normalizeStatusRecipient("unsafe recipient?"),null);
+  assert.equal(receipt.normalizeStatusRecipient(""),null);
+  assert.equal(receipt.normalizeStatusRecipient({id:"60125550000"}),null);
+  assert.equal(receipt.normalizeStatusRecipient("a".repeat(65)),null);
+  const unsigned=receipt.normalizedSignedEvents(signed(body([
+    status({recipient_id:"hidden"}),
+  ])).rawBody,env);
+  assert.equal(unsigned[0].recipientVerified,false);
+});
+
+test("signed opaque recipient is durably held unmatched with no billing release, delivery update or auto retry",async()=>{
+  const calls=[];
+  const client={
+    query:async (sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql.includes("SELECT id FROM whatsapp_sender_accounts"))return{rows:[{id:7}],rowCount:1};
+      if(sql.includes("INSERT INTO whatsapp_sender_status_receipts")) {
+        assert.equal(params[2],null);
+        assert.equal(params[3],null);
+        assert.equal(params[12],false);
+        return {rows:[{fingerprint:params[0]}],rowCount:1};
+      }
+      if(sql.includes("MATCH_SECONDARY_ATTEMPT_SQL") ||
+         sql.includes("JOIN whatsapp_sender_message_context") ||
+         sql.includes("UPDATE messages"))assert.fail("opaque recipient must never resolve a contact");
+      return {rows:[],rowCount:1};
+    },
+    release:()=>{},
+  };
+  const result=await receipt.recordSignedSecondaryStatusBatch({
+    ...signed(body([status({recipient_id:"hidden"})])),
+    subsetFromVerifiedWebhook:true,
+  },{
+    env,database:{connect:async()=>client},
+  });
+  assert.equal(result.accepted,true);
+  assert.equal(result.matched,0);
+  assert.equal(result.unmatched,1);
+  assert.equal(result.autoRetryAllowed,false);
+  assert.equal(result.sendAuthorized,false);
+  assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_status_receipts")).length,1);
+  assert.equal(calls.filter(x=>x.sql==="COMMIT").length,1);
+  assert.equal(calls.filter(x=>x.sql.includes("UPDATE whatsapp_sender_billing_gates")).length,0);
+});
+
+test("wrong sender identity and unverified HMAC still reject opaque receipt before DB",async()=>{
+  const event=body([status({recipient_id:"hidden"})]);
+  event.entry[0].changes[0].value.metadata.phone_number_id="100000000000099";
+  const payload=signed(event);
+  const fakeDb={connect:async()=>assert.fail("no unverified status can touch DB")};
+  const wrongSender=await receipt.recordSignedSecondaryStatusBatch({
+    ...payload,subsetFromVerifiedWebhook:true,
+  },{env,database:fakeDb});
+  assert.equal(wrongSender.accepted,false);
+  const invalidSignature=await receipt.recordSignedSecondaryStatusBatch({
+    rawBody:payload.rawBody,signatureHeader:"sha256=invalid",
+    subsetFromVerifiedWebhook:true,
+  },{env,database:fakeDb});
+  assert.equal(invalidSignature.accepted,false);
 });
