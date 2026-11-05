@@ -275,7 +275,7 @@ function recoveryPeriodGuidance(customerText, language = "zh") {
 }
 
 const SESSION_OR_DURATION_QUESTION =
-  /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|多久|多长|多長|\bhow\s+many\s+sessions?\b|\bhow\s+long\b|\bberapa\s+(?:kali|sesi|lama)\b)/iu;
+  /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|(?:做|只做|护理|護理|调理|調理)\s*(?:一|1)\s*(?:次|回)\s*(?:就|可以|能|会)?\s*(?:行|好|够|夠|有效)(?:了|吗|嗎|呢|[?？])*|\b(?:is|will|would)\s+(?:one|1|a\s+single)\s+(?:session|treatment)\s+(?:be\s+)?(?:enough|sufficient)\b|多久|多长|多長|\bhow\s+many\s+sessions?\b|\bhow\s+long\b|\bberapa\s+(?:kali|sesi|lama)\b)/iu;
 
 function safeNonPriceExplanation(customerText, original, language) {
   const recovery = recoveryPeriodGuidance(customerText, language);
