@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
 const {
   CONVERSATION_LOCK_NAMESPACE,
   lockConversation,
@@ -1281,6 +1282,23 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
   return result.rows[0]?.has_staff_reply === true;
 }
 
+
+// A verified staff-originated WhatsApp reply owns the conversation briefly,
+// even if the operator has not clicked the Inbox takeover toggle. The next
+// inbound message during this 2h interval must stay in Inbox for staff.
+// This is only used for Neutro's direct AI replies, not a global CRM mode
+// change or a marketing-consent decision. Follow-up automation is not staff.
+async function hasRecentStaffConversation(contactId,inboundMessageId,query=pool.query.bind(pool)){
+ const id=Number(contactId),message=Number(inboundMessageId);
+ if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(message)||message<=0)return false;
+ const result=await query(
+  `SELECT ${temporaryStaffConversationSql("c","inbound")} AS staff_active
+    FROM contacts c JOIN messages inbound
+      ON inbound.contact_id=c.id AND inbound.id=$2 AND inbound.role='user'
+    WHERE c.id=$1`,[id,message]);
+ return result.rows[0]?.staff_active===true;
+}
+
 function normalizeReactionTimestamp(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
@@ -1856,6 +1874,7 @@ module.exports = {
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
+  hasRecentStaffConversation,
   isDeletedWhatsappReactionEvent,
   applyWhatsappReaction,
   reconcilePendingWhatsappReactionsForMessage,

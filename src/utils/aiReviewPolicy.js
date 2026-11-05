@@ -1,5 +1,6 @@
 const { checkKeywordTriggers } = require("./attentionTriggers");
 const { pendingAcceptedAppointmentAllowedSql } = require("./pendingAcceptedAppointmentFollowUp");
+const {pendingCancellationFollowupAllowedSql}=require("./appointmentCancellationSafety");
 
 const ADMINISTRATIVE_QUESTION = /\b(price|cost|how much|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|park|deposit|payment|credit card|debit card|card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|价钱|多少钱|收费|费用|优惠|配套|营业时间|营业|地址|地点|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
 const CLINICAL_PROCEDURE_TIMING = /\b(after|before|recent|just had)\b.{0,40}\b(hifu|filler|botox|laser|thread|peel|injection|procedure)\b|\b(hifu|filler|botox|laser|thread|peel|injection)\b.{0,40}\b(after|before|recent|just had)\b/iu;
@@ -89,6 +90,15 @@ function hasClinicalMediaRisk(customerText) {
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
+  // A time-planning enquiry is administrative, not clinical merely because
+  // the model labeled an unanswered question as a medical review.
+  const { isSimpleVisitTimingQuestion }=require('./plainVisitSchedulingReply');
+  const {isDefiniteAppointmentCancellation}=require('./appointmentCancellationSafety');
+  // A cancellation with a clinical red flag still needs clinical review.
+  // Do not downgrade medical concerns to an administrative appointment task.
+  if(isSimpleVisitTimingQuestion(customerText)||
+     (isDefiniteAppointmentCancellation(customerText)&&
+      !hasClinicalMediaRisk(customerText)))return 'information';
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
   if (!ADMINISTRATIVE_QUESTION.test(text) ||
@@ -113,7 +123,7 @@ function followUpAttentionAllowedSql(alias = "c") {
     WHERE review.contact_id = ${alias}.id
       AND review.status = 'pending'
       AND review.category <> 'information'
-  )) AND ${pendingAcceptedAppointmentAllowedSql(alias)}`;
+  )) AND ${pendingAcceptedAppointmentAllowedSql(alias)} AND ${pendingCancellationFollowupAllowedSql(alias)}`;
 }
 
 module.exports = {

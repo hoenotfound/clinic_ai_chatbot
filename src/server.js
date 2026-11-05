@@ -41,9 +41,12 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
+const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
-const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
+const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
+const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -1011,6 +1014,25 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // If WhatsApp Business App staff has just replied, keep the next customer
+    // turn manual for two hours rather than immediately letting AI interrupt.
+    // Do not silently change the contact's explicit AI/Human mode.
+    if(channel==="whatsapp"&&clinicConfig.businessType==="tcm_clinic"&&
+       /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
+       !keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
+       !isExplicitStaffRequest(text)&&!whatsappPolicy.classifyOptOutText(text)&&
+       await messagesRepo.hasRecentStaffConversation(contact.id,savedInbound.id)){
+      // A cancellation arriving while staff is handling the booking must
+      // reach the staff review queue; suppress the bot's competing reply.
+      if(isDefiniteAppointmentCancellation(text)){
+        await contactsRepo.setAiReviewAttention(
+          contact.id,savedInbound.id,String(text).slice(0,350),
+          hasClinicalMediaRisk(text)?"clinical":"information");
+      }
+      console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
+      return {wasFirstMessage,keywordReason};
+    }
+
     // Earlier messages in the same typing burst are fully saved/transcribed and
     // included in history, but only the last one gets an AI response. This is
     // what turns three short chat bubbles into one coherent assistant reply.
@@ -1304,6 +1326,32 @@ async function processIncomingMessage(
       }
     }
 
+    // A bare visit-planning question after Chinese New Year is not a
+    // diagnosis, suitability check or confirmed booking. If the model
+    // incorrectly chooses a staff review, answer cautiously and normally.
+    if(flagged&&reviewRequired&&!keywordReason&&!urgentSafety&&
+       !bookingReady&&isSimpleVisitTimingQuestion(text)){
+      aiReply=safeVisitTimingReply(mediaLanguage);
+      flagged=false;reviewRequired=false;reviewType=null;
+      clinicalAcknowledgement=null;
+      serviceQuery=false;priceQuery=false;packageQuery=false;
+      details=null;
+    }
+
+    // A requested cancellation does not change a confirmed CRM booking by
+    // itself. Never let a model promise an unperformed cancellation or
+    // quietly close the contact. Put the request in the staff Inbox and
+    // send only a non-committal acknowledgement through the normal guarded
+    // outbound path. Booking state changes remain staff/provider verified.
+    if(!keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
+       !hasClinicalMediaRisk(text)&&isDefiniteAppointmentCancellation(text)){
+      flagged=true;reviewRequired=true;reviewType="information";
+      bookingReady=false;serviceQuery=false;priceQuery=false;packageQuery=false;
+      details=null;
+      aiReply=cancellationReviewAcknowledgement(mediaLanguage);
+      clinicalAcknowledgement=aiReply;
+    }
+
     // Full multi-turn information-review recovery remains Enabled-only.
     // In Shadow, only a separate independently verified early-treatment or
     // current-Meta-ad pricing exception may use the legacy reply path.
@@ -1527,6 +1575,35 @@ async function processIncomingMessage(
       allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
     });
     const approvedPricingDecision = pricingApproval.decision;
+    // A customer who ALREADY received both configured pelvic package prices
+    // may ask for a comparison. This is information about an existing quote,
+    // NOT an independent request for new pricing or promotional graphics.
+    // Only the active configured offers and a trusted customer-led, quoted
+    // history can authorize this reply.
+    let pelvicPackageComparison = clinicConfig.businessType === "tcm_clinic" &&
+      /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+      (!flagged || (flagged && reviewRequired && reviewType === "information")) &&
+      !bookingReady && !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion
+      ? resolveNeutroPelvicPackageComparison({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions, language: mediaLanguage,
+        }) : null;
+    if (pelvicPackageComparison && flagged && reviewRequired && reviewType === "information") {
+      // Model uncertainty about already-quoted package contents is not a
+      // clinical incident, but an actual unresolved clinical review still
+      // blocks this otherwise independently verified commercial answer.
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+      } else {
+        pelvicPackageComparison = null;
+      }
+    }
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
         twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
@@ -1791,12 +1868,21 @@ async function processIncomingMessage(
       }
     }
 
+    // Restore only the independently verified, current configured package
+    // comparison AFTER all model price-heading and repeated-clarification
+    // guards have run. It must not license any fresh promo-media selection.
+    if (pelvicPackageComparison && !flagged && !bookingReady) {
+      reply = pelvicPackageComparison.reply;
+      console.info("[Package comparison] contact=" + contact.id +
+        " inbound=" + savedInbound.id + " decision=verified_text_only");
+    }
+
     // A first-trial image must be provider-accepted for this same treatment
     // before we suggest later-session packages. If the customer then repeats
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !flagged && !bookingReady &&
+    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -1837,6 +1923,16 @@ async function processIncomingMessage(
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
       });
+    }
+
+    // Correct only an objectively false multi-branch claim against the
+    // clinic's single configured address. Never invent a second branch.
+    if(!flagged&&!marketingStopQuestion&&
+       clinicConfig.businessType==="tcm_clinic"){
+      const locationCorrection=correctUnsupportedBranchReply({
+        customerText:text,reply,branches:clinicConfig.branches,language:mediaLanguage,
+      });
+      if(locationCorrection.changed)reply=locationCorrection.reply;
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
@@ -2052,6 +2148,12 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
+    if (pelvicPackageComparison) {
+      // Comparison answers are text-only, even if the model set packageQuery.
+      // Never resend recently delivered Package A/B graphics or Before/After.
+      await auditResultMediaEarlyExit("verified_package_comparison_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
       // Once the matching First Trial image has been accepted, package and
       // staff-handoff turns are strictly text only.

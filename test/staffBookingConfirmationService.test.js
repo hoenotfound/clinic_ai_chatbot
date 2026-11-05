@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   parseStaffConfirmedSlot,
+  parseTerseStaffConfirmedSlot,
+  isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
 } = require("../src/services/staffBookingConfirmationService");
@@ -90,6 +92,36 @@ test("staff visit acknowledgment requires a concrete visit day", () => {
     "Can 29/11 3pm?", "Confirm this Saturday", "OK next year maybe"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
 });
 
+test("two provider-authenticated terse staff confirmations have unambiguous dates",async()=>{
+ const now=new Date("2026-11-04T04:06:00Z");
+ assert.equal(parseTerseStaffConfirmedSlot("Comfirm this sat 3.30pm 😊",now),"2026-11-07T07:30:00.000Z");
+ assert.equal(parseTerseStaffConfirmedSlot("OK 29/11, 3pm",now),"2026-11-29T07:00:00.000Z");
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm","2026-11-29T07:00:00.000Z",[],"2026-11-04T04:47:31Z"),false);
+ for(const value of ["this sat 3.30pm can?","29/11, 3pm?", "OK this sat 3pm", "Comfirm next sat 3.30pm","OK 29/11", "OK 29/11, 3pm maybe"]){
+  assert.equal(parseTerseStaffConfirmedSlot(value,now),null,value);
+ }
+ const calls=[];
+ const context={
+ 7245:{id:16834,created_at:"2026-11-04T04:06:40Z",prior_turns:[
+  {role:"user",content:"yes, can",created_at:"2026-11-04T04:05:15Z"},
+  {role:"assistant",content:"this sat 3.30pm can?",sent_by_username:"WhatsApp Business App",created_at:"2026-11-04T04:03:54Z"}]},
+ 1046:{id:16870,created_at:"2026-11-04T04:47:31Z",prior_turns:[
+  {role:"user",content:"3pm",created_at:"2026-11-04T04:46:50Z"},
+  {role:"user",content:"29/11 afternoon, any slot?",created_at:"2026-11-02T16:11:12Z"}]},
+ };
+ const service=createStaffBookingConfirmationService({
+  config:{businessType:"tcm_clinic"},now:()=>now,
+  database:{query:async(sql,args)=>({rows:context[args[0]]?[context[args[0]]]:[]})},
+  pipeline:{getActiveLeadForContact:async()=>({id:45,appointment_status:"none",is_closed:false}),
+   updateLead:async(id,data)=>{calls.push({id,data});return data;}},
+ });
+ assert.equal(await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:false}),null);
+ await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:true});
+ await service(1046,"OK 29/11, 3pm",{providerAccepted:true});
+ assert.deepEqual(calls.map(x=>x.data.appointmentAt),
+  ["2026-11-07T07:30:00.000Z","2026-11-29T07:00:00.000Z"]);
+});
+
 test("staff acknowledgment is held for review, not automatically booked", async () => {
   const events=[];
   const service=createStaffBookingConfirmationService({
@@ -124,9 +156,42 @@ test("informal Business App date confirmation creates a hold, not a booked lead"
       updateLead:async()=>{throw Error("must not automatically set appointment");},
     },
   });
-  assert.deepEqual(await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:true}),{pending:true});
+  assert.deepEqual(await service(7245,"See u, Thursday 1pm",{providerAccepted:true}),{pending:true});
   assert.equal(reviews[0].contactId,7245);
   assert.equal(reviews[0].messageId,199);
-  assert.equal(reviews[0].options.details.appointmentPreference,"Comfirm this sat 3.30pm 😊");
+  assert.equal(reviews[0].options.details.appointmentPreference,"See u, Thursday 1pm");
   assert.equal(await service(7245,"Can this sat 3.30pm?",{providerAccepted:true}),null);
+});
+
+
+test("newer customer booking date overrides an older date even if the time matches",async()=>{
+ const staffAt="2026-11-04T04:47:31Z";
+ const proposed="2026-11-29T07:00:00.000Z";
+ const turns=[
+  {role:"user",content:"29/11 afternoon, any slot?",created_at:"2026-11-02T16:11:12Z"},
+  {role:"user",content:"30/11 at 3pm instead",created_at:"2026-11-04T04:46:50Z"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,turns,staffAt),false);
+ assert.equal(isTerseBookingCorroborated("OK 30/11, 3pm","2026-11-30T07:00:00.000Z",turns,staffAt),true);
+ const sameDate=[
+  turns[0],{...turns[1],content:"29/11 at 3pm, please"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,sameDate,staffAt),true);
+ const wrongYear=[
+  {role:"user",content:"29/11/2025, 3pm",created_at:"2026-11-04T04:46:50Z"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,wrongYear,staffAt),false);
+ const reviews=[],updates=[];
+ const service=createStaffBookingConfirmationService({
+  config:{businessType:"tcm_clinic"},now:()=>new Date("2026-11-04T04:47:32Z"),
+  database:{query:async()=>({rows:[{id:808,created_at:staffAt,prior_turns:turns}]})},
+  markPendingBooking:async(contactId,messageId)=>{reviews.push([contactId,messageId]);return{review:true};},
+  pipeline:{
+   getActiveLeadForContact:async()=>{throw Error("No auto-booking for conflicting date");},
+   updateLead:async(...args)=>{updates.push(args);throw Error("No CRM update");},
+  },
+ });
+ assert.deepEqual(await service(1046,"OK 29/11, 3pm",{providerAccepted:true}),{review:true});
+ assert.deepEqual(reviews,[[1046,808]]);
+ assert.deepEqual(updates,[]);
 });

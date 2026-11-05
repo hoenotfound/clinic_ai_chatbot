@@ -15,9 +15,10 @@ const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalP
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const {
-  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
+  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
+const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -372,9 +373,35 @@ function resolveShadowPriceException({
     if (result) return result;
   }
 
+  // A customer choosing "脸型" in the bot's explicit 3D-vs-9D menu,
+  // followed by a 3D-only explanation, is a verified current selection.
+  // This is the Nov 5 contact #685 regression; the new helper never trusts
+  // CRM interest, ad labels or model-selected treatments by themselves.
+  const facialChoice=resolveNeutroFacialConcernPrice({
+    customerText:text,session,services,serviceAliases,now,
+  });
+  if(facialChoice){
+    const verified=shadowVerifiedPrice({
+      source:"customer_facial_concern_selection",treatment:facialChoice.name,
+      customerText:text,conversationHistory:session,promotions,
+    });
+    if(verified)return verified;
+  }
+
   // A bounded customer-led discussion can have several normal Q&A turns
   // after the original treatment choice. A direct price question still refers
   // to that verified service, unless staff, a new topic or ambiguity intervened.
+  const engaged=resolveCustomerEngagedPrice({
+    customerText:text,conversationHistory,services,serviceAliases,now,
+  });
+  if(engaged){
+    const verified=shadowVerifiedPrice({
+      source:"customer_engaged_single_treatment",treatment:engaged.name,
+      customerText:text,conversationHistory:session,promotions,
+    });
+    if(verified)return verified;
+  }
+
   const established = resolveEstablishedTreatmentPrice({
     customerText:text, session, services, serviceAliases, now,
   });

@@ -59,6 +59,38 @@ test("only reaction and proven profile-only events are ignored by the follow-up 
   }
 });
 
+test("secondary-only provider receipts never wake the primary follow-up scan", () => {
+ const env = {
+  WHATSAPP_PHONE_NUMBER_ID: "1408739622311791",
+  WHATSAPP_SECONDARY_PHONE_NUMBER_ID: "1318355951360575",
+ };
+ const secondary = { channel: "whatsapp",
+  businessPhoneNumberId: env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID };
+ assert.equal(followUpChangeRequiresWake({
+  ...secondary,reason: "delivery_status",deliveryStatus: "read",
+ },env),false,"signed secondary receipt cannot change primary sending eligibility");
+ assert.equal(followUpChangeRequiresWake({
+  ...secondary,reason: "message",
+ },env),true,"a real incoming message may affect the primary conversation");
+ assert.equal(followUpChangeRequiresWake({
+  ...secondary,reason: "whatsapp_opt_out",
+ },env),true,"cross-channel opt-outs remain immediate");
+ assert.equal(followUpChangeRequiresWake({
+  ...secondary,reason: "booking_confirmed",
+ },env),true,"cross-channel booking changes remain immediate");
+ assert.equal(followUpChangeRequiresWake({
+  reason: "delivery_status",channel: "whatsapp",
+  businessPhoneNumberId:env.WHATSAPP_PHONE_NUMBER_ID,
+ },env),true,"primary receipts still wake their own worker");
+ assert.equal(followUpChangeRequiresWake({
+  reason: "delivery_status",channel:"whatsapp",
+ },env),true,"unverified sender still wakes conservatively");
+ assert.equal(followUpChangeRequiresWake({
+  ...secondary,reason: "delivery_status",
+ },{...env,WHATSAPP_PHONE_NUMBER_ID:""}),true,
+ "missing sender configuration must not silently suppress a receipt");
+});
+
 test("follow-up realtime subscriptions coalesce events but retain pipeline/config safeguards", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/services/followUpService.js"), "utf8");
   assert.match(source, /createCoalescedImmediateWake/);

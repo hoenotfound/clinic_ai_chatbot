@@ -8,17 +8,21 @@ const service = require("../src/services/whatsappSecondaryFollowUpService");
 const marketing = require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const { listInboxPageIndex, resetIndexCacheForTests } = require("../src/db/inboxPageIndexRepo");
 
-test("secondary service and marketing queries prune stale contacts before complex eligibility checks", () => {
-  for (const [module, window] of [[service, "24 hours"], [marketing, "7 days"]]) {
-    assert.match(module.CANDIDATES_SQL, /JOIN\s*\(\s*SELECT DISTINCT recent\.contact_id FROM messages recent/);
-    assert.match(module.CANDIDATES_SQL, new RegExp("recent\\.created_at > \\$4::timestamptz - INTERVAL '" + window + "'"));
-    assert.match(module.CANDIDATES_SQL, new RegExp("m\\.created_at > \\$4::timestamptz - INTERVAL '" + window + "'"));
-    assert.match(module.POTENTIAL_DUE_SQL, /recent_inbound_contacts\.contact_id=sc\.contact_id/);
+test("secondary follow-up shortlist preserves the current main branch safety windows", () => {
+  for (const [module, window] of [[service, "24 hours"], [marketing, "9 days"]]) {
+    assert.match(module.CANDIDATES_SQL, /SELECT DISTINCT recent\.contact_id/);
+    assert.ok(module.CANDIDATES_SQL.includes(
+      "recent.created_at > $4::timestamptz - INTERVAL '" + window + "'"
+    ), "Retain the established recent-inbound shortlist");
+    assert.match(module.CANDIDATES_SQL, /sc\.contact_id=recent_contact\.contact_id/);
+    assert.match(module.POTENTIAL_DUE_SQL, /recent_contact/);
     assert.match(module.CANDIDATES_SQL, /pending|opt_out|appointment/i);
   }
-  assert.match(marketing.EXTENDED_CANDIDATES_SQL, /recent_inbound_contacts/);
-  assert.match(marketing.RECHECK_SQL, /recent_inbound_contacts/);
-  assert.match(marketing.EXTENDED_RECHECK_SQL, /recent_inbound_contacts/);
+  assert.match(marketing.EXTENDED_CANDIDATES_SQL, /recent_contact/);
+  assert.match(marketing.RECHECK_SQL, /recent_contact/);
+  assert.match(marketing.EXTENDED_RECHECK_SQL, /recent_contact/);
+  assert.match(service.CANDIDATES_SQL, /whatsapp_opt_out_at IS NULL/);
+  assert.match(marketing.CANDIDATES_SQL, /whatsapp_marketing_opt_out_at IS NULL/);
 });
 
 test("Contacts page uses bounded SQL with server-side search and assignment filtering", async (t) => {
