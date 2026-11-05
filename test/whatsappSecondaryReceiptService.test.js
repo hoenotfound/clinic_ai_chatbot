@@ -102,7 +102,6 @@ test("receipt rejections identify only safe validation categories without touchi
  const samples=[
    [x=>{x.entry[0].changes[0].value.statuses[0].id="wamid.bad?identifier";},"status_id_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].status="unsafe state!";},"status_value_unsupported"],
-   [x=>{x.entry[0].changes[0].value.statuses[0].recipient_id="unsafe recipient?";},"status_recipient_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].timestamp="not-a-time";},"status_timestamp_invalid"],
    [x=>{x.entry[0].changes[0].value.statuses[0].pricing.billable="false";},"status_pricing_invalid"],
    [x=>{x.entry[0].id="other-account";},"mixed_sender_or_status_mismatch"],
@@ -297,6 +296,108 @@ test("signed opaque recipient is durably held unmatched with no billing release,
   assert.equal(calls.filter(x=>x.sql.includes("UPDATE whatsapp_sender_billing_gates")).length,0);
 });
 
+test("verified invalid recipient receipts are durably quarantined without identifying or notifying customers",async()=>{
+  const calls=[];
+  const seen=new Set();
+  const client={
+    query: async (sql,params=[])=>{
+      calls.push({sql,params});
+      if(sql.includes("SELECT id FROM whatsapp_sender_accounts"))
+        return {rows:[{id:7}],rowCount:1};
+      if(sql.includes("INSERT INTO whatsapp_sender_quarantined_events")){
+        assert.match(params[0],/^[a-f0-9]{64}$/);
+        assert.match(params[1],/^messages\.status_recipient_invalid\.(missing|null|non_string|blank|oversize|control|non_ascii|unrecognized_format)$/);
+        assert.equal(params[2],env.WHATSAPP_SECONDARY_WABA_ID);
+        assert.equal(params[3],env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+        const fresh=!seen.has(params[0]);seen.add(params[0]);
+        return {rows:fresh?[{fingerprint:params[0]}]:[],rowCount:fresh?1:0};
+      }
+      if(sql.includes("INSERT INTO whatsapp_sender_billing_alarms")) {
+        assert.equal(params[0],7);
+        assert.match(params[1],/^[a-f0-9]{64}$/);
+        return {rows:[],rowCount:1};
+      }
+      assert.doesNotMatch(sql,/JOIN whatsapp_sender_message_context|UPDATE messages|UPDATE whatsapp_sender_billing_gates|INSERT INTO whatsapp_sender_status_receipts|INSERT INTO whatsapp_sender_auto_reconciliations/);
+      return {rows:[],rowCount:1};
+    },
+    release:()=>{},
+  };
+  const packet=body([
+    status({id:"wamid.no-recipient",recipient_id:undefined}),
+    status({id:"wamid.unsafe-recipient",recipient_id:"unsafe recipient?",pricing:{
+      type:"regular",billable:true,category:"service",
+    }}),
+  ]);
+  delete packet.entry[0].changes[0].value.statuses[0].recipient_id;
+  const signature=signed(packet);
+  // Direct public parser is still strict and never treats missing recipients as valid.
+  assert.equal(receipt.normalizedSignedEvents(signature.rawBody,env),null);
+  for(const expectation of [2,0]){
+    const result=await receipt.recordSignedSecondaryStatusBatch({
+      ...signature,subsetFromVerifiedWebhook:true,
+    },{env,database:{connect:async()=>client}});
+    assert.equal(result.accepted,true);
+    assert.equal(result.matched,0);
+    assert.equal(result.unmatched,0);
+    assert.equal(result.quarantined,expectation);
+    assert.equal(result.held,expectation===2?1:0);
+    assert.equal(result.sendAuthorized,false);
+    assert.equal(result.autoRetryAllowed,false);
+  }
+  assert.equal(seen.size,2);
+  assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_quarantined_events")).length,4);
+  assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_billing_alarms")).length,1);
+  assert.equal(calls.filter(x=>x.sql==="COMMIT").length,2);
+  assert.ok(!JSON.stringify(calls.map(x=>x.sql)).includes("unsafe recipient?"));
+});
+
+test("invalid recipient categories are bounded and do not expose identifier bytes",()=>{
+  const samples=[
+    [undefined,"missing"],[null,"null"],[2,"non_string"],["","blank"],
+    ["x".repeat(65),"oversize"],["x\n","control"],["界","non_ascii"],
+    ["a?b","unrecognized_format"],
+  ];
+  for(const [value,kind] of samples){
+    const input=body([status({recipient_id:value})]);
+    if(value===undefined) delete input.entry[0].changes[0].value.statuses[0].recipient_id;
+    assert.equal(receipt.normalizedSignedEvents(signed(input).rawBody,env),null);
+    const records=[];
+    const parsed=receipt.normalizedSecondarySubsetEvents(
+      signed(input).rawBody,env,()=>{},()=>{},audit=>records.push(audit));
+    assert.deepEqual(parsed,[]);
+    assert.equal(records.length,1);
+    assert.equal(records[0].field,"messages.status_recipient_invalid."+kind);
+    assert.match(records[0].fingerprint,/^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(records[0]).includes("a?b"),false);
+  }
+});
+
+test("untrusted recipient batches still fail before touching the database",async()=>{
+  const invalid=body([status({recipient_id:"?",timestamp:"invalid"})]);
+  const wrong=body([status({recipient_id:"?"})]);
+  wrong.entry[0].changes[0].value.metadata.phone_number_id="999999999999999";
+  for(const input of [invalid,wrong]){
+    const result=await receipt.recordSignedSecondaryStatusBatch({
+      ...signed(input),subsetFromVerifiedWebhook:true,
+    },{env,database:{connect:async()=>assert.fail("invalid batch opened database")}});
+    assert.equal(result.accepted,false);
+  }
+  const forged=signed(body([status({recipient_id:"?"})]));
+  forged.signatureHeader="sha256=invalid";
+  const result=await receipt.recordSignedSecondaryStatusBatch({
+    ...forged,subsetFromVerifiedWebhook:true,
+  },{env,database:{connect:async()=>assert.fail("forged signature accessed database")}});
+  assert.equal(result.code,"secondary_receipt_signature_invalid");
+});
+
+test("invalid recipient receipts cannot be acknowledged if the database transaction fails",async()=>{
+  const result=await receipt.recordSignedSecondaryStatusBatch({
+    ...signed(body([status({recipient_id:null})])),subsetFromVerifiedWebhook:true,
+  },{env,database:{connect:async()=>{throw Error("unavailable");}}});
+  assert.equal(result.accepted,false);
+  assert.equal(result.code,"secondary_receipt_database_unavailable");
+});
+
 test("wrong sender identity and unverified HMAC still reject opaque receipt before DB",async()=>{
   const event=body([status({recipient_id:"hidden"})]);
   event.entry[0].changes[0].value.metadata.phone_number_id="100000000000099";
@@ -434,7 +535,7 @@ test("unsupported statuses cannot bypass HMAC, sender scope, malformed-input or 
     signatureHeader:"sha256=invalid",subsetFromVerifiedWebhook:true,
   },{env,database:db});
   assert.equal(forged.accepted,false);
-  const invalid=body([status({status:"played",recipient_id:"???"})]);
+  const invalid=body([status({status:"played",recipient_id:"???",timestamp:"bad_timestamp"})]);
   const malformed=await receipt.recordSignedSecondaryStatusBatch({
     ...signed(invalid),subsetFromVerifiedWebhook:true,
   },{env,database:db});
