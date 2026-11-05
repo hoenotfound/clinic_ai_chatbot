@@ -10,7 +10,7 @@ const aliases=[{alias:"3d小颜术",officialService:"3D 小颜术"},
 const generic="请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊";
 const run=(customerText,conversationHistory,reply=generic)=>
  improveRepeatedPriceClarification({customerText,conversationHistory,reply,
- services,serviceAliases:aliases,language:"zh"});
+ services,serviceAliases:aliases,language:"zh",allowFirstContext:true});
 test("Nov 1 contact 8858: do not repeat what treatment after customer named 3D",()=>{
  const history=[
  {role:"user",content:"我想了解3D小颜术"},
