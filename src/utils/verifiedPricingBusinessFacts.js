@@ -100,17 +100,32 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
   :lang.startsWith("ms")
    ?"Lokasi yang disahkan ialah "+b.name.trim()+". Alamat: "+b.address.trim()+". 😊"
    :"我们目前确认的门店在"+b.name.trim()+"哦 😊\n地址："+b.address.trim()+"。";
- // Discard only the misleading branch-selection sentences. Never discard
- // independent service descriptions, treatment advice or appointment details.
- const sentences=original.match(/[^。.!！?？\n]+[。.!！?？\n]*/gu)||[original];
- const retained=sentences.map(part=>{
-   if(choice&&UNNECESSARY_AREA.test(part))return "";
-   const bad=[FALSE_BRANCHES.exec(part),FALSE_BRANCH_CHOICE.exec(part)].filter(Boolean);
+ // Work at clause boundaries, not the first false claim in a full sentence:
+ // "我们有多个分行，3D First Trial RM488，你方便什么时候来？"
+ // must retain the price and appointment question.
+ const clauses=original.match(/[^，,；;。.!！?？\n]+[，,；;。.!！?？\n]*/gu)||[original];
+ const misleadingArea=/(?:你|您).{0,12}(?:靠近哪里|靠近哪裡|想去哪家|想去哪一家|想去哪間|想去哪间|选哪家|選哪家|which branch|which outlet)|(?:which|what).{0,12}(?:branch|outlet|cawangan)/iu;
+ const emptyPreamble=/^(?:我们有|我們有|我们|我們|我帮你看看|我幫你看看|帮你看看|幫你看看|我可以帮你看看|我可以幫你看看|we\s+(?:have|offer)|we|kami\s+(?:ada|mempunyai)|kami)$/iu;
+ const independentInfo=/(?:RM\s*\d+|[39]\s*d|First\s+Trial|骨盆|疗程|療程|护理|護理|价钱|價錢|价格|價格|评估|評估|预约|預約|appointment|booking|treatment|rawatan|package|promo)/iu;
+ const retained=clauses.map(part=>{
+   if(choice&&(UNNECESSARY_AREA.test(part)||misleadingArea.test(part)))return "";
+   const bad=[FALSE_BRANCHES.exec(part),FALSE_BRANCH_CHOICE.exec(part)]
+     .filter(Boolean).sort((a,b)=>a.index-b.index);
    if(!bad.length)return part;
-   const cutoff=Math.min(...bad.map(match=>match.index));
-   const prefix=part.slice(0,cutoff).replace(/[\s，,；;:：]+$/u,"").trim();
-   return prefix?prefix+"。":"";
- }).join("").trim();
+   const first=bad[0],last=bad.at(-1);
+   const before=part.slice(0,first.index).trim();
+   const after=part.slice(last.index+last[0].length)
+     .replace(/^[\s，,；;:：]+/u,"").trim();
+   const keepBefore=before&&!emptyPreamble.test(before)?before:"";
+   // A mixed clause can contain an independent price or booking statement
+   // after the false claim. Retain it, but never retain dangling location
+   // selection text or a bare conjunction.
+   const keepAfter=after&&independentInfo.test(after)&&
+     !misleadingArea.test(after)&&!FALSE_BRANCHES.test(after)&&
+     !FALSE_BRANCH_CHOICE.test(after)
+       ?after.replace(/^(?:但|不过|不過|and|but)\s*/iu,""):"";
+   return [keepBefore,keepAfter].filter(Boolean).join(" ");
+ }).join("").replace(/^[\s，,；;]+|[\s，,；;]+$/gu,"").trim();
  const final=retained&&retained.toLocaleLowerCase().includes(b.address.trim().toLocaleLowerCase())
    ?retained:[retained,fact].filter(Boolean).join("\n\n");
  return {reply:final,changed:final!==original};
