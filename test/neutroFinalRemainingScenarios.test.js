@@ -59,6 +59,19 @@ test("#8856: an existing named pelvic enquiry can answer a later price-choice fo
  assert.equal(price?.treatment,"骨盆调理");
  assert.deepEqual(price?.prices?.map(x=>x.price).sort(),["RM288","RM388"]);
 });
+test("#8937: active pelvic enquiry stays scoped when customer requests weekend pricing",()=>{
+ const history=[
+  t("user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看",170000),
+  t("assistant","想了解骨盆调理对吗？你困扰的是小腹凸还是体态不平衡？",168000),
+  t("user","腰酸，长短腿",150000),
+  t("assistant","我们建议中医师先帮你做1对1体态评估+体验",146000),
+  t("user","weekends 我想了解价钱",120000),
+ ];
+ const p=resolveShadowPriceException(opts(history));
+ assert.equal(p?.treatment,"骨盆调理");
+ assert.deepEqual(p?.prices?.map(x=>x.price).sort(),["RM288","RM388"]);
+});
+
 test("Re-engagement never trusts a staff reply, treatment switch, clinical message or stale interest",()=>{
  const day=86400000;
  const baseline=[
