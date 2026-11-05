@@ -1,14 +1,16 @@
 "use strict";
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
-// Neutro's follow-up queue, template billing, retry worker or media ID cache.
+// Neutro's follow-up queue, template billing or retry worker.
+// Its media upload cache may be reused only with the distinct secondary phone ID.
 // A claimed slot is one-shot even after timeout, worker crash or uncertain
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
-const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
+const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
+const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
@@ -353,6 +355,9 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
  videoSelection=selectApprovedTreatmentVideo,
+ // Inject only the existing, scoped AI-copy helper for deterministic tests.
+ personalize20h=createPersonalized20h,
+ onUnexpectedFailure=()=>{},
 }={}) {
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
@@ -415,6 +420,7 @@ async function runOnce({
     if(!id)continue;
     attempted++;
     let messageId=null;
+    let phase="initial_recheck";
     const fail=async(code)=>{
       await database.query(
         "UPDATE whatsapp_sender_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
@@ -436,6 +442,7 @@ async function runOnce({
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
+      phase="media_selection";
       const selectedVideo=!adFollowUpPolicy?.ambiguous &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
@@ -457,6 +464,9 @@ async function runOnce({
       if(key && (mediaType!=="video" || !liveVideoApproval())){
         await fail("sender_followup_video_approval_revoked");continue;
       }
+      const useSharedVideoCache=Boolean(key && secondaryVideoCacheEligible({
+        env,storage,mediaKey:key,
+      }));
       let bytes=null;
       if(key){
         const mime=mediaMime;
@@ -466,9 +476,14 @@ async function runOnce({
           !/^[A-Za-z0-9._ -]{1,180}$/.test(String(filename||""))){
           await fail("sender_followup_media_invalid");continue;
         }
-        bytes=await storage.downloadMedia(key,{maxBytes:MAX_MEDIA});
-        if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>MAX_MEDIA){
-          await fail("sender_followup_media_unavailable");continue;
+        // Preserve the existing pre-save media validation when cache is OFF.
+        // With the cache ON, a HEAD validates the object before any reuse,
+        // avoiding a full R2 download on each approved follow-up.
+        if(!useSharedVideoCache){
+          bytes=await storage.downloadMedia(key,{maxBytes:MAX_MEDIA});
+          if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>MAX_MEDIA){
+            await fail("sender_followup_media_unavailable");continue;
+          }
         }
       }
       // This is the PRIMARY Neutro follow-up AI generator, using only
@@ -476,6 +491,7 @@ async function runOnce({
       // claim, and never send a static substitute when AI mode is explicitly on.
       let outboundText=localized;
       let aiMode=null;
+      phase="ai_generation";
       if(slot===20 && !adFollowUpPolicy?.ambiguous &&
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
@@ -488,11 +504,13 @@ async function runOnce({
       if(!await preSendCheck()){
         await fail("secondary_followup_policy_changed_after_ai");continue;
       }
+      phase="contact_lookup";
       const contact=await contacts.getContactById(candidate.contact_id);
       if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
          String(contact.whatsapp_sender_id)!==String(candidate.sender_id)){
         await fail("sender_followup_owner_changed");continue;
       }
+      phase="message_save";
       const saved=await store.saveMessage(candidate.contact_id,
         "assistant",outboundText,null,null,null,null,
         key?mediaMime:null,{
@@ -509,25 +527,17 @@ async function runOnce({
         "UPDATE whatsapp_sender_followup_attempts SET message_id=$2 WHERE id=$1",
         [id,messageId]
       );
+      phase="provider_dispatch";
       const result=await sendText({
         contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
-        ...(bytes?{dispatchTransport:async transport=>{
-          if(!liveVideoApproval() || !await preSendCheck())
-            return {success:false,unknown:true,ambiguous:true,retryable:false};
-          const uploaded=await transport.uploadMedia(bytes,
-            mediaMime,mediaFilename);
-          if(!uploaded?.success || !uploaded.mediaId)return{
-            success:false,ambiguous:true,retryable:false,
-          };
-          if(!liveVideoApproval() || !await preSendCheck())return{
-            success:false,ambiguous:true,retryable:false,
-          };
-          return transport.sendMediaById(mediaType,
-            uploaded.mediaId,{caption:outboundText,
-              filename:mediaFilename,voice:false});
-        }}:{}),
+        ...(key?{dispatchTransport:async transport=>dispatchSecondaryFollowUpVideo({
+          transport,mediaKey:key,mimeType:mediaMime,filename:mediaFilename,
+          caption:outboundText,env,storage,preSendCheck,liveVideoApproval,
+          prefetchedBytes:bytes,
+        })}:{}),
       },{env,database});
+      phase="provider_result_persist";
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
         await store.setWhatsappMessageId(messageId,result.wamid,{
           preserveVerifiedSecondaryReceipt:true,
@@ -542,7 +552,16 @@ async function runOnce({
         accepted++;
       } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
-      await fail("sender_followup_processing_unconfirmed").catch(()=>{});
+      // Never automatically replay this one-shot attempt. Report a fixed,
+      // content-free processing phase, not error messages or customer data.
+      const safePhases=new Set([
+        "initial_recheck","media_selection","ai_generation","contact_lookup",
+        "message_save","provider_dispatch","provider_result_persist",
+      ]);
+      const safePhase=safePhases.has(phase)?phase:"unknown";
+      try{onUnexpectedFailure({phase:safePhase,slot});}catch{}
+      const prefix=messageId?"sender_followup_after_save_":"sender_followup_before_save_";
+      await fail(prefix+safePhase).catch(()=>{});
     }
   }
   return {disabled:false,attempted,accepted};

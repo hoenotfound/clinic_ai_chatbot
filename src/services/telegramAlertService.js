@@ -1,4 +1,5 @@
 const https = require("https");
+const { recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
 const {isSecondaryAutomationEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {pool}=require("../db/db");
@@ -246,6 +247,7 @@ function postTelegramMessage({ token, chatId, text }) {
     text,
     disable_web_page_preview: true,
   });
+  recordOutboundRequest("telegram_json", Buffer.byteLength(payload));
 
   return new Promise((resolve, reject) => {
     const request = https.request(

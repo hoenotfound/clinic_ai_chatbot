@@ -11,6 +11,7 @@
  */
 
 const crypto = require("crypto");
+const { recordOutboundPayload } = require("../utils/outboundPayloadDiagnostics");
 const { jpegFrameEncoding } = require("../utils/jpegEncoding");
 const {
   S3Client,
@@ -83,6 +84,9 @@ async function sendR2(command, { timeoutMs = r2RequestTimeoutMs() } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    if (command instanceof PutObjectCommand && Buffer.isBuffer(command.input?.Body)) {
+      recordOutboundPayload("r2_object_upload", command.input.Body.length);
+    }
     return await getClient().send(command, { abortSignal: controller.signal });
   } catch (err) {
     if (controller.signal.aborted) {

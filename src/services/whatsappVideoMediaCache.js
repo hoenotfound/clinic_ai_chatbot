@@ -25,8 +25,11 @@ function createCache({
   whatsappApi = whatsapp,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   phoneNumberId = () => process.env.WHATSAPP_PHONE_NUMBER_ID,
+  // Optional process-local coordination for per-send cache instances.
+  // Every distinct phone/version is independently keyed below.
+  inFlight = new Map(),
 } = {}) {
-  const inFlight = new Map();
+  if (!(inFlight instanceof Map)) throw new TypeError("inFlight must be a Map");
   function measure(phoneId, event, bytes = 0) {
     if (!phoneId || typeof repo.recordEvent !== "function") return;
     Promise.resolve().then(() => repo.recordEvent(phoneId, event, bytes))

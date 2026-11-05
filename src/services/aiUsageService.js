@@ -1,4 +1,5 @@
 const { createHash } = require("node:crypto");
+const { recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { pool } = require("../db/db");
 const aiUsageRepo = require("../db/aiUsageRepo");
 
@@ -174,6 +175,8 @@ async function generateGeminiContent(
     : request;
   let response;
   try {
+    // SDK performs its own serialization; count calls only, not guessed bytes.
+    recordOutboundRequest("gemini_sdk");
     response = await ai.models.generateContent(effectiveRequest);
   } catch (error) {
     const timedOut = signal?.aborted === true;
