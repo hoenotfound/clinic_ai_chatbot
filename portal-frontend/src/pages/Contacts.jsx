@@ -41,6 +41,7 @@ export default function Contacts() {
   const [allOwnerOptions, setAllOwnerOptions] = useState([]);
   const [assignmentFilter, setAssignmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
+  const [savedContactSnapshot, setSavedContactSnapshot] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
   const [showExport, setShowExport] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -124,22 +125,28 @@ export default function Contacts() {
   }, [canCreateContacts, canExportCustomerData, canManageContacts, panelMode, showExport]);
 
   function handleSelect(id) {
+    setSavedContactSnapshot(null);
     setSelectedId(id);
     setPanelMode("view");
   }
 
   function handleAddNew() {
     if (!canCreateContacts) return;
+    setSavedContactSnapshot(null);
     setSelectedId(null);
     setPanelMode("create");
   }
 
   function handleBackToList() {
+    setSavedContactSnapshot(null);
     setSelectedId(null);
     setPanelMode("view");
   }
 
   async function handleSaved(savedContact, isNew) {
+    // Newly created contacts have no messages and may sort well beyond page 1.
+    // Keep only the contact just saved visible in the detail panel.
+    setSavedContactSnapshot(savedContact);
     await refreshContacts(searchInput);
     setSelectedId(savedContact.id);
     setPanelMode("view");
@@ -149,6 +156,7 @@ export default function Contacts() {
   async function handleCustomerDeleted(result) {
     const deletedId = Number(result?.contactId || deleteTarget?.id);
     setDeleteTarget(null);
+    setSavedContactSnapshot(null);
     if (selectedId === deletedId) {
       setSelectedId(null);
       setPanelMode("view");
@@ -162,7 +170,8 @@ export default function Contacts() {
     );
   }
 
-  const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
+  const selectedContact = contacts?.find((c) => c.id === selectedId) ||
+    (savedContactSnapshot?.id === selectedId ? savedContactSnapshot : null);
   const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
   const exportViewReady = contacts !== null &&
     loadedSearch === searchInput && loadedAssignment === assignmentFilter;
