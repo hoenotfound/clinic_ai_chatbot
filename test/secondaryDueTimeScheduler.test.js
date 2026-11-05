@@ -66,7 +66,7 @@ test("service candidate and hint only scan recent inbound contacts before the or
   assert.match(sql,/SELECT DISTINCT recent\.contact_id/);
   assert.match(sql,/recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/,
    "marketing and optional Day4/Day6 keep their full eligible seven-day sessions");
-  assert.match(sql,/sc\.contact_id=recent_contact\\.contact_id/);
+  assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
   assert.match(sql,/whatsapp_marketing_consent_events consent/);
  }
 });
