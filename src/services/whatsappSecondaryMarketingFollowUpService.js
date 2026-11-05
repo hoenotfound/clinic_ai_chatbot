@@ -80,6 +80,16 @@ const FIRST_REPLY_SQL=`
  ) first_reply ON TRUE
 `;
 
+// Guard current message intent at discovery AND at the last provider recheck.
+// The same SQL is inherited by the separately disabled Day4/Day6 path.
+const MARKETING_CUSTOMER_INTENT_SQL=String.raw`
+ AND COALESCE(inbound.last_customer_text,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+ AND COALESCE(inbound.last_customer_text,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
+ AND NOT (
+  COALESCE(inbound.last_customer_text,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
+  AND COALESCE(inbound.last_customer_text,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
+ )
+`;
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -100,7 +110,8 @@ const CANDIDATES_SQL=`
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
-   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role, ARRAY(
+   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role,
+     m.content AS last_customer_text, ARRAY(
      SELECT LEFT(recent.content,500) FROM messages recent
      JOIN whatsapp_sender_message_context recent_ctx
        ON recent_ctx.message_id=recent.id AND recent_ctx.conversation_id=sc.id
@@ -129,6 +140,7 @@ const CANDIDATES_SQL=`
    AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
+   ${MARKETING_CUSTOMER_INTENT_SQL}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -450,6 +462,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+ MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
  approvedStaticMarketingTemplate,runOnce,nextPotentialDueAt,start,stop,
 };
