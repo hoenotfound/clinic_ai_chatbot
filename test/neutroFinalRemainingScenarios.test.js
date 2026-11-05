@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {resolveCustomerEngagedPrice}=require("../src/utils/priceConversationRecovery");
 const {resolveShadowPriceException}=require("../src/utils/shadowPriceException");
-const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=
+const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,pendingCancellationFollowupAllowedSql}=
  require("../src/utils/appointmentCancellationSafety");
 const eligibility=require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const followup=require("../src/services/whatsappSecondaryFollowUpService");
@@ -99,6 +99,20 @@ test("#8889: a customer cancellation is never a recorded completed CRM action",(
  assert.match(source,/clinicalAcknowledgement=aiReply/);
  assert.match(source,/setAiReviewAttention/);
 });
+test("unresolved cancellation blocks primary and both secondary follow-up selectors",()=>{
+ const sql=pendingCancellationFollowupAllowedSql("c");
+ assert.match(sql,/cancellation_review\.status='pending'/);
+ assert.match(sql,/cancellation_review\.category='information'/);
+ assert.match(sql,/cancellation_inbound\.role='user'/);
+ assert.match(sql,/取消/);
+ const primary=require("../src/utils/aiReviewPolicy").followUpAttentionAllowedSql("c");
+ const short=require("../src/services/whatsappSecondaryFollowUpService");
+ const long=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+ assert.match(primary,/cancellation_review\.status='pending'/);
+ for(const candidate of [short.CANDIDATES_SQL,short.RECHECK_SQL,
+   long.CANDIDATES_SQL,long.RECHECK_SQL])assert.match(candidate,/cancellation_review\.status='pending'/);
+});
+
 test("all secondary contacts get new-inbound AI eligibility; not restricted to ads",async()=>{
  const env={
   WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
