@@ -369,6 +369,13 @@ test("20h secondary follow-up invokes existing personalized generator and saves 
   const result=await worker.runOnce({
     ...f,
     env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+    getConfig:()=>({automatedFollowUp:{
+      message:"2h treatment check-in",
+      additionalSteps:[
+        {message:"6h check-in"},
+        {message:"Would you like to arrange a personal posture assessment?"},
+      ],
+    }}),
     personalize20h:async ({candidate:row})=>{
       calls++;
       assert.equal(row.slot_hours,20);
@@ -388,6 +395,13 @@ test("20h pre-save AI exception records fixed phase and never sends or retries",
   const result=await worker.runOnce({
     ...f,
     env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+    getConfig:()=>({automatedFollowUp:{
+      message:"2h treatment check-in",
+      additionalSteps:[
+        {message:"6h check-in"},
+        {message:"Would you like to arrange a personal posture assessment?"},
+      ],
+    }}),
     personalize20h:async()=>{throw Error("test secret that must never reach logs");},
     onUnexpectedFailure:({phase,slot})=>phases.push({phase,slot}),
   });
