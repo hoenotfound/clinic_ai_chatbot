@@ -617,6 +617,7 @@ function createMetaCommentAutomationService({
       }
 
       let liveJob = job;
+      let newlySentPrivateText = null;
 
       if (settings.publicReplyEnabled && !liveJob.publicReplyId) {
         const publicText =
@@ -658,6 +659,7 @@ function createMetaCommentAutomationService({
           branches:clinicConfig.branches,
           language:detectMessageLanguage(event.text)||"zh",
         }).reply;
+        newlySentPrivateText = verifiedPrivateText;
         // Make the outbound intent durable before calling Meta. An Instagram
         // or Facebook echo can arrive before the Send API response gets back to
         // this process; the echo handler uses this marker to recognize that
@@ -705,7 +707,8 @@ function createMetaCommentAutomationService({
       ) {
         await ensureCommentLead({
           event,
-          copy,
+          copy: newlySentPrivateText===null ? copy :
+            {...copy,privateReply:newlySentPrivateText},
           sendResult: {
             messageId: liveJob.privateReplyMessageId,
             recipientId: liveJob.privateReplyRecipientId,
