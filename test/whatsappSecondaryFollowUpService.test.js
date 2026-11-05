@@ -347,3 +347,17 @@ test("sequential sender follow-ups never skip FU1 for FU2 or send after a failed
   assert.match(worker.POTENTIAL_DUE_SQL,/previous_step\.completed_at/);
   assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours/);
 });
+
+test("secondary reminders exclude closed, non-patient and out-of-area enquiries at both SQL gates",()=>{
+  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+    assert.match(sql,/health\[\[:space:\]\]\+professional/);
+    assert.match(sql,/谢谢/);
+    assert.match(sql,/penang/);
+    assert.match(sql,/same_slot\.status='accepted'/);
+    assert.match(sql,/same_slot\.slot_hours=rule\.slot_hours/);
+    assert.match(sql,/INTERVAL '12 hours'/);
+  }
+  assert.match(worker.CANDIDATES_SQL,/m\.role,m\.content FROM messages m/);
+  assert.match(worker.CANDIDATES_SQL,/same_slot\.completed_at > \$4::timestamptz/);
+  assert.match(worker.RECHECK_SQL,/same_slot\.completed_at > NOW\(\)/);
+});

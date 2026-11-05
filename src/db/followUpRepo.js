@@ -11,6 +11,35 @@ function clinicRescheduleHoldSql() {
     ? "COALESCE(latest_lead.appointment_status, 'none') <> 'reschedule'"
     : "TRUE";
 }
+// Guard only TCM sales followups against clear commercial outreach, goodbyes
+// and unavailable-branch-only messages. Recheck before sending a claimed step.
+function customerFollowUpIntentGuardSql(contactAlias = "c") {
+  if (!/^[a-z][a-z0-9_]*$/i.test(contactAlias)) throw new Error("Invalid contact alias");
+  if (clinicConfig.businessType !== "tcm_clinic" ||
+      !/^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")))
+    return "TRUE";
+  return `NOT EXISTS (
+    SELECT 1 FROM messages terminal_inbound
+    WHERE terminal_inbound.id=(
+      SELECT recent_user.id FROM messages recent_user
+      WHERE recent_user.contact_id=${contactAlias}.id AND recent_user.role='user'
+      ORDER BY recent_user.created_at DESC,recent_user.id DESC LIMIT 1
+    )
+    AND (
+      COALESCE(terminal_inbound.content,'') ~*
+        '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
+      OR COALESCE(terminal_inbound.content,'') ~*
+        '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+      OR (
+        COALESCE(terminal_inbound.content,'') ~*
+          '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
+        AND COALESCE(terminal_inbound.content,'') !~*
+          '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
+      )
+    )
+  )`;
+}
+
 function reserveFinalPricingWindow() {
   const config=clinicConfig.automatedFollowUp;
   return config?.enabled === true && config?.pricingReminder?.enabled === true;
@@ -310,6 +339,7 @@ async function findCandidates({
          AND ${primaryFollowUpSenderSql('$7', '$8')}
          AND ${followUpAttentionAllowedSql("c")}
           AND ${automatedFollowUpConsentSql("c")}
+         AND ${customerFollowUpIntentGuardSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -530,6 +560,7 @@ async function getNextCandidateDueAt({
          AND ${primaryFollowUpSenderSql('$6', '$7')}
          AND ${followUpAttentionAllowedSql("c")}
           AND ${automatedFollowUpConsentSql("c")}
+         AND ${customerFollowUpIntentGuardSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -774,6 +805,7 @@ async function saveIfStillEligible({
      WHERE c.id = $1
        AND ${followUpAttentionAllowedSql("c")}
           AND ${automatedFollowUpConsentSql("c")}
+         AND ${customerFollowUpIntentGuardSql("c")}
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -1062,6 +1094,7 @@ async function recordAiDecisionIfStillEligible({
        WHERE c.id = $1
          AND ${followUpAttentionAllowedSql("c")}
           AND ${automatedFollowUpConsentSql("c")}
+         AND ${customerFollowUpIntentGuardSql("c")}
          AND anchor.id = $2
          AND ${acceptedNormalOutboundSql('anchor')}
          AND (
@@ -1209,6 +1242,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
        ) latest_lead ON true
        WHERE ${followUpAttentionAllowedSql("c")}
           AND ${automatedFollowUpConsentSql("c")}
+         AND ${customerFollowUpIntentGuardSql("c")}
          AND ${acceptedNormalOutboundSql('anchor')}
          AND NOT EXISTS (
            SELECT 1
@@ -1495,6 +1529,7 @@ async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
 module.exports = {
   MAX_FOLLOW_UP_STEPS,
   primaryFollowUpSenderSql,
+  customerFollowUpIntentGuardSql,
   findCandidates,
   getNextCandidateDueAt,
   getNextStaleClaimDueAt,

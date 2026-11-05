@@ -91,6 +91,30 @@ const SEQUENCE_DUE_SQL=`GREATEST(
     ${FOLLOWUP_DUE_SQL})
 )`;
 
+// A new inbound restarts a sequence, but does not mean the customer wants
+// another sales reminder after saying goodbye, asking only about a distant
+// branch, or pitching a business partnership. Apply the same fail-closed SQL
+// at discovery and immediately before dispatch.
+const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
+ AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+ AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
+ AND NOT (
+   COALESCE(inbound.content,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
+   AND COALESCE(inbound.content,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
+ )
+`;
+// A customer replying again must not cause the identical 2h or 6h video to
+// be sent twice in a few hours. Other slots remain independent.
+function repeatSlotCooldownSql(atSql){
+ return `AND NOT EXISTS (
+   SELECT 1 FROM whatsapp_sender_followup_attempts same_slot
+   WHERE same_slot.sender_id=sa.id AND same_slot.contact_id=c.id
+     AND same_slot.slot_hours=rule.slot_hours
+     AND same_slot.status='accepted'
+     AND same_slot.completed_at > ${atSql} - INTERVAL '12 hours'
+ )`;
+}
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -125,7 +149,7 @@ const CANDIDATES_SQL=`
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL (
-   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role FROM messages m
+   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role,m.content FROM messages m
    JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user'
@@ -158,6 +182,8 @@ const CANDIDATES_SQL=`
    AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
+   ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   ${repeatSlotCooldownSql('$4::timestamptz')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -270,6 +296,8 @@ const RECHECK_SQL=`
    AND ${secondaryAutomationEligibleSql('c','$8','inbound','$9','$10')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
+   ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   ${repeatSlotCooldownSql('NOW()')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL

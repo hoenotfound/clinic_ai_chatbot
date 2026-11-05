@@ -83,9 +83,11 @@ test("closed, visited or cancelled lead is not reopened by a staff message", asy
 
 test("staff visit acknowledgment requires a concrete visit day", () => {
   for (const s of ["See u tmr", "See u, Thursday 1pm", "好的明天见",
-    "预约已确认 10/11 10:30am"]) assert.equal(isStaffVisitAcknowledgement(s),true,s);
+    "预约已确认 10/11 10:30am", "Comfirm this sat 3.30pm 😊",
+    "OK 29/11, 3pm", "Confirmed next Sun 2pm"]) assert.equal(isStaffVisitAcknowledgement(s),true,s);
   for (const s of ["See u", "See u if you want", "See u tomorrow maybe",
-    "Your booking was cancelled"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
+    "Your booking was cancelled", "29/11, 3pm?", "OK noted",
+    "Can 29/11 3pm?", "Confirm this Saturday", "OK next year maybe"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
 });
 
 test("staff acknowledgment is held for review, not automatically booked", async () => {
@@ -106,4 +108,25 @@ test("staff acknowledgment is held for review, not automatically booked", async 
   assert.deepEqual(await service(7,"See u tmr",{providerAccepted:true}),{review:true});
   assert.equal(events[1].messageId,200);
   assert.match(events[0],/whatsapp_message_id IS NOT NULL/);
+});
+
+test("informal Business App date confirmation creates a hold, not a booked lead", async () => {
+  const reviews = [];
+  const service = createStaffBookingConfirmationService({
+    config: {businessType:"tcm_clinic"},
+    now: () => new Date("2026-11-05T00:00:00Z"),
+    database: {query:async()=>({rows:[{id:199}]})},
+    markPendingBooking:async(contactId,messageId,options)=>{
+      reviews.push({contactId,messageId,options});return {pending:true};
+    },
+    pipeline: {
+      getActiveLeadForContact:async()=>{throw Error("must not automatically set appointment");},
+      updateLead:async()=>{throw Error("must not automatically set appointment");},
+    },
+  });
+  assert.deepEqual(await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:true}),{pending:true});
+  assert.equal(reviews[0].contactId,7245);
+  assert.equal(reviews[0].messageId,199);
+  assert.equal(reviews[0].options.details.appointmentPreference,"Comfirm this sat 3.30pm 😊");
+  assert.equal(await service(7245,"Can this sat 3.30pm?",{providerAccepted:true}),null);
 });

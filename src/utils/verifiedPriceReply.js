@@ -415,6 +415,13 @@ function ensureVerifiedPriceReply({
     const parts = [safeInfo, confirm, acknowledgement].filter(Boolean);
     return { reply: parts.join("\n\n"), restored: true };
   }
+  // The active configuration, not the AI draft, names Neutro's 3D/9D
+  // promotional price as a First Trial. A one-off trial must not be labelled
+  // as a recurring package or a subsequent-session rate.
+  const firstTrialQuote = prices.length === 1 && getActivePromotions(promotions).some(p =>
+    p?.linkedService === treatment && p?.sendOnPriceQuery === true &&
+    /\bfirst[\s-]*trial\b/iu.test(String(p.name || ""))
+  );
   // "RM488 for one time?" follows a previously sent, verified offer.
   // Answer the customer's session-price confirmation directly instead of
   // producing another generic price menu or promising to resend an image.
@@ -451,11 +458,17 @@ function ensureVerifiedPriceReply({
           ? " The after-voucher price is subject to eligibility and confirmation by the centre."
           : " 使用优惠券需符合领取及使用条件，请以门店确认为准。"
       : "";
-    const answer = locale.startsWith("ms")
-      ? `Ya, harga promosi semasa untuk ${offerName} ialah ${amount} 😊${unitNote}${voucherNote}`
-      : locale.startsWith("en")
-        ? `Yes, the current ${offerName} package offer is ${amount} 😊${unitNote}${voucherNote}`
-        : `是的，${offerName} 目前的配套优惠价是 ${amount} 😊${unitNote}${voucherNote}`;
+    const answer = firstTrialQuote
+      ? (locale.startsWith("ms")
+        ? `Ya, harga promosi First Trial untuk ${treatment} ialah ${amount} 😊${unitNote}${voucherNote}`
+        : locale.startsWith("en")
+          ? `Yes, the First Trial promotional price for ${treatment} is ${amount} 😊${unitNote}${voucherNote}`
+          : `是的，${treatment} 的 First Trial 体验优惠价是 ${amount} 😊${unitNote}${voucherNote}`)
+      : locale.startsWith("ms")
+        ? `Ya, harga promosi semasa untuk ${offerName} ialah ${amount} 😊${unitNote}${voucherNote}`
+        : locale.startsWith("en")
+          ? `Yes, the current ${offerName} package offer is ${amount} 😊${unitNote}${voucherNote}`
+          : `是的，${offerName} 目前的配套优惠价是 ${amount} 😊${unitNote}${voucherNote}`;
     // A verified earlier amount answers the price only. Preserve a fresh
     // recovery question without inferring a fixed downtime or session count.
     const recovery = recoveryPeriodGuidance(customerText, language);
@@ -474,11 +487,17 @@ function ensureVerifiedPriceReply({
         ? `The ${voucherNames} price is after applying the voucher, subject to eligibility and availability. Our centre can confirm the voucher terms; additional discounts are not guaranteed.`
         : `${voucherNames} 的上述价格为使用优惠券后的价格，须符合领取及使用条件；优惠券是否还有名额及能否叠加其他优惠，请以门店确认为准。`)
     : "";
-  const quote = locale.startsWith("ms")
-    ? `Untuk ${treatment}, harga promosi terkini ialah:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
-    : locale.startsWith("en")
-      ? `The current ${treatment} package prices are:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
-      : `${treatment}目前的配套价格是：\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`;
+  const quote = firstTrialQuote
+    ? (locale.startsWith("ms")
+      ? `Harga promosi First Trial untuk ${treatment}: ${prices[0].price} 😊`
+      : locale.startsWith("en")
+        ? `The First Trial promotional price for ${treatment} is ${prices[0].price} 😊`
+        : `${treatment} 的 First Trial 体验优惠价是 ${prices[0].price} 😊`)
+    : locale.startsWith("ms")
+      ? `Untuk ${treatment}, harga promosi terkini ialah:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
+      : locale.startsWith("en")
+        ? `The current ${treatment} package prices are:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
+        : `${treatment}目前的配套价格是：\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`;
   // A clinical/suitability question may need staff input. Do not reproduce
   // potentially unsafe model claims about pain, pregnancy or eligibility;
   // quote verified prices independently without authorizing marketing media.
