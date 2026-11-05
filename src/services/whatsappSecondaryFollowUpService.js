@@ -43,6 +43,18 @@ function serviceFollowupParityActivation(env=process.env) {
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
+const SLOW_QUERY_WARNING_MS=3000;
+// Report only materially slow SQL; never log contact IDs, message bodies,
+// bound parameters or provider identifiers. Does not change retry behaviour.
+async function monitoredFollowUpRead(database,sql,params,label){
+ const started=performance.now();
+ try{return await database.query(sql,params);}
+ finally {
+   const elapsedMs=Math.round(performance.now()-started);
+   if(elapsedMs>=SLOW_QUERY_WARNING_MS)
+     console.warn("[Secondary WhatsApp follow-ups] slow "+label+" query:",elapsedMs+"ms");
+ }
+}
 const ALLOWED_MIME={
   video:new Set(["video/mp4","video/3gpp"]),
   image:new Set(["image/jpeg","image/png"]),
@@ -380,14 +392,14 @@ async function runOnce({
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
-  const items=(await database.query(CANDIDATES_SQL,[
+  const items=(await monitoredFollowUpRead(database,CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
-  ])).rows||[];
+  ],"candidate")).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
@@ -588,14 +600,14 @@ async function runOnce({
 async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
- const result=await database.query(POTENTIAL_DUE_SQL,[
+ const result=await monitoredFollowUpRead(database,POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
    serviceFollowupParityActivation(env),
- ]);
+ ],"due-time hint");
  return result.rows?.[0]||null;
 }
 
