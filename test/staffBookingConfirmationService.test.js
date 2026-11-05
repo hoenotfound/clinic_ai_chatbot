@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   parseStaffConfirmedSlot,
   parseTerseStaffConfirmedSlot,
+  isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
 } = require("../src/services/staffBookingConfirmationService");
