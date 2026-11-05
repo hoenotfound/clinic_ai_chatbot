@@ -60,6 +60,15 @@ test("service candidate and hint only scan recent inbound contacts before the or
  assert.match(service.RECHECK_SQL,/whatsapp_sender_followup_attempts attempt/);
  assert.doesNotMatch(service.RECHECK_SQL,/recent_contact/,
    "last provider recheck stays keyed to the exact reserved inbound");
+ for(const sql of [marketing.CANDIDATES_SQL,marketing.POTENTIAL_DUE_SQL,
+   marketing.EXTENDED_CANDIDATES_SQL,marketing.RECHECK_SQL,
+   marketing.EXTENDED_RECHECK_SQL]){
+  assert.match(sql,/SELECT DISTINCT recent\\.contact_id/);
+  assert.match(sql,/recent\\.created_at > \\$4::timestamptz - INTERVAL '9 days'/,
+   "marketing and optional Day4/Day6 keep their full eligible seven-day sessions");
+  assert.match(sql,/sc\\.contact_id=recent_contact\\.contact_id/);
+  assert.match(sql,/whatsapp_marketing_consent_events consent/);
+ }
 });
 
 test("scheduler shifts due sends during Malaysia quiet hours to 07:00 without delaying daytime slots",()=>{
