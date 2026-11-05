@@ -99,8 +99,17 @@ test("two provider-authenticated terse staff confirmations have unambiguous date
   assert.equal(parseTerseStaffConfirmedSlot(value,now),null,value);
  }
  const calls=[];
+ const context={
+ 7245:{id:16834,created_at:"2026-11-04T04:06:40Z",prior_turns:[
+  {role:"user",content:"yes, can",created_at:"2026-11-04T04:05:15Z"},
+  {role:"assistant",content:"this sat 3.30pm can?",sent_by_username:"WhatsApp Business App",created_at:"2026-11-04T04:03:54Z"}]},
+ 1046:{id:16870,created_at:"2026-11-04T04:47:31Z",prior_turns:[
+  {role:"user",content:"3pm",created_at:"2026-11-04T04:46:50Z"},
+  {role:"user",content:"29/11 afternoon, any slot?",created_at:"2026-11-02T16:11:12Z"}]},
+ };
  const service=createStaffBookingConfirmationService({
   config:{businessType:"tcm_clinic"},now:()=>now,
+  database:{query:async(sql,args)=>({rows:context[args[0]]?[context[args[0]]]:[]})},
   pipeline:{getActiveLeadForContact:async()=>({id:45,appointment_status:"none",is_closed:false}),
    updateLead:async(id,data)=>{calls.push({id,data});return data;}},
  });
