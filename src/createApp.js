@@ -1,5 +1,6 @@
 const path = require("path");
 const express = require("express");
+const { recordHttp503 } = require("./utils/outboundPayloadDiagnostics");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
@@ -99,6 +100,18 @@ function createApp({
   // leftmost X-Forwarded-For values supplied by clients.
   app.set("trust proxy", resolveTrustProxy(process.env));
   app.use(applyPortalSecurityHeaders);
+  // Passive, coarse 503 attribution. No URI paths, queries, customer IDs,
+  // addresses or request bodies are persisted or logged.
+  if (process.env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
+    app.use((req, res, next) => {
+      const readyAtStart = startupReadiness.isReady();
+      res.once("finish", () => recordHttp503({
+        statusCode: res.statusCode, pathname: req.path,
+        readyAtStart,
+      }));
+      next();
+    });
+  }
   app.use(stagingAccessGuard);
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
