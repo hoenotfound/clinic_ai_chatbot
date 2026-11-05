@@ -127,7 +127,7 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  // from the previous week. A new requested date supersedes an older one,
  // even when the latest time happens to match the staff's confirmation.
  const customerDates=history.filter(t=>t.role==="user").flatMap(t=>{
-  const matches=[...String(t.content||"").matchAll(/\\b(\\d{1,2})\\s*[\\/-]\\s*(\\d{1,2})(?:\\s*[\\/-]\\s*(20\\d{2}))?\\b/gu)];
+  const matches=[...String(t.content||"").matchAll(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[\/-]\s*(20\d{2}))?\b/gu)];
   return matches.map(m=>({
    at:t.at,day:Number(m[1]),month:Number(m[2]),year:m[3]?Number(m[3]):null,
   }));
