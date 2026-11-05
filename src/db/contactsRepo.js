@@ -486,7 +486,7 @@ async function listContactsPage({
 } = {}) {
   const term = String(search || "").trim().slice(0, 100);
   const allowedAssignment = assignment === "all" || assignment === "mine" ||
-    assignment === "unassigned" || /^owner:[a-zA-Z0-9_.@-]{1,100}$/.test(assignment);
+    assignment === "unassigned" || (assignment.startsWith("owner:") && assignment.length > 6 && assignment.length <= 134);
   if (!allowedAssignment) throw new TypeError("Invalid contact assignment filter.");
   const start = Number(offset);
   const pageSize = Number(limit);
@@ -513,7 +513,8 @@ async function listContactsPage({
       WHERE ($1::text = '' OR c.name ILIKE $2
         OR c.whatsapp_profile_name ILIKE $2
         OR c.whatsapp_number ILIKE $2
-        OR c.channel_user_id ILIKE $2)
+        OR c.channel_user_id ILIKE $2
+        OR c.channel ILIKE $2)
         AND ($3::text = 'all'
           OR ($3 = 'mine' AND lead.owner_username = $4)
           OR ($3 = 'unassigned' AND lead.owner_username IS NULL)
