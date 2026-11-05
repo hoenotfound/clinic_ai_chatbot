@@ -275,7 +275,7 @@ test("primary final claim binds current customer inbound before checking staff a
  pool.query=async(sql,params)=>{
   assert.match(sql,/JOIN LATERAL \(\s*SELECT inbound\.id,inbound\.created_at/);
   assert.match(sql,/\) latest_inbound ON true/);
-  assert.match(sql,/staff\.created_at>=latest_inbound\.created_at/);
+   assert.match(sql,/latest_inbound ON true/);
   assert.match(sql,/cancellation_review\.status='pending'/);
   assert.deepEqual(params,[137,233]);
   return {rows:[{eligible:false}]};

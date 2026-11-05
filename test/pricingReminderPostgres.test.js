@@ -29,7 +29,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         whatsapp_opt_out_at TIMESTAMPTZ,
         whatsapp_marketing_opt_out_at TIMESTAMPTZ
       );
-      CREATE TABLE ai_review_items (contact_id INTEGER, status TEXT, category TEXT);
+      CREATE TABLE ai_review_items (contact_id INTEGER, status TEXT, category TEXT, inbound_message_id INTEGER);
       CREATE TABLE pipeline_stages (id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
       CREATE TABLE leads (
         id SERIAL PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
