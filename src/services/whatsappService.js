@@ -1,4 +1,5 @@
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { recordOutboundPayload } = require("../utils/outboundPayloadDiagnostics");
 const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
@@ -332,6 +333,7 @@ async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) 
     form.append("messaging_product", "whatsapp");
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
+    recordOutboundPayload("meta_primary_media", buffer.length);
     const res = await fetchWithTimeout(
       url,
       {
