@@ -45,6 +45,7 @@ const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentP
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
+const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -1020,6 +1021,12 @@ async function processIncomingMessage(
        !keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
        !isExplicitStaffRequest(text)&&!whatsappPolicy.classifyOptOutText(text)&&
        await messagesRepo.hasRecentStaffConversation(contact.id,savedInbound.id)){
+      // A cancellation arriving while staff is handling the booking must
+      // reach the staff review queue; suppress the bot's competing reply.
+      if(isDefiniteAppointmentCancellation(text)){
+        await contactsRepo.setAiReviewAttention(
+          contact.id,savedInbound.id,String(text).slice(0,350),"information");
+      }
       console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
       return {wasFirstMessage,keywordReason};
     }
@@ -1327,6 +1334,20 @@ async function processIncomingMessage(
       clinicalAcknowledgement=null;
       serviceQuery=false;priceQuery=false;packageQuery=false;
       details=null;
+    }
+
+    // A requested cancellation does not change a confirmed CRM booking by
+    // itself. Never let a model promise an unperformed cancellation or
+    // quietly close the contact. Put the request in the staff Inbox and
+    // send only a non-committal acknowledgement through the normal guarded
+    // outbound path. Booking state changes remain staff/provider verified.
+    if(!keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
+       isDefiniteAppointmentCancellation(text)){
+      flagged=true;reviewRequired=true;reviewType="information";
+      bookingReady=false;serviceQuery=false;priceQuery=false;packageQuery=false;
+      details=null;
+      aiReply=cancellationReviewAcknowledgement(mediaLanguage);
+      clinicalAcknowledgement=aiReply;
     }
 
     // Full multi-turn information-review recovery remains Enabled-only.
