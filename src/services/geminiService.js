@@ -1,5 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
-const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
+const { normalizeOptions } = require("../utils/systemPrompt");
+const { buildScopedReplyPrompt } = require("../utils/scopedReplyPrompt");
 const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
 const { generateGeminiContent } = require("./aiUsageService");
 
@@ -65,7 +66,7 @@ function buildGeminiRequest(messages, options, resolvedModel) {
       model: resolvedModel,
       contents: buildContents(messages),
       config: {
-        systemInstruction: buildSystemPrompt(promptOptions),
+        systemInstruction: buildScopedReplyPrompt(promptOptions),
         maxOutputTokens: 1200,
         responseMimeType: "application/json",
         ...(thinkingConfig ? { thinkingConfig } : {}),
