@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   parseStaffConfirmedSlot,
+  parseTerseStaffConfirmedSlot,
   isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
 } = require("../src/services/staffBookingConfirmationService");
@@ -90,6 +91,26 @@ test("staff visit acknowledgment requires a concrete visit day", () => {
     "Can 29/11 3pm?", "Confirm this Saturday", "OK next year maybe"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
 });
 
+test("two provider-authenticated terse staff confirmations have unambiguous dates",async()=>{
+ const now=new Date("2026-11-04T04:06:00Z");
+ assert.equal(parseTerseStaffConfirmedSlot("Comfirm this sat 3.30pm 😊",now),"2026-11-07T07:30:00.000Z");
+ assert.equal(parseTerseStaffConfirmedSlot("OK 29/11, 3pm",now),"2026-11-29T07:00:00.000Z");
+ for(const value of ["this sat 3.30pm can?","29/11, 3pm?", "OK this sat 3pm", "Comfirm next sat 3.30pm","OK 29/11", "OK 29/11, 3pm maybe"]){
+  assert.equal(parseTerseStaffConfirmedSlot(value,now),null,value);
+ }
+ const calls=[];
+ const service=createStaffBookingConfirmationService({
+  config:{businessType:"tcm_clinic"},now:()=>now,
+  pipeline:{getActiveLeadForContact:async()=>({id:45,appointment_status:"none",is_closed:false}),
+   updateLead:async(id,data)=>{calls.push({id,data});return data;}},
+ });
+ assert.equal(await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:false}),null);
+ await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:true});
+ await service(1046,"OK 29/11, 3pm",{providerAccepted:true});
+ assert.deepEqual(calls.map(x=>x.data.appointmentAt),
+  ["2026-11-07T07:30:00.000Z","2026-11-29T07:00:00.000Z"]);
+});
+
 test("staff acknowledgment is held for review, not automatically booked", async () => {
   const events=[];
   const service=createStaffBookingConfirmationService({
@@ -124,9 +145,9 @@ test("informal Business App date confirmation creates a hold, not a booked lead"
       updateLead:async()=>{throw Error("must not automatically set appointment");},
     },
   });
-  assert.deepEqual(await service(7245,"Comfirm this sat 3.30pm 😊",{providerAccepted:true}),{pending:true});
+  assert.deepEqual(await service(7245,"See u, Thursday 1pm",{providerAccepted:true}),{pending:true});
   assert.equal(reviews[0].contactId,7245);
   assert.equal(reviews[0].messageId,199);
-  assert.equal(reviews[0].options.details.appointmentPreference,"Comfirm this sat 3.30pm 😊");
+  assert.equal(reviews[0].options.details.appointmentPreference,"See u, Thursday 1pm");
   assert.equal(await service(7245,"Can this sat 3.30pm?",{providerAccepted:true}),null);
 });

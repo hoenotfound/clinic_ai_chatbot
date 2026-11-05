@@ -55,6 +55,52 @@ function parseStaffConfirmedSlot(message, now = new Date()) {
   return instant.toISOString();
 }
 
+function parseTerseStaffConfirmedSlot(message, now = new Date()) {
+ const value=String(message||"").trim();
+ if(!value||value.length>160||/[?？]/u.test(value)||
+   /(?:not\s+confirm|not\s+booked|cancel|取消|maybe|perhaps|tbc|subject\s+to|待确认|待確認)/iu.test(value))return null;
+ const confirm=/^(?:confirm(?:ed)?|comfirm(?:ed)?|确认|確認|已确认|已確認|ok(?:ay)?)\b/iu.test(value);
+ const chineseConfirm=/^(?:确认|確認|已确认|已確認)/u.test(value);
+ if(!confirm&&!chineseConfirm)return null;
+ const clock=value.match(/\b(0?[1-9]|1[0-2])(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+ if(!clock)return null;
+ let hour=Number(clock[1]),minute=Number(clock[2]||0);
+ if(minute>59)return null;
+ if(/^p/iu.test(clock[3]))hour=(hour%12)+12;
+ else hour%=12;
+ const localNow=new Date(now.getTime()+8*60*60*1000);
+ let year=localNow.getUTCFullYear(),month,day;
+ const explicit=value.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/u);
+ if(explicit){
+  day=Number(explicit[1]);month=Number(explicit[2]);
+  if(explicit[3])year=Number(explicit[3]);
+  else{
+   const candidate=new Date(Date.UTC(year,month-1,day));
+   const today=new Date(Date.UTC(localNow.getUTCFullYear(),localNow.getUTCMonth(),localNow.getUTCDate()));
+   if(candidate<today)year++;
+  }
+ } else {
+  // Relative weekdays are permitted only with an EXPLICIT staff
+  // confirmation, not an "OK" or provisional staff offer.
+  if(!/^(?:confirm|comfirm)/iu.test(value))return null;
+  const match=value.match(/\bthis\s+(mon|tue|wed|thu|fri|sat|sun)(?:day)?\b/iu);
+  if(!match)return null;
+  const weekday={sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6}[match[1].toLowerCase()];
+  const days=(weekday-localNow.getUTCDay()+7)%7;
+  const date=new Date(Date.UTC(year,localNow.getUTCMonth(),localNow.getUTCDate()+days));
+  year=date.getUTCFullYear();month=date.getUTCMonth()+1;day=date.getUTCDate();
+ }
+ if(!Number.isInteger(day)||!Number.isInteger(month)||!Number.isInteger(year))return null;
+ const utc=new Date(Date.UTC(year,month-1,day,hour-8,minute));
+ const check=new Date(utc.getTime()+8*60*60*1000);
+ if(check.getUTCFullYear()!==year||check.getUTCMonth()+1!==month||
+    check.getUTCDate()!==day||check.getUTCHours()!==hour||
+    check.getUTCMinutes()!==minute)return null;
+ if(utc<new Date(now.getTime()-24*60*60*1000)||
+    utc>new Date(now.getTime()+90*24*60*60*1000))return null;
+ return utc.toISOString();
+}
+
 function isStaffVisitAcknowledgement(message) {
   const value = String(message || "").trim();
   if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
@@ -80,7 +126,8 @@ function createStaffBookingConfirmationService({
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
-    const appointmentAt = parseStaffConfirmedSlot(staffText, now());
+    const appointmentAt = parseStaffConfirmedSlot(staffText, now()) ||
+      (config.businessType === 'tcm_clinic' ? parseTerseStaffConfirmedSlot(staffText, now()) : null);
     if (!appointmentAt) {
       if (!isStaffVisitAcknowledgement(staffText)) return null;
       const proof = await database.query(
@@ -101,6 +148,13 @@ function createStaffBookingConfirmationService({
     }
     const lead = await pipeline.getActiveLeadForContact(contactId);
     if (!lead || lead.is_closed || ["visited", "cancelled"].includes(lead.appointment_status)) return null;
+    // A new time for an existing booking is a rescheduling proposal, not an
+    // automatic overwrite. Staff must reconcile the current CRM appointment.
+    if(lead.appointment_status==="set"){
+      if(lead.appointment_at &&
+         new Date(lead.appointment_at).getTime()===new Date(appointmentAt).getTime())return lead;
+      return null;
+    }
     // Existing updateLead handles validation, stage transition, booking alert
     // cleanup and the follow-up suppression for genuinely confirmed bookings.
     return pipeline.updateLead(lead.id, { appointmentStatus: "set", appointmentAt }, "Staff chat confirmation");
@@ -109,6 +163,7 @@ function createStaffBookingConfirmationService({
 const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
+  parseTerseStaffConfirmedSlot,
   isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
