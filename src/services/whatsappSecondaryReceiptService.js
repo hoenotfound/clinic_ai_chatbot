@@ -49,9 +49,12 @@ function digest(input) { return crypto.createHash("sha256").update(input).digest
 // A signed Meta callback can carry an opaque recipient. A masked recipient
 // is NEVER a verified customer ID: retain hashed unmatched evidence only.
 function normalizeStatusRecipient(value) {
-  if (typeof value !== "string" || !value.trim() || value.length > 64 ||
-      !/^[A-Za-z0-9._+*-]+$/.test(value.trim())) return null;
-  const raw=value.trim();
+  // Never turn a modified/malformed recipient into a verified phone number by
+  // trimming whitespace or control characters from the original Meta value.
+  if (typeof value !== "string" || !value || value.length > 64 ||
+      value !== value.trim() ||
+      !/^[A-Za-z0-9._+*-]+$/.test(value)) return null;
+  const raw=value;
   const e164=/^\+([0-9]{8,15})$/.exec(raw);
   if (e164) return { recipient: e164[1], verified: true };
   if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
