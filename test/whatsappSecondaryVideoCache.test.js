@@ -3,8 +3,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { secondaryVideoCacheEligible, dispatchSecondaryFollowUpVideo } =
   require("../src/services/whatsappSecondaryVideoCache");
-const { recordOutboundPayload, takeOutboundPayloadSnapshot } =
+const { recordOutboundPayload, recordOutboundRequest, recordHttp503,
+  takeOutboundPayloadSnapshot } =
   require("../src/utils/outboundPayloadDiagnostics");
+const { createCache } = require("../src/services/whatsappVideoMediaCache");
 
 const enabled = {
   WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED: "true",
@@ -215,10 +217,101 @@ test("outbound diagnostics never record unless explicitly enabled", () => {
     DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED: "true",
   }), true);
   const got = takeOutboundPayloadSnapshot();
-  assert.equal(got.coverage, "attempted_upload_payload_only");
+  assert.equal(got.coverage, "attempted_upload_and_known_json_payload_only");
   assert.deepEqual(got.buckets.find(x => x.category === "meta_secondary_media"), {
     category: "meta_secondary_media", attempts: 1, payloadMiB: 2,
   });
   assert.equal(takeOutboundPayloadSnapshot().buckets.find(
     x => x.category === "meta_secondary_media").attempts, 0);
+});
+
+test("simultaneous secondary follow-ups share a pending upload without sharing sends", async () => {
+  // Each recipient has its own verified sender transport and billing result.
+  // Only the clinic-owned media upload is shared while pending.
+  const f = setup();
+  let uploadReady, finishUpload;
+  const began = new Promise(resolve => { uploadReady = resolve; });
+  const barrier = new Promise(resolve => { finishUpload = resolve; });
+  const repoRows = new Map();
+  const repo = {
+    async get(phone, fingerprint) { return repoRows.get(phone + fingerprint)?.mediaId || null; },
+    async claim(phone, fingerprint, mime, claimId) {
+      const id = phone + fingerprint;
+      if (repoRows.has(id)) return false;
+      repoRows.set(id, { claimId }); return true;
+    },
+    async save(phone, fingerprint, claimId, mediaId) {
+      const id = phone + fingerprint;
+      if (repoRows.get(id)?.claimId !== claimId) return false;
+      repoRows.set(id, { mediaId }); return true;
+    },
+    async release() {},
+    async recordEvent() {},
+  };
+  const storage = {
+    ...f.storage,
+    getSharedFollowUpMediaInfo: async () => ({
+      etag: "etag1", mimeType: "video/mp4", bytes: 512,
+    }),
+  };
+  let downloads = 0, uploads = 0, sentA = 0, sentB = 0;
+  storage.downloadMedia = async () => { downloads++; return Buffer.from("shared-video"); };
+  const firstTransport = {
+    uploadMedia: async () => {
+      uploads++; uploadReady(); await barrier;
+      return { success: true, mediaId: "222777" };
+    },
+    sendMediaById: async (_, id) => {
+      assert.equal(id, "222777"); sentA++;
+      return { success: true, wamid: "wamid.first" };
+    },
+  };
+  const secondTransport = {
+    uploadMedia: async () => { uploads++; return { success: true, mediaId: "222888" }; },
+    sendMediaById: async (_, id) => {
+      assert.equal(id, "222777"); sentB++;
+      return { success: true, wamid: "wamid.second" };
+    },
+  };
+  const factory = options => createCache({
+    ...options, repo, mediaStorage: storage,
+    sleep: async () => { throw new Error("Should share in-process flight instead of DB polling"); },
+  });
+  const a = dispatchSecondaryFollowUpVideo({
+    ...f.args, transport: firstTransport, storage, cacheFactory: factory,
+  });
+  await began;
+  const b = dispatchSecondaryFollowUpVideo({
+    ...f.args, transport: secondTransport, storage, cacheFactory: factory,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  finishUpload();
+  const [resultA, resultB] = await Promise.all([a, b]);
+  assert.equal(resultA.success, true);
+  assert.equal(resultB.success, true);
+  assert.equal(downloads, 1);
+  assert.equal(uploads, 1);
+  assert.equal(sentA, 1);
+  assert.equal(sentB, 1);
+});
+
+test("extended outbound counters count only known API request sizes and coarse 503 classes", () => {
+  const env = { DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED: "true" };
+  takeOutboundPayloadSnapshot();
+  assert.equal(recordOutboundRequest("meta_secondary_json", 4096, env), true);
+  assert.equal(recordOutboundRequest("gemini_sdk", 0, env), true);
+  assert.equal(recordOutboundRequest("arbitrary_external_url", 4096, env), false);
+  assert.equal(recordHttp503({ statusCode: 503, pathname: "/api/conversations/123",
+    readyAtStart: true, env }), true);
+  assert.equal(recordHttp503({ statusCode: 503, pathname: "/health/ready",
+    readyAtStart: false, env }), true);
+  assert.equal(recordHttp503({ statusCode: 200, pathname: "/api/secret",
+    readyAtStart: true, env }), false);
+  const snap = takeOutboundPayloadSnapshot();
+  assert.equal(snap.buckets.find(x => x.category === "meta_secondary_json").attempts, 1);
+  assert.equal(snap.buckets.find(x => x.category === "gemini_sdk").attempts, 1);
+  assert.equal(snap.http503.find(x => x.category === "api").count, 1);
+  assert.equal(snap.http503.find(x => x.category === "startup").count, 1);
+  assert.equal(JSON.stringify(snap).includes("conversations"), false);
+  assert.equal(JSON.stringify(snap).includes("secret"), false);
 });
