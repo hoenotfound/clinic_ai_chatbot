@@ -514,7 +514,7 @@ async function listContactsPage({
         OR c.whatsapp_profile_name ILIKE $2
         OR c.whatsapp_number ILIKE $2
         OR c.channel_user_id ILIKE $2
-        OR c.channel ILIKE $2)
+)
         AND ($3::text = 'all'
           OR ($3 = 'mine' AND lead.owner_username = $4)
           OR ($3 = 'unassigned' AND lead.owner_username IS NULL)
