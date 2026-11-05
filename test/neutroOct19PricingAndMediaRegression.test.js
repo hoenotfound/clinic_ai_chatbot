@@ -64,7 +64,7 @@ test("Amanda #567: recent previously quoted RM488 confirms one 3D session", asyn
     pricingDecision: approval.decision,
     language: "en", priceOnlyResponse: true,
   });
-  assert.match(quote.reply, /current 3D 小颜术 package offer is RM488/u);
+  assert.match(quote.reply, /First Trial promotional price for 3D 小颜术 is RM488/u);
   assert.match(quote.reply, /centre can confirm how many sessions are included/u);
   assert.doesNotMatch(quote.reply, /covers one session|price for one .* session/iu);
   assert.doesNotMatch(quote.reply, /Which treatment|send.*image/iu);
@@ -449,7 +449,7 @@ test("RM488? confirms only the verified amount, not an invented session count", 
     services, serviceAliases: aliases, promotions, conversationHistory: history,
     language: "en",
   });
-  assert.match(reply.reply, /current .* package offer is RM488/iu);
+  assert.match(reply.reply, /First Trial promotional price for 3D 小颜术 is RM488/iu);
   assert.doesNotMatch(reply.reply, /one session|how many sessions|per session/iu);
 });
 
