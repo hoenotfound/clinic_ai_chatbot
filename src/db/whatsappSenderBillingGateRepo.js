@@ -43,7 +43,7 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
      AND m.sent_by_username IS NULL
      AND m.whatsapp_template->>'automatedSecondaryMarketingFollowup'='true'
      AND m.whatsapp_template->>'senderKey'=sa.sender_key
-     AND m.whatsapp_template->>'slotHours' IN ('48','72')
+     AND m.whatsapp_template->>'slotHours' IN ('48','66','72','96','144')
      AND m.whatsapp_template->>'name' ~ '^[a-z0-9_]+$'
      AND EXISTS (
        SELECT 1 FROM whatsapp_sender_marketing_followup_attempts att
