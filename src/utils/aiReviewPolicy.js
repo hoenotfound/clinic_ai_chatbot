@@ -94,8 +94,11 @@ function categorizeAiReview(customerText, proposedCategory) {
   // the model labeled an unanswered question as a medical review.
   const { isSimpleVisitTimingQuestion }=require('./plainVisitSchedulingReply');
   const {isDefiniteAppointmentCancellation}=require('./appointmentCancellationSafety');
+  // A cancellation with a clinical red flag still needs clinical review.
+  // Do not downgrade medical concerns to an administrative appointment task.
   if(isSimpleVisitTimingQuestion(customerText)||
-     isDefiniteAppointmentCancellation(customerText))return 'information';
+     (isDefiniteAppointmentCancellation(customerText)&&
+      !hasClinicalMediaRisk(customerText)))return 'information';
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
   if (!ADMINISTRATIVE_QUESTION.test(text) ||
