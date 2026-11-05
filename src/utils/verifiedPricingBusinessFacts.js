@@ -91,8 +91,10 @@ const UNNECESSARY_AREA=/(?:靠近哪一区|靠近哪一區|靠近哪个区|靠�
 function correctUnsupportedBranchReply({customerText="",reply="",branches=[],language="zh"}={}){
  const items=(Array.isArray(branches)?branches:[]).filter(b=>
    b&&typeof b.name==="string"&&b.name.trim()&&typeof b.address==="string"&&b.address.trim());
- const original=String(reply||"").trim(),choice=FALSE_BRANCH_CHOICE.test(original);
- if(items.length!==1||!original||(!choice&&!FALSE_BRANCHES.test(original)))
+ const original=String(reply||"").trim();
+ const choice=FALSE_BRANCH_CHOICE.test(original);
+ const multiple=FALSE_BRANCHES.test(original);
+ if(items.length!==1||!original||(!choice&&!multiple))
    return {reply:original,changed:false};
  const b=items[0],lang=String(language||"").toLowerCase();
  const fact=lang.startsWith("en")
@@ -108,7 +110,7 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
  const emptyPreamble=/^(?:我们有|我們有|我们|我們|我帮你看看|我幫你看看|帮你看看|幫你看看|我可以帮你看看|我可以幫你看看|we\s+(?:have|offer)|we|kami\s+(?:ada|mempunyai)|kami)$/iu;
  const independentInfo=/(?:RM\s*\d+|[39]\s*d|First\s+Trial|骨盆|疗程|療程|护理|護理|价钱|價錢|价格|價格|评估|評估|预约|預約|appointment|booking|treatment|rawatan|package|promo)/iu;
  const retained=clauses.map(part=>{
-   if(choice&&(UNNECESSARY_AREA.test(part)||misleadingArea.test(part)))return "";
+   if((choice||multiple)&&(UNNECESSARY_AREA.test(part)||misleadingArea.test(part)))return "";
    const bad=[FALSE_BRANCHES.exec(part),FALSE_BRANCH_CHOICE.exec(part)]
      .filter(Boolean).sort((a,b)=>a.index-b.index);
    if(!bad.length)return part;
