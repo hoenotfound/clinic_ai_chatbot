@@ -95,3 +95,36 @@ test("single-branch correction preserves independent treatment and booking detai
   branches});
  assert.doesNotMatch(area.reply,/靠近哪一区/);
 });
+
+
+test("false-branch correction keeps verified prices and visit invitations after the false claim",()=>{
+ const branches=[{name:"Petaling Jaya",address:"Section 19/1, PJ"}];
+ for(const [reply,language] of [
+  ["我们有多个分行，3D First Trial 是 RM488，你方便什么时候过来？","zh"],
+  ["我们有多个分行 3D First Trial 是 RM488，你方便什么时候过来？","zh"],
+  ["We have multiple branches, First Trial is RM488. When can you visit?","en"],
+  ["Kami ada beberapa cawangan, harga First Trial RM488, boleh datang Sabtu?","ms"],
+ ]){
+  const corrected=correctUnsupportedBranchReply({customerText:"First Trial?",reply,branches,language});
+  assert.equal(corrected.changed,true,reply);
+  assert.match(corrected.reply,/RM488/,reply);
+  assert.match(corrected.reply,/Petaling Jaya/,reply);
+  assert.doesNotMatch(corrected.reply,/多个分行|multiple branches|beberapa cawangan/iu,reply);
+  if(language==="zh")assert.match(corrected.reply,/你方便什么时候过来/,reply);
+  if(language==="en")assert.match(corrected.reply,/When can you visit/,reply);
+  if(language==="ms")assert.match(corrected.reply,/boleh datang Sabtu/,reply);
+ }
+ const booking=correctUnsupportedBranchReply({
+  customerText:"Hi",
+  reply:"我们有多个分行，3D First Trial 是 RM488。可以先安排评估。",
+  branches,language:"zh",
+ });
+ assert.match(booking.reply,/RM488/);
+ assert.match(booking.reply,/可以先安排评估/);
+ const unchanged=correctUnsupportedBranchReply({
+  customerText:"First Trial?",
+  reply:"3D First Trial 是 RM488，你方便什么时候过来？",
+  branches,language:"zh",
+ });
+ assert.equal(unchanged.changed,false);
+});
