@@ -86,7 +86,10 @@ function appendRequestedBusinessFacts({
 // configured, verified location list contains only one. This correction
 // never chooses an address from an ad, AI guess or CRM text.
 const FALSE_BRANCHES=/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu;
-const FALSE_BRANCH_CHOICE=/(?:最方便|最近|附近|哪[一家个個間]|nearest|closest|which|most\s+convenient).{0,18}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,12}(?:最方便|最近|哪[一家个個間]|nearest|closest|which)/iu;
+// Require a complete Chinese branch-choice noun. `哪一` alone is only
+// a prefix and also appears in `哪一种套餐`, which is NOT about branches.
+// Keep actual `哪一家分行` / `哪个门店` correction intact.
+const FALSE_BRANCH_CHOICE=/(?:最方便|最近|附近|哪(?:一家|一间|一間|一个|一個|家|间|間|个|個)|nearest|closest|which|most\s+convenient).{0,18}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,12}(?:最方便|最近|哪(?:一家|一间|一間|一个|一個|家|间|間|个|個)|nearest|closest|which)/iu;
 const UNNECESSARY_AREA=/(?:靠近哪一区|靠近哪一區|靠近哪个区|靠近哪個區|在哪一区|在哪一區|which\s+area\s+(?:are\s+you|do\s+you)|what\s+area\s+(?:are\s+you|do\s+you)|kawasan\s+mana)/iu;
 function correctUnsupportedBranchReply({customerText="",reply="",branches=[],language="zh"}={}){
  const items=(Array.isArray(branches)?branches:[]).filter(b=>
