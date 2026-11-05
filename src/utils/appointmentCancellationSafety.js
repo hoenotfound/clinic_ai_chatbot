@@ -16,4 +16,26 @@ function cancellationReviewAcknowledgement(language="zh"){
  if(lang.startsWith("ms"))return "Baik, kami faham anda ingin membatalkan janji temu. Pihak pusat perlu semak dan proses permintaan ini dahulu. Pembatalan belum disahkan; pihak kami akan menghubungi anda semula.";
  return "收到，你想取消预约。需要由门店同事核实并处理哦。目前还不能当作已经取消成功，确认后会再通知你。";
 }
-module.exports={isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement};
+// Keep ordinary administrative questions eligible for routine follow-ups.
+// A pending, message-linked cancellation review, however, is an active
+// request for staff to change the appointment and suspends sales reminders
+// until that review is explicitly resolved.
+function pendingCancellationFollowupAllowedSql(alias="c"){
+ if(!/^[a-z][a-z0-9_]*$/iu.test(alias))throw new TypeError("Invalid contact SQL alias");
+ return `NOT EXISTS (
+  SELECT 1 FROM ai_review_items cancellation_review
+  JOIN messages cancellation_inbound
+    ON cancellation_inbound.id=cancellation_review.inbound_message_id
+     AND cancellation_inbound.contact_id=${alias}.id
+     AND cancellation_inbound.role='user'
+  WHERE cancellation_review.contact_id=${alias}.id
+    AND cancellation_review.status='pending'
+    AND cancellation_review.category='information'
+    AND (
+      COALESCE(cancellation_inbound.content,'') ~* '(取消.{0,45}(预约|預約|预定|預定|订位|訂位)|(预约|預約|预定|預定|订位|訂位).{0,45}取消)'
+      OR COALESCE(cancellation_inbound.content,'') ~* '(cancel.{0,45}(appointment|booking|reservation)|(appointment|booking|reservation).{0,45}cancel)'
+      OR COALESCE(cancellation_inbound.content,'') ~* '(batal.{0,45}(janji temu|temujanji)|(janji temu|temujanji).{0,45}batal)'
+    )
+ )`;
+}
+module.exports={isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,pendingCancellationFollowupAllowedSql};
