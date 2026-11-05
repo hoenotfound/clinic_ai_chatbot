@@ -85,25 +85,30 @@ function appendRequestedBusinessFacts({
 // Do not tell a customer that this clinic has multiple branches when the
 // configured, verified location list contains only one. This correction
 // never chooses an address from an ad, AI guess or CRM text.
-function correctUnsupportedBranchReply({
- customerText="",reply="",branches=[],language="zh",
-}={}){
+const FALSE_BRANCHES=/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu;
+const FALSE_BRANCH_CHOICE=/(?:最方便|最近|附近|哪[一家个個間]|nearest|closest|which|most\s+convenient).{0,18}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,12}(?:最方便|最近|哪[一家个個間]|nearest|closest|which)/iu;
+const UNNECESSARY_AREA=/(?:靠近哪一区|靠近哪一區|靠近哪个区|靠近哪個區|在哪一区|在哪一區|which\s+area\s+(?:are\s+you|do\s+you)|what\s+area\s+(?:are\s+you|do\s+you)|kawasan\s+mana)/iu;
+function correctUnsupportedBranchReply({customerText="",reply="",branches=[],language="zh"}={}){
  const items=(Array.isArray(branches)?branches:[]).filter(b=>
-   b&&typeof b.name==="string"&&b.name.trim()&&
-   typeof b.address==="string"&&b.address.trim());
- const current=String(customerText||"");
- const original=String(reply||"");
- const misplacedChoice=/(?:最方便|最近|附近|哪[一家个個間]|nearest|closest|which|most\s+convenient).{0,18}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,12}(?:最方便|最近|哪[一家个個間]|nearest|closest|which)/iu.test(original);
- if(items.length!==1||!original.trim()||
-   (!misplacedChoice&&!/(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan|lokasi|地址|在哪里|在哪裡|where|nearest|nearby)/iu.test(current))||
-   !misplacedChoice&&!/(?:多个|多間|多家|几家|幾家|好几|幾間|different|several|multiple|many|various|a\s+few|beberapa|banyak).{0,20}(?:分行|分店|门店|門店|branch|branches|outlets?|cawangan)|(?:分行|分店|门店|門店|branches|outlets?|cawangan).{0,16}(?:很多|多个|多間|多家|好几|several|multiple|many|beberapa)/iu.test(original))return {reply:original,changed:false};
+   b&&typeof b.name==="string"&&b.name.trim()&&typeof b.address==="string"&&b.address.trim());
+ const original=String(reply||"").trim(),choice=FALSE_BRANCH_CHOICE.test(original);
+ if(items.length!==1||!original||(!choice&&!FALSE_BRANCHES.test(original)))
+   return {reply:original,changed:false};
  const b=items[0],lang=String(language||"").toLowerCase();
- const value=lang.startsWith("en")?
-  "Our currently confirmed location is "+b.name.trim()+". Address: "+b.address.trim()+". 😊":
-  lang.startsWith("ms")?
-   "Lokasi yang disahkan ialah "+b.name.trim()+". Alamat: "+b.address.trim()+". 😊":
-   "我们目前确认的门店在"+b.name.trim()+"哦 😊\n地址："+b.address.trim()+"。";
- return {reply:value,changed:true};
+ const fact=lang.startsWith("en")
+  ?"Our currently confirmed location is "+b.name.trim()+". Address: "+b.address.trim()+". 😊"
+  :lang.startsWith("ms")
+   ?"Lokasi yang disahkan ialah "+b.name.trim()+". Alamat: "+b.address.trim()+". 😊"
+   :"我们目前确认的门店在"+b.name.trim()+"哦 😊\n地址："+b.address.trim()+"。";
+ // Discard only the misleading branch-selection sentences. Never discard
+ // independent service descriptions, treatment advice or appointment details.
+ const sentences=original.match(/[^。.!！?？\n]+[。.!！?？\n]*/gu)||[original];
+ const retained=sentences.filter(part=>
+   !FALSE_BRANCHES.test(part)&&!FALSE_BRANCH_CHOICE.test(part)&&
+   !(choice&&UNNECESSARY_AREA.test(part))).join("").trim();
+ const final=retained&&retained.toLocaleLowerCase().includes(b.address.trim().toLocaleLowerCase())
+   ?retained:[retained,fact].filter(Boolean).join("\n\n");
+ return {reply:final,changed:final!==original};
 }
 
 module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply };

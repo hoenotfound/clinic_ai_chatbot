@@ -2,6 +2,7 @@
 // Never share primary Neutro marketing templates, opt-in or billing entries.
 // Exact one-shot sender, contact, inbound and template authorization required.
 const {pool}=require("../db/db");
+const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
 const contactsRepo=require("../db/contactsRepo");
 const messagesRepo=require("../db/messagesRepo");
 const policy=require("./whatsappSecondaryPolicyService");
@@ -141,6 +142,7 @@ const CANDIDATES_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${MARKETING_CUSTOMER_INTENT_SQL}
+   AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL

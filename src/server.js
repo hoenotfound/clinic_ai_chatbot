@@ -1017,6 +1017,8 @@ async function processIncomingMessage(
     // Do not silently change the contact's explicit AI/Human mode.
     if(channel==="whatsapp"&&clinicConfig.businessType==="tcm_clinic"&&
        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
+       !keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
+       !isExplicitStaffRequest(text)&&!whatsappPolicy.classifyOptOutText(text)&&
        await messagesRepo.hasRecentStaffConversation(contact.id,savedInbound.id)){
       console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
       return {wasFirstMessage,keywordReason};

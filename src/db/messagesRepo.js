@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
 const {
   CONVERSATION_LOCK_NAMESPACE,
   lockConversation,
@@ -1290,25 +1291,11 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
 async function hasRecentStaffConversation(contactId,inboundMessageId,query=pool.query.bind(pool)){
  const id=Number(contactId),message=Number(inboundMessageId);
  if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(message)||message<=0)return false;
- const result=await query(`SELECT EXISTS(
-   SELECT 1 FROM messages inbound
-   JOIN messages staff ON staff.contact_id=inbound.contact_id
-     AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
-     AND staff.sent_by_username<>'Follow-up automation'
-     AND staff.whatsapp_message_id IS NOT NULL
-     AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
-     AND staff.delivery_status IS DISTINCT FROM 'failed'
-     AND (staff.created_at,staff.id)<(inbound.created_at,inbound.id)
-     AND staff.created_at>=inbound.created_at-INTERVAL '2 hours'
-   WHERE inbound.id=$2 AND inbound.contact_id=$1 AND inbound.role='user'
-     AND NOT EXISTS(
-       SELECT 1 FROM messages ai WHERE ai.contact_id=inbound.contact_id
-         AND ai.role='assistant' AND ai.sent_by_username IS NULL
-         AND ai.is_automated_follow_up IS DISTINCT FROM TRUE
-         AND (ai.created_at,ai.id)>(staff.created_at,staff.id)
-         AND (ai.created_at,ai.id)<(inbound.created_at,inbound.id)
-     )
- ) AS staff_active`,[id,message]);
+ const result=await query(
+  `SELECT ${temporaryStaffConversationSql("c","inbound")} AS staff_active
+    FROM contacts c JOIN messages inbound
+      ON inbound.contact_id=c.id AND inbound.id=$2 AND inbound.role='user'
+    WHERE c.id=$1`,[id,message]);
  return result.rows[0]?.staff_active===true;
 }
 
