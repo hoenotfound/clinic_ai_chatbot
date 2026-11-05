@@ -456,7 +456,7 @@ test("signed secondary unsupported status is durably quarantined without matchin
   assert.equal(calls.filter(x=>x.sql==="COMMIT").length,2);
 });
 
-test("mixed signed secondary statuses quarantine only unknown and preserve legitimate delivery evidence",async()=>{
+test("mixed signed secondary statuses quarantine unknown and missing recipients while preserving valid delivery evidence",async()=>{
   const calls=[];
   const client={
     query:async(sql,params=[])=>{
@@ -479,15 +479,16 @@ test("mixed signed secondary statuses quarantine only unknown and preserve legit
   const packet=signed(body([
     status({id:"wamid.secondary-known",status:"delivered"}),
     status({id:"wamid.secondary-unknown",status:"played"}),
+    status({id:"wamid.secondary-invalid-recipient",recipient_id:null}),
   ]));
   const result=await receipt.recordSignedSecondaryStatusBatch({
     ...packet,subsetFromVerifiedWebhook:true,
   },{env,database:{connect:async()=>client}});
   assert.equal(result.accepted,true);
-  assert.equal(result.quarantined,1);
+  assert.equal(result.quarantined,2);
   assert.equal(result.unmatched,1);
   assert.equal(result.matched,0);
-  assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_quarantined_events")).length,1);
+  assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_quarantined_events")).length,2);
   assert.equal(calls.filter(x=>x.sql.includes("INSERT INTO whatsapp_sender_status_receipts")).length,1);
 });
 
