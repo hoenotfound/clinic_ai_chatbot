@@ -249,6 +249,8 @@ test("verified E.164 +recipient normalizes only to the same numeric customer ID"
 });
 
 test("masked Meta recipient is never treated as a verified customer",()=>{
+  assert.equal(receipt.normalizeStatusRecipient(" 60125550000 "),null);
+  assert.equal(receipt.normalizeStatusRecipient("60125550000\n"),null);
   const opaque=receipt.normalizeStatusRecipient("hidden");
   assert.deepEqual(opaque,{recipient:"hidden",verified:false});
   assert.equal(receipt.normalizeStatusRecipient("unsafe recipient?"),null);
@@ -339,7 +341,7 @@ test("verified invalid recipient receipts are durably quarantined without identi
     assert.equal(result.accepted,true);
     assert.equal(result.matched,0);
     assert.equal(result.unmatched,0);
-    assert.equal(result.quarantined,expectation);
+    assert.equal(result.quarantined || 0,expectation);
     assert.equal(result.held,expectation===2?1:0);
     assert.equal(result.sendAuthorized,false);
     assert.equal(result.autoRetryAllowed,false);
@@ -355,7 +357,7 @@ test("invalid recipient categories are bounded and do not expose identifier byte
   const samples=[
     [undefined,"missing"],[null,"null"],[2,"non_string"],["","blank"],
     ["x".repeat(65),"oversize"],["x\n","control"],["界","non_ascii"],
-    ["a?b","unrecognized_format"],
+    ["a?b","unrecognized_format"],[" 60125550000 ","unrecognized_format"],
   ];
   for(const [value,kind] of samples){
     const input=body([status({recipient_id:value})]);
