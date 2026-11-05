@@ -1343,7 +1343,7 @@ async function processIncomingMessage(
     // send only a non-committal acknowledgement through the normal guarded
     // outbound path. Booking state changes remain staff/provider verified.
     if(!keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
-       isDefiniteAppointmentCancellation(text)){
+       !hasClinicalMediaRisk(text)&&isDefiniteAppointmentCancellation(text)){
       flagged=true;reviewRequired=true;reviewType="information";
       bookingReady=false;serviceQuery=false;priceQuery=false;packageQuery=false;
       details=null;
