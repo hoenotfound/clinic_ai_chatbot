@@ -21,6 +21,27 @@ function isPlausibleWhatsappNumber(v) {
   return isNonEmptyString(v) && contactsRepo.normalizeWhatsappNumber(v).length >= 8;
 }
 
+router.get("/paged", async (req, res) => {
+  try {
+    const result = await contactsRepo.listContactsPage({
+      search: req.query.search || "",
+      assignment: req.query.assignment || "all",
+      currentUsername: req.user?.username || "",
+      offset: Number(req.query.offset ?? 0),
+      limit: Number(req.query.limit ?? 60),
+      includeOwners: req.query.includeOwners === "true",
+    });
+    res.set("Cache-Control", "private, no-store");
+    res.json(result);
+  } catch (err) {
+    if (err instanceof TypeError) {
+      return res.status(400).json({ error: "Invalid Contacts page request." });
+    }
+    console.error("Failed to load paged contacts:", err);
+    res.status(500).json({ error: "Something went wrong loading contacts." });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const contacts = await contactsRepo.listContacts(req.query.search);
