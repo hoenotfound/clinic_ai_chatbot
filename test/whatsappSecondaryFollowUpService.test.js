@@ -386,7 +386,7 @@ test("20h secondary follow-up invokes existing personalized generator and saves 
   assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
   assert.equal(f.sends,1);
   assert.equal(f.calls.filter(x=>x.save).length,1);
-  assert.equal(f.calls.filter(x=>x.sql?.includes("status='accepted'")).length,1);
+  assert.equal(f.calls.filter(x=>x.sql?.startsWith("UPDATE whatsapp_sender_followup_attempts SET status='accepted'")).length,1);
 });
 
 test("20h pre-save AI exception records fixed phase and never sends or retries",async()=>{
