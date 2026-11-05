@@ -123,9 +123,22 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  const date=String(staffText||"").match(/\b(\d{1,2})\/(\d{1,2})(?:\/20\d{2})?\b/u);
  const day=String(staffText||"").match(/\bthis\s+(mon|tue|wed|thu|fri|sat|sun)(?:day)?\b/iu);
  if(!date&&!day)return false;
- const customerDate=date&&history.some(t=>t.role==="user"&&
-   new RegExp("\\b0?"+Number(date[1])+"\\/0?"+Number(date[2])+"(?:\\/20\\d{2})?\\b","u").test(String(t.content||"")));
- // A customer proposed the exact time and earlier gave the calendar date.
+ // Read the latest date explicitly mentioned by the customer, not any date
+ // from the previous week. A new requested date supersedes an older one,
+ // even when the latest time happens to match the staff's confirmation.
+ const customerDates=history.filter(t=>t.role==="user").flatMap(t=>{
+  const matches=[...String(t.content||"").matchAll(/\\b(\\d{1,2})\\s*[\\/-]\\s*(\\d{1,2})(?:\\s*[\\/-]\\s*(20\\d{2}))?\\b/gu)];
+  return matches.map(m=>({
+   at:t.at,day:Number(m[1]),month:Number(m[2]),year:m[3]?Number(m[3]):null,
+  }));
+ });
+ const newestDate=customerDates.length?Math.max(...customerDates.map(d=>d.at)):-Infinity;
+ const latestDates=customerDates.filter(d=>d.at===newestDate);
+ const customerDate=date&&latestDates.length>0&&latestDates.every(d=>
+   d.day===local.getUTCDate()&&d.month===local.getUTCMonth()+1&&
+   (d.year===null||d.year===local.getUTCFullYear()));
+ // A customer proposed this specific date and most recently confirmed its
+ // time. Conflicting/newer customer dates must go to manual booking review.
  if(date&&customerDate&&bookingTimeMinutes(latest.content)===target)return true;
  // Or the customer accepted a specific staff proposal, including the
  // identical time and date/weekday, before the staff confirmation.
