@@ -52,7 +52,7 @@ function normalizeStatusRecipient(value) {
   if (typeof value !== "string" || !value.trim() || value.length > 64 ||
       !/^[A-Za-z0-9._+*-]+$/.test(value.trim())) return null;
   const raw=value.trim();
-  const e164=/^\\+([0-9]{8,15})$/.exec(raw);
+  const e164=/^\+([0-9]{8,15})$/.exec(raw);
   if (e164) return { recipient: e164[1], verified: true };
   if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
   return { recipient: raw, verified: false };
