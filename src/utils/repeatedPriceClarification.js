@@ -7,11 +7,13 @@ const STAFF = /^\[Verified STAFF message\]/u;
 const TWO = /\b3\s*d\b.*(?:和|与|及|、|and|&)\s*9\s*d\b|\b9\s*d\b.*(?:和|与|及|、|and|&)\s*3\s*d\b/iu;
 function improveRepeatedPriceClarification({
  customerText,reply,conversationHistory=[],services=[],serviceAliases=[],language="zh",
+ allowFirstContext=false,
 }={}) {
  const original=String(reply||"");
  if(!GENERIC.test(original.trim()))return {reply:original,changed:false};
  const history=Array.isArray(conversationHistory)?conversationHistory.slice(-12):[];
  const hadPriorClarification=history.some(t=>t?.role==="assistant"&&GENERIC.test(String(t.content||"").trim()));
+ if(!hadPriorClarification && !allowFirstContext)return {reply:original,changed:false};
  if(history.some(t=>t?.pricingStaffAuthored===true||
      (t?.role==="assistant"&&STAFF.test(String(t.content||"")))))
    return {reply:original,changed:false};
@@ -31,7 +33,7 @@ function improveRepeatedPriceClarification({
  // a short customer "PM" or "how does it work?". Recognise the topic for
  // a safe STAFF-confirmation message only, never as pricing authorization.
  // Do not inherit a mixed 3D/9D menu, clinical review or a staff echo.
- if(!chosen && history.length>=3 && customerTurns.length>=2) {
+ if(!chosen && allowFirstContext && history.length>=3 && customerTurns.length>=2) {
    const explained=history.filter(t=>t?.role==="assistant"&&!GENERIC.test(String(t.content||"").trim()))
      .slice(-4).map(t=>safeServiceFromCustomer(t.content,services,serviceAliases)?.name)
      .filter(Boolean);
