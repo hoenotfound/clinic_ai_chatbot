@@ -353,6 +353,41 @@ test("verified invalid recipient receipts are durably quarantined without identi
   assert.ok(!JSON.stringify(calls.map(x=>x.sql)).includes("unsafe recipient?"));
 });
 
+test("unattributable receipt deduplicates across different Meta batch groupings",()=>{
+  const invalid=status({
+    id:"wamid.same-event-across-batches",
+    recipient_id:"unsafe recipient?",
+    status:"delivered",
+  });
+  const first=body([invalid]);
+  const regrouped=body([
+    status({id:"wamid.other-event",recipient_id:"60125550000"}),
+    invalid,
+    status({id:"wamid.played-other",status:"played"}),
+  ]);
+  const collect=(packet)=>{
+    const results=[];
+    const parsed=receipt.normalizedSecondarySubsetEvents(
+      signed(packet).rawBody,env,()=>{},()=>{},value=>results.push(value));
+    assert.ok(Array.isArray(parsed));
+    return results;
+  };
+  const once=collect(first);
+  const differentlyGrouped=collect(regrouped);
+  assert.equal(once.length,1);
+  assert.equal(differentlyGrouped.length,1);
+  assert.equal(once[0].fingerprint,differentlyGrouped[0].fingerprint);
+  assert.equal(once[0].wamidHash,differentlyGrouped[0].wamidHash);
+  assert.match(once[0].fingerprint,/^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(once[0]).includes("unsafe recipient?"),false);
+  const changedStatus=collect(body([status({
+    id:"wamid.same-event-across-batches",
+    recipient_id:"unsafe recipient?",
+    status:"read",
+  })]));
+  assert.notEqual(once[0].fingerprint,changedStatus[0].fingerprint);
+});
+
 test("invalid recipient categories are bounded and do not expose identifier bytes",()=>{
   const samples=[
     [undefined,"missing"],[null,"null"],[2,"non_string"],["","blank"],
