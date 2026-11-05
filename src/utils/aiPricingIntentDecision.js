@@ -109,32 +109,6 @@ function verifiedServiceAnchor({
   // this does not authorize an ad-only or model-only treatment.
   if (current.length > 115) return null;
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
-  let currentSkipped = false, customerTurns = 0, bridge = false;
-  for (let i = history.length - 1; i >= 0 && customerTurns < 2; i -= 1) {
-    const entry = history[i];
-    if (entry?.role === "assistant") {
-      if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
-      continue;
-    }
-    if (entry?.role !== "user") continue;
-    const text = String(entry.content || "").trim();
-    if (!currentSkipped && text === current) { currentSkipped = true; continue; }
-    if (!text || RESET.test(text) || REFUSAL.test(text) ||
-        AD_NEGATED_TOPIC.test(text) || AD_BROAD_TOPIC.test(text)) return null;
-    customerTurns += 1;
-    const found = [...new Set(findServicesInText(text, candidates))];
-    const named = safeServiceFromCustomer(text, services, serviceAliases);
-    if (found.length > 1 || (found.length && !named)) return null;
-    if (named) {
-      // Latest independent customer choice wins, including a switch from the
-      // original ad treatment; a conflicting model label is not proof.
-      return { treatment: named.name, source: "recent_customer" };
-    }
-    if (bridge || (!BRIDGE.test(text) && !isBriefLocationHoursQuestion(text)) ||
-        (UNRELATED.test(text) && !isBriefLocationHoursQuestion(text))) return null;
-    bridge = true;
-  }
-
   // The customer may describe their symptoms over two replies before
   // asking "这种调理...想了解价钱看看". Reuse ONLY a recent, explicitly
   // customer-named treatment, never symptoms, ads or the model's guess.
@@ -167,6 +141,32 @@ function verifiedServiceAnchor({
       return { treatment: selected.name, source: "recent_customer" };
     }
   }
+  let currentSkipped = false, customerTurns = 0, bridge = false;
+  for (let i = history.length - 1; i >= 0 && customerTurns < 2; i -= 1) {
+    const entry = history[i];
+    if (entry?.role === "assistant") {
+      if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
+      continue;
+    }
+    if (entry?.role !== "user") continue;
+    const text = String(entry.content || "").trim();
+    if (!currentSkipped && text === current) { currentSkipped = true; continue; }
+    if (!text || RESET.test(text) || REFUSAL.test(text) ||
+        AD_NEGATED_TOPIC.test(text) || AD_BROAD_TOPIC.test(text)) return null;
+    customerTurns += 1;
+    const found = [...new Set(findServicesInText(text, candidates))];
+    const named = safeServiceFromCustomer(text, services, serviceAliases);
+    if (found.length > 1 || (found.length && !named)) return null;
+    if (named) {
+      // Latest independent customer choice wins, including a switch from the
+      // original ad treatment; a conflicting model label is not proof.
+      return { treatment: named.name, source: "recent_customer" };
+    }
+    if (bridge || (!BRIDGE.test(text) && !isBriefLocationHoursQuestion(text)) ||
+        (UNRELATED.test(text) && !isBriefLocationHoursQuestion(text))) return null;
+    bridge = true;
+  }
+
   return null;
 }
 
