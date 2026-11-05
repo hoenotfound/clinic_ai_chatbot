@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { appendRequestedBusinessFacts } =
+const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } =
   require("../src/utils/verifiedPricingBusinessFacts");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 
@@ -173,5 +173,59 @@ test("location intent retains correct business address in three languages",()=>{
       customerText,reply:"3D 小颜术 RM488",...configured,language,
     });
     assert.match(priced,/C-12-6, Dataran 3 Two Business Centre/u,customerText);
+  }
+});
+
+
+test("production contact #8943 package comparison must not inject unsolicited PJ address", () => {
+  const question = "RM388和RM288的配套有什么分别？";
+  const complete = "这两个骨盆调理配套的区别是：\n\n" +
+    "Package A (RM388 | 尊享护理配套｜2小时30分钟):\n" +
+    "• 骨盆调整与体态矫正疗程\n• 经络穴位按摩\n• 子宫草药护理\n• AI 身体检测\n\n" +
+    "Package B (RM288 | 1小时30分钟女性护理配套):\n" +
+    "• 骨盆调整与体态矫正疗程\n• 子宫护理\n• 艾灸桶护理｜排湿・驱寒\n\n" +
+    "两个配套都有骨盆与体态调整，主要区别是护理时长和包含的项目。" +
+    "优惠券使用条件请向门店确认；适合哪一种，可以先让中医师评估后再决定哦 😊";
+  const result = correctUnsupportedBranchReply({
+    customerText: question, reply: complete, ...configured, language: "zh",
+  });
+  assert.equal(result.changed, false,
+    "哪一种 refers to package selection, not 哪一家分行");
+  assert.equal(result.reply, complete);
+  assert.match(result.reply, /RM388[\s\S]*RM288/u);
+  assert.doesNotMatch(result.reply, /C-12-6|我们目前确认的门店在/u);
+  assert.equal(appendRequestedBusinessFacts({
+    customerText: question, reply: result.reply,
+    ...configured, language: "zh",
+  }), complete, "explicit business-location request is still required");
+});
+
+test("branch correction distinguishes package choices from actual location choices", () => {
+  for (const reply of [
+    "优惠券使用条件请向门店确认；适合哪一种，可以先让中医师评估后再决定哦 😊",
+    "这些配套请向门店确认，哪一种更适合你？",
+    "请向门店确认；你想了解哪一类护理？",
+    "套餐 A 和 B 的不同可以向门店确认，再看哪一种合适。",
+  ]) {
+    const fixed = correctUnsupportedBranchReply({
+      customerText: "RM388和RM288的配套有什么分别？",
+      reply, ...configured, language: "zh",
+    });
+    assert.equal(fixed.changed, false, reply);
+    assert.equal(fixed.reply, reply);
+  }
+  for (const reply of [
+    "我们有多个分行，请问你想去哪一家分行？",
+    "你想去哪一个门店？",
+    "请选择哪个分店比较方便。",
+    "请问你靠近哪家分行？",
+  ]) {
+    const fixed = correctUnsupportedBranchReply({
+      customerText: "你们诊所在哪里？",
+      reply, ...configured, language: "zh",
+    });
+    assert.equal(fixed.changed, true, reply);
+    assert.match(fixed.reply, /C-12-6.*Dataran 3 Two/u, reply);
+    assert.doesNotMatch(fixed.reply, /多个分行|哪一家分行|哪一个门店|哪个分店|哪家分行/u, reply);
   }
 });
