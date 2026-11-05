@@ -162,3 +162,36 @@ test("informal Business App date confirmation creates a hold, not a booked lead"
   assert.equal(reviews[0].options.details.appointmentPreference,"See u, Thursday 1pm");
   assert.equal(await service(7245,"Can this sat 3.30pm?",{providerAccepted:true}),null);
 });
+
+
+test("newer customer booking date overrides an older date even if the time matches",async()=>{
+ const staffAt="2026-11-04T04:47:31Z";
+ const proposed="2026-11-29T07:00:00.000Z";
+ const turns=[
+  {role:"user",content:"29/11 afternoon, any slot?",created_at:"2026-11-02T16:11:12Z"},
+  {role:"user",content:"30/11 at 3pm instead",created_at:"2026-11-04T04:46:50Z"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,turns,staffAt),false);
+ assert.equal(isTerseBookingCorroborated("OK 30/11, 3pm","2026-11-30T07:00:00.000Z",turns,staffAt),true);
+ const sameDate=[
+  turns[0],{...turns[1],content:"29/11 at 3pm, please"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,sameDate,staffAt),true);
+ const wrongYear=[
+  {role:"user",content:"29/11/2025, 3pm",created_at:"2026-11-04T04:46:50Z"},
+ ];
+ assert.equal(isTerseBookingCorroborated("OK 29/11, 3pm",proposed,wrongYear,staffAt),false);
+ const reviews=[],updates=[];
+ const service=createStaffBookingConfirmationService({
+  config:{businessType:"tcm_clinic"},now:()=>new Date("2026-11-04T04:47:32Z"),
+  database:{query:async()=>({rows:[{id:808,created_at:staffAt,prior_turns:turns}]})},
+  markPendingBooking:async(contactId,messageId)=>{reviews.push([contactId,messageId]);return{review:true};},
+  pipeline:{
+   getActiveLeadForContact:async()=>{throw Error("No auto-booking for conflicting date");},
+   updateLead:async(...args)=>{updates.push(args);throw Error("No CRM update");},
+  },
+ });
+ assert.deepEqual(await service(1046,"OK 29/11, 3pm",{providerAccepted:true}),{review:true});
+ assert.deepEqual(reviews,[[1046,808]]);
+ assert.deepEqual(updates,[]);
+});
