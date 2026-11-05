@@ -20,6 +20,20 @@ function cancellationReviewAcknowledgement(language="zh"){
 // A pending, message-linked cancellation review, however, is an active
 // request for staff to change the appointment and suspends sales reminders
 // until that review is explicitly resolved.
+// Match the same request, booking, negation and question rules as
+// isDefiniteAppointmentCancellation(). The follow-up gate must not accept a
+// smaller vocabulary than the review creator (notably slot / temujanji).
+// Postgres uses POSIX whitespace classes rather than JavaScript \\s.
+function cancellationRequestSqlExpression(contentSql){
+ const value=`COALESCE(${contentSql},'')`;
+ return `(
+   CHAR_LENGTH(BTRIM(${value})) BETWEEN 1 AND 249
+   AND ${value} ~* '(取消|cancel(ling|lation)?|batalkan|batal)'
+   AND ${value} ~* '(预约|預約|预定|預定|订位|訂位|booking|appointment|reservation|slot|temujanji|janji temu)'
+   AND ${value} !~* '(不要取消|不用取消|别取消|別取消|不取消|not[[:space:]]+cancel|don.?t[[:space:]]+cancel|jangan[[:space:]]+batal)'
+   AND ${value} !~* '(怎样|怎樣|怎么|怎麼|如何|how[[:space:]]+(do[[:space:]]+i|to)|can[[:space:]]+i|could[[:space:]]+i|if[[:space:]]+i|如果|是否|boleh[[:space:]]+tak)'
+ )`;
+}
 function pendingCancellationFollowupAllowedSql(alias="c"){
  if(!/^[a-z][a-z0-9_]*$/iu.test(alias))throw new TypeError("Invalid contact SQL alias");
  return `NOT EXISTS (
@@ -31,11 +45,7 @@ function pendingCancellationFollowupAllowedSql(alias="c"){
   WHERE cancellation_review.contact_id=${alias}.id
     AND cancellation_review.status='pending'
     AND cancellation_review.category='information'
-    AND (
-      COALESCE(cancellation_inbound.content,'') ~* '(取消.{0,45}(预约|預約|预定|預定|订位|訂位)|(预约|預約|预定|預定|订位|訂位).{0,45}取消)'
-      OR COALESCE(cancellation_inbound.content,'') ~* '(cancel.{0,45}(appointment|booking|reservation)|(appointment|booking|reservation).{0,45}cancel)'
-      OR COALESCE(cancellation_inbound.content,'') ~* '(batal.{0,45}(janji temu|temujanji)|(janji temu|temujanji).{0,45}batal)'
-    )
+    AND ${cancellationRequestSqlExpression("cancellation_inbound.content")}
  )`;
 }
 module.exports={isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,pendingCancellationFollowupAllowedSql};
