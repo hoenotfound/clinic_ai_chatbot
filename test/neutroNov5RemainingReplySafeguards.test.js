@@ -22,7 +22,9 @@ test("Nov4 #8928 only configured PJ branch; no unsupported multiple branches",()
  assert.match(a.reply,/Petaling Jaya/);
  assert.doesNotMatch(a.reply,/多个分行/);
  assert.equal(correctUnsupportedBranchReply({customerText:"哪里有分行？",reply:"我们有多个分行",branches:[...one,{name:"KL",address:"Kuala Lumpur"}]}).changed,false);
- assert.equal(correctUnsupportedBranchReply({customerText:"如何护理?",reply:"我们有多个分行",branches:one}).changed,false);
+ // A factual hallucination is corrected even when the customer did not
+ // directly ask for directions. Do not send false branch information.
+ assert.equal(correctUnsupportedBranchReply({customerText:"如何护理?",reply:"我们有多个分行",branches:one}).changed,true);
  const comment=correctUnsupportedBranchReply({customerText:"Hi",reply:"你比较靠近哪一区？我帮你看看最方便的分行",branches:one});
  assert.equal(comment.changed,true);
  assert.match(comment.reply,/Petaling Jaya/);
