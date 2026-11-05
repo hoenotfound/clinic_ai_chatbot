@@ -49,7 +49,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         attention_reason text, updated_at timestamptz default now());
       CREATE TABLE ai_review_items (contact_id integer, status text, category text, inbound_message_id INTEGER);
       CREATE TABLE messages(
-        id integer primary key, contact_id integer,role text, created_at timestamptz default now(),
+        id integer primary key, contact_id integer,role text,content text, created_at timestamptz default now(),
         delivery_status text,delivery_error text,whatsapp_message_id text,
         is_automated_follow_up boolean default false,
         automated_follow_up_step integer default 1,
