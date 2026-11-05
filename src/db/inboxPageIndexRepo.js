@@ -3,6 +3,22 @@
 const { pool } = require("./db");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 
+// One bounded, WAL-verified in-memory index avoids transferring the same
+// thousands of index rows again on consecutive paged Inbox requests.
+// Only full-access reads share the cache. Scoped staff always query fresh.
+// The cache never authorizes a contact or bypasses route permission rechecks.
+const INDEX_CACHE_TTL_MS = 45 * 1000;
+let cachedIndex = null;
+async function currentWal() {
+  try {
+    const result = await pool.query("SELECT pg_current_wal_lsn()::text AS wal_lsn");
+    return result.rows?.[0]?.wal_lsn || null;
+  } catch {
+    return null;
+  }
+}
+function resetIndexCacheForTests() { cachedIndex = null; }
+
 // Only used within the server to select page IDs and accurate, whole-Inbox
 // filter counts. Never return its complete contact set to the browser.
 async function listInboxPageIndex({ accessibleContactIds = null, query = "" } = {}) {
@@ -12,6 +28,18 @@ async function listInboxPageIndex({ accessibleContactIds = null, query = "" } = 
     throw new TypeError("Invalid Inbox access scope");
   }
   if (accessibleContactIds?.length === 0) return [];
+
+  // The caller has already recomputed the staff's access scope. Never cache
+  // scoped rows; use a small read-only revision probe for full-access views.
+  const cacheable = accessibleContactIds === null &&
+    process.env.INBOX_INDEX_WAL_CACHE_ENABLED === "true";
+  const normalizedQuery = String(query).trim().toLowerCase().slice(0, 160);
+  const wal = cacheable ? await currentWal() : null;
+  if (wal && cachedIndex?.wal === wal &&
+      cachedIndex.query === normalizedQuery &&
+      cachedIndex.expiresAt > Date.now()) {
+    return cachedIndex.rows;
+  }
 
   const multi = process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
   const hideEmpty = multi && process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS !== "false";
@@ -32,7 +60,7 @@ async function listInboxPageIndex({ accessibleContactIds = null, query = "" } = 
   const from = hideEmpty
     ? "eligible_inbox_contacts candidate JOIN contacts c ON c.id=candidate.id"
     : "contacts c";
-  const params = [String(query).trim().toLowerCase().slice(0, 160)];
+  const params = [normalizedQuery];
   if (accessibleContactIds !== null) params.push(accessibleContactIds);
 
   const sql = [
@@ -92,7 +120,15 @@ async function listInboxPageIndex({ accessibleContactIds = null, query = "" } = 
     " c.created_at DESC,c.id DESC",
   ].join("\n");
   const result = await pool.query(sql, params);
+  if (wal && (await currentWal()) === wal) {
+    cachedIndex = {
+      wal, query: normalizedQuery, rows: result.rows,
+      expiresAt: Date.now() + INDEX_CACHE_TTL_MS,
+    };
+  } else if (cacheable) {
+    cachedIndex = null;
+  }
   return result.rows;
 }
 
-module.exports = { listInboxPageIndex };
+module.exports = { listInboxPageIndex, resetIndexCacheForTests };
