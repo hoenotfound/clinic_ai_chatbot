@@ -204,6 +204,48 @@ function secondaryAllContactReplyActivation(env = process.env) {
   return Number.isFinite(d.getTime()) && d.getTime() > 0 ? d.toISOString() : null;
 }
 
+
+/**
+ * Only the known Meta 131060 informational review may coexist with a new
+ * ordinary AI reply. Never clear the staff review or bypass clinical/safety
+ * reviews, booking holds, manual ownership or opt-outs. This is used by both
+ * the per-message and Inbox ownership checks, not by marketing/follow-ups.
+ */
+function secondaryReplyAttentionAllowedSql(alias = "c") {
+  if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
+  return `(
+    ${alias}.needs_attention IS NOT TRUE
+    OR (
+      ${alias}.attention_reason LIKE 'Booking ready:%'
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_review_items booking_review
+        WHERE booking_review.contact_id=${alias}.id
+          AND booking_review.status='pending'
+          AND booking_review.category <> 'information'
+      )
+    )
+    OR (
+      ${alias}.attention_reason LIKE 'AI review requested:%'
+      AND EXISTS (
+        SELECT 1 FROM ai_review_items unavailable_review
+        WHERE unavailable_review.contact_id=${alias}.id
+          AND unavailable_review.status='pending'
+          AND unavailable_review.category='information'
+          AND unavailable_review.summary LIKE 'WhatsApp message unavailable (Meta 131060)%'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_review_items other_review
+        WHERE other_review.contact_id=${alias}.id
+          AND other_review.status='pending'
+          AND (
+            other_review.category IS DISTINCT FROM 'information'
+            OR other_review.summary NOT LIKE 'WhatsApp message unavailable (Meta 131060)%'
+          )
+      )
+    )
+  )`;
+}
+
 // Only use this for replies to incoming customer messages. It deliberately
 // does NOT replace the ads-only SQL for follow-ups, marketing, or media jobs.
 async function isSecondaryAiReplyEligible(contactId, {
@@ -242,15 +284,7 @@ async function isSecondaryAiReplyEligible(contactId, {
          WHERE c.id=$1 AND c.channel='whatsapp'
            AND sa.sender_key='neutro_secondary' AND sa.state='active'
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-           AND c.mode='ai' AND (
-           c.needs_attention IS NOT TRUE OR (
-             c.attention_reason LIKE 'Booking ready:%'
-             AND NOT EXISTS (SELECT 1 FROM ai_review_items booking_review
-               WHERE booking_review.contact_id=c.id
-                 AND booking_review.status='pending'
-                 AND booking_review.category <> 'information')
-           )
-         )
+           AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c")}
            AND c.whatsapp_opt_out_at IS NULL
            ${proof}
        ) AS eligible`,
@@ -288,15 +322,7 @@ async function eligibleSecondaryAiReplyContactIds(ids, {
        WHERE c.id=ANY($1::integer[]) AND c.channel='whatsapp'
          AND sa.sender_key='neutro_secondary' AND sa.state='active'
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-         AND c.mode='ai' AND (
-           c.needs_attention IS NOT TRUE OR (
-             c.attention_reason LIKE 'Booking ready:%'
-             AND NOT EXISTS (SELECT 1 FROM ai_review_items booking_review
-               WHERE booking_review.contact_id=c.id
-                 AND booking_review.status='pending'
-                 AND booking_review.category <> 'information')
-           )
-         )
+         AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c")}
          AND c.whatsapp_opt_out_at IS NULL`,
       [valid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]
@@ -408,4 +434,4 @@ module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyElig
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
   eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
   secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
-  originalAdsOnlyCutoff };
+  secondaryReplyAttentionAllowedSql, originalAdsOnlyCutoff };
