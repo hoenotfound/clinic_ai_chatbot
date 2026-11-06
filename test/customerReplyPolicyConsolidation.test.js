@@ -6,6 +6,9 @@ const config = require("../src/config/clinicConfig");
 const { buildSystemPrompt } = require("../src/utils/systemPrompt");
 const { getIndustryProfile } = require("../src/config/industryProfiles");
 const gemini = require("../src/services/geminiService");
+const path = require("node:path");
+const Module = require("node:module");
+const { execFileSync } = require("node:child_process");
 
 function withTcmConfig(overrides, callback) {
   const saved = JSON.parse(JSON.stringify(config));
@@ -132,6 +135,28 @@ test("TCM safety text is retained even with assessment-first pricing disabled", 
   });
 });
 
+
+function readPreConsolidationPromptBuilder() {
+  // Comparison-only. Full-history GitHub CI checkout has this original PR base,
+  // but local shallow clones may not. Never call Gemini or modify configuration.
+  const root = path.resolve(__dirname, "..");
+  const filename = path.join(root, "src/utils/systemPrompt.js");
+  try {
+    const source = execFileSync(
+      "git",
+      ["show", "1d9c506ab2e0820b26c5350aaa699d122f330b7a:src/utils/systemPrompt.js"],
+      {cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000}
+    );
+    const previous = new Module(filename, module);
+    previous.filename = filename;
+    previous.paths = Module._nodeModulePaths(path.dirname(filename));
+    previous._compile(source, filename);
+    return previous.exports.buildSystemPrompt;
+  } catch {
+    return null;
+  }
+}
+
 test("rendered Gemini request prompt size is recorded for reproducible scenarios without API calls", (t) => {
   withTcmConfig({
     services: [
@@ -150,25 +175,33 @@ test("rendered Gemini request prompt size is recorded for reproducible scenarios
       {name: "pelvic_price_en", message: "How much is pelvic adjustment?", services: ["骨盆调理"]},
       {name: "clinical_question_ms", message: "Rawatan ini sesuai untuk saya selepas pembedahan?", services: ["骨盆调理"]},
     ];
+    const priorBuilder = readPreConsolidationPromptBuilder();
     const counts = scenarios.map(({name, message, services}) => {
+      const options = {
+        surface: "conversation",
+        channel: "whatsapp",
+        conversationContext: {
+          currentCustomerText: message,
+          relevantServiceNames: services,
+          serviceSource: "current_customer",
+          promotionIntent: /price|how much/i.test(message),
+        },
+      };
       const result = gemini.buildGeminiRequest(
         [{role: "user", content: message}],
-        {
-          surface: "conversation",
-          channel: "whatsapp",
-          conversationContext: {
-            currentCustomerText: message,
-            relevantServiceNames: services,
-            serviceSource: "current_customer",
-            promotionIntent: /price|how much/i.test(message),
-          },
-        },
+        options,
         "gemini-3.8-flash"
       );
       const prompt = result.request.config.systemInstruction;
       assert.ok(typeof prompt === "string" && prompt.length > 2000);
-      return {name, systemInstructionCharacters: prompt.length};
+      const baselineCharacters = priorBuilder ? priorBuilder(options).length : null;
+      return {
+        name, systemInstructionCharacters: prompt.length, baselineCharacters,
+        savedCharacters: baselineCharacters == null ? null : baselineCharacters - prompt.length,
+        savedPercent: baselineCharacters == null ? null :
+          Number(((baselineCharacters - prompt.length) * 100 / baselineCharacters).toFixed(2)),
+      };
     });
-    t.diagnostic("Non-billable prompt character measurements (fixture, not Gemini tokens): " + JSON.stringify(counts));
+    t.diagnostic("Non-billable rendered prompt comparison (same fixture, characters NOT provider tokens): " + JSON.stringify(counts));
   });
 });
