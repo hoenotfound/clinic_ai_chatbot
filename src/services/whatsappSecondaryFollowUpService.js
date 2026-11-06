@@ -21,7 +21,7 @@ const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
-  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
@@ -217,7 +217,7 @@ const CANDIDATES_SQL=`
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('$4::timestamptz')}
-   AND c.mode='ai' AND c.needs_attention=FALSE
+   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -333,7 +333,7 @@ const RECHECK_SQL=`
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('NOW()')}
-   AND c.mode='ai' AND c.needs_attention=FALSE
+   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
