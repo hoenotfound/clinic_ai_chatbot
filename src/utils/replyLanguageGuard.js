@@ -43,8 +43,7 @@ function isUsableCorrection(original, candidate, language) {
 // mismatch. Never revise outcome/intent/booking metadata from the initial
 // validated draft: use just the corrected customer-facing text. On failure,
 // send no wrong-language draft and raise an existing staff information review.
-async function getLanguageAlignedReply(history, options, { getReply, parseReply, onCorrectionError } = {}) {
-  const original = parseReply(await getReply(history, options));
+async function correctReplyLanguage(original, history, options, { getReply, parseReply, onCorrectionError } = {}) {
   const language = options?.replyLanguage;
   if (original.flagged || !clearReplyLanguageMismatch(original.text, language)) {
     return original;
@@ -79,6 +78,6 @@ async function getLanguageAlignedReply(history, options, { getReply, parseReply,
 
 module.exports = {
   clearReplyLanguageMismatch,
-  getLanguageAlignedReply,
+  correctReplyLanguage,
   sameBookingFacts,
 };
