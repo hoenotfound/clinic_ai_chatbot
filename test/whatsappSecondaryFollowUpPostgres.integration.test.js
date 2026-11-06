@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const {CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL}=require("../src/services/whatsappSecondaryFollowUpService");
+const {RECORD_SQL}=require("../src/db/whatsappSecondaryFollowUpTreatmentRepo");
 
 const connectionString=process.env.TEST_DATABASE_URL;
 test("PostgreSQL compiles both sender-specific followup queries against migrated production schema",{
@@ -23,7 +24,7 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
        return{query:(...args)=>c.query(...args),release:()=>c.end()};
      },
    };
-   assert.equal(loadMigrations().at(-1).version,117);
+   assert.equal(loadMigrations().at(-1).version,118);
    await runMigrations(database,{quiet:true});
    assert.equal((await db.query(
      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_followup_rules"
@@ -37,6 +38,14 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
    await db.query(
      "PREPARE sender_followup_due(text,text,text,timestamptz,timestamptz,text,timestamptz,timestamptz) AS "+POTENTIAL_DUE_SQL
    );
+   // Compile sender-bound verification and upsert without creating a message.
+   await db.query(
+     "PREPARE secondary_treatment_record(integer,integer,text,text,text) AS "+RECORD_SQL
+   );
+   assert.equal((await db.query(
+     "EXECUTE secondary_treatment_record(1,1,'neutro_secondary','selected','骨盆调理')"
+   )).rowCount,0);
+   await db.query("DEALLOCATE secondary_treatment_record");
    const due=await db.query(
      "EXECUTE sender_followup_due('ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW(),NULL)"
    );
