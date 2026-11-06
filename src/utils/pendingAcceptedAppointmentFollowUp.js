@@ -16,7 +16,7 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
       LIMIT 1
     )
       AND (COALESCE(booking_lead.appointment_status,'none') = 'reschedule'
-        OR (booking_acceptance.metadata->>'outcome' IN ('staff_time_accepted','booking_ready','staff_visit_acknowledged','booking_intent_pending')
+        OR (booking_acceptance.metadata->>'outcome' IN ('staff_time_accepted','booking_ready','staff_visit_acknowledged','booking_intent_pending','staff_appointment_reminder')
           AND COALESCE(booking_lead.appointment_status,'none') <> 'cancelled'
           AND NOT EXISTS (SELECT 1 FROM lead_activities booking_resolution
             WHERE booking_resolution.lead_id=booking_lead.id
