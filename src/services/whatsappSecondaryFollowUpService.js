@@ -15,7 +15,8 @@ const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./wh
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
-const {classifyVerifiedTreatmentTurn,isStoppedDecision}=
+const {classifyVerifiedTreatmentTurn,isStoppedDecision,
+  chooseSecondaryFollowUpTreatment}=
   require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
@@ -447,30 +448,29 @@ async function runOnce({
     // Reject the entire reminder after an explicit withdrawal or deferral.
     if(isStoppedDecision(latestDecision?.status) ||
        isStoppedDecision(candidate.verified_treatment_status))continue;
-    const generalOnly=adFollowUpPolicy?.ambiguous===true ||
-      latestDecision?.status==="ambiguous" ||
-      (candidate.verified_treatment_status==="ambiguous" &&
-       latestDecision?.status!=="selected");
-    const confirmedTreatment=adFollowUpPolicy
-      ? adFollowUpPolicy.treatment
-      : generalOnly ? null : resolveFollowUpTreatment({
-          clinicConfig,customerTexts:candidate.customer_texts,
-          treatmentInterest:candidate.verified_treatment_status==="selected"
-            ? candidate.verified_treatment_name : candidate.treatment_interest,
-        });
-    candidate={...candidate,adFollowUpPolicy};
+    const choice=chooseSecondaryFollowUpTreatment({
+      candidate,clinicConfig,adFollowUpPolicy,latestDecision,
+    });
+    const {generalOnly}=choice;
+    const confirmedTreatment=choice.treatment;
+    // The 20h AI invitation must not reuse a stale CRM/ad treatment either.
+    const effectivePolicy=confirmedTreatment
+      ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
+      : adFollowUpPolicy;
+    candidate={...candidate,adFollowUpPolicy:effectivePolicy};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
     const replyLanguage=customerLanguage ||
       detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
     const localized=neutralMixedAdFollowUp({
-      policy:adFollowUpPolicy,language:replyLanguage,slot,
+      policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
     }) || localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
       languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
       treatmentInterest:confirmedTreatment,
+      selectedTreatment:confirmedTreatment,
       clinicConfig,
       forceGeneral:generalOnly,
     });
@@ -478,7 +478,7 @@ async function runOnce({
     if(!localized)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && !adFollowUpPolicy?.ambiguous &&
+    if(candidate.media_key && !generalOnly &&
        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
@@ -563,7 +563,7 @@ async function runOnce({
       let outboundText=localized;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !adFollowUpPolicy?.ambiguous &&
+      if(slot===20 && !generalOnly &&
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
