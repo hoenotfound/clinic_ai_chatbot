@@ -106,6 +106,32 @@ test("accepted Ariel graphics use own transport once and retain verified receipt
   assert.ok(args.calls.some(x=>x.sql?.includes("state='accepted'")));
   assert.equal(args.calls.some(x=>x.sql?.includes("whatsapp_result_media_queue")),false);
 });
+test("131060-only pending informational review permits approved secondary media; clinical review still blocks",async()=>{
+  const allowed=mocks();
+  const originalGet=allowed.contacts.getContactById;
+  allowed.contacts.getContactById=async()=>({
+    ...await originalGet(),needs_attention:true,
+    attention_reason:"AI review requested: WhatsApp message unavailable (Meta 131060)",
+  });
+  const sent=await worker.runOnce({...allowed,env:approved});
+  assert.equal(sent.accepted,1,
+    "the earlier informational flag is not a reason to suppress an independently eligible image");
+  assert.equal(allowed.calls.filter(x=>x.send).length,1);
+
+  const blocked=mocks();
+  const originalBlockedGet=blocked.contacts.getContactById;
+  blocked.contacts.getContactById=async()=>({
+    ...await originalBlockedGet(),needs_attention:true,
+    attention_reason:"AI review requested: clinical question",
+  });
+  blocked.contacts.canSendAutomaticReviewMedia=async()=>false;
+  const skipped=await worker.runOnce({...blocked,env:approved});
+  assert.equal(skipped.accepted,0);
+  assert.equal(blocked.calls.filter(x=>x.send).length,0);
+  assert.equal(blocked.calls.filter(x=>x.appended).length,0,
+    "a clinical safety review cannot create an outbound row");
+});
+
 test("private before/after image loads trusted DB bytes and uploads through secondary transport",async()=>{
  const url="/api/config/result-media/image/78";
  const args=mocks({jobImageUrl:url});
