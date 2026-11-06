@@ -119,9 +119,15 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const bookingReviewOpen = useMemo(() => {
     if (!activities || ui.conversionStageKeys?.set !== "appointment_set" ||
         !["none", null].includes(lead.appointment_status)) return false;
-    const outcomes = new Set(["staff_time_accepted","booking_ready","staff_visit_acknowledged","booking_intent_pending","staff_appointment_reminder","booking_hold_resolved"]);
-    const latest = activities.find((activity) => outcomes.has(activity.metadata?.outcome));
-    return !!latest && latest.metadata?.outcome !== "booking_hold_resolved";
+    const signals = new Set(["staff_time_accepted","booking_ready","staff_visit_acknowledged","booking_intent_pending","staff_appointment_reminder"]);
+    return activities.some((signal) => signals.has(signal.metadata?.outcome) &&
+      !activities.some((later) => {
+        if (Number(later.id) <= Number(signal.id)) return false;
+        if (later.metadata?.outcome === "booking_hold_resolved") return true;
+        return signal.metadata?.outcome === "staff_appointment_reminder" &&
+          later.metadata?.outcome === "staff_reminder_invalidated" &&
+          String(later.metadata?.staffMessageId) === String(signal.metadata?.staffMessageId);
+      }));
   }, [activities,lead.appointment_status,ui.conversionStageKeys?.set]);
 
 
