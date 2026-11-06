@@ -152,6 +152,13 @@ const CANDIDATES_SQL=`
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
    AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
+   AND NOT EXISTS(
+     SELECT 1 FROM whatsapp_sender_followup_treatment_state decision_hold
+     WHERE decision_hold.sender_id=sa.id AND decision_hold.contact_id=c.id
+       AND decision_hold.source_message_id<=inbound.id
+       AND decision_hold.status IN('declined','deferred')
+   )
+   AND COALESCE(inbound.last_customer_text,'') !~* '(算了.{0,20}(不要|不用)|(暂时|暫時)?(不要了|不用了|不需要了|不做了|不考虑了|不考慮了)|没兴趣|沒興趣|not interested|no longer interested|tak berminat)'
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${MARKETING_CUSTOMER_INTENT_SQL}
