@@ -221,7 +221,7 @@ test(
       assert.deepEqual(state.rows[0], {
         mode: "human",
         takeover_by: "WhatsApp Business App",
-        message_count: 5,
+        message_count: 6,
       });
 
       // A confirmed Business App reply does not implicitly resolve an
