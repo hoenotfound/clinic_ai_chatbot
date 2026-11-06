@@ -6,6 +6,21 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
  for(const alias of [contact,inbound]){
   if(!/^[a-z][a-z0-9_]*$/iu.test(alias))throw new TypeError("Invalid SQL alias");
  }
+ // The durable, verified staff reminder signal also covers natural messages
+ // that do not contain the literal words "appointment" or "booking".
+ const persistedReminder = `EXISTS (
+   SELECT 1 FROM lead_activities reminder
+   JOIN leads reminder_lead ON reminder_lead.id=reminder.lead_id
+   WHERE reminder_lead.contact_id=staff.contact_id
+     AND reminder.metadata->>'outcome'='staff_appointment_reminder'
+     AND reminder.metadata->>'staffMessageId'=staff.id::text
+     AND NOT EXISTS (
+       SELECT 1 FROM lead_activities resolved
+       WHERE resolved.lead_id=reminder.lead_id
+         AND resolved.metadata->>'outcome'='booking_hold_resolved'
+         AND resolved.id>reminder.id
+     )
+ )`;
  return `EXISTS (
   SELECT 1 FROM messages staff
   WHERE staff.contact_id=${contact}.id
@@ -22,13 +37,24 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
     AND (
       COALESCE(staff.content,'') ~ '[?？]'
       OR COALESCE(staff.content,'') ~* '(confirm|comfirm|confirmed|booked|booking|appointment|预约|預約|确认|確認|已安排|slot|时段|時段|can[[:space:]]+[0-9]{1,2}([:.][0-9]{2})?[[:space:]]*(am|pm))'
+      OR ${persistedReminder}
     )
-    AND EXISTS (
-      SELECT 1 FROM messages previous_customer
-      WHERE previous_customer.contact_id=staff.contact_id
-        AND previous_customer.role='user'
-        AND (previous_customer.created_at,previous_customer.id)<(staff.created_at,staff.id)
-        AND previous_customer.created_at>=staff.created_at-INTERVAL '30 minutes'
+    AND (
+      EXISTS (
+        SELECT 1 FROM messages previous_customer
+        WHERE previous_customer.contact_id=staff.contact_id
+          AND previous_customer.role='user'
+          AND (previous_customer.created_at,previous_customer.id)<(staff.created_at,staff.id)
+          AND previous_customer.created_at>=staff.created_at-INTERVAL '30 minutes'
+      )
+      OR (
+        -- A proactive Business App booking reminder has no recent customer
+        -- message. Treat it as staff-owned appointment coordination rather
+        -- than restarting sales nudges after a simple 'ok' acknowledgement.
+        staff.sent_by_username='WhatsApp Business App'
+        AND COALESCE(staff.content,'') ~* '(remind(er)?[[:space:]]+(you[[:space:]]+of[[:space:]]+)?(your[[:space:]]+)?appointment|appointment[[:space:]]+(reminder|confirm(ed|ation)?|t(mr|omorrow))|see[[:space:]]+you[[:space:]]+(tomorrow|tmr)|预约提醒|預約提醒|已预约|已預約|temujanji[[:space:]]+(esok|disahkan)|janji[[:space:]]+temu[[:space:]]+(esok|disahkan))'
+        OR ${persistedReminder}
+      )
     )
     AND NOT EXISTS (
       SELECT 1 FROM messages ai
