@@ -175,3 +175,15 @@ test("declined or mixed recent treatment enquiry must not inherit older video",(
    customerTexts:[newest,"我对骨盆调理有兴趣"],treatmentInterest:"骨盆调理"}),null,newest);
  }
 });
+
+test("explicitly declined 3D + 9D combo is not treated as consent for combo video",()=>{
+ const config={...liveClinic,
+  services:[...liveClinic.services,{name:"3D + 9D 组合"},{name:"3D 小颜术"}],
+  serviceAliases:[...liveClinic.serviceAliases,
+   {alias:"3D + 9D",officialService:"3D + 9D 组合"},
+   {alias:"3D",officialService:"3D 小颜术"}],
+ };
+ assert.equal(resolveFollowUpTreatment({clinicConfig:config,
+  customerTexts:["I don't want the 3D + 9D combo anymore","我想了解骨盆调理"],
+  treatmentInterest:"3D + 9D 组合"}),null);
+});
