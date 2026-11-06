@@ -251,11 +251,12 @@ async function sendSecondaryStaffText({
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
   }, { database, env });
-  // Consecutive staff photos can race the signed receipt for the previous
-  // photo. The NEXT message has not reached Meta or reserved billing yet.
-  // Give that previous accepted send a short chance to reconcile, while
+  // Consecutive staff or forward-only photos can race the signed receipt
+  // for the previous photo. The NEXT message has not reached Meta or reserved
+  // billing yet. Give the previous accepted send a short chance to reconcile,
   // never retrying a provider request or releasing an unknown billing hold.
-  if (origin === "staff" && typeof dispatchTransport === "function" &&
+  if ((origin === "staff" || origin === "staff_forward") &&
+      typeof dispatchTransport === "function" &&
       !reserved.reserved &&
       reserved.code === "secondary_billing_previous_send_unresolved") {
     for (let i = 0; i < 4; i++) {

@@ -201,3 +201,137 @@ test("legacy URL-only image forward persists inferred MIME and saved target id",
   assert.equal(providerMessage.media_mime_type, "image/jpeg");
   assert.equal(providerMessage.media_url, "https://legacy.example/photo.jpg");
 });
+
+
+// Exercise the real URL-only forwarding path used by Settings-managed
+// Before/After images; the media bytes never enter a public preview URL.
+function privateClinicForwardHarness({ loadImage = async () => ({
+  buffer: Buffer.from("verified-private-jpeg"),
+  mimeType: "image/jpeg",
+  filename: "clinic-promo.jpg",
+}) } = {}) {
+  const storedStart = source.indexOf("async function sendStoredMessage(");
+  const storedEnd = source.indexOf("// Aggregate diagnostics only:", storedStart);
+  const forwardStart = source.indexOf("async function forwardOtherStoredMessage(");
+  const forwardEnd = source.indexOf('\nrouter.post("/:contactId/messages/:messageId/forward"', forwardStart);
+  assert.ok(storedStart >= 0 && storedEnd > storedStart && forwardStart >= 0 && forwardEnd > forwardStart);
+  const calls = { loaded: [], buffered: [], urls: [], attention: [], warnings: [], saved: [] };
+  let nextId = 300;
+  const sandbox = {
+    Buffer, Date,
+    console: { warn: message => calls.warnings.push(message), info() {}, error() {} },
+    clinicImage: {
+      storedClinicImageRef: require("../src/services/whatsappSecondaryClinicImage").storedClinicImageRef,
+      loadOwnedClinicImage: async url => { calls.loaded.push(url); return loadImage(url); },
+    },
+    hasPartialCaptionMarker: () => false,
+    whatsappPolicy: { manualStaffPurpose: () => "staff", checkFreeformAllowed: async () => ({ allowed: true }) },
+    telegramImmediateAlertRepo: { withContactAlertLock: async (_id, fn) => fn() },
+    prepareStaffSend: async contact => contact,
+    finalizeStaffSendState: async () => null,
+    conversationStore: { appendMessageForContact: async (...args) => {
+      assert.equal(args[7].isForwarded, true);
+      const saved = { id: nextId++, contact_id: args[0], content: args[2], is_forwarded: true };
+      calls.saved.push({ saved, mediaUrl: args[5], mimeType: args[6]?.mimeType });
+      return saved;
+    } },
+    mediaStorage: {},
+    socialProviderSendOptions: (message, _contact, options) => ({
+      ...options, staffMedia: true, currentMessageId: message.id,
+    }),
+    channelMessaging: {
+      sendImageBuffer: async (contact, bytes, mime, caption, filename, options) => {
+        calls.buffered.push({ contact, bytes, mime, caption, filename, options });
+        return { success: true, wamid: "wamid.private-forward" };
+      },
+      sendImageByUrl: async (contact, url) => {
+        calls.urls.push({ contact, url });
+        return { success: true, wamid: "wamid.legacy-url" };
+      },
+    },
+    sendSecondaryStaffText: async () => { throw new Error("private image must not become text"); },
+    deliveryErrorForSend: (result, error) => result.success ? null : error,
+    rejectedErrorFor: () => "provider rejected",
+    persistSendOutcome: async (message, result, error) => ({
+      ...message,
+      delivery_status: result.success ? "sent" : "failed",
+      delivery_error: error,
+    }),
+    reconcileAcceptedStaffReplyAttention: async () => {},
+    markLeadContacted: async () => {},
+    contactsRepo: { setDeliveryAttention: async (...args) => calls.attention.push(args) },
+    publicDeliveryError: error => error,
+    verboseInboxMediaLogs: () => false,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(source.slice(storedStart, storedEnd) + source.slice(forwardStart, forwardEnd), sandbox);
+  return {
+    calls,
+    async send(url, target = {
+      id: 8946, channel: "whatsapp", whatsapp_sender_id: 2,
+      whatsapp_sender_key: "neutro_secondary",
+    }) {
+      return sandbox.forwardOtherStoredMessage({
+        id: 20, media_key: null, media_url: url, media_mime_type: "image/jpeg",
+        content: "📷 Example result image",
+      }, target, "admin");
+    },
+  };
+}
+
+test("forwarding private Before/After images #11 and #12 to the secondary number uploads trusted bytes", async () => {
+  const h = privateClinicForwardHarness();
+  for (const id of [11, 12]) {
+    const url = '/api/config/result-media/image/' + id;
+    const result = await h.send(url);
+    assert.equal(result.delivered, true);
+    assert.equal(result.message.is_forwarded, true);
+  }
+  assert.deepEqual(h.calls.loaded, [
+    "/api/config/result-media/image/11",
+    "/api/config/result-media/image/12",
+  ]);
+  assert.equal(h.calls.urls.length, 0, "Never submit a private preview path to Meta");
+  assert.equal(h.calls.buffered.length, 2);
+  for (let i = 0; i < 2; i++) {
+    const send = h.calls.buffered[i];
+    assert.ok(Buffer.isBuffer(send.bytes));
+    assert.equal(send.mime, "image/jpeg");
+    assert.equal(send.filename, "clinic-promo.jpg");
+    assert.equal(send.contact.whatsapp_sender_key, "neutro_secondary");
+    assert.equal(send.options.staffMedia, true);
+    assert.equal(send.options.staffForward, true);
+    assert.equal(send.options.currentMessageId, 300 + i);
+    assert.equal(h.calls.saved[i].mimeType, "image/jpeg");
+  }
+});
+
+test("secondary forward-only handling also supports configured promo images but never expands to other senders", async () => {
+  const h = privateClinicForwardHarness();
+  assert.equal((await h.send("/promo-images/30")).delivered, true);
+  assert.deepEqual(h.calls.loaded, ["/promo-images/30"]);
+  await h.send("/api/config/result-media/image/11", {
+    id: 11, channel: "whatsapp", whatsapp_sender_id: 1,
+    whatsapp_sender_key: "neutro",
+  });
+  assert.equal(h.calls.loaded.length, 1);
+  assert.equal(h.calls.urls.length, 1, "Primary sender keeps its existing URL handling");
+});
+
+test("missing or unreadable private clinic images fail closed without a provider send", async () => {
+  for (const loadImage of [
+    async () => null,
+    async () => { throw new Error("private storage failure detail"); },
+  ]) {
+    const h = privateClinicForwardHarness({ loadImage });
+    const result = await h.send("/api/config/result-media/image/11");
+    assert.equal(result.delivered, false);
+    assert.equal(result.deliveryUnknown, false);
+    assert.equal(result.message.delivery_status, "failed");
+    assert.match(result.error, /No message was sent/);
+    assert.doesNotMatch(result.error, /private storage failure detail/);
+    assert.equal(h.calls.buffered.length, 0);
+    assert.equal(h.calls.urls.length, 0);
+    assert.equal(h.calls.attention.length, 1);
+  }
+});
