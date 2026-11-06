@@ -112,4 +112,6 @@ test("SQL refuses stopped contacts at discovery and final provider check",()=>{
 test("rejecting a price quote is not necessarily rejecting a treatment",()=>{
  assert.equal(classifyVerifiedTreatmentTurn({
   text:"我不想要报价",clinicConfig:config}),null);
+ assert.equal(classifyVerifiedTreatmentTurn({
+  text:"I don't want pricing information, but tell me about pelvic care",clinicConfig:config})?.status,"selected");
 });
