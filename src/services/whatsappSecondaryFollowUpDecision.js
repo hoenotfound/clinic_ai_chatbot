@@ -58,6 +58,10 @@ function chooseSecondaryFollowUpTreatment({
  candidate={},clinicConfig,adFollowUpPolicy=null,latestDecision=null,
 }={}){
  const services=(clinicConfig?.services||[]).map(x=>x?.name).filter(Boolean);
+ // New uncertainty overrides a prior selection even before its async state
+ // write finishes. Never send media for an unresolved either/or question.
+ if(latestDecision?.status==="ambiguous")
+   return{treatment:null,generalOnly:true,customerSelected:false};
  const selectedLatest=latestDecision?.status==="selected" ? latestDecision.treatment : null;
  const selectedStored=candidate.verified_treatment_status==="selected"
    ? candidate.verified_treatment_name : null;
