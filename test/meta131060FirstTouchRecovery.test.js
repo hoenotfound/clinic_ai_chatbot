@@ -39,7 +39,7 @@ test("a recovered ad must have trusted live SQL proof and writes atomically once
     "la.source='whatsapp_unattributed'","l.source='whatsapp_unattributed'",
     "initial.id=l.started_message_id","initial.id=la.first_message_id",
     "verified.id=$2","verified.source_created_at>=initial.source_created_at",
-    "INTERVAL '10 minutes'","initial_job.incoming_payload->>'unsupportedType'='unsupported'",
+    "INTERVAL '2 minutes'","initial_job.incoming_payload->>'unsupportedType'='unsupported'",
     `'[{"code":131060}]'::jsonb`,
     "verified_job.incoming_payload->'attribution'->>'adId'=$3",
     "verified_job.incoming_payload->'attribution'->>'sourceType'='ad'",
