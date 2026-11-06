@@ -45,14 +45,14 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
                   AND NULLIF(to_jsonb(fresh_interest)->>'media_mime_type','') IS NULL
                   -- The first 72 hours are kept for the original appointment.
                   -- Only a later, EXPLICIT new treatment enquiry reopens sales.
-                  AND fresh_interest.created_at >=
-                      reminder_source.created_at + INTERVAL '72 hours'
-                  AND fresh_interest.created_at >= NOW() - INTERVAL '7 days'
-                  AND fresh_interest.content ~*
+                  AND COALESCE((to_jsonb(fresh_interest)->>'created_at')::timestamptz,to_timestamp(0)) >=
+                      COALESCE((to_jsonb(reminder_source)->>'created_at')::timestamptz,NOW()) + INTERVAL '72 hours'
+                  AND COALESCE((to_jsonb(fresh_interest)->>'created_at')::timestamptz,to_timestamp(0)) >= NOW() - INTERVAL '7 days'
+                  AND COALESCE(to_jsonb(fresh_interest)->>'content','') ~*
                     '(3[[:space:]]*d|9[[:space:]]*d|pelvic|pulse[[:space:]]*wave|moxibustion|facial|骨盆|脉冲|脈衝|小颜|小顏|逆龄|逆齡|艾灸)'
-                  AND fresh_interest.content ~*
+                  AND COALESCE(to_jsonb(fresh_interest)->>'content','') ~*
                     '(interested|want[[:space:]]+to[[:space:]]+(know|try|ask)|like[[:space:]]+to[[:space:]]+know|how[[:space:]]+much|price[[:space:]]+for|enquir|new[[:space:]]+treatment|我想了解|想了解|我要做|请问|請問|多少钱|多少錢|nak[[:space:]]+tahu|nak[[:space:]]+tanya|berapa[[:space:]]+harga|saya[[:space:]]+nak)'
-                  AND fresh_interest.content !~*
+                  AND COALESCE(to_jsonb(fresh_interest)->>'content','') !~*
                     '(appointment|booking|tomorrow|tmr|prepare|aftercare|reschedul|cancel|预约|預約|准备|準備|改期|取消|复诊|複診)'
               )
             )
