@@ -25,6 +25,9 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const combined=services.filter(name=>/3\s*d/i.test(name)&&/9\s*d/i.test(name));
  const joint=/3\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}9\s*d|9\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}3\s*d/i;
  const comparison=/\b(?:or|vs|versus|compare|difference|either)\b|还是|或者|比较|区别|分别|哪个|哪一个/i;
+ // A negative or discontinued treatment mention cannot authorize a video,
+ // even if an older CRM label still points to that treatment.
+ const declined=/(?:don't|do not|not interested|no longer|rather not|not for me|stop|cancel|不要|不想|不是|没兴趣|沒興趣|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
    const named=services.filter(service=>{
@@ -41,7 +44,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
        /3\s*d/i.test(term)&&/9\s*d/i.test(term)&&msg.includes(term));
      if(explicit||joint.test(msg))return combinedName;
    }
-   if(named.length>1)return null;
+   if(named.length>1 || (named.length && declined.test(msg)))return null;
    if(named.length===1)return named[0];
  }
  return services.find(service=>normalize(service)===normalize(treatmentInterest))||null;
