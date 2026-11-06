@@ -2528,7 +2528,10 @@ async function processIncomingMessage(
           serviceQuerySource,
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
-          priorCustomerTexts: verifiedPriorCustomerTexts,
+          priorCustomerTexts: verifiedFirstReadableAd &&
+            Array.isArray(verifiedPriorCustomerTexts) &&
+            verifiedPriorCustomerTexts.length === 1
+              ? [] : verifiedPriorCustomerTexts,
           loadPriorResultContext,
           onSkip: (reason) => { auditReason = reason; },
           priceQuery,
