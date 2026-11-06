@@ -14,7 +14,7 @@ test("duplicate provider echo retries failed reminder hold without inventing an 
     "../db/pipelineRepo":{ensureLeadForContact:async()=>{},markContactedForContact:async()=>{}},
     "../utils/realtimeEvents":{publish:()=>{}},
     "./staffBookingConfirmationService":{
-      isProactiveAppointmentReminder:()=>true,
+      isProactiveAppointmentReminder:()=>false, // Error recovery must not depend on keyword classification.
       recordStaffConfirmedBooking:async(contactId,text,options)=>{
         seen.push({contactId,text,options});
         if(++attempts===1)throw Error("temporary database outage");
