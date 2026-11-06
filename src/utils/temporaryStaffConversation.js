@@ -20,6 +20,13 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
          AND resolved.metadata->>'outcome'='booking_hold_resolved'
          AND resolved.id>reminder.id
      )
+     AND NOT EXISTS (
+       SELECT 1 FROM lead_activities invalidated
+       WHERE invalidated.lead_id=reminder.lead_id
+         AND invalidated.metadata->>'outcome'='staff_reminder_invalidated'
+         AND invalidated.metadata->>'staffMessageId'=staff.id::text
+         AND invalidated.id>reminder.id
+     )
  )`;
  return `EXISTS (
   SELECT 1 FROM messages staff
@@ -29,6 +36,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
     AND staff.sent_by_username<>'Follow-up automation'
     AND staff.whatsapp_message_id IS NOT NULL
     AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
+    AND staff.is_forwarded IS DISTINCT FROM TRUE
     AND staff.delivery_status IS DISTINCT FROM 'failed'
     AND (staff.created_at,staff.id)<(${inbound}.created_at,${inbound}.id)
     AND staff.created_at>=${inbound}.created_at-INTERVAL '2 hours'
@@ -47,14 +55,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
           AND (previous_customer.created_at,previous_customer.id)<(staff.created_at,staff.id)
           AND previous_customer.created_at>=staff.created_at-INTERVAL '30 minutes'
       )
-      OR (
-        -- A proactive Business App booking reminder has no recent customer
-        -- message. Treat it as staff-owned appointment coordination rather
-        -- than restarting sales nudges after a simple 'ok' acknowledgement.
-        staff.sent_by_username='WhatsApp Business App'
-        AND COALESCE(staff.content,'') ~* '(remind(er)?[[:space:]]+(you[[:space:]]+of[[:space:]]+)?(your[[:space:]]+)?appointment|appointment[[:space:]]+(reminder|confirm(ed|ation)?|t(mr|omorrow))|see[[:space:]]+you[[:space:]]+(tomorrow|tmr)|预约提醒|預約提醒|已预约|已預約|temujanji[[:space:]]+(esok|disahkan)|janji[[:space:]]+temu[[:space:]]+(esok|disahkan))'
-        OR ${persistedReminder}
-      )
+      OR ${persistedReminder}
     )
     AND NOT EXISTS (
       SELECT 1 FROM messages ai
