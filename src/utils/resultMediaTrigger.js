@@ -108,7 +108,9 @@ function explicitServiceNamedByCustomer(
   // It still needs one unambiguous configured alias and an enabled media set.
   const bareOsteopathyEnquiry =
     /^(?:(?:你好|hi|hello|嗨)[\s～~,，.!！。]*)?(?:整骨|全身整骨|中医徒手整骨)[\s?？.!！。]*$/iu.test(current.trim());
-  if ((!EXPLICIT_TREATMENT_INTEREST.test(current) && !bareOsteopathyEnquiry) ||
+  const barePulseWaveEnquiry =
+    /^(?:(?:你好|hi|hello|嗨)[\s～~,，.!！。]*)?(?:(?:脉冲|脈衝)(?:能量)?波?|(?:rawatan\s+)?pulse(?:[\s-]*energy)?[\s-]*wave)(?:\s*(?:调理|調理|护理|護理|疗程|療程|treatment|care))?[\s?？.!！。]*$/iu.test(current.trim());
+  if ((!EXPLICIT_TREATMENT_INTEREST.test(current) && !bareOsteopathyEnquiry && !barePulseWaveEnquiry) ||
       !hasCustomerServiceEnquiry(current)) return null;
   const matches = qualifiedTreatmentMentions(
     customerNamedServices(resultMedia, current, serviceAliases, services), current
