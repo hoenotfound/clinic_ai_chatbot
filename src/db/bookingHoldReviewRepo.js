@@ -27,7 +27,7 @@ async function resolveBookingReview(leadId, actor, database=pool) {
       `SELECT signal.id FROM lead_activities signal
        WHERE signal.lead_id=$1
          AND signal.metadata->>'outcome' IN
-           ('staff_time_accepted','staff_visit_acknowledged','booking_intent_pending','booking_ready')
+           ('staff_time_accepted','staff_visit_acknowledged','booking_intent_pending','booking_ready','staff_appointment_reminder')
          AND NOT EXISTS (SELECT 1 FROM lead_activities resolved
            WHERE resolved.lead_id=$1
              AND resolved.metadata->>'outcome'='booking_hold_resolved'
