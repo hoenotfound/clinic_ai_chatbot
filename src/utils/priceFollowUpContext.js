@@ -97,7 +97,7 @@ function assistantIntroducesCompetingPaidService(turn, chosenService, candidates
     serviceMentions = serviceMentions.split(/([。！？!?\\n])/u).map(clause => {
       if (!/(?:脉冲|脈衝|pulse[\\s-]*(?:energy[\\s-]*)?wave)/iu.test(clause) ||
           !/(?:主要是|(?:仪器|儀器).{0,24}(?:辅助|輔助)|用于|用於|用来|用來|适用于|適用於|作为|作為|\\bused\\s+(?:for|in)\\b)/iu.test(clause) ||
-          /(?:另外|另一个|另一项|另一種|另一种|还(?:有|提供)|也(?:有|提供)|分开|分開|分别|分別|独立|獨立|\\b(?:another|separate|alternatively|also\\s+offer)\\b)/iu.test(clause) ||
+          /(?:另外|另一个|另一项|另一種|另一种|还(?:有(?!人)|提供)|也(?:有(?!人)|提供)|分开|分開|分别|分別|独立|獨立|\\b(?:another|separate|alternatively|also\\s+offer)\\b)/iu.test(clause) ||
           /\\b(?:RM|MYR)\\s*[1-9]\\d+/iu.test(clause)) return clause;
       return clause.replace(/(?:产后|產後)(?:调理|調理)/gu, " ");
     }).join("");
