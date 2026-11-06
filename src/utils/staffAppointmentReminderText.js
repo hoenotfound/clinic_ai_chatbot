@@ -9,6 +9,9 @@ function isProactiveAppointmentReminder(message) {
     ""
   );
   if(value.length<10||value.length>400||/[?？]/u.test(value))return false;
+  // Business App media echoes can initially have no media MIME until fetched.
+  // Their rendered labels must never be mistaken for staff-authored text.
+  if(/^(?:📷|🎥|🎤|📄|🙂|🗑️|✏️)/u.test(value))return false;
   // Never turn offers, tentative plans, reschedules, cancelled bookings,
   // birthday greetings or marketing copy into a recorded appointment.
   if(/\b(?:if|unless|please[\s]+confirm|can[\s]+you[\s]+confirm|maybe|perhaps|tentative|possibly|if you|subject to|not confirmed|not booked|unconfirmed|pending|cancel(?:led|ed)?|reschedul(?:e|ed|ing)|availab\w*|would you like|may be|might be|provisional|tbc|to book|to schedule|book now|schedule now|slots? open|slots? left|slots? remaining)\b|(?:可能|如果|请确认|請確認|取消|未确认|未確認|待定|改期|不确定|尚未|有空位|还有空位|預約嗎|预约吗)|(?:belum disahkan|batal|mungkin|slot kosong|nak tempah)/iu.test(value))return false;
