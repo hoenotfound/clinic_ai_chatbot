@@ -4,7 +4,7 @@ const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
-const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationService");
+const { recordStaffConfirmedBooking, isProactiveAppointmentReminder } = require("./staffBookingConfirmationService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
@@ -271,17 +271,19 @@ async function finalizeBusinessAppEcho(persisted) {
       err
     );
   }
-  // Only fresh authenticated staff echoes may confirm a full, explicit slot.
-  // Provider echo already proves Meta accepted this outbound message.
-  if (persisted.isNew && !persisted.message.is_forwarded) {
+  // Provider replay repairs a failed reminder hold on the SAME already
+  // authenticated staff message. Duplicate echoes do not repeat AI takeover.
+  if (!persisted.message.is_forwarded) {
     try {
       await recordStaffConfirmedBooking(
-        persisted.contact.id,
-        persisted.message.content,
-        { providerAccepted: true }
+        persisted.contact.id, persisted.message.content,
+        { providerAccepted: true, messageId: persisted.message.id }
       );
     } catch (bookingError) {
       console.error("Failed to sync staff echo booking confirmation:", bookingError);
+      // A 503 triggers an idempotent Meta replay if this durable reminder
+      // record failed. Never silently enable sales nudges after an error.
+      if (isProactiveAppointmentReminder(persisted.message.content)) throw bookingError;
     }
   }
 
