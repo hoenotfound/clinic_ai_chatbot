@@ -17,8 +17,8 @@ const DEFERRED=/(?:^(?:我|让我|讓我|先|暂时|暫時)?(?:再)?(?:考虑|�
 // Only an affirmative clause AFTER the rejection can replace the previous
 // treatment. Never interpret an either/or comparison as a selection.
 function explicitSwitchChoice(value,clinicConfig){
- const separator=/(?:[,，;；。]|但是|不過|不过|可是|而是|(?:\\bbut\\b)|(?:\\binstead\\b))/giu;
- const affirmative=/^(?:我(?:现在|現在|更)?(?:想(?:了解|做|试|試)|要(?:了解|做)?|对|對|考虑|考慮)|(?:现在|現在)?(?:改成|换成|換成)|i(?:'m| am) interested in|i (?:want|prefer)|i(?:'d| would) (?:like|prefer)|saya (?:nak|mahu|berminat)|(?:3\\s*d|9\\s*d).{0,35}\\b(?:looks good|sounds good|is better)\\b)/iu;
+ const separator=/(?:[,，;；。]|但是|不過|不过|可是|而是|(?:\bbut\b)|(?:\binstead\b))/giu;
+ const affirmative=/^(?:我(?:现在|現在|更)?(?:想(?:了解|做|试|試)|要(?:了解|做)?|对|對|考虑|考慮)|(?:现在|現在)?(?:改成|换成|換成)|i(?:'m| am) interested in|i (?:want|prefer)|i(?:'d| would) (?:like|prefer)|saya (?:nak|mahu|berminat)|(?:3\s*d|9\s*d).{0,35}\b(?:looks good|sounds good|is better)\b)/iu;
  for(const match of value.matchAll(separator)){
    const phrase=value.slice(match.index+match[0].length).trim();
    if(!affirmative.test(phrase) || WITHDRAWN.some(re=>re.test(phrase)) ||
