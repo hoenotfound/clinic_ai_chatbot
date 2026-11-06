@@ -4,7 +4,7 @@ const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
-const { recordStaffConfirmedBooking, isProactiveAppointmentReminder } = require("./staffBookingConfirmationService");
+const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
@@ -282,9 +282,10 @@ async function finalizeBusinessAppEcho(persisted) {
       );
     } catch (bookingError) {
       console.error("Failed to sync staff echo booking confirmation:", bookingError);
-      // A 503 triggers an idempotent Meta replay if this durable reminder
-      // record failed. Never silently enable sales nudges after an error.
-      if (isProactiveAppointmentReminder(persisted.message.content)) throw bookingError;
+      // A verified reminder, tentative visit review or fully dated booking
+      // must never be silently lost. The source WAMID has already been stored:
+      // replay retries only the local database action, not the WhatsApp send.
+      throw bookingError;
     }
   }
 
