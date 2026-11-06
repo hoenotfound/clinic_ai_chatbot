@@ -102,11 +102,49 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
       AND ads_first.created_at >= ${cutoffSql}::timestamptz
       AND ads_first.source_created_at IS NOT NULL
       AND ads_first.source_created_at >= ${cutoffSql}::timestamptz
-      AND NOT EXISTS (
-        SELECT 1 FROM messages ads_prior
-        WHERE ads_prior.contact_id=${contactSql}.id
-          AND (ads_prior.created_at, ads_prior.id)
-              < (ads_first.created_at, ads_first.id)
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM messages ads_prior
+          WHERE ads_prior.contact_id=${contactSql}.id
+            AND (ads_prior.created_at, ads_prior.id)
+                < (ads_first.created_at, ads_first.id)
+        )
+        OR EXISTS (
+          -- Meta sometimes delivers an unreadable 131060 placeholder seconds
+          -- before the first actual CTWA ad message. A verified single
+          -- placeholder is not an earlier customer conversation. No imported
+          -- history, other messages, or old direct conversations qualify.
+          SELECT 1 FROM messages unavailable_first
+          JOIN whatsapp_sender_message_context unavailable_ctx
+            ON unavailable_ctx.message_id=unavailable_first.id
+           AND unavailable_ctx.conversation_id=ads_sc.id
+          JOIN inbound_processing_jobs unavailable_job
+            ON unavailable_job.message_id=unavailable_first.id
+           AND unavailable_job.channel='whatsapp'
+          WHERE unavailable_first.contact_id=${contactSql}.id
+            AND unavailable_first.role='user'
+            AND unavailable_first.whatsapp_message_id IS NOT NULL
+            AND unavailable_first.source_created_at IS NOT NULL
+            AND unavailable_first.created_at >= ${cutoffSql}::timestamptz
+            AND unavailable_first.source_created_at >= ${cutoffSql}::timestamptz
+            AND (unavailable_first.created_at, unavailable_first.id)
+                < (ads_first.created_at, ads_first.id)
+            AND ads_first.created_at <= unavailable_first.created_at
+                + INTERVAL '2 minutes'
+            AND ads_first.source_created_at >= unavailable_first.source_created_at
+            AND ads_first.source_created_at <= unavailable_first.source_created_at
+                + INTERVAL '2 minutes'
+            AND unavailable_job.incoming_payload->>'unsupportedType'='unsupported'
+            AND unavailable_job.incoming_payload->'unsupportedErrors'
+                @> '[{"code":131060}]'::jsonb
+            AND NOT EXISTS (
+              SELECT 1 FROM messages other_prior
+              WHERE other_prior.contact_id=${contactSql}.id
+                AND (other_prior.created_at, other_prior.id)
+                    < (ads_first.created_at, ads_first.id)
+                AND other_prior.id<>unavailable_first.id
+            )
+        )
       )
       AND NOT EXISTS (
         SELECT 1
@@ -211,6 +249,38 @@ function secondaryAllContactReplyActivation(env = process.env) {
  * reviews, booking holds, manual ownership or opt-outs. This is used by both
  * the per-message and Inbox ownership checks, not by marketing/follow-ups.
  */
+function verified131060InformationReviewSql(alias = "c") {
+  if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
+  return `(
+    ${alias}.mode='ai'
+    AND ${alias}.needs_attention IS TRUE
+    AND ${alias}.attention_reason LIKE 'AI review requested:%'
+    AND EXISTS (
+      SELECT 1 FROM ai_review_items unavailable_review
+      WHERE unavailable_review.contact_id=${alias}.id
+        AND unavailable_review.status='pending'
+        AND unavailable_review.category='information'
+        AND unavailable_review.summary LIKE 'WhatsApp message unavailable (Meta 131060)%'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_review_items other_review
+      WHERE other_review.contact_id=${alias}.id
+        AND other_review.status='pending'
+        AND (
+          other_review.category IS DISTINCT FROM 'information'
+          OR other_review.summary NOT LIKE 'WhatsApp message unavailable (Meta 131060)%'
+        )
+    )
+  )`;
+}
+
+// Unlike the text reply rule below, secondary media and follow-ups must NEVER
+// gain the Booking ready exception. This narrow path preserves all downstream
+// appointment, opt-in, window, staff and billing checks.
+function secondaryAutomationAttentionAllowedSql(alias = "c") {
+  return `(${alias}.needs_attention IS NOT TRUE
+    OR ${verified131060InformationReviewSql(alias)})`;
+}
 function secondaryReplyAttentionAllowedSql(alias = "c") {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
@@ -224,25 +294,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c") {
           AND booking_review.category <> 'information'
       )
     )
-    OR (
-      ${alias}.attention_reason LIKE 'AI review requested:%'
-      AND EXISTS (
-        SELECT 1 FROM ai_review_items unavailable_review
-        WHERE unavailable_review.contact_id=${alias}.id
-          AND unavailable_review.status='pending'
-          AND unavailable_review.category='information'
-          AND unavailable_review.summary LIKE 'WhatsApp message unavailable (Meta 131060)%'
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM ai_review_items other_review
-        WHERE other_review.contact_id=${alias}.id
-          AND other_review.status='pending'
-          AND (
-            other_review.category IS DISTINCT FROM 'information'
-            OR other_review.summary NOT LIKE 'WhatsApp message unavailable (Meta 131060)%'
-          )
-      )
-    )
+    OR ${verified131060InformationReviewSql(alias)}
   )`;
 }
 
@@ -417,7 +469,7 @@ async function isSecondaryAutomationEligible(contactId, {
       `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5")} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
-        WHERE c.id=$1 AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
           AND c.whatsapp_opt_out_at IS NULL`,
       [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
         originalAdsOnlyCutoff(env)]
@@ -434,4 +486,5 @@ module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyElig
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
   eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
   secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
-  secondaryReplyAttentionAllowedSql, originalAdsOnlyCutoff };
+  secondaryReplyAttentionAllowedSql, secondaryAutomationAttentionAllowedSql,
+  verified131060InformationReviewSql, originalAdsOnlyCutoff };
