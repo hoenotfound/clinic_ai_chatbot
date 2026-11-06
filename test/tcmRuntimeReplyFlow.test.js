@@ -107,6 +107,7 @@ function harness({ failDelivery = false } = {}) {
         : [{ role: "user", content: state.inbound.at(-1).text }],
     },
     detectConversationLanguage: () => "en",
+    detectReplyConversationLanguage: () => "en",
     whatsappPolicy: { extractQuestionAfterMarketingOptOut: () => null },
     shouldGenerateLocalizedIntro: () => false,
     loadMetaAdReplyContext: async () => null,
