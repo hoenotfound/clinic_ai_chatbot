@@ -69,7 +69,7 @@ test("complete runtime wiring uses durable evidence for fixed intro, AI and medi
   assert.match(server,/verifiedFirstReadableAd\s*=\s*secondaryAiConversation/);
   assert.match(server,/isFirstMessage:\s*wasFirstMessage\s*===\s*true\s*\|\|\s*verifiedFirstReadableAd/);
   assert.match(server,/conversationHistory:\s*verifiedFirstReadableAd\s*\?\s*history\.slice\(-1\)/);
-  assert.match(server,/ai\.getReply\([\s\S]*?verifiedFirstReadableAd\s*\?\s*replyHistory\.slice\(-1\)/);
+  assert.match(server,/const modelReplyHistory\s*=\s*verifiedFirstReadableAd[\s\S]*?\?\s*replyHistory\.slice\(-1\)[\s\S]*?ai\.getReply\(modelReplyHistory,\s*replyOptions\)/);
   assert.match(server,/priorCustomerTexts:\s*verifiedFirstReadableAd[\s\S]*?\?\s*\[\]\s*:\s*verifiedPriorCustomerTexts/);
   assert.match(eligibility,/FROM whatsapp_secondary_131060_first_ads verified_first/);
   assert.doesNotMatch(eligibility,/unavailable_job\.incoming_payload/);

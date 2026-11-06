@@ -71,9 +71,12 @@ const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidenc
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
+const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
+const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
   detectConversationLanguage,
+  detectReplyConversationLanguage,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
@@ -1087,7 +1090,7 @@ async function processIncomingMessage(
           err?.message);
       }
     }
-    const mediaLanguage = detectConversationLanguage(
+    const mediaLanguage = detectReplyConversationLanguage(
       history
         .slice()
         .reverse()
@@ -1217,7 +1220,7 @@ async function processIncomingMessage(
       if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
-        aiReply = "我帮你核对这项疗程的最新配套价格 😊";
+        aiReply = priceCheckingReply("latest_package", mediaLanguage);
         priceQuery = true;
         details = { treatment: numberedPricingSelection.treatment };
       } else if (fixedAdFirstReply) {
@@ -1228,16 +1231,31 @@ async function processIncomingMessage(
         console.info("[Fixed ad first reply] contact=" + contact.id +
           " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
       } else {
-        const rawAiReply = await ai.getReply(
-          verifiedFirstReadableAd ? replyHistory.slice(-1) : replyHistory, {
+        const modelReplyHistory = verifiedFirstReadableAd
+          ? replyHistory.slice(-1) : replyHistory;
+        const replyOptions = {
           bookingContext,
           contactId: contact.id,
           isFirstMessage,
           generateFirstIntro,
           channel,
           metaAdContext,
-        });
+          replyLanguage: mediaLanguage,
+        };
+        const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        // Preserve the latest 131060 first-ad history boundary and all
+        // downstream booking, clinical, pricing and takeover safeguards.
+        const languageCheckedReply = await correctReplyLanguage(
+          parsedReply, modelReplyHistory, replyOptions, {
+            getReply: ai.getReply,
+            parseReply: parseAiReplyResult,
+            onCorrectionError: (error) => console.warn(
+              "[Reply language] correction rejected contact=" + contact.id +
+              " code=" + String(error?.code || "unknown")
+            ),
+          }
+        );
         ({
           text: aiReply,
           flagged,
@@ -1249,7 +1267,7 @@ async function processIncomingMessage(
           priceQuery,
           packageQuery,
           details,
-        } = parsedReply);
+        } = languageCheckedReply);
       }
 
       // A model can miss a clear complaint, refund or legal escalation.
@@ -1443,7 +1461,7 @@ async function processIncomingMessage(
         priceQuery = true;
         packageQuery = false;
         details = { ...details, treatment: shadowPriceException.treatment };
-        aiReply = "我帮你核对这项疗程的价格 😊";
+        aiReply = priceCheckingReply("treatment", mediaLanguage);
         console.info("[Pricing] Recovered narrow Shadow price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       }
@@ -1484,7 +1502,7 @@ async function processIncomingMessage(
         bookingReady = false;
         priceQuery = true;
         packageQuery = false;
-        aiReply = "我帮你确认这两项护理各自的价格 😊";
+        aiReply = priceCheckingReply("two_treatments", mediaLanguage);
         console.info("[Pricing] Recovered verified two-price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       } else {
@@ -1539,7 +1557,7 @@ async function processIncomingMessage(
         details = { ...details, treatment: scopedPackagePrice.treatment };
         // The price-only formatter replaces this safe placeholder with
         // currently configured and independently verified package amounts.
-        aiReply = "我帮你核对这两项配套的价格 😊";
+        aiReply = priceCheckingReply("two_packages", mediaLanguage);
         console.info("[Pricing] Resolved verified scoped-package information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       } else {
