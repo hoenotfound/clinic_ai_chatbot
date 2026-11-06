@@ -187,3 +187,11 @@ test("explicitly declined 3D + 9D combo is not treated as consent for combo vide
   customerTexts:["I don't want the 3D + 9D combo anymore","我想了解骨盆调理"],
   treatmentInterest:"3D + 9D 组合"}),null);
 });
+
+test("uncertainty about treatment is not misclassified as a refusal",()=>{
+ for(const customer of ["I don't know how pelvic care works",
+  "我不是很清楚骨盆调理是什么"]){
+  assert.equal(resolveFollowUpTreatment({clinicConfig:liveClinic,
+   customerTexts:[customer]}),"骨盆调理",customer);
+ }
+});
