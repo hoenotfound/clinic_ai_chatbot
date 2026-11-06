@@ -5,6 +5,7 @@ const {Client}=require("pg");
 const {createStaffBookingConfirmationService}=require("../src/services/staffBookingConfirmationService");
 const {pendingAcceptedAppointmentAllowedSql}=require("../src/utils/pendingAcceptedAppointmentFollowUp");
 const {INVALIDATE_SQL}=require("../src/db/staffAppointmentReminderRepo");
+const reminderRecovery=require("../src/services/staffAppointmentReminderRecoveryService");
 const connectionString=process.env.TEST_DATABASE_URL;
 
 test("verified staff reminder persists once, suppresses sales, and reopens only for a later genuine enquiry",{
@@ -66,6 +67,32 @@ test("verified staff reminder persists once, suppresses sales, and reopens only 
     await db.query("UPDATE lead_activities SET created_at=NOW()-INTERVAL '31 days' WHERE metadata->>'outcome'='staff_appointment_reminder'");
     assert.equal((await db.query(guard)).rows[0].eligible,true);
     assert.equal((await db.query("SELECT appointment_status FROM leads WHERE id=792")).rows[0].appointment_status,"none");
+    // A verified forwarded WhatsApp text cannot create a reminder hold.
+    await db.query("INSERT INTO messages(id,contact_id,role,content,sent_by_username,whatsapp_message_id,is_forwarded,created_at) VALUES(17284,1005,'assistant','Reminder: your appointment is tomorrow at 11:30am','WhatsApp Business App','wamid.forwarded',true,NOW())");
+    await service(1005,"Reminder: your appointment is tomorrow at 11:30am",
+      {providerAccepted:true,messageId:17284});
+    assert.equal((await db.query("SELECT count(*)::int n FROM lead_activities WHERE metadata->>'outcome'='staff_appointment_reminder'")).rows[0].n,3);
+
+    // An independent booking agreement must stay protected even if the staff
+    // edits an unrelated reminder later.
+    await db.query("INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata) VALUES(792,'updated','Customer accepted staff time','Staff','{\"outcome\":\"staff_time_accepted\"}'::jsonb)");
+    assert.equal((await db.query(guard)).rows[0].eligible,false);
+    await db.query(INVALIDATE_SQL,[1005,17282,9003]);
+    assert.equal((await db.query(guard)).rows[0].eligible,false);
+    await db.query("INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata) VALUES(792,'updated','Explicit booking review','Staff','{\"outcome\":\"booking_hold_resolved\"}'::jsonb)");
+    assert.equal((await db.query(guard)).rows[0].eligible,true);
+
+    // The restart recovery scan is provider-bound, excludes app echoes and
+    // can repair an accepted Inbox staff message without sending anything.
+    await db.query("INSERT INTO messages(id,contact_id,role,content,sent_by_username,whatsapp_message_id,is_forwarded,created_at) VALUES(17285,1005,'assistant','Confirmed your appointment for tomorrow at 11.30am','clinic-staff','wamid.inbox17285',false,NOW())");
+    const repair=await reminderRecovery.runOnce({
+      config:{businessType:"tcm_clinic"},
+      database:{query:db.query.bind(db)},
+      record:service,
+    });
+    assert.ok(repair.eligible>=1);
+    assert.equal((await db.query(guard)).rows[0].eligible,false);
+
   }finally{
     await db.query("SET search_path TO public").catch(()=>{});
     if(created)await db.query("DROP SCHEMA "+schema+" CASCADE").catch(()=>{});
