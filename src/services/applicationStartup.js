@@ -35,6 +35,7 @@ const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
 const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
 const coexistenceMutations = require("./whatsappCoexistenceMutationService");
+const staffReminderRecovery = require("./staffAppointmentReminderRecoveryService");
 const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
 const legacyLifecycleAlerts = require("./pr395LegacyLifecycleAlertService");
 const {
@@ -213,6 +214,7 @@ async function startApplication({
     secondaryAiMediaQueue.start();
     coexistenceMediaQueue.start();
     coexistenceMutations.start();
+    staffReminderRecovery.start();
     coexistenceHistory.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();

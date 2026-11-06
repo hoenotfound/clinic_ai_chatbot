@@ -11,7 +11,8 @@ async function persistStaffEchoIfNew(
   actor,
   syntheticHandoffOwner,
   queryable = null,
-  senderConversationId = null
+  senderConversationId = null,
+  isForwarded = false
 ) {
   const ownsClient = queryable == null;
   const client = ownsClient ? await pool.connect() : queryable;
@@ -25,16 +26,16 @@ async function persistStaffEchoIfNew(
 
     const inserted = await client.query(
       `INSERT INTO messages (
-         contact_id, role, content, whatsapp_message_id, sent_by_username
+         contact_id, role, content, whatsapp_message_id, sent_by_username, is_forwarded
        )
-       VALUES ($1, 'assistant', $2, $3, $4)
+       VALUES ($1, 'assistant', $2, $3, $4, $5)
        ON CONFLICT (whatsapp_message_id) DO NOTHING
        RETURNING id, contact_id, role, content, whatsapp_message_id,
-                 sent_by_username, media_url,
+                 sent_by_username, is_forwarded, media_url,
                  (media_key IS NOT NULL) AS has_media_attachment,
                  media_mime_type, created_at, delivery_status, delivery_error,
                  is_automated_follow_up`,
-      [contactId, content, whatsappMessageId, actor]
+      [contactId, content, whatsappMessageId, actor, isForwarded === true]
     );
 
     // The sender association is part of the SAME transaction as staff
@@ -65,7 +66,7 @@ async function persistStaffEchoIfNew(
       // ownership again.
       const existingMessage = await client.query(
         `SELECT id, contact_id, role, content, whatsapp_message_id,
-                sent_by_username, media_url,
+                sent_by_username, is_forwarded, media_url,
                 (media_key IS NOT NULL) AS has_media_attachment,
                 media_mime_type, created_at, delivery_status, delivery_error,
                 is_automated_follow_up

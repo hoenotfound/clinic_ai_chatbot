@@ -1,6 +1,9 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
+const { HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
+const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
 // Only explicit staff confirmations with a complete calendar date can
@@ -168,6 +171,10 @@ function isStaffVisitAcknowledgement(message) {
   return affirmative && day && time;
 }
 
+
+// A reminder is evidence that staff is managing an existing visit, not proof
+// of a verified CRM booking. Do not guess a calendar slot from "tmr" or "ok".
+
 function createStaffBookingConfirmationService({
   pipeline = pipelineRepo,
   config = clinicConfig,
@@ -175,12 +182,39 @@ function createStaffBookingConfirmationService({
   database = pool,
   markPendingBooking = markBookingReadyForContact,
 } = {}) {
-  return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
+  return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false, messageId = null } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
     const strictSlot=parseStaffConfirmedSlot(staffText,now());
     const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
       ?parseTerseStaffConfirmedSlot(staffText,now()):null;
     let appointmentAt=strictSlot;
+    // A routine staff reminder is evidence of a staff-managed visit, not
+    // permission to fabricate a CRM appointment or send a booking alert.
+    // The provider-authenticated original message ID is required for a
+    // recoverable, replay-safe follow-up hold.
+    if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) {
+      const sourceId=Number(messageId);
+      if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
+      const holdSql=HOLD_SQL;
+      const args=[contactId,sourceId,staffText];
+      // Serialize duplicate webhook deliveries on the existing conversation
+      // lock. The NOT EXISTS check then becomes race-safe without a migration.
+      if(typeof database.connect === "function"){
+        const client=await database.connect();
+        try{
+          await client.query("BEGIN");
+          await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[contactId]);
+          await client.query(holdSql,args);
+          await client.query("COMMIT");
+        }catch(error){
+          await client.query("ROLLBACK").catch(()=>{});
+          throw error;
+        }finally{client.release();}
+      }else{
+        await database.query(holdSql,args);
+      }
+      return null;
+    }
     if(!strictSlot) {
       if(!terseSlot&&!isStaffVisitAcknowledgement(staffText))return null;
       // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
@@ -243,6 +277,7 @@ module.exports = {
   parseTerseStaffConfirmedSlot,
   isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
+  isProactiveAppointmentReminder,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
 };

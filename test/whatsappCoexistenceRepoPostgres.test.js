@@ -45,6 +45,7 @@ test(
           content TEXT NOT NULL,
           whatsapp_message_id TEXT UNIQUE,
           sent_by_username TEXT,
+          is_forwarded BOOLEAN DEFAULT false,
           media_url TEXT,
           media_key TEXT,
           media_mime_type TEXT,
@@ -90,6 +91,22 @@ test(
       assert.equal(first.contact.needs_attention, false);
       assert.equal(first.contact.is_unread, false);
 
+      // A forwarded Business App echo keeps the provider's forwarded flag
+      // across persistence and duplicate webhook replay.
+      const forwarded = await coexistenceRepo.persistStaffEchoIfNew(
+        contactId,"Reminder appointment tmr 11.30am",
+        "wamid.business-app-forwarded","WhatsApp Business App",
+        "AI handoff",client,null,true
+      );
+      assert.equal(forwarded.message.is_forwarded,true);
+      const forwardedReplay = await coexistenceRepo.persistStaffEchoIfNew(
+        contactId,"Reminder appointment tmr 11.30am",
+        "wamid.business-app-forwarded","WhatsApp Business App",
+        "AI handoff",client,null,true
+      );
+      assert.equal(forwardedReplay.isNew,false);
+      assert.equal(forwardedReplay.message.is_forwarded,true);
+
       const duplicate = await coexistenceRepo.persistStaffEchoIfNew(
         contactId,
         "Handled from phone",
@@ -111,7 +128,7 @@ test(
       assert.deepEqual(duplicateState.rows[0], {
         mode: "ai",
         takeover_by: null,
-        message_count: 1,
+        message_count: 2,
       });
 
       // A real portal owner must remain the owner if they also use the
@@ -204,7 +221,7 @@ test(
       assert.deepEqual(state.rows[0], {
         mode: "human",
         takeover_by: "WhatsApp Business App",
-        message_count: 5,
+        message_count: 6,
       });
 
       // A confirmed Business App reply does not implicitly resolve an

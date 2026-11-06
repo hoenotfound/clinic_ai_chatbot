@@ -145,7 +145,8 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       BUSINESS_APP_ACTOR,
       AI_HANDOFF_OWNER,
       null,
-      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null
+      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null,
+      echo.isForwarded === true
     );
 
     if (!persisted) {
@@ -271,17 +272,20 @@ async function finalizeBusinessAppEcho(persisted) {
       err
     );
   }
-  // Only fresh authenticated staff echoes may confirm a full, explicit slot.
-  // Provider echo already proves Meta accepted this outbound message.
-  if (persisted.isNew && !persisted.message.is_forwarded) {
+  // Provider replay repairs a failed reminder hold on the SAME already
+  // authenticated staff message. Duplicate echoes do not repeat AI takeover.
+  if (!persisted.message.is_forwarded) {
     try {
       await recordStaffConfirmedBooking(
-        persisted.contact.id,
-        persisted.message.content,
-        { providerAccepted: true }
+        persisted.contact.id, persisted.message.content,
+        { providerAccepted: true, messageId: persisted.message.id }
       );
     } catch (bookingError) {
       console.error("Failed to sync staff echo booking confirmation:", bookingError);
+      // A verified reminder, tentative visit review or fully dated booking
+      // must never be silently lost. The source WAMID has already been stored:
+      // replay retries only the local database action, not the WhatsApp send.
+      throw bookingError;
     }
   }
 

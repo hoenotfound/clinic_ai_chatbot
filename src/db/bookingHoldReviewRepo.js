@@ -27,11 +27,17 @@ async function resolveBookingReview(leadId, actor, database=pool) {
       `SELECT signal.id FROM lead_activities signal
        WHERE signal.lead_id=$1
          AND signal.metadata->>'outcome' IN
-           ('staff_time_accepted','staff_visit_acknowledged','booking_intent_pending','booking_ready')
+           ('staff_time_accepted','staff_visit_acknowledged','booking_intent_pending','booking_ready','staff_appointment_reminder')
          AND NOT EXISTS (SELECT 1 FROM lead_activities resolved
            WHERE resolved.lead_id=$1
              AND resolved.metadata->>'outcome'='booking_hold_resolved'
              AND resolved.id>signal.id)
+         AND NOT EXISTS (SELECT 1 FROM lead_activities invalidated
+           WHERE invalidated.lead_id=$1
+             AND signal.metadata->>'outcome'='staff_appointment_reminder'
+             AND invalidated.metadata->>'outcome'='staff_reminder_invalidated'
+             AND invalidated.metadata->>'staffMessageId'=signal.metadata->>'staffMessageId'
+             AND invalidated.id>signal.id)
        ORDER BY signal.id DESC LIMIT 1`,[id]);
     if (!pending.rows[0]) { await client.query("COMMIT"); return null; }
     const saved=await client.query(
