@@ -173,14 +173,17 @@ function isStaffVisitAcknowledgement(message) {
 // of a verified CRM booking. Do not guess a calendar slot from "tmr" or "ok".
 function isProactiveAppointmentReminder(message) {
   const value=String(message||"").trim();
-  if(value.length<8||value.length>400||/[?？]/u.test(value))return false;
-  if(/\b(?:maybe|perhaps|tentative|possibly|if you|subject to|not confirmed|not booked|unconfirmed|pending|cancel(?:led|ed)?|reschedul(?:e|ed|ing)|available\??|would you like)\b|(?:可能|如果|取消|未确认|未確認|待定|改期|不确定|尚未)|(?:belum disahkan|batal|mungkin)/iu.test(value))return false;
+  if(value.length<10||value.length>400||/[?？]/u.test(value))return false;
+  // Never turn offers, tentative plans, reschedules, cancelled bookings,
+  // birthday greetings or marketing copy into a recorded appointment.
+  if(/\b(?:maybe|perhaps|tentative|possibly|if you|subject to|not confirmed|not booked|unconfirmed|pending|cancel(?:led|ed)?|reschedul(?:e|ed|ing)|availab\w*|would you like|may be|might be|to book|to schedule|book now|schedule now|slots? open|slots? left|slots? remaining)\b|(?:可能|如果|取消|未确认|未確認|待定|改期|不确定|尚未|有空位|还有空位|預約嗎|预约吗)|(?:belum disahkan|batal|mungkin|slot kosong|nak tempah)/iu.test(value))return false;
   if(/\b(?:promo(?:tion)?|discount|sale|trial price|offer expires|coupon|voucher|complimentary|birthday|promosi|diskaun)\b|(?:限时|限時|優惠|优惠|促销|促銷|折扣|生日)/iu.test(value))return false;
-  const explicit=/(?:remind(?:er|ing)?[\s\S]{0,45}(?:appointment|booking)|(?:appointment|booking)[\s\S]{0,40}(?:remind(?:er)?|confirm(?:ed|ation)?|booked|scheduled|set for)|\bbooked\s+for\s+(?:(?:this|next)\s+)?(?:sat(?:urday)?|sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?)\b|(?:预约|預約).{0,18}(?:提醒|已确认|已確認|已安排|明天|后天|後天|星期|週|周|见|見)|(?:temujanji|janji\s*temu).{0,42}(?:esok|disahkan|peringatan|diingatkan|sabtu|isnin|jumaat)|(?:peringatan|diingatkan).{0,45}(?:temujanji|janji\s*temu))/iu.test(value);
-  const date=/(?:\b(?:tmr|tomorrow|today|this\s+(?:sat|sun|mon|tue|wed|thu|fri)(?:day)?|next\s+(?:sat|sun|mon|tue|wed|thu|fri)(?:day)?|(?:saturday|sunday|monday|tuesday|wednesday|thursday|friday)|esok|hari\s+ini|sabtu|ahad|isnin|selasa|rabu|khamis|jumaat)\b|(?:明天|后天|後天|星期[一二三四五六日天]|(?:本|下|这|這)周[一二三四五六日天]|(?:本|下|這)週[一二三四五六日天])|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b)/iu.test(value);
-  const time=/(?:\b(?:0?[1-9]|1[0-9]|2[0-3])[:.][0-5]\d\s*(?:am|pm|pagi|petang)?\b|\b(?:0?[1-9]|1[0-2])\s*(?:am|pm)\b|(?:上午|下午|早上|晚上|傍晚)\s*\d{1,2}[点點]|[一二三四五六七八九十]\s*[点點](?:半)?)/iu.test(value);
-  const casual=/(?:see\s*(?:u|you)|jumpa|(?:明天|后天|後天).{0,25}[见見]|(?:星期[一二三四五六日天]|周[一二三四五六日天]).{0,20}[见見])/iu.test(value);
-  return explicit || (casual && date && time);
+  // Concrete time AND day/date required. "Appointment confirmed" alone,
+  // "reminder to book", or an invitation to take a slot is not enough.
+  const day=/(?:\b(?:tmr|tomorrow|today|this\s+(?:sat|sun|mon|tue|wed|thu|fri)(?:day)?|next\s+(?:sat|sun|mon|tue|wed|thu|fri)(?:day)?|saturday|sunday|monday|tuesday|wednesday|thursday|friday|esok|sabtu|ahad|isnin|selasa|rabu|khamis|jumaat)\b|(?:明天|后天|後天|星期[一二三四五六日天]|(?:本|下|这|這)周[一二三四五六日天]|(?:本|下|這)週[一二三四五六日天])|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|\b20\d{2}-\d{1,2}-\d{1,2}\b)/iu.test(value);
+  const time=/(?:\b(?:0?[1-9]|1[0-9]|2[0-3])[:.][0-5]\d\s*(?:am|pm|pagi|petang)?\b|\b(?:0?[1-9]|1[0-2])\s*(?:am|pm)\b|(?:上午|下午|早上|晚上|傍晚)\s*\d{1,2}[点點]|[一二三四五六七八九十]\s*[点點](?:半)?|\bpukul\s+\d{1,2}(?:[.:][0-5]\d)?\b)/iu.test(value);
+  if(!day||!time)return false;
+  return /(?:\bremind(?:er|ing)?\b.{0,24}\b(?:appointment|booking)\b|\b(?:your\s+)?(?:appointment|booking)\b.{0,35}\b(?:confirm(?:ed|ation)?|booked|scheduled|set\s+for|remind(?:er)?|tmr|tomorrow)\b|\b(?:appointment|booking)\s+(?:reminder|confirmed)\b|\bbooked\s+for\s+(?:(?:this|next)\s+)?(?:sat(?:urday)?|sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?)\b|\bsee\s*(?:u|you)\b.{0,24}\b(?:tmr|tomorrow|next|this|mon|tue|wed|thu|fri|sat|sun)\b|(?:预约|預約).{0,25}(?:提醒|已确认|已確認|已安排|明天|后天|後天|星期|週|周|见|見)|(?:明天|后天|後天|星期[一二三四五六日天]).{0,24}[见見]|(?:temujanji|janji\s*temu).{0,45}(?:esok|disahkan|peringatan|diingatkan|sabtu|isnin|jumaat)|(?:peringatan|diingatkan).{0,45}(?:temujanji|janji\s*temu)|\bjumpa\b.{0,20}\b(?:esok|sabtu|isnin|jumaat)\b)/iu.test(value);
 }
 
 function createStaffBookingConfirmationService({
@@ -190,55 +193,54 @@ function createStaffBookingConfirmationService({
   database = pool,
   markPendingBooking = markBookingReadyForContact,
 } = {}) {
-  return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
+  return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false, messageId = null } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
     const strictSlot=parseStaffConfirmedSlot(staffText,now());
     const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
       ?parseTerseStaffConfirmedSlot(staffText,now()):null;
     let appointmentAt=strictSlot;
+    // A routine staff reminder is evidence of a staff-managed visit, not
+    // permission to fabricate a CRM appointment or send a booking alert.
+    // The provider-authenticated original message ID is required for a
+    // recoverable, replay-safe follow-up hold.
+    if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) {
+      const sourceId=Number(messageId);
+      if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
+      await database.query(`
+        INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
+        SELECT lead.id,'updated','Verified staff appointment reminder; sales follow-ups on hold.',
+               'Automation',jsonb_build_object('outcome','staff_appointment_reminder',
+                 'staffMessageId',staff.id,'source','verified_staff_send')
+        FROM messages staff
+        JOIN LATERAL (
+          SELECT l.id FROM leads l
+          WHERE l.contact_id=staff.contact_id AND l.is_closed=false
+            AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited','cancelled')
+            -- Do not attach an old staff replay to a newly-created lead.
+            AND l.created_at<=staff.created_at + INTERVAL '30 minutes'
+          ORDER BY l.created_at DESC,l.id DESC LIMIT 1
+        ) lead ON true
+        WHERE staff.id=$2 AND staff.contact_id=$1 AND staff.role='assistant'
+          AND staff.whatsapp_message_id IS NOT NULL
+          AND staff.is_forwarded IS DISTINCT FROM TRUE
+          AND staff.media_mime_type IS NULL
+          AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
+          AND staff.sent_by_username IS NOT NULL
+          AND staff.sent_by_username NOT IN
+            ('Follow-up automation','Consent request automation')
+          AND staff.delivery_status IS DISTINCT FROM 'failed'
+          AND staff.created_at>=NOW()-INTERVAL '7 days'
+          AND BTRIM(staff.content)=BTRIM($3)
+          AND NOT EXISTS(SELECT 1 FROM lead_activities prior
+            WHERE prior.lead_id=lead.id
+              AND prior.metadata->>'outcome'='staff_appointment_reminder'
+              AND prior.metadata->>'staffMessageId'=staff.id::text)
+        RETURNING id
+      `,[contactId,sourceId,staffText]);
+      return null;
+    }
     if(!strictSlot) {
-      if(!terseSlot&&!isStaffVisitAcknowledgement(staffText)) {
-        if(isProactiveAppointmentReminder(staffText)) {
-          // This is a follow-up HOLD only, not a CRM booking, new lead,
-          // notification, or automatic reschedule. Check provider evidence
-          // in the persisted sender-specific conversation before recording.
-          await database.query(
-            `
-            INSERT INTO lead_activities
-              (lead_id,activity_type,description,actor,metadata)
-            SELECT lead.id,'updated',
-              'Verified staff appointment reminder: sales follow-ups held until booking review or subsequent lead.',
-              'Automation',
-              jsonb_build_object('outcome','staff_appointment_reminder',
-                'staffMessageId',staff.id,'source','verified_staff_send')
-            FROM messages staff
-            JOIN LATERAL (
-              SELECT l.id FROM leads l
-              WHERE l.contact_id=staff.contact_id AND l.is_closed=false
-                AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited','cancelled')
-              ORDER BY l.created_at DESC,l.id DESC LIMIT 1
-            ) lead ON TRUE
-            WHERE staff.contact_id=$1 AND staff.role='assistant'
-              AND staff.sent_by_username IS NOT NULL
-              AND staff.sent_by_username NOT IN
-                ('Follow-up automation','Consent request automation')
-              AND staff.whatsapp_message_id IS NOT NULL
-              AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
-              AND staff.delivery_status IS DISTINCT FROM 'failed'
-              AND staff.created_at>=NOW()-INTERVAL '30 minutes'
-              AND BTRIM(staff.content)=BTRIM($2)
-              AND NOT EXISTS (
-                SELECT 1 FROM lead_activities older
-                WHERE older.lead_id=lead.id
-                  AND older.metadata->>'outcome'='staff_appointment_reminder'
-                  AND older.metadata->>'staffMessageId'=staff.id::text
-              )
-            RETURNING id
-            `,[contactId,staffText]
-          );
-        }
-        return null;
-      }
+      if(!terseSlot&&!isStaffVisitAcknowledgement(staffText))return null;
       // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
       // provider-authenticated staff evidence and independent customer
       // agreement on the same date and time. If missing, hold for review.
