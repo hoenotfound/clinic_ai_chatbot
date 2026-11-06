@@ -105,6 +105,9 @@ test("short price/location questions keep an established Chinese or Malay reply 
 test("English or Malay questions with Chinese treatment names use the customer's sentence", () => {
   assert.equal(detectMessageLanguage("How much for 骨盆调理?"), "en");
   assert.equal(detectMessageLanguage("Can I book 3D小颜术 tomorrow?"), "en");
+  assert.equal(detectMessageLanguage("Interested in 骨盆调理"), "en");
+  assert.equal(detectMessageLanguage("骨盆调理 available tomorrow?"), "en");
+  assert.equal(detectMessageLanguage("Nak tahu 骨盆调理"), "ms");
   assert.equal(detectMessageLanguage("Is 9D逆龄疗程 available?"), "en");
   assert.equal(detectMessageLanguage("We want to try 9D逆龄"), "en");
   assert.equal(detectMessageLanguage("Saya nak tahu 骨盆调理"), "ms");
@@ -133,4 +136,25 @@ test("legacy follow-up language stays Chinese for Chinese service-name shorthand
   assert.equal(detectConversationLanguage(["3D 小颜术 / 9D 逆龄抗衰 price?"]), "zh");
   assert.equal(detectConversationLanguage(["Package A 跟 Package B 有什么分别？"]), "zh");
   assert.equal(detectReplyConversationLanguage(["How much for 骨盆调理?"]), "en");
+});
+
+test("AI replies and follow-ups use the same customer-language evidence", () => {
+  for (const customerTurns of [
+    ["Interested in 骨盆调理"],
+    ["骨盆调理 available tomorrow?"],
+    ["How much for 骨盆调理?", "I want to book"],
+    ["骨盆调理 price?", "Morning dear, what is the cost?"],
+    ["nak tahu 骨盆调理"],
+    ["我想了解骨盆调理", "好的"],
+    ["3D 小颜术 / 9D 逆龄抗衰 price?"],
+    ["Package A 跟 Package B 有什么分别？"],
+  ]) {
+    assert.equal(detectReplyConversationLanguage(customerTurns),
+      detectConversationLanguage(customerTurns), JSON.stringify(customerTurns));
+  }
+  assert.equal(detectConversationLanguage(["Interested in 骨盆调理"]), "en");
+  assert.equal(detectConversationLanguage(["骨盆调理 available tomorrow?"]), "en");
+  assert.equal(detectConversationLanguage(["骨盆调理 price?", "Morning dear"]), "en");
+  assert.equal(detectConversationLanguage(["骨盆调理 price?"]), "zh",
+    "ambiguous name-only shorthand defaults to its existing Chinese template");
 });
