@@ -205,6 +205,7 @@ test("informal Business App appointment reminders hold follow-ups in English, Ch
     "Tomorrow 11.30am see you",
     "Hi dear, your booking is tomorrow 11.30am",
     "Reminder: your appointment is tomorrow at 11:30am",
+    "Reminder: your appointment is tomorrow at 11.30am. If you need to reschedule, let us know.",
     "Your appointment is confirmed for Saturday at 11:30am",
     "Appointment set for Saturday 11.30am",
     "Booked for Saturday 11:30am, see you there!",
