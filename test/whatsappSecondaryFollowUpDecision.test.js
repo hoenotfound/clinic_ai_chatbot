@@ -29,7 +29,8 @@ test("confirmed pelvic interest is persistable and prices/branch-only messages d
 });
 test("withdrawal without treatment name blocks follow-ups, including later generic reminders",()=>{
  for(const text of ["算了，暂时不要了","暂时不要了","不用了",
-   "不考虑了","Not interested","No longer interested","Tak berminat"]){
+   "不考虑了","Not interested","No longer interested","Tak berminat",
+   "I don't want pelvic care anymore","不要3D"]){
   const decision=classifyVerifiedTreatmentTurn({text,clinicConfig:config});
   assert.equal(decision?.status,"declined",text);
   assert.equal(isStoppedDecision(decision.status),true);
@@ -106,4 +107,9 @@ test("SQL refuses stopped contacts at discovery and final provider check",()=>{
   "../src/db/migrations/118_whatsapp_secondary_followup_treatment_state.sql"),"utf8");
  assert.match(migration,/PRIMARY KEY \(sender_id, contact_id\)/);
  assert.doesNotMatch(migration,/INSERT INTO whatsapp_sender_followup_treatment_state/i);
+});
+
+test("rejecting a price quote is not necessarily rejecting a treatment",()=>{
+ assert.equal(classifyVerifiedTreatmentTurn({
+  text:"我不想要报价",clinicConfig:config}),null);
 });
