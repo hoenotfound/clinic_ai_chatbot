@@ -75,6 +75,7 @@ const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
   detectConversationLanguage,
+  detectReplyConversationLanguage,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
@@ -1069,7 +1070,7 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
-    const mediaLanguage = detectConversationLanguage(
+    const mediaLanguage = detectReplyConversationLanguage(
       history
         .slice()
         .reverse()
