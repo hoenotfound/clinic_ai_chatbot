@@ -110,38 +110,28 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
                 < (ads_first.created_at, ads_first.id)
         )
         OR EXISTS (
-          -- Meta sometimes delivers an unreadable 131060 placeholder seconds
-          -- before the first actual CTWA ad message. A verified single
-          -- placeholder is not an earlier customer conversation. No imported
-          -- history, other messages, or old direct conversations qualify.
-          SELECT 1 FROM messages unavailable_first
-          JOIN whatsapp_sender_message_context unavailable_ctx
-            ON unavailable_ctx.message_id=unavailable_first.id
-           AND unavailable_ctx.conversation_id=ads_sc.id
-          JOIN inbound_processing_jobs unavailable_job
-            ON unavailable_job.message_id=unavailable_first.id
-           AND unavailable_job.channel='whatsapp'
-          WHERE unavailable_first.contact_id=${contactSql}.id
-            AND unavailable_first.role='user'
-            AND unavailable_first.whatsapp_message_id IS NOT NULL
-            AND unavailable_first.source_created_at IS NOT NULL
-            AND unavailable_first.created_at >= ${cutoffSql}::timestamptz
-            AND unavailable_first.source_created_at >= ${cutoffSql}::timestamptz
-            AND (unavailable_first.created_at, unavailable_first.id)
-                < (ads_first.created_at, ads_first.id)
-            AND ads_first.created_at <= unavailable_first.created_at
-                + INTERVAL '2 minutes'
-            AND ads_first.source_created_at >= unavailable_first.source_created_at
-            AND ads_first.source_created_at <= unavailable_first.source_created_at
-                + INTERVAL '2 minutes'
-            AND unavailable_job.incoming_payload->>'unsupportedType'='unsupported'
-            AND unavailable_job.incoming_payload->'unsupportedErrors'
-                @> '[{"code":131060}]'::jsonb
+          -- This compact provider-verified proof survives the normal 24-hour
+          -- pruning of inbound_processing_jobs. A real prior conversation
+          -- can never become an eligible first ad because creation required
+          -- exactly one 131060 placeholder before the first readable ad.
+          SELECT 1 FROM whatsapp_secondary_131060_first_ads verified_first
+          JOIN messages unavailable_first
+            ON unavailable_first.id=verified_first.unavailable_message_id
+           AND unavailable_first.contact_id=${contactSql}.id
+          JOIN whatsapp_sender_message_context first_ctx
+            ON first_ctx.message_id=unavailable_first.id
+           AND first_ctx.conversation_id=ads_sc.id
+          WHERE verified_first.contact_id=${contactSql}.id
+            AND verified_first.sender_id=ads_sa.id
+            AND verified_first.first_ad_message_id=ads_first.id
+            AND verified_first.meta_ad_id=ads_ref.meta_ad_id
+            AND unavailable_first.created_at>=${cutoffSql}::timestamptz
+            AND unavailable_first.source_created_at>=${cutoffSql}::timestamptz
             AND NOT EXISTS (
               SELECT 1 FROM messages other_prior
               WHERE other_prior.contact_id=${contactSql}.id
-                AND (other_prior.created_at, other_prior.id)
-                    < (ads_first.created_at, ads_first.id)
+                AND (other_prior.created_at,other_prior.id)
+                    < (ads_first.created_at,ads_first.id)
                 AND other_prior.id<>unavailable_first.id
             )
         )
