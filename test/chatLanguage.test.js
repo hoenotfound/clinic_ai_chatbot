@@ -104,6 +104,7 @@ test("short price/location questions keep an established Chinese or Malay reply 
 test("English or Malay questions with Chinese treatment names use the customer's sentence", () => {
   assert.equal(detectMessageLanguage("How much for 骨盆调理?"), "en");
   assert.equal(detectMessageLanguage("Can I book 3D小颜术 tomorrow?"), "en");
+  assert.equal(detectMessageLanguage("Is 9D逆龄疗程 available?"), "en");
   assert.equal(detectMessageLanguage("We want to try 9D逆龄"), "en");
   assert.equal(detectMessageLanguage("Saya nak tahu 骨盆调理"), "ms");
   assert.equal(detectMessageLanguage("我想了解3D小颜术 price?"), "zh");
