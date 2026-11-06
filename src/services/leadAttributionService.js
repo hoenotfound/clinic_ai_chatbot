@@ -87,6 +87,7 @@ function createLeadAttributionService(
 
   async function recoverUnavailableFirstTouchAd({ lead, incoming, messageId }) {
     if (!lead?.id || !Number.isSafeInteger(Number(messageId)) ||
+        (lead.source && lead.source !== "whatsapp_unattributed") ||
         incoming?.channel !== "whatsapp" ||
         (typeof incoming?.text !== "string" || !incoming.text.trim()) ||
         incoming?.attribution?.source !== "meta_ads" ||
