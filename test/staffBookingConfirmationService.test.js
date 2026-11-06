@@ -264,7 +264,8 @@ test("proactive reminder writes a durable hold without silently marking CRM book
   assert.match(sqls[0].sql,/staff_appointment_reminder/);
   assert.match(sqls[0].sql,/staff.id=\$2/);
   assert.match(sqls[0].sql,/staff.is_forwarded IS DISTINCT FROM TRUE/);
-  assert.match(sqls[0].sql,/staff.whatsapp_message_id IS NOT NULL/);
+  assert.match(sqls[0].sql,/staff.whatsapp_message_id LIKE 'wamid.%'/);
+  assert.match(sqls[0].sql,/origin.channel='whatsapp'/);
   assert.match(sqls[0].sql,/staff.is_automated_follow_up IS DISTINCT FROM TRUE/);
   assert.match(sqls[0].sql,/NOT IN \('set','visited','cancelled'\)/);
   assert.match(sqls[0].sql,/NOT EXISTS/);
