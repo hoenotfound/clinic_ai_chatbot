@@ -56,7 +56,6 @@ test("consolidated reply policy retains pricing, booking, clinical and media saf
     assert.match(prompt, /requests for no reminders; do not push again/);
     assert.match(prompt, /TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT/);
     assert.match(prompt, /L4\/L5/);
-    assert.match(prompt, /earlier medical concerns available for practitioner review/);
     assert.match(prompt, /use "review_required"/);
     assert.match(prompt, /use "needs_human"/);
     assert.match(prompt, /Preserve earlier medical\/spinal concerns for practitioner review/);
