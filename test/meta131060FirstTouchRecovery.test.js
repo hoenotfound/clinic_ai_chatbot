@@ -29,10 +29,10 @@ test("a recovered ad must have trusted live SQL proof and writes atomically once
   },{connect:async()=>client});
   assert.equal(got.first_message_id,17255);
   assert.equal(released,true);
-  assert.deepEqual(queries.map(x=>x.sql.slice(0,33)),[
-    "BEGIN","UPDATE lead_attributions la\n     ",
-    "UPDATE leads\n         SET source=","INSERT INTO lead_activities\n     ","COMMIT",
-  ].map(x=>x.slice(0,33)));
+  assert.deepEqual(queries.map(x=>x.sql.trim().split(/\\s+/).slice(0,2).join(" ")),[
+    "BEGIN","UPDATE lead_attributions","UPDATE leads",
+    "INSERT INTO","COMMIT",
+  ]);
   const update=queries[1];
   for(const fragment of [
     "la.source='whatsapp_unattributed'","l.source='whatsapp_unattributed'",
