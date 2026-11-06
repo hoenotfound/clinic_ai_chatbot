@@ -35,6 +35,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
        .map(a=>a.alias)].map(normalize).filter(t=>t.length>1);
      return terms.some(term=>msg.includes(term));
    });
+   if(named.length && declined.test(msg))return null;
    if(combined.length===1 && /3\s*d/i.test(msg) && /9\s*d/i.test(msg) &&
      !comparison.test(msg)){
      const combinedName=combined[0];
@@ -44,7 +45,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
        /3\s*d/i.test(term)&&/9\s*d/i.test(term)&&msg.includes(term));
      if(explicit||joint.test(msg))return combinedName;
    }
-   if(named.length>1 || (named.length && declined.test(msg)))return null;
+   if(named.length>1)return null;
    if(named.length===1)return named[0];
  }
  return services.find(service=>normalize(service)===normalize(treatmentInterest))||null;
