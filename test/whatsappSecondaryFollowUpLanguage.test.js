@@ -195,3 +195,16 @@ test("uncertainty about treatment is not misclassified as a refusal",()=>{
    customerTexts:[customer]}),"骨盆调理",customer);
  }
 });
+
+test("video and caption share the verified treatment even with an older ad enquiry",()=>{
+ assert.equal(localizedFollowUpText({
+  slot:6,customerTexts:["Where is your branch?","How much is 3D?"],
+  treatmentInterest:"3D 小颜术",selectedTreatment:"9D 逆龄抗衰",
+  clinicConfig:liveClinic,
+ }),"Primary 9D English 6h");
+ assert.equal(localizedFollowUpText({
+  slot:2,customerTexts:["Where is your branch?","How much is pelvic care?"],
+  treatmentInterest:"骨盆调理",selectedTreatment:null,
+  clinicConfig:liveClinic,
+ }),"Primary clinic English 2h");
+});
