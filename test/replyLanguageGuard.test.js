@@ -64,6 +64,99 @@ test("language guard avoids configured Chinese treatment-name false positives", 
   assert.equal(clearReplyLanguageMismatch("Ok ya", "ms", names), false);
 });
 
+test("two-character Chinese acknowledgements are detected without misclassifying treatment names", () => {
+  for (const reply of ["好的 😊", "好", "可以🙏", "收到。", "明白 😊", "谢谢！", "好的，", "没问题 🤍"]) {
+    assert.equal(clearReplyLanguageMismatch(reply, "en", names), true, reply);
+    assert.equal(clearReplyLanguageMismatch(reply, "ms", names), true, reply);
+  }
+  for (const reply of [
+    "Sure, 骨盆调理 😊",
+    "OK, 3D小颜术 looks good",
+    "Morning dear, let's discuss 骨盆调理 at 10am.",
+    "骨盆调理",
+  ]) {
+    assert.equal(clearReplyLanguageMismatch(reply, "en", names), false, reply);
+  }
+  assert.equal(clearReplyLanguageMismatch("好的 😊", "zh", names), false);
+});
+
+test("wrong-language clinical suitability replies never enter a second AI call", async () => {
+  let calls = 0;
+  const original = {
+    ...copy(ordinary), text: "需要由中医师评估是否适合这个疗程。",
+  };
+  const result = await correctReplyLanguage(original, [
+    { role: "user", content: "Is this treatment suitable for me?" },
+  ], { replyLanguage: "en", ...names }, {
+    getReply: async () => { calls++; throw Error("must not regenerate clinical advice"); },
+    parseReply: JSON.parse,
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.flagged, true);
+  assert.equal(result.reviewRequired, false);
+  assert.equal(result.languageCorrectionFailed, true);
+  assert.match(result.text, /ask the team/);
+  assert.doesNotMatch(result.text, /suitable|safe|guarantee/iu);
+  assert.deepEqual(result.details, original.details);
+});
+
+test("clinical customer question prevents an unrelated AI rewrite even if initial reply is neutral", async () => {
+  let calls = 0;
+  const original = { ...copy(ordinary), text: "好的 😊" };
+  const result = await correctReplyLanguage(original, [
+    { role: "assistant", content: "What is your concern?" },
+    { role: "user", content: "I had surgery recently. Is this safe?" },
+  ], { replyLanguage: "en", ...names }, {
+    getReply: async () => { calls++; throw Error("must not retry"); },
+    parseReply: JSON.parse,
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.flagged, true);
+  assert.equal(result.languageCorrectionFailed, true);
+});
+
+test("clinical claims added by the second model are rejected even with unchanged metadata", async () => {
+  let calls = 0;
+  const original = { ...copy(ordinary), text: "好的，我可以介绍骨盆调理给您 😊" };
+  const result = await correctReplyLanguage(original, [
+    { role: "user", content: "Can you explain 骨盆调理?" },
+  ], { replyLanguage: "en", ...names }, {
+    getReply: async () => {
+      calls++;
+      return JSON.stringify({
+        ...copy(original),
+        text: "This treatment is suitable for everyone and guarantees results.",
+      });
+    },
+    parseReply: JSON.parse,
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.flagged, true);
+  assert.equal(result.reviewRequired, false);
+  assert.equal(result.languageCorrectionFailed, true);
+  assert.doesNotMatch(result.text, /suitable for everyone|guarantees/iu);
+  assert.equal(correctionPreservesClaims(original, {
+    text: "This treatment is suitable for everyone.",
+  }), false);
+});
+
+test("outdated clinical history does not block a new simple administrative correction", async () => {
+  let calls = 0;
+  const original = { ...copy(ordinary), text: "好的 😊" };
+  const corrected = { ...copy(original), text: "Sure, let me check that for you 😊" };
+  const result = await correctReplyLanguage(original, [
+    { role: "user", content: "I have pain from surgery" },
+    { role: "assistant", content: "Please speak to our practitioner." },
+    { role: "user", content: "Can I have the address?" },
+  ], { replyLanguage: "en", ...names }, {
+    getReply: async () => { calls++; return JSON.stringify(corrected); },
+    parseReply: JSON.parse,
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.flagged, false);
+  assert.equal(result.text, corrected.text);
+});
+
 test("aligned replies cost no extra provider requests", async () => {
   let calls = 0;
   const original = { ...copy(ordinary), text: "Morning dear, we can check 骨盆调理 for 10am." };
