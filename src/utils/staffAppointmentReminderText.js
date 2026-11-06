@@ -1,7 +1,13 @@
 "use strict";
 // Recognises staff-managed visits for follow-up holds, never CRM booking dates.
 function isProactiveAppointmentReminder(message) {
-  const value=String(message||"").trim();
+  // A clearly stated appointment can end with optional aftercare guidance:
+  // "If you need to reschedule, let us know." That is not a tentative slot.
+  // Only ignore this narrowly defined tail after sentence punctuation.
+  const value=String(message||"").trim().replace(
+    /[.!。！]\s*if\s+(?:you\s+(?:need\s+to\s+(?:reschedule|change\s+the\s+time)|have\s+(?:any\s+)?questions|cannot\s+make\s+it|can't\s+make\s+it)|anything\s+changes)[\s\S]*$/iu,
+    ""
+  );
   if(value.length<10||value.length>400||/[?？]/u.test(value))return false;
   // Never turn offers, tentative plans, reschedules, cancelled bookings,
   // birthday greetings or marketing copy into a recorded appointment.
