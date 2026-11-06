@@ -149,14 +149,24 @@ const CANDIDATES_SQL=`
    ad_followup.source AS ad_followup_source,
    ad_followup.headline AS ad_followup_headline,
    ad_followup.body AS ad_followup_body,
-   ARRAY(SELECT language_turn.content FROM messages language_turn
+   -- Carry forward a verified customer treatment choice after later price,
+   -- package or branch questions. Five turns excluded #8943's pelvic request.
+   -- Keep the sample recent, bounded and tied to THIS sender's conversation;
+   -- never use imported Business App history as treatment evidence.
+   ARRAY(SELECT LEFT(language_turn.content,500) FROM messages language_turn
      JOIN whatsapp_sender_message_context language_context
        ON language_context.message_id=language_turn.id
        AND language_context.conversation_id=sc.id
      WHERE language_turn.contact_id=c.id AND language_turn.role='user'
+       AND language_turn.whatsapp_message_id IS NOT NULL
+       AND language_turn.created_at >= inbound.created_at - INTERVAL '24 hours'
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.sender_id=sa.id AND historical.message_id=language_turn.id
+       )
        AND (language_turn.created_at,language_turn.id)
            <= (inbound.created_at,inbound.id)
-     ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 5
+     ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 20
    ) AS customer_texts
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
