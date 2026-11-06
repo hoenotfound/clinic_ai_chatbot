@@ -36,7 +36,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
     AND staff.sent_by_username<>'Follow-up automation'
     AND staff.whatsapp_message_id IS NOT NULL
     AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
-    AND staff.is_forwarded IS DISTINCT FROM TRUE
+    AND COALESCE((to_jsonb(staff)->>'is_forwarded')::boolean,FALSE)=FALSE
     AND staff.delivery_status IS DISTINCT FROM 'failed'
     AND (staff.created_at,staff.id)<(${inbound}.created_at,${inbound}.id)
     AND staff.created_at>=${inbound}.created_at-INTERVAL '2 hours'
