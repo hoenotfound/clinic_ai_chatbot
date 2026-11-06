@@ -3,7 +3,8 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const path=require("node:path");
-const {classifyVerifiedTreatmentTurn,isStoppedDecision,chooseSecondaryFollowUpTreatment}=
+const {classifyVerifiedTreatmentTurn,isStoppedDecision,
+ chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches}=
   require("../src/services/whatsappSecondaryFollowUpDecision");
 const repo=require("../src/db/whatsappSecondaryFollowUpTreatmentRepo");
 const {resolveFollowUpTreatment}=require("../src/services/whatsappSecondaryFollowUpLanguage");
@@ -200,4 +201,22 @@ test("service and all marketing schedules recheck exact verified switch and cons
   assert.match(sql,/consent\.consent_scope='treatment_followups_and_related_offers'/);
   assert.match(sql,/explicit_switch\.source_message_id=inbound\.id/);
  }
+});
+
+test("48h/66h and Day4/Day6 reject newer mismatched customer choice before DB state catches up",()=>{
+ for(const [messages,interest,allowed] of [
+  [["I'm interested in 9D"],"3D 小颜术",false],
+  [["我不想做3D了，我想了解9D"],"3D 小颜术",false],
+  [["I'm interested in 9D"],"9D 逆龄抗衰",true],
+  [["Should I choose 3D or 9D?"],"3D 小颜术",false],
+  [["算了，暂时不要了"],"3D 小颜术",false],
+  [["Where is your branch?"],"3D 小颜术",true],
+ ]){
+  assert.equal(latestMarketingIntentMatches({
+   customerMessages:messages,treatmentInterest:interest,clinicConfig:config,
+  }),allowed,JSON.stringify({messages,interest}));
+ }
+ const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+ assert.match(marketing.runOnce.toString(),/intentMatches\(candidate\)/);
+ assert.match(marketing.runOnce.toString(),/intentMatches\(x\)/);
 });
