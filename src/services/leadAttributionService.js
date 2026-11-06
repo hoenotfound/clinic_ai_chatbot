@@ -84,7 +84,34 @@ function createLeadAttributionService(
     return saved;
   }
 
+
+  async function recoverUnavailableFirstTouchAd({ lead, incoming, messageId }) {
+    if (!lead?.id || !Number.isSafeInteger(Number(messageId)) ||
+        incoming?.channel !== "whatsapp" ||
+        !incoming?.text?.trim() ||
+        incoming?.attribution?.source !== "meta_ads" ||
+        !incoming?.attribution?.adId ||
+        typeof repo.recoverUnavailableFirstTouchAd !== "function") return null;
+
+    const saved = await repo.recoverUnavailableFirstTouchAd({
+      leadId: lead.id,
+      inboundMessageId: messageId,
+      attribution: incoming.attribution,
+    });
+    if (saved) {
+      events.publish("pipeline_changed", {
+        leadId: lead.id,
+        reason: "unavailable_first_touch_ad_recovered",
+      });
+      if (saved.enrichment_status === "pending") {
+        enrichment.queueAttributionEnrichment?.(saved.id);
+      }
+    }
+    return saved;
+  }
+
   return {
+    recoverUnavailableFirstTouchAd,
     captureForInbound,
     rememberPendingReferral,
     consumePendingForInbound,
