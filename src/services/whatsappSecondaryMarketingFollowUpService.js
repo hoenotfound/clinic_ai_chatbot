@@ -6,6 +6,8 @@ const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversati
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const contactsRepo=require("../db/contactsRepo");
 const messagesRepo=require("../db/messagesRepo");
+const configRepo=require("../db/configRepo");
+const {latestMarketingIntentMatches}=require("./whatsappSecondaryFollowUpDecision");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
@@ -361,6 +363,7 @@ async function runOnce({
  env=process.env,database=pool,now=new Date(),limit=10,
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
+ getConfig=()=>configRepo.getConfig(),
 }={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
@@ -377,12 +380,18 @@ async function runOnce({
    candidates.push(...extra);
  }
  let attempted=0,accepted=0;
+ const intentMatches=entry=>latestMarketingIntentMatches({
+  customerMessages:entry.customer_messages,
+  treatmentInterest:entry.treatment_interest,
+  clinicConfig:getConfig(),
+ });
  for(const candidate of candidates){
   if(attempted>=maxAttempts)break;
   const slot=Number(candidate.slot_hours);
   if(!SLOTS.has(slot) ||
      (EXTENDED_SLOTS.has(slot) && !extendedEnabled(env)) ||
-     customerTemplateLocale(candidate.customer_messages)!==candidate.language_code)continue;
+     (customerTemplateLocale(candidate.customer_messages)!==candidate.language_code ||
+      !intentMatches(candidate)))continue;
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
      (sender_id,contact_id,anchor_message_id,slot_hours)
@@ -408,7 +417,8 @@ async function runOnce({
     x.template_signature===candidate.template_signature &&
     x.template_name===candidate.template_name &&
     x.language_code===candidate.language_code &&
-    customerTemplateLocale(x.customer_messages)===candidate.language_code)===true;
+    customerTemplateLocale(x.customer_messages)===candidate.language_code &&
+    intentMatches(x))===true;
   };
   try{
    if(!await current()){await fail("secondary_marketing_policy_changed");continue;}
