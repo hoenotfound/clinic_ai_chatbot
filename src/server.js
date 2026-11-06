@@ -70,6 +70,7 @@ const {
 const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
+const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
   detectConversationLanguage,
@@ -1207,15 +1208,30 @@ async function processIncomingMessage(
         console.info("[Fixed ad first reply] contact=" + contact.id +
           " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
       } else {
-        const rawAiReply = await ai.getReply(replyHistory, {
+        const replyOptions = {
           bookingContext,
           contactId: contact.id,
           isFirstMessage,
           generateFirstIntro,
           channel,
           metaAdContext,
-        });
+          replyLanguage: mediaLanguage,
+        };
+        const rawAiReply = await ai.getReply(replyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        // The one optional language-only correction happens before existing
+        // pricing, clinical, booking, staff takeover and media guards. It
+        // cannot change the model's already validated intent/booking metadata.
+        const languageCheckedReply = await correctReplyLanguage(
+          parsedReply, replyHistory, replyOptions, {
+            getReply: ai.getReply,
+            parseReply: parseAiReplyResult,
+            onCorrectionError: (error) => console.warn(
+              "[Reply language] correction failed contact=" + contact.id +
+              " code=" + String(error?.code || "unknown")
+            ),
+          }
+        );
         ({
           text: aiReply,
           flagged,
@@ -1227,7 +1243,7 @@ async function processIncomingMessage(
           priceQuery,
           packageQuery,
           details,
-        } = parsedReply);
+        } = languageCheckedReply);
       }
 
       // A model can miss a clear complaint, refund or legal escalation.
