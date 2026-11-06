@@ -133,3 +133,45 @@ test("explicit combined 3D + 9D enquiry selects the combo, not a single treatmen
    customerTexts:[msg],treatmentInterest:"9D 逆龄抗衰"}),null,msg);
  }
 });
+
+test("Neutro #8943 retains verified pelvic context across package and branch questions",()=>{
+ // Newest-first, sender-bound customer messages in the 24h follow-up context.
+ // The previous five-message cutoff hid both explicit pelvic requests.
+ const turns=[
+  "哪一分行",
+  "RM388和RM288的配套有什么分别？",
+  "RM388和RM288的配套有什么分别？",
+  "RM388和RM288的配套有什么分别？",
+  "RM388和RM288的配套有什么分别？",
+  "那这种调理是做一次就行了吗？想了解价钱看看",
+  "那这种调理是做一次就行了吗？想了解价钱看看",
+  "我平时久坐，腰有点酸，小腹也比较突出。",
+  "我对你们的骨盆调理有兴趣，想了解一下。",
+  "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+ ];
+ const config=structuredClone(liveClinic);
+ config.automatedFollowUp.additionalSteps[0].serviceOverrides.push({
+  serviceName:"骨盆调理",translations:{zh:"Pelvic-specific 6h reminder"},
+ });
+ assert.equal(resolveFollowUpTreatment({clinicConfig:config,
+  customerTexts:turns,treatmentInterest:null}),"骨盆调理");
+ for(const [slot,expected] of [[2,"Primary pelvic Chinese 2h"],
+  [6,"Pelvic-specific 6h reminder"]]){
+  assert.equal(localizedFollowUpText({slot,customerTexts:turns,
+   treatmentInterest:null,clinicConfig:config}),expected);
+ }
+});
+
+test("later explicit treatment switch overrides older verified pelvic context",()=>{
+ const turns=["I now want 9D lift instead","哪一分行","我对你们的骨盆调理有兴趣"];
+ assert.equal(resolveFollowUpTreatment({clinicConfig:liveClinic,
+  customerTexts:turns,treatmentInterest:"骨盆调理"}),"9D 逆龄抗衰");
+});
+
+test("declined or mixed recent treatment enquiry must not inherit older video",()=>{
+ for(const newest of ["I don't want pelvic care anymore",
+  "我不想做骨盆调理了","Should I choose pelvic or 9D lift?"]){
+  assert.equal(resolveFollowUpTreatment({clinicConfig:liveClinic,
+   customerTexts:[newest,"我对骨盆调理有兴趣"],treatmentInterest:"骨盆调理"}),null,newest);
+ }
+});
