@@ -8,6 +8,7 @@ const { resolveShadowPriceException } = require("../src/utils/shadowPriceExcepti
 const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
 const clinicConfig = require("../src/config/clinicConfig");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { assistantIntroducesCompetingPaidService } = require("../src/utils/priceFollowUpContext");
 const { serviceCandidates } = require("../src/utils/conversationPromptContext");
 const fixture = {
@@ -557,7 +558,15 @@ test("verified Pulse Wave continuation selects only the unsent RM388 promotional
     services: fixture.services, serviceAliases: fixture.aliases,
     promotions: fixture.promotions, now,
     complimentaryAssessmentExperienceEnabled: true };
-  const approved = resolveShadowPriceException(base);
+  const shadow = resolveShadowPriceException(base);
+  assert.equal(shadow?.treatment, "脉冲波调理");
+  const {decision: approved,reason} = resolveApprovedPricingAssessment({
+    mode: "shadow", shadowException: shadow, customerText, conversationHistory: history,
+    services: fixture.services, serviceAliases: fixture.aliases,
+    resultMedia: [], flagged: false, bookingReady: false, keywordReason: null,
+    now, allowOfferEnquiries: true,
+  });
+  assert.equal(reason, "approved", "A verified RM388 shadow decision must pass final pricing authority");
   assert.equal(approved?.treatment, "脉冲波调理");
   const originalTrust = clinicConfig.trustAdminConfiguredContent;
   clinicConfig.trustAdminConfiguredContent = true; // exactly Neutro's current setting
