@@ -27,7 +27,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const comparison=/\b(?:or|vs|versus|compare|difference|either)\b|还是|或者|比较|区别|分别|哪个|哪一个/i;
  // A negative or discontinued treatment mention cannot authorize a video,
  // even if an older CRM label still points to that treatment.
- const declined=/(?:don't|do not|not interested|no longer|rather not|not for me|stop|cancel|不要|不想|不是|没兴趣|沒興趣|tak nak|tak mahu|bukan)/iu;
+ const declined=/(?:\b(?:don't want|do not want|not interested|no longer interested|rather not|not for me|stop (?:the )?treatment|cancel (?:the )?treatment)\b|不想(?:做|要|考虑|考慮)|不要(?:做|安排|这个|這個|骨盆|3D|9D)|没兴趣|沒興趣|不考虑|不考慮|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
    const named=services.filter(service=>{
