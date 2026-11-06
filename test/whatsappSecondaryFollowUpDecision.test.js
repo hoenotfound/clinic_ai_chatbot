@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const path=require("node:path");
-const {classifyVerifiedTreatmentTurn,isStoppedDecision}=
+const {classifyVerifiedTreatmentTurn,isStoppedDecision,chooseSecondaryFollowUpTreatment}=
   require("../src/services/whatsappSecondaryFollowUpDecision");
 const repo=require("../src/db/whatsappSecondaryFollowUpTreatmentRepo");
 const {resolveFollowUpTreatment}=require("../src/services/whatsappSecondaryFollowUpLanguage");
@@ -101,7 +101,13 @@ test("SQL refuses stopped contacts at discovery and final provider check",()=>{
  assert.match(service,/const SECONDARY_DECISION_HOLD_SQL=/);
  assert.match(service,/declined_state.status IN\('declined','deferred'\)/);
  assert.match(service,/\$\{SECONDARY_DECISION_HOLD_SQL\}/);
- assert.match(marketing,/decision_hold.status IN\('declined','deferred'\)/);
+ assert.match(marketing,/decision_hold.status IN\('declined','deferred','ambiguous'\)/);
+ assert.match(marketing,/LOWER\(BTRIM\(decision_hold\.treatment_name\)\)/);
+ assert.match(marketing,/LOWER\(BTRIM\(lead\.treatment_interest\)\)/);
+ for(const sql of [service,marketing]){
+  assert.match(sql,/explicit_switch\.source_message_id=inbound\.id/);
+  assert.match(sql,/explicit_switch\.status='selected'/);
+ }
  assert.match(marketing,/whatsapp_sender_followup_treatment_state/);
  const migration=fs.readFileSync(path.join(__dirname,
   "../src/db/migrations/118_whatsapp_secondary_followup_treatment_state.sql"),"utf8");
@@ -114,4 +120,55 @@ test("rejecting a price quote is not necessarily rejecting a treatment",()=>{
   text:"我不想要报价",clinicConfig:config}),null);
  assert.notEqual(classifyVerifiedTreatmentTurn({
   text:"I don't want pricing information, but tell me about pelvic care",clinicConfig:config})?.status,"declined");
+});
+
+test("a customer changing 3D to 9D is a selection, not a withdrawal",()=>{
+ for(const msg of [
+  "我不想做3D了，我想了解9D",
+  "I don't want 3D, I'm interested in 9D",
+  "I'm not interested in 3D, but 9D looks good",
+ ]){
+  assert.deepEqual(classifyVerifiedTreatmentTurn({text:msg,clinicConfig:config}),
+   {status:"selected",treatment:"9D 逆龄抗衰"},msg);
+ }
+ for(const msg of ["我不想做3D了","I don't want 3D anymore",
+  "I don't want 3D or 9D"]){
+  assert.equal(classifyVerifiedTreatmentTurn({text:msg,clinicConfig:config})?.status,
+   "declined",msg);
+ }
+});
+
+test("verified current treatment beats ad creative, old CRM and the last-24h window",()=>{
+ const candidate={
+  verified_treatment_status:"selected",
+  verified_treatment_name:"9D 逆龄抗衰",
+  treatment_interest:"3D 小颜术",
+  customer_texts:["哪一分行","RM388和RM288有什么不同？"],
+ };
+ const staleAd={ambiguous:false,treatment:"3D 小颜术",source:"verified_ad_creative"};
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate,clinicConfig:config,adFollowUpPolicy:staleAd,
+ }),{treatment:"9D 逆龄抗衰",generalOnly:false,customerSelected:true});
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate:{...candidate,verified_treatment_name:"3D 小颜术"},
+  clinicConfig:config,adFollowUpPolicy:staleAd,
+  latestDecision:{status:"selected",treatment:"9D 逆龄抗衰"},
+ }),{treatment:"9D 逆龄抗衰",generalOnly:false,customerSelected:true});
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate,clinicConfig:config,
+  adFollowUpPolicy:{ambiguous:true,treatment:null},
+ }),{treatment:"9D 逆龄抗衰",generalOnly:false,customerSelected:true});
+});
+
+test("ambiguous choice and removed treatment cannot trigger stale ad videos",()=>{
+ const ad={ambiguous:false,treatment:"3D 小颜术"};
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate:{verified_treatment_status:"ambiguous",customer_texts:["哪一分行"],
+   treatment_interest:"3D 小颜术"},
+  clinicConfig:config,adFollowUpPolicy:ad,
+ }),{treatment:null,generalOnly:true,customerSelected:false});
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate:{verified_treatment_status:"selected",verified_treatment_name:"Discontinued service"},
+  clinicConfig:config,adFollowUpPolicy:ad,
+ }),{treatment:null,generalOnly:true,customerSelected:false});
 });
