@@ -85,7 +85,7 @@ function assistantIntroducesCompetingPaidService(turn, chosenService, candidates
   // Strip ONLY these exact concern phrases; an actual "产后调理" mention
   // continues to block automated prices for a different service.
   let serviceMentions = message.replace(
-    /(?:产后|產後)(?:的)?(?:体态|體態|身材)(?:改变|改變|变化|變化)/gu, " "
+    /(?:产后|產後)(?:的)?(?:体态|體態|身材|身体|身體)(?:改变|改變|变化|變化)/gu, " "
   );
   // A Pulse Wave explanation may describe postpartum conditioning as ONE use
   // of the customer-selected treatment. "产后调理" is also a separate
