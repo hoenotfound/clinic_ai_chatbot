@@ -172,3 +172,32 @@ test("ambiguous choice and removed treatment cannot trigger stale ad videos",()=
   clinicConfig:config,adFollowUpPolicy:ad,
  }),{treatment:null,generalOnly:true,customerSelected:false});
 });
+
+test("new either/or enquiry overrides an older saved 9D choice",()=>{
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate:{verified_treatment_status:"selected",
+   verified_treatment_name:"9D 逆龄抗衰",
+   treatment_interest:"9D 逆龄抗衰"},
+  clinicConfig:config,adFollowUpPolicy:{ambiguous:false,treatment:"3D 小颜术"},
+  latestDecision:{status:"ambiguous",treatment:null},
+ }),{treatment:null,generalOnly:true,customerSelected:false});
+});
+
+test("service and all marketing schedules recheck exact verified switch and consent",()=>{
+ const service=require("../src/services/whatsappSecondaryFollowUpService");
+ const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+ for(const sql of [service.CANDIDATES_SQL,service.RECHECK_SQL]){
+  assert.match(sql,/explicit_switch\.source_message_id=inbound\.id/);
+  assert.match(sql,/explicit_switch\.status='selected'/);
+  assert.match(sql,/declined_state\.status IN\('declined','deferred'\)/);
+ }
+ for(const sql of [marketing.CANDIDATES_SQL,marketing.RECHECK_SQL,
+   marketing.EXTENDED_CANDIDATES_SQL,marketing.EXTENDED_RECHECK_SQL]){
+  assert.match(sql,/decision_hold\.status IN\('declined','deferred','ambiguous'\)/);
+  assert.match(sql,/LOWER\(BTRIM\(decision_hold\.treatment_name\)\)/);
+  assert.match(sql,/LOWER\(BTRIM\(lead\.treatment_interest\)\)/);
+  assert.match(sql,/consent\.consent_service/);
+  assert.match(sql,/consent\.consent_scope='treatment_followups_and_related_offers'/);
+  assert.match(sql,/explicit_switch\.source_message_id=inbound\.id/);
+ }
+});
