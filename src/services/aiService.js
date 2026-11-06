@@ -649,6 +649,8 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
       metaAdContext: null,
       followUpContext: null,
       bookingContext: null,
+      replyLanguage: null,
+      strictReplyLanguage: false,
       contactId: null,
       leadId: null,
     };
@@ -665,6 +667,9 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
     bookingContext: optionsOrFirstMessage?.bookingContext || null,
+    replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
+      ? optionsOrFirstMessage.replyLanguage : null,
+    strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     contactId: optionsOrFirstMessage?.contactId || null,
     leadId: optionsOrFirstMessage?.leadId || null,
   };
