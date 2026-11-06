@@ -6,6 +6,8 @@ const { resolveEstablishedTreatmentPrice } = require("../src/utils/priceConversa
 const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+const { assistantIntroducesCompetingPaidService } = require("../src/utils/priceFollowUpContext");
+const { serviceCandidates } = require("../src/utils/conversationPromptContext");
 const fixture = {
   "services": [
     {
@@ -514,4 +516,25 @@ test("Neutro Pulse Wave real-price sequence after Before & After and pain questi
   assert.equal(shadow?.treatment, "脉冲波调理",
     "Shadow pricing should verify an unchanged treatment after media and a pain question");
   assert.deepEqual(shadow?.prices?.map(x => x.price), ["RM388"]);
+});
+
+
+test("Pulse Wave postpartum application is not a separate package; a genuine other service remains blocked", () => {
+  const candidates = serviceCandidates(fixture.services, fixture.aliases);
+  assert.equal(assistantIntroducesCompetingPaidService({
+    role: "assistant",
+    content: "脉冲波调理主要是用仪器辅助来做身体局部塑形或产后调理，也有人称为中医智能减脂。",
+  }, "脉冲波调理", candidates), false);
+  assert.equal(assistantIntroducesCompetingPaidService({
+    role: "assistant",
+    content: "脉冲波调理是一个项目，另外我们也提供产后调理，想了解哪一个？",
+  }, "脉冲波调理", candidates), true);
+  assert.equal(assistantIntroducesCompetingPaidService({
+    role: "assistant",
+    content: "脉冲波调理主要是辅助身体护理。另外还提供产后调理。",
+  }, "脉冲波调理", candidates), true);
+  assert.equal(assistantIntroducesCompetingPaidService({
+    role: "assistant",
+    content: "脉冲波调理 RM388，也有产后调理 RM288。",
+  }, "脉冲波调理", candidates), true);
 });
