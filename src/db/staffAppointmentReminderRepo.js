@@ -16,7 +16,9 @@ const HOLD_SQL=`
           ORDER BY l.created_at DESC,l.id DESC LIMIT 1
         ) lead ON true
         WHERE staff.id=$2 AND staff.contact_id=$1 AND staff.role='assistant'
-          AND staff.whatsapp_message_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM contacts origin
+            WHERE origin.id=staff.contact_id AND origin.channel='whatsapp')
+          AND staff.whatsapp_message_id LIKE 'wamid.%'
           AND staff.is_forwarded IS DISTINCT FROM TRUE
           AND staff.media_mime_type IS NULL
           AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
