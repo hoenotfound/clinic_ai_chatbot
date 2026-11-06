@@ -232,6 +232,9 @@ async function recoverUnavailableFirstTouchAd({
   const client = await database.connect();
   try {
     await client.query("BEGIN");
+    // Best-effort CRM correction is not allowed to hold a live customer reply
+    // indefinitely behind Neon locks or heavy traffic.
+    await client.query("SET LOCAL statement_timeout = '2000ms'");
     const result = await client.query(
       `UPDATE lead_attributions la
        SET first_message_id=verified.id,
