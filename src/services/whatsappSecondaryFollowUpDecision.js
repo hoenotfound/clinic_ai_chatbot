@@ -85,5 +85,14 @@ function chooseSecondaryFollowUpTreatment({
    treatmentInterest:candidate.treatment_interest,
  }),generalOnly:false,customerSelected:false};
 }
+// Marketing must not rely on a lagging database snapshot when the latest
+// sender-owned customer message explicitly chooses a different treatment.
+function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinicConfig}={}){
+ const latest=classifyVerifiedTreatmentTurn({
+   text:Array.isArray(customerMessages)?customerMessages[0]:null,
+   clinicConfig,
+ });
+ return !latest || (latest.status==="selected" && latest.treatment===treatmentInterest);
+}
 module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,
- chooseSecondaryFollowUpTreatment,WITHDRAWN,DEFERRED};
+ chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,WITHDRAWN,DEFERRED};
