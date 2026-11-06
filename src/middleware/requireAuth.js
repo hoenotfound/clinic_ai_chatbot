@@ -113,6 +113,15 @@ async function enforceConversationsPolicy(req, res, user) {
 async function enforceContactsPolicy(req, res, user) {
   const parts = segments(req);
 
+  // The paged directory has its own server-side contact scope checks.
+  // Treat this as a list route, not a numeric contact ID.
+  if (parts[0] === "paged") {
+    if (parts.length !== 1 || req.method !== "GET" || !hasAnyLeadView(user)) {
+      return forbidden(res);
+    }
+    return true;
+  }
+
   if (parts[0] === "export") {
     if (req.method !== "GET") return forbidden(res);
     if (!hasCapability(user, "export_customer_data")) {
