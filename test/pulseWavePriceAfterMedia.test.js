@@ -6,6 +6,8 @@ const { resolveEstablishedTreatmentPrice } = require("../src/utils/priceConversa
 const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+const clinicConfig = require("../src/config/clinicConfig");
+const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { assistantIntroducesCompetingPaidService } = require("../src/utils/priceFollowUpContext");
 const { serviceCandidates } = require("../src/utils/conversationPromptContext");
 const fixture = {
@@ -537,4 +539,46 @@ test("Pulse Wave postpartum application is not a separate package; a genuine oth
     role: "assistant",
     content: "脉冲波调理 RM388，也有产后调理 RM288。",
   }, "脉冲波调理", candidates), true);
+});
+
+
+test("verified Pulse Wave continuation selects only the unsent RM388 promotional image", async () => {
+  const now = Date.now();
+  const history = fixture.turns.map(([role, content, age]) => ({
+    role, content, pricingCreatedAtMs: now - age, pricingStaffAuthored: false,
+  }));
+  const customerText = history.at(-1).content;
+  const base = { customerText, conversationHistory: history,
+    services: fixture.services, serviceAliases: fixture.aliases,
+    promotions: fixture.promotions, now,
+    complimentaryAssessmentExperienceEnabled: true };
+  const approved = resolveShadowPriceException(base);
+  assert.equal(approved?.treatment, "脉冲波调理");
+  const originalTrust = clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent = true; // exactly Neutro's current setting
+  try {
+    let skipReason = null;
+    const choose = overrides => resolvePricePromotionForReply({
+      priceQuery: true, packageQuery: false, aiPricingEnabled: true,
+      pricingDecision: approved, treatment: approved.treatment,
+      verifiedServiceFromText: approved.treatment,
+      verifiedShadowPriceService: approved.treatment,
+      customerText, conversationHistory: history,
+      flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true,
+      promotions: fixture.promotions, services: fixture.services,
+      serviceAliases: fixture.aliases, resultMedia: [],
+      language: "zh", contactId: 8877, now: new Date(now),
+      wasPromoRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+      onSkip: reason => { skipReason = reason; }, ...overrides,
+    });
+    const selected = await choose({});
+    assert.equal(selected?.packages?.length, 1, skipReason || "Expected one promotion");
+    assert.equal(selected.packages[0].imageUrl, fixture.promotions[0].imageUrl);
+    const duplicate = await choose({wasPromoRecentlySent:async()=>true});
+    assert.equal(duplicate, null, "Already sent promotional image must not be resent");
+  } finally {
+    clinicConfig.trustAdminConfiguredContent = originalTrust;
+  }
 });
