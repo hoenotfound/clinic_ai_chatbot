@@ -10,6 +10,7 @@ const {isSecondaryAutomationEligible,secondaryAutomationEligibleSql,
 const followup=require("../src/services/whatsappSecondaryFollowUpService");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const media=require("../src/services/whatsappSecondaryAiMediaQueue");
+const firstAdProof=require("../src/db/whatsapp131060FirstAdRepo");
 
 const cs=process.env.TEST_DATABASE_URL;
 test("Postgres: fresh non-ad messages qualify without replay; old ad sequences survive",{
@@ -119,12 +120,42 @@ test("Postgres: fresh non-ad messages qualify without replay; old ad sequences s
     const firstAd=await inbound(unavailable,{
       at:new Date(now-7000).toISOString(),ad:true,
     });
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [firstAd,unavailable.id,JSON.stringify({
+        text:"Interested",attribution:{
+          source:"meta_ads",sourceType:"ad",adId:"verified-ad-"+firstAd,
+        },
+      })]
+    );
+    const proof=await firstAdProof.recordVerifiedFirstAd({
+      contactId:unavailable.id,inboundMessageId:firstAd,
+      adId:"verified-ad-"+firstAd,
+    },db);
+    assert.equal(proof?.unavailable_message_id,placeholder,
+      "provider-verified first unreadable message becomes a durable proof");
+    assert.equal(proof?.first_ad_message_id,firstAd);
+    assert.deepEqual(await firstAdProof.getVerifiedFirstAdMessage(
+      unavailable.id,firstAd,db),{
+        first_ad_message_id:firstAd,unavailable_message_id:placeholder,
+      });
     const adOnly={...env,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only"};
     assert.equal(await isSecondaryAdsOnlyEligible(unavailable.id,{database:db,env:adOnly}),true,
       "a single verified 131060 placeholder may precede the first real CTWA ad");
     assert.deepEqual([...await eligibleSecondaryAdsOnlyContactIds([unavailable.id],{
       database:db,env:adOnly})],[unavailable.id],
       "Inbox bulk ads-only eligibility agrees with the single-contact rule");
+    // Ordinary pruning must not cancel the lead's 48h/66h/Day4/Day6
+    // eligibility when the first verified ad was preceded only by 131060.
+    await db.query(
+      "DELETE FROM inbound_processing_jobs WHERE message_id IN($1,$2)",
+      [placeholder,firstAd]);
+    assert.equal(await isSecondaryAdsOnlyEligible(unavailable.id,{
+      database:db,env:adOnly}),true,
+      "ads-only proof survives completed inbound-job cleanup");
+    assert.ok(await firstAdProof.getVerifiedFirstAdMessage(unavailable.id,firstAd,db),
+      "fixed greeting and contextual media proof also survives cleanup");
     await db.query(
       "INSERT INTO ai_review_items(contact_id,inbound_message_id,category,summary,status) "+
       "VALUES($1,$2,'information','WhatsApp message unavailable (Meta 131060). Meta did not provide the content.','pending')",
