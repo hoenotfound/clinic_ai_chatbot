@@ -117,8 +117,19 @@ const SEQUENCE_DUE_SQL=`GREATEST(
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
  AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
- AND COALESCE(inbound.content,'') !~* '(算了.{0,20}(不要|不用)|((暂时|暫時)?(不要了|不用了|不需要了|不做了|不考虑了|不考慮了))|没兴趣|沒興趣|不感兴趣|不感興趣|not interested|no longer interested|tak berminat|tidak berminat)'
- AND COALESCE(inbound.content,'') !~* '(我再(联系|聯繫|通知|回复|回覆)你|我(再)?(考虑|考慮)一下|let me (think|consider)|i will (let you know|get back)|saya akan hubungi nanti)'
+ -- If the same authenticated inbound explicitly replaces an old treatment,
+ -- its recorded new selection clears a lexical "not interested in 3D" match.
+ -- A failed/missing state write does NOT bypass the withdrawal guard.
+ AND (
+   (COALESCE(inbound.content,'') !~* '(算了.{0,20}(不要|不用)|((暂时|暫時)?(不要了|不用了|不需要了|不做了|不考虑了|不考慮了))|没兴趣|沒興趣|不感兴趣|不感興趣|not interested|no longer interested|tak berminat|tidak berminat)'
+    AND COALESCE(inbound.content,'') !~* '(我再(联系|聯繫|通知|回复|回覆)你|我(再)?(考虑|考慮)一下|let me (think|consider)|i will (let you know|get back)|saya akan hubungi nanti)')
+   OR EXISTS (
+     SELECT 1 FROM whatsapp_sender_followup_treatment_state explicit_switch
+     WHERE explicit_switch.sender_id=sa.id AND explicit_switch.contact_id=c.id
+       AND explicit_switch.source_message_id=inbound.id
+       AND explicit_switch.status='selected'
+   )
+ )
  AND NOT (
    COALESCE(inbound.content,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
    AND COALESCE(inbound.content,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
