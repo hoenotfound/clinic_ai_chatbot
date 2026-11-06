@@ -323,7 +323,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
         },
       };
       const all=loadMigrations();
-      assert.equal(all.at(-1).version,117);
+      assert.equal(all.at(-1).version,118);
       const first=await runMigrations(scoped,{
         quiet:true,migrations:all.filter(m=>m.version<=77)
       });
