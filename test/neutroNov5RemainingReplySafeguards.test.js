@@ -66,8 +66,7 @@ test("Neutro temporary staff ownership is anchored to a genuine recent customer 
  // Never trust a broad keyword match for an unsolicited staff promotion.
  assert.match(sql,/staff_appointment_reminder/);
  assert.match(sql,/staff_reminder_invalidated/);
- assert.doesNotMatch(sql,/remind\\\(er\\\)/);
- assert.match(sql,/staff_appointment_reminder/);
+ assert.equal(sql.includes('remind(er)?'),false);
  assert.match(sql,/staffMessageId/);
  assert.match(sql,/booking_hold_resolved/);
  assert.match(sql,/appointment/);
