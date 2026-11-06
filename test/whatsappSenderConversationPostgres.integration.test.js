@@ -338,7 +338,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
       )).rows[0].id;
       const upgraded=await runMigrations(scoped,{quiet:true});
       assert.equal(upgraded.appliedCount,40);
-      assert.equal(upgraded.currentVersion,117);
+      assert.equal(upgraded.currentVersion,118);
       const proof=(await db.query(
         "SELECT c.id,c.whatsapp_number,c.whatsapp_sender_id,m.id AS message_id, " +
         "m.content FROM contacts c JOIN messages m ON m.contact_id=c.id " +
@@ -350,7 +350,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
       assert.equal(proof[0].content,"existing customer enquiry");
       assert.equal(proof[0].whatsapp_sender_id,null);
       assert.equal((await db.query("SELECT MAX(version)::int AS latest, " +
-        "COUNT(*)::int AS total FROM schema_migrations")).rows[0].latest,117);
+        "COUNT(*)::int AS total FROM schema_migrations")).rows[0].latest,118);
       assert.equal((await db.query("SELECT COUNT(*)::int AS total " +
         "FROM whatsapp_sender_accounts")).rows[0].total,0);
       await assert.rejects(db.query(
