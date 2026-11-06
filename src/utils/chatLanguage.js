@@ -57,6 +57,10 @@ const MALAY_WORDS = new Set([
 const ENGLISH_SENTENCE_START = /^(?:(?:hi|hello|hey)[,!\s]+)?(?:how|what|when|where|why|which|can|could|would|will|is|are|do|does|did|may|should|please|i|i'm|i'd|we|we'd)\b/iu;
 const CHINESE_CONVERSATION_MARKERS = /(?:我|你|您|请|請|问|問|想|吗|嗎|呢|这个|這個|那些|這些|多少|怎么|怎麼|哪里|哪裡|可以|怎样|怎樣|已经|已經|明天|现在|現在|谢谢|謝謝)/u;
 const CHINESE_WITH_ENGLISH_ADMIN_TERM = /\b(?:price|pricing|prices|package|packages|promo|cost|trial)\b/iu;
+// English sentence markers alongside a Chinese treatment name. Avoid treating
+// a lone sales label such as "price?" as an English language switch.
+const ENGLISH_MIXED_SENTENCE = /\b(?:interested\s+in|looking\s+for|available\s+(?:today|tomorrow|now|this|next)|(?:today|tomorrow)\s+available|book\s+(?:for|on)|want\s+to|need\s+to|i\s+(?:am|want|need)|how\s+much|what\s+is|is\s+there|can\s+i|do\s+you)\b/iu;
+const MALAY_MIXED_SENTENCE = /\b(?:saya\s+(?:nak|mahu|ingin)|nak\s+tahu|boleh\s+(?:tahu|book|buat|cuba)|berapa\s+harga|ada\s+(?:tak|ke))\b/iu;
 
 const ENGLISH_WORDS = new Set([
   "are",
@@ -155,8 +159,11 @@ function detectMessageLanguage(input) {
     // English commercial words. Small Chinese treatment names can occur in
     // otherwise English or Malay sentences and must not force Chinese.
     if (chineseCount <= 12 && !CHINESE_CONVERSATION_MARKERS.test(text)) {
-      if (malayScore >= 2 && malayScore > englishScore) return "ms";
-      if (englishScore >= 2 || (englishScore >= 1 && ENGLISH_SENTENCE_START.test(text))) {
+      if (MALAY_MIXED_SENTENCE.test(text) ||
+          (malayScore >= 2 && malayScore > englishScore)) return "ms";
+      if (ENGLISH_MIXED_SENTENCE.test(text) ||
+          englishScore >= 2 ||
+          (englishScore >= 1 && ENGLISH_SENTENCE_START.test(text))) {
         return "en";
       }
       // A standalone treatment name plus "price?" is ambiguous: inherit the
@@ -181,31 +188,28 @@ function detectMessageLanguage(input) {
 const ENGLISH_ADMIN_SHORTHAND =
   /^(?:price|prices|pricing|trial\s+price|first\s+trial|trial|promo\s+price|package\s+price|location|address|cost|fee|fees|hours|opening hours|packages?|promo)[\s?.!！。？]*$/iu;
 
+// Shared selection for customer replies, promotional media and follow-up
+// locale. Earlier customer messages decide when the latest message is only a
+// service name or a short sales term. The old Chinese fallback for ambiguous
+// Chinese-name shorthand remains when no prior language evidence exists.
 function detectConversationLanguage(recentMessages, fallback = "en") {
+  let ambiguousChinese = false;
   for (const message of recentMessages || []) {
-    const explicit = detectExplicitLanguagePreference(message);
+    const text = String(message || "").trim();
+    const explicit = detectExplicitLanguagePreference(text);
     if (explicit) return explicit;
-    if (ENGLISH_ADMIN_SHORTHAND.test(String(message || "").trim())) continue;
-    // Preserve the prior follow-up/template language choice for Chinese
-    // names, independently of the finer interactive AI reply detection.
-    const detected = CHINESE_CHARACTERS.test(String(message || ""))
-      ? "zh" : detectMessageLanguage(message);
+    if (ENGLISH_ADMIN_SHORTHAND.test(text)) continue;
+    const detected = detectMessageLanguage(text);
     if (detected) return detected;
+    if (CHINESE_CHARACTERS.test(text)) ambiguousChinese = true;
   }
-  return fallback;
+  return ambiguousChinese ? "zh" : fallback;
 }
 
-// This more precise variant is used only when producing an interactive AI
-// response (including its matching promotional/results media).
+// Keep the named entry point for the live reply path, but share exactly the
+// same customer-language rules with follow-up template selection.
 function detectReplyConversationLanguage(recentMessages, fallback = "en") {
-  for (const message of recentMessages || []) {
-    const explicit = detectExplicitLanguagePreference(message);
-    if (explicit) return explicit;
-    if (ENGLISH_ADMIN_SHORTHAND.test(String(message || "").trim())) continue;
-    const detected = detectMessageLanguage(message);
-    if (detected) return detected;
-  }
-  return fallback;
+  return detectConversationLanguage(recentMessages, fallback);
 }
 
 module.exports = {
