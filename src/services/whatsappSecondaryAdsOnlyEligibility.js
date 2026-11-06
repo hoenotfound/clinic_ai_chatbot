@@ -278,7 +278,7 @@ function verified131060InformationReviewSql(alias = "c") {
 // gain the Booking ready exception. This narrow path preserves all downstream
 // appointment, opt-in, window, staff and billing checks.
 function secondaryAutomationAttentionAllowedSql(alias = "c") {
-  return `(${alias}.needs_attention IS NOT TRUE
+  return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)})`;
 }
 function secondaryReplyAttentionAllowedSql(alias = "c") {
