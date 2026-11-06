@@ -34,6 +34,7 @@ test("a recovered ad must have trusted live SQL proof and writes atomically once
     "INSERT INTO","COMMIT",
   ]);
   const update=queries[1];
+  assert.equal(update.args.length,21,"every SQL placeholder has a bound value");
   for(const fragment of [
     "la.source='whatsapp_unattributed'","l.source='whatsapp_unattributed'",
     "initial.id=l.started_message_id","initial.id=la.first_message_id",
@@ -110,6 +111,10 @@ test("attribution service publishes and enriches only on a true recovery",async(
   assert.equal(await service.recoverUnavailableFirstTouchAd({
     lead:{id:12}, incoming:{...incoming,text:""},messageId:124,
   }),null);
+  assert.equal(actions.length,1);
+  assert.equal(await service.recoverUnavailableFirstTouchAd({
+    lead:{id:12,source:"meta_ads"},incoming,messageId:125,
+  }),null,"already attributed leads never incur another recovery query");
   assert.equal(actions.length,1);
 });
 test("inbound preparation tries recovery only for an existing ad lead",()=>{
