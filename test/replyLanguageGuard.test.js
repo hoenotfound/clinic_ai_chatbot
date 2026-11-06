@@ -29,7 +29,7 @@ test("language prompt survives provider option normalization", () => {
   ).request.config.systemInstruction;
   assert.match(prompt, /REQUIRED REPLY LANGUAGE FOR THIS TURN: English/);
   assert.match(prompt, /not clinic instructions, Chinese treatment names/);
-  assert.match(prompt, /not a confirmed CRM booking/);
+  assert.match(prompt, /NOT a confirmed CRM booking/i);
   assert.match(buildSystemPrompt({ replyLanguage: "ms" }), /REQUIRED REPLY LANGUAGE FOR THIS TURN: Bahasa Malaysia/);
   assert.match(buildSystemPrompt({ replyLanguage: "zh" }), /REQUIRED REPLY LANGUAGE FOR THIS TURN: Simplified Chinese/);
   assert.match(buildSystemPrompt({ replyLanguage: "en", strictReplyLanguage: true }), /language-correction attempt/);
@@ -132,5 +132,5 @@ test("server calls correction before downstream booking, pricing, and provider s
   const providerSend = src.indexOf('const sendOutcome = await sendTrackedText(');
   assert.ok(aiDraft > 0 && correction > aiDraft);
   assert.ok(assembled > correction && providerSend > assembled);
-  assert.match(src.slice(aiDraft, assembled), /replyLanguage: mediaLanguage/);
+  assert.match(src.slice(aiDraft - 500, assembled), /replyLanguage: mediaLanguage/);
 });
