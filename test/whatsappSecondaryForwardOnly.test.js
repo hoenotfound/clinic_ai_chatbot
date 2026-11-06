@@ -144,3 +144,46 @@ test("secondary media forwarding accepts only a proven saved forward with staff-
   assert.equal(denied.success,false);
   assert.deepEqual(calls,["staff_forward"]);
 });
+
+
+test("forwarded media waits for the previous receipt before one sender-owned send", async () => {
+  const {deps} = textFixture();
+  let attempts = 0, waits = 0, sends = 0;
+  deps.billingRepo.reserveSecondaryBillingAttempt = async () => {
+    attempts++;
+    return attempts === 1
+      ? {reserved:false,code:"secondary_billing_previous_send_unresolved"}
+      : {reserved:true,reservationId};
+  };
+  deps.waitForPriorSettlement = async delay => {
+    waits++;
+    assert.equal(delay,750);
+  };
+  const sent = await sendSecondaryStaffText({
+    contact,messageId:125,text:"[staff media]",origin:"staff_forward",
+    preSendCheck:async()=>true,
+    dispatchTransport:async()=>{sends++;return{success:true,wamid:"wamid.forwarded-media"};},
+  },deps);
+  assert.equal(sent.success,true);
+  assert.equal(attempts,2);
+  assert.equal(waits,1);
+  assert.equal(sends,1);
+});
+
+test("unresolved prior forwarded-media billing gate never triggers another Meta send", async () => {
+  const {deps} = textFixture();
+  let reservations=0, waits=0, sends=0;
+  deps.billingRepo.reserveSecondaryBillingAttempt = async () => {
+    reservations++;
+    return {reserved:false,code:"secondary_billing_previous_send_unresolved"};
+  };
+  deps.waitForPriorSettlement = async () => { waits++; };
+  const blocked = await sendSecondaryStaffText({
+    contact,messageId:125,text:"[staff media]",origin:"staff_forward",
+    dispatchTransport:async()=>{sends++;return{success:true,wamid:"wamid.must-not-send"};},
+  },deps);
+  assert.equal(blocked.code,"secondary_billing_previous_send_unresolved");
+  assert.equal(reservations,5);
+  assert.equal(waits,4);
+  assert.equal(sends,0);
+});
