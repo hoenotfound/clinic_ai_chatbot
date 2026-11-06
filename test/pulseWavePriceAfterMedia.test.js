@@ -529,6 +529,11 @@ test("Pulse Wave postpartum application is not a separate package; a genuine oth
   }, "脉冲波调理", candidates), false);
   assert.equal(assistantIntroducesCompetingPaidService({
     role: "assistant",
+    content: "脉冲波调理会先由中医师了解腹部、腰围，还是产后身体变化这块呢？",
+  }, "脉冲波调理", candidates), false,
+  "The configured 产后 alias must not treat postpartum body changes as a separately offered treatment");
+  assert.equal(assistantIntroducesCompetingPaidService({
+    role: "assistant",
     content: "脉冲波调理是一个项目，另外我们也提供产后调理，想了解哪一个？",
   }, "脉冲波调理", candidates), true);
   assert.equal(assistantIntroducesCompetingPaidService({
