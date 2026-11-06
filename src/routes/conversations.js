@@ -3098,7 +3098,7 @@ router.post("/:contactId/messages", async (req, res) => {
         /(?:已确认|已確認|确认成功|確認成功|appointment confirmed|booking confirmed|booked)/iu.test(text.trim()) &&
         /(?:预约|預約|appointment|booking|temujanji)/iu.test(text.trim());
       try {
-        const synchronized = await recordStaffConfirmedBooking(preparedContact.id, text.trim(), { providerAccepted: true });
+        const synchronized = await recordStaffConfirmedBooking(preparedContact.id, text.trim(), { providerAccepted: true, messageId: finalMessage.id });
         bookingSynced = Boolean(synchronized);
         if (explicitBookingConfirmation && !bookingSynced) {
           bookingSyncWarning = "Appointment message sent, but it was not recorded as confirmed. Please enter the verified date/time in Pipeline.";
