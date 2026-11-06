@@ -55,7 +55,7 @@ const MALAY_WORDS = new Set([
 // An English/Malay question may contain a Chinese treatment name. The name
 // is not evidence that the customer's sentence is in Chinese.
 const ENGLISH_SENTENCE_START = /^(?:(?:hi|hello|hey)[,!\s]+)?(?:how|what|when|where|why|which|can|could|would|will|is|are|do|does|did|may|should|please|i|i'm|i'd|we|we'd)\b/iu;
-const CHINESE_CONVERSATION_MARKERS = /(?:我|你|您|请|請|问|問|想|吗|嗎|呢|这个|這個|那些|這些|多少|怎么|怎麼|哪里|哪裡|可以|怎样|怎樣|已经|已經|明天|现在|現在|预约|預約|价格|價格|疗程|療程|谢谢|謝謝)/u;
+const CHINESE_CONVERSATION_MARKERS = /(?:我|你|您|请|請|问|問|想|吗|嗎|呢|这个|這個|那些|這些|多少|怎么|怎麼|哪里|哪裡|可以|怎样|怎樣|已经|已經|明天|现在|現在|谢谢|謝謝)/u;
 const CHINESE_WITH_ENGLISH_ADMIN_TERM = /\b(?:price|pricing|prices|package|packages|promo|cost|trial)\b/iu;
 
 const ENGLISH_WORDS = new Set([
