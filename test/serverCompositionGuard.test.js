@@ -172,7 +172,7 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
 
 test("mixed opt-out answer remains noncommercial and skips optional media", () => {
   assert.match(serverSource, /const marketingStopQuestion = whatsappPolicy\.extractQuestionAfterMarketingOptOut\(text\)/);
-  assert.match(serverSource, /const rawAiReply = await ai\.getReply\(\s*verifiedFirstReadableAd \? replyHistory\.slice\(-1\) : replyHistory,/);
+  assert.match(serverSource, /const modelReplyHistory = verifiedFirstReadableAd[\s\S]*?replyHistory\.slice\(-1\)\s*:\s*replyHistory;[\s\S]*?ai\.getReply\(modelReplyHistory, replyOptions\)/);
   assert.match(serverSource, /marketingStopQuestion && hasCommercialReplyContent\(reply\)/);
   assert.match(serverSource, /reason: "marketing_opt_out_turn"/);
   assert.ok(
