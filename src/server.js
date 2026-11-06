@@ -71,6 +71,7 @@ const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidenc
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
+const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
   detectConversationLanguage,
@@ -1197,7 +1198,7 @@ async function processIncomingMessage(
       if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
-        aiReply = "我帮你核对这项疗程的最新配套价格 😊";
+        aiReply = priceCheckingReply("latest_package", mediaLanguage);
         priceQuery = true;
         details = { treatment: numberedPricingSelection.treatment };
       } else if (fixedAdFirstReply) {
@@ -1437,7 +1438,7 @@ async function processIncomingMessage(
         priceQuery = true;
         packageQuery = false;
         details = { ...details, treatment: shadowPriceException.treatment };
-        aiReply = "我帮你核对这项疗程的价格 😊";
+        aiReply = priceCheckingReply("treatment", mediaLanguage);
         console.info("[Pricing] Recovered narrow Shadow price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       }
@@ -1478,7 +1479,7 @@ async function processIncomingMessage(
         bookingReady = false;
         priceQuery = true;
         packageQuery = false;
-        aiReply = "我帮你确认这两项护理各自的价格 😊";
+        aiReply = priceCheckingReply("two_treatments", mediaLanguage);
         console.info("[Pricing] Recovered verified two-price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       } else {
@@ -1533,7 +1534,7 @@ async function processIncomingMessage(
         details = { ...details, treatment: scopedPackagePrice.treatment };
         // The price-only formatter replaces this safe placeholder with
         // currently configured and independently verified package amounts.
-        aiReply = "我帮你核对这两项配套的价格 😊";
+        aiReply = priceCheckingReply("two_packages", mediaLanguage);
         console.info("[Pricing] Resolved verified scoped-package information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
       } else {
