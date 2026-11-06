@@ -212,6 +212,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
   const runtime = vm.runInNewContext(`(async function runCase(options) {
     const text = options.text;
     const wasFirstMessage = options.wasFirstMessage;
+    const verifiedFirstReadableAd = options.verifiedFirstReadableAd === true;
     const history = [{ role: "user", content: text }];
     const replyHistory = history;
     const isFirstMessage = history.length === 1;
