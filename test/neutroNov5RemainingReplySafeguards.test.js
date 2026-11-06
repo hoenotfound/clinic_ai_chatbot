@@ -62,8 +62,11 @@ test("recent provider-verified human response blocks next Neutro AI reply withou
 test("Neutro temporary staff ownership is anchored to a genuine recent customer exchange",()=>{
  const sql=temporaryStaffConversationSql("c","inbound");
  assert.match(sql,/previous_customer/);
- assert.match(sql,/staff\.sent_by_username='WhatsApp Business App'/);
- assert.match(sql,/remind\(er\)\?/);
+ // Proactive staff holds now require the verified, persisted reminder signal.
+ // Never trust a broad keyword match for an unsolicited staff promotion.
+ assert.match(sql,/staff_appointment_reminder/);
+ assert.match(sql,/staff_reminder_invalidated/);
+ assert.doesNotMatch(sql,/remind\\\(er\\\)/);
  assert.match(sql,/staff_appointment_reminder/);
  assert.match(sql,/staffMessageId/);
  assert.match(sql,/booking_hold_resolved/);
