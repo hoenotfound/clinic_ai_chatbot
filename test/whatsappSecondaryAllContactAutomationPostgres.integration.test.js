@@ -215,7 +215,7 @@ test("Postgres: fresh non-ad messages qualify without replay; old ad sequences s
       [oldPlaceholder,tooLate.id,JSON.stringify({
         unsupportedType:"unsupported",unsupportedErrors:[{code:131060}],
       })]);
-    await inbound(tooLate,{at:new Date(now-30000).toISOString(),ad:true});
+    await inbound(tooLate,{at:new Date(now-28000).toISOString(),ad:true});
     assert.equal(await isSecondaryAdsOnlyEligible(tooLate.id,{database:db,env:adOnly}),false,
       "a separate ad click outside two minutes cannot inherit first-contact status");
 
