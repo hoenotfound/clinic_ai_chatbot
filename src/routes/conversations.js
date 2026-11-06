@@ -43,6 +43,8 @@ const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const { recordStaffConfirmedBooking } = require("../services/staffBookingConfirmationService");
+const staffReminderRecovery = require("../services/staffAppointmentReminderRecoveryService");
+const {isProactiveAppointmentReminder} = require("../utils/staffAppointmentReminderText");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
@@ -3105,6 +3107,9 @@ router.post("/:contactId/messages", async (req, res) => {
         }
       } catch (bookingSyncError) {
         console.error("Failed to sync staff chat booking confirmation:", bookingSyncError);
+        // Provider accepted this outbound message; a durable local message
+        // record will be revisited without another WhatsApp send.
+        if (isProactiveAppointmentReminder(text.trim())) staffReminderRecovery.wake();
         bookingSyncWarning = "Appointment message sent, but booking could not be saved to CRM. Please confirm it in Pipeline.";
       }
     }
