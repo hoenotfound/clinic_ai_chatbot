@@ -287,6 +287,21 @@ function createInboundMessageClaimService({
         console.error(`Failed to capture lead attribution for lead ${lead.id}:`, err);
       }
     } else {
+      // A Meta 131060 placeholder may have created a false direct first-touch
+      // row seconds before the first readable ad message. Repair it only when
+      // sender-bound provider evidence confirms that exact two-message
+      // sequence. Real older direct leads and later ad clicks remain unchanged.
+      if (channel === "whatsapp" && lead?.id &&
+          incoming?.attribution?.source === "meta_ads") {
+        try {
+          await attribution.recoverUnavailableFirstTouchAd?.({
+            lead, incoming, messageId: savedInbound.id,
+          });
+        } catch (err) {
+          // Attribution is best-effort; never block an ordinary customer reply.
+          console.error(`Failed to repair Meta 131060 first-touch for lead ${lead.id}:`, err);
+        }
+      }
       // A pending social OPEN_THREAD referral belongs to the next actual
       // message. Clear it once the journey decision has been made so it cannot
       // leak into a future lead after this one is closed.
