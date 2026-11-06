@@ -4881,7 +4881,12 @@ function MessageBubble({
   const longPressTriggeredRef = useRef(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
-  const isWhatsAppTemplate = !!message.whatsapp_template;
+  // Secondary AI images store delivery bookkeeping in whatsapp_template,
+  // but they are regular WhatsApp image sends, not approved Meta templates.
+  const templateMetadata = message.whatsapp_template;
+  const isWhatsAppTemplate =
+    typeof templateMetadata?.name === "string" && templateMetadata.name.trim().length > 0 &&
+    typeof templateMetadata?.language === "string" && templateMetadata.language.trim().length > 0;
   const senderLabel = message.is_automated_follow_up
     ? "Automated follow-up"
     : sentByStaff
