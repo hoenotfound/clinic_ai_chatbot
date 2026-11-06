@@ -850,6 +850,10 @@ function parseBusinessAppEchoes(body) {
             type: message.type || "unknown",
             mediaId: null,
             text: null,
+            // Meta can mark a Business App echo as forwarded in context or on the message.
+            isForwarded: Boolean(message.context?.forwarded || message.context?.frequently_forwarded ||
+              message.forwarded === true || message.is_forwarded === true ||
+              message.frequently_forwarded === true),
           };
 
           if (message.type === "text") {
