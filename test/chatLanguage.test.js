@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   detectMessageLanguage,
   detectConversationLanguage,
+  detectReplyConversationLanguage,
   detectExplicitLanguagePreference,
   isGreetingOrLanguageOnly,
   shouldGenerateLocalizedIntro,
@@ -111,8 +112,8 @@ test("English or Malay questions with Chinese treatment names use the customer's
   assert.equal(detectMessageLanguage("可以介绍 9D逆龄 package 吗？"), "zh");
   // Ambiguous shorthand uses prior customer language, not a named treatment.
   assert.equal(detectMessageLanguage("骨盆调理 price?"), null);
-  assert.equal(detectConversationLanguage(["骨盆调理 price?", "How much for 骨盆调理?"]), "en");
-  assert.equal(detectConversationLanguage(["骨盆调理 price?", "我想了解骨盆调理"]), "zh");
+  assert.equal(detectReplyConversationLanguage(["骨盆调理 price?", "How much for 骨盆调理?"]), "en");
+  assert.equal(detectReplyConversationLanguage(["骨盆调理 price?", "我想了解骨盆调理"]), "zh");
 });
 
 test("Hor Yen appointment conversation stays English despite Chinese AI replies", () => {
@@ -123,7 +124,13 @@ test("Hor Yen appointment conversation stays English despite Chinese AI replies"
     "Morning dear. If morning ok?",
     "Period heavy flow",
   ];
-  assert.equal(detectConversationLanguage(customerOnlyLatestFirst), "en");
-  assert.equal(detectConversationLanguage(["10am ok", "Morning dear. If morning ok?"]), "en");
-  assert.equal(detectConversationLanguage(["ok ya", "Saya nak tanya harga"]), "ms");
+  assert.equal(detectReplyConversationLanguage(customerOnlyLatestFirst), "en");
+  assert.equal(detectReplyConversationLanguage(["10am ok", "Morning dear. If morning ok?"]), "en");
+  assert.equal(detectReplyConversationLanguage(["ok ya", "Saya nak tanya harga"]), "ms");
+});
+
+test("legacy follow-up language stays Chinese for Chinese service-name shorthand", () => {
+  assert.equal(detectConversationLanguage(["3D 小颜术 / 9D 逆龄抗衰 price?"]), "zh");
+  assert.equal(detectConversationLanguage(["Package A 跟 Package B 有什么分别？"]), "zh");
+  assert.equal(detectReplyConversationLanguage(["How much for 骨盆调理?"]), "en");
 });
