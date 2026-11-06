@@ -2,8 +2,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client } = require("pg");
+const fs=require("node:fs");
+const path=require("node:path");
 const { runMigrations } = require("../src/db/migrationRunner");
 const { recoverUnavailableFirstTouchAd } = require("../src/db/leadAttributionRepo");
+const {getVerifiedFirstAdMessage}=require("../src/db/whatsapp131060FirstAdRepo");
+const {isSecondaryAdsOnlyEligible}=require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 
 const cs = process.env.TEST_DATABASE_URL;
 const ad={
@@ -92,6 +96,36 @@ test("Postgres repairs only a verified immediate secondary 131060/ad pair, once"
   assert.equal(got.source,"meta_ads");
   assert.equal(got.meta_ad_id,ad.adId);
   assert.equal(got.enrichment_status,"pending");
+  // The historical live repair was audited before the durable proof table
+  // existed. Verify migration backfills that evidence without any invented
+  // webhook content or second customer send.
+  await db.query(
+    "INSERT INTO whatsapp_free_entry_referrals(origin_message_id,contact_id,meta_ad_id,source_type) "+
+    "VALUES($1,$2,$3,'ad')",
+    [f.verified,f.contact,ad.adId]);
+  const migration=fs.readFileSync(path.join(__dirname,
+    "../src/db/migrations/117_whatsapp_secondary_131060_first_ad_proof.sql"),"utf8");
+  await db.query(migration);
+  assert.deepEqual(await getVerifiedFirstAdMessage(f.contact,f.verified,db),{
+    first_ad_message_id:f.verified,unavailable_message_id:f.initial,
+  },"migration backfills only the independently audited first Meta ad");
+  // Simulate the normal worker's 24-hour cleanup. Durable sender evidence,
+  // unlike raw webhook jobs, must remain available for later follow-ups.
+  await db.query("DELETE FROM inbound_processing_jobs WHERE message_id IN($1,$2)",
+    [f.initial,f.verified]);
+  const env={
+    WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+    WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:new Date(start.getTime()-60000).toISOString(),
+    WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+  };
+  assert.equal(await isSecondaryAdsOnlyEligible(f.contact,{database:db,env}),true,
+    "historically corrected contact remains eligible after 24h job deletion");
+  await db.query(migration);
+  assert.equal((await db.query(
+    "SELECT COUNT(*)::int AS n FROM whatsapp_secondary_131060_first_ads WHERE contact_id=$1",
+    [f.contact])).rows[0].n,1,"migration reruns do not duplicate proof");
   const lead=(await db.query("SELECT source FROM leads WHERE id=$1",[f.lead])).rows[0];
   assert.equal(lead.source,"meta_ads");
   assert.equal(await recoverUnavailableFirstTouchAd({
