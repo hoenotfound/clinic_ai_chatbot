@@ -215,6 +215,13 @@ test("informal Business App appointment reminders hold follow-ups in English, Ch
   ])assert.equal(isProactiveAppointmentReminder(text),true,text);
   for(const text of [
     "Do you want to book an appointment?",
+    "Reminder to book your appointment this Saturday at 11:30am",
+    "Reminder to book your appointment for RM388",
+    "Reminder: appointment slots open this weekend at 11:30am",
+    "Your appointment may be scheduled this Saturday at 11:30am",
+    "Your appointment is confirmed",
+    "预约已确认",
+    "Boleh book temujanji esok 11.30am?",
     "We have an appointment slot tomorrow 11.30am",
     "New appointment availability tomorrow 11.30am",
     "Appointment promotion RM388, book now",
@@ -241,12 +248,30 @@ test("proactive reminder writes a durable hold without silently marking CRM book
   assert.equal(await service(1005,"Morning dear remind appointment tmr 11.30am 😊",{providerAccepted:false}),null);
   assert.equal(sqls.length,0);
   assert.equal(await service(1005,"Morning dear remind appointment tmr 11.30am 😊",{providerAccepted:true}),null);
+  assert.equal(sqls.length,0,"Original provider message ID is mandatory");
+  assert.equal(await service(1005,"Morning dear remind appointment tmr 11.30am 😊",
+    {providerAccepted:true,messageId:17279}),null);
   assert.equal(sqls.length,1);
-  assert.deepEqual(sqls[0].args,[1005,"Morning dear remind appointment tmr 11.30am 😊"]);
+  assert.deepEqual(sqls[0].args,[1005,17279,"Morning dear remind appointment tmr 11.30am 😊"]);
   assert.match(sqls[0].sql,/INSERT INTO lead_activities/);
   assert.match(sqls[0].sql,/staff_appointment_reminder/);
+  assert.match(sqls[0].sql,/staff.id=\$2/);
+  assert.match(sqls[0].sql,/staff.is_forwarded IS DISTINCT FROM TRUE/);
   assert.match(sqls[0].sql,/staff.whatsapp_message_id IS NOT NULL/);
   assert.match(sqls[0].sql,/staff.is_automated_follow_up IS DISTINCT FROM TRUE/);
   assert.match(sqls[0].sql,/NOT IN \('set','visited','cancelled'\)/);
   assert.match(sqls[0].sql,/NOT EXISTS/);
+});
+
+test("a failed reminder hold propagates and can be retried using the SAME provider message",async()=>{
+  const message="Morning dear remind appointment tmr 11.30am 😊";
+  let calls=0;
+  const service=createStaffBookingConfirmationService({
+    config:{businessType:"tcm_clinic"},
+    database:{query:async()=>{calls++;if(calls===1)throw Error("transient postgres error");return{rows:[{id:8}],rowCount:1};}},
+    pipeline:{getActiveLeadForContact:async()=>{throw Error("Never auto-book a reminder");}},
+  });
+  await assert.rejects(service(1005,message,{providerAccepted:true,messageId:17279}),/transient postgres error/);
+  assert.equal(await service(1005,message,{providerAccepted:true,messageId:17279}),null);
+  assert.equal(calls,2);
 });
