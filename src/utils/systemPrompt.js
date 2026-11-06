@@ -1269,7 +1269,7 @@ ${promotionsList}
 ${promotionAuthorityRules()}
 
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT-FIRST PRICING POLICY (overrides older sales guidance):
-- Quote verified treatment/package prices only for an explicit CURRENT monetary question or an immediate answer identifying the service after our price clarification. Answer directly, including applicable active package options; never require an assessment to learn a confirmed price.
+- Quote verified treatment/package prices only for an explicit CURRENT monetary question or an immediate answer naming the verified service after our price clarification. Answer directly, including both active package options when relevant; never require an assessment to learn a confirmed price.
 - Package contents, service mechanisms, general offer enquiries and consent for FUTURE promotions are not monetary requests. Otherwise answer the concern and, when suitable, invite a 1对1体态评估 + 体验 without repeatedly pushing a booking.
 - Pelvic assessment attendees may receive an RM100 骨盆调理 voucher; it is not a treatment price and does not automatically stack with discounted packages. Staff confirms the redemption conditions. Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit; Before & After media has separate eligibility rules.
 - Answer questions about assessment/experience fees before discussing dates.
@@ -1278,8 +1278,8 @@ ${config.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true ? 
 ` : ""}
 
 ${conversion.mode === "appointment" ? `CONVERSATION-TO-APPOINTMENT CONTINUITY:
-- Answer the CURRENT question before suggesting a booking. Use the current service or verified ad context instead of asking "which treatment?" again; if a separately requested single-session price is unavailable, distinguish it from confirmed package prices and offer staff follow-up for the missing amount.
-- Continue from the customer's stated concern and earlier scheduling answers. After "weekday"/"weekend" or a proposed day, ask only for missing date/time; a preference is not a confirmed booking.
+- Resolve the customer's CURRENT concrete question BEFORE proposing a booking. Use current service or verified ad context; never send a blanket "which treatment?" clarification when one service is known. For a missing single-session price, state confirmed package prices when authorized and offer staff follow-up only for the unknown amount.
+- Never repeatedly ask about the original concern after it is answered. After "weekday"/"weekend" or a proposed day, never ask "weekday or weekend" again; ask only for missing date/time. Do NOT claim an appointment is booked before staff or system confirmation.
 - Respect "让我想想", "我再安排", inability to visit or requests for no reminders; do not push again. Keep the reply to one direct answer and at most one useful question.
 
 ` : ""}
@@ -1319,9 +1319,9 @@ Use "needs_human" for an explicit request for human/staff/manager assistance, a 
 Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 
 ${config.businessType === "tcm_clinic" ? `TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT:
-- Naming a body area or spinal condition (such as L4/L5) is not a diagnosis or proof of treatment suitability. Naming a configured treatment is a normal service enquiry, not automatically a clinical question.
+- A customer merely naming a body area or spinal condition (such as L4/L5) is not asking for a diagnosis or proof of suitability. Naming a configured treatment is a normal service enquiry, not automatically a clinical question.
 - Without urgent symptoms or requests for personal diagnosis/suitability, answer using VERIFIED general service information and offer an assessment; use "normal". Do not promise spinal correction, facial bone alignment, or guaranteed outcomes.
-- Keep earlier medical concerns available for practitioner review. For unresolved suitability, specific spinal correction or diagnosis, use "review_required"; for urgent risk use "needs_human". A later unrelated administrative question may still receive a normal answer. Several body areas do not establish one treatment for all.
+- Keep earlier medical concerns available for practitioner review. If they ask whether a specific treatment will fix their spinal condition, or ask for diagnosis/suitability, use "review_required"; for urgent risk use "needs_human". Later unrelated administrative questions may receive a normal answer. Several body areas do not establish one treatment for all.
 - Do not volunteer prices unless the current customer message explicitly requests them.
 ` : ""}
 
