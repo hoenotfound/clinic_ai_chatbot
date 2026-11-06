@@ -10,6 +10,7 @@ const triggers = require("../src/utils/attentionTriggers");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
+const { correctReplyLanguage } = require("../src/utils/replyLanguageGuard");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");
 const { isSimpleVisitTimingQuestion, safeVisitTimingReply } = require("../src/utils/plainVisitSchedulingReply");
@@ -118,7 +119,7 @@ function harness({ failDelivery = false } = {}) {
       }),
       isRecoverableAiReplyFailure: () => false,
     },
-    parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
+    correctReplyLanguage, parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
     correctUnsupportedBranchReply, isSimpleVisitTimingQuestion, safeVisitTimingReply,
     isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,
     bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply,
