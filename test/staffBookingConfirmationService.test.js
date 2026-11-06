@@ -5,6 +5,7 @@ const {
   parseTerseStaffConfirmedSlot,
   isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
+  isProactiveAppointmentReminder,
   createStaffBookingConfirmationService,
 } = require("../src/services/staffBookingConfirmationService");
 
@@ -194,4 +195,58 @@ test("newer customer booking date overrides an older date even if the time match
  assert.deepEqual(await service(1046,"OK 29/11, 3pm",{providerAccepted:true}),{review:true});
  assert.deepEqual(reviews,[[1046,808]]);
  assert.deepEqual(updates,[]);
+});
+
+
+test("informal Business App appointment reminders hold follow-ups in English, Chinese and Malay", () => {
+  for(const text of [
+    "Morning dear remind appointment tmr 11.30am 😊",
+    "Reminder: your appointment is tomorrow at 11:30am",
+    "Your appointment is confirmed for Saturday at 11:30am",
+    "Appointment set for Saturday 11.30am",
+    "Booked for Saturday 11:30am, see you there!",
+    "See you tomorrow at 11:30am 😊",
+    "预约提醒：明天11:30见 😊",
+    "您的预约已确认，星期六11:30见",
+    "明天11:30见哦 😊",
+    "Peringatan temujanji anda esok pukul 11.30 pagi",
+    "Jangan lupa janji temu esok pukul 11.30 pagi",
+    "Temujanji anda disahkan Sabtu 11.30 pagi",
+  ])assert.equal(isProactiveAppointmentReminder(text),true,text);
+  for(const text of [
+    "Do you want to book an appointment?",
+    "We have an appointment slot tomorrow 11.30am",
+    "New appointment availability tomorrow 11.30am",
+    "Appointment promotion RM388, book now",
+    "If you want, see you tomorrow at 11.30am?",
+    "Your appointment is not confirmed for Saturday",
+    "We need to reschedule your appointment tomorrow",
+    "Happy birthday dear, our complimentary appointment is available",
+    "See you soon dear",
+  ])assert.equal(isProactiveAppointmentReminder(text),false,text);
+});
+
+test("proactive reminder writes a durable hold without silently marking CRM booked",async()=>{
+  const sqls=[];
+  const service=createStaffBookingConfirmationService({
+    config:{businessType:"tcm_clinic"},
+    database:{query:async(sql,args)=>{
+      sqls.push({sql,args});
+      return {rows:[{id:100}]};
+    }},
+    pipeline:{getActiveLeadForContact:async()=>{throw Error("No inferred booking");},
+      updateLead:async()=>{throw Error("No inferred booking");}},
+    markPendingBooking:async()=>{throw Error("No alert for a routine reminder");},
+  });
+  assert.equal(await service(1005,"Morning dear remind appointment tmr 11.30am 😊",{providerAccepted:false}),null);
+  assert.equal(sqls.length,0);
+  assert.equal(await service(1005,"Morning dear remind appointment tmr 11.30am 😊",{providerAccepted:true}),null);
+  assert.equal(sqls.length,1);
+  assert.deepEqual(sqls[0].args,[1005,"Morning dear remind appointment tmr 11.30am 😊"]);
+  assert.match(sqls[0].sql,/INSERT INTO lead_activities/);
+  assert.match(sqls[0].sql,/staff_appointment_reminder/);
+  assert.match(sqls[0].sql,/staff.whatsapp_message_id IS NOT NULL/);
+  assert.match(sqls[0].sql,/staff.is_automated_follow_up IS DISTINCT FROM TRUE/);
+  assert.match(sqls[0].sql,/NOT IN \('set','visited','cancelled'\)/);
+  assert.match(sqls[0].sql,/NOT EXISTS/);
 });
