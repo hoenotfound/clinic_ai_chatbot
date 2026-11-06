@@ -14,8 +14,8 @@ async function recordVerifiedFirstAd({contactId,inboundMessageId,adId},database=
   if(!Number.isSafeInteger(contact)||contact<=0||
      !Number.isSafeInteger(inbound)||inbound<=0||
      !/^[A-Za-z0-9_.:-]{1,256}$/.test(String(adId||"")))return null;
-  const result=await database.query(
-    `INSERT INTO whatsapp_secondary_131060_first_ads
+  const result=await database.query({
+    text:`INSERT INTO whatsapp_secondary_131060_first_ads
       (contact_id,sender_id,unavailable_message_id,first_ad_message_id,meta_ad_id)
      SELECT c.id,sa.id,initial.id,ad_message.id,$3
      FROM contacts c
@@ -67,8 +67,9 @@ async function recordVerifiedFirstAd({contactId,inboundMessageId,adId},database=
        AND whatsapp_secondary_131060_first_ads.first_ad_message_id=EXCLUDED.first_ad_message_id
        AND whatsapp_secondary_131060_first_ads.meta_ad_id=EXCLUDED.meta_ad_id
      RETURNING first_ad_message_id,unavailable_message_id,contact_id,meta_ad_id`,
-    [contact,inbound,String(adId)]
-  );
+    values:[contact,inbound,String(adId)],
+    query_timeout:1500,
+  });
   return result.rows?.[0]||null;
 }
 
