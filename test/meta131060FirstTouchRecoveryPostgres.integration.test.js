@@ -112,7 +112,7 @@ test("Postgres repairs only a verified immediate secondary 131060/ad pair, once"
     leadId:intervening.lead,inboundMessageId:intervening.verified,attribution:ad,
   },adapter),null,"a substantive intervening turn must preserve true first touch");
 
-  const late=await fixture({offsetMs:11*60*1000});
+  const late=await fixture({offsetMs:2*60*1000+1000});
   assert.equal(await recoverUnavailableFirstTouchAd({
     leadId:late.lead,inboundMessageId:late.verified,attribution:ad,
   },adapter),null,"a later ad is not the original first touch");
