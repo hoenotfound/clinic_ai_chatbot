@@ -52,7 +52,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
 }
 function localizedFollowUpText({
  slot,originalText,customerTexts,languageEvidenceTexts,treatmentInterest,clinicConfig,
- forceGeneral=false,
+ forceGeneral=false,selectedTreatment=undefined,
 }={}){
  const config=clinicConfig?.automatedFollowUp;
  if(config && [2,6,20].includes(Number(slot))){
@@ -64,7 +64,10 @@ function localizedFollowUpText({
    const step=Number(slot)===2?config:Number(slot)===6?config.additionalSteps?.[0]:config.additionalSteps?.[1];
    if(!step)return null;
    const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
-   const service=forceGeneral ? null
+   // A verified selection is authoritative; older customer text still
+   // provides language evidence, never a competing treatment.
+   const service=forceGeneral ? null : selectedTreatment!==undefined
+     ? (clinicConfig.services||[]).find(x=>x.name===selectedTreatment)?.name||null
      : resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
    const selected=service?overrides.find(x=>x.serviceName===service):null;
    const source=selected||step;
