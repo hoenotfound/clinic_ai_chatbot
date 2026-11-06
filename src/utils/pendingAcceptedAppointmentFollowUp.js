@@ -23,6 +23,16 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
               AND booking_resolution.metadata->>'outcome'='booking_hold_resolved'
               AND (to_jsonb(booking_resolution)->>'id')::bigint >
                   (to_jsonb(booking_acceptance)->>'id')::bigint)
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_activities invalidated
+            WHERE invalidated.lead_id=booking_lead.id
+              AND booking_acceptance.metadata->>'outcome'='staff_appointment_reminder'
+              AND invalidated.metadata->>'outcome'='staff_reminder_invalidated'
+              AND invalidated.metadata->>'staffMessageId' =
+                  booking_acceptance.metadata->>'staffMessageId'
+              AND (to_jsonb(invalidated)->>'id')::bigint >
+                  (to_jsonb(booking_acceptance)->>'id')::bigint
+          )
           AND (
             booking_acceptance.metadata->>'outcome' <> 'staff_appointment_reminder'
             OR (
