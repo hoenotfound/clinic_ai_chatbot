@@ -212,6 +212,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
   const runtime = vm.runInNewContext(`(async function runCase(options) {
     const text = options.text;
     const wasFirstMessage = options.wasFirstMessage;
+    const verifiedFirstReadableAd = options.verifiedFirstReadableAd === true;
     const history = [{ role: "user", content: text }];
     const replyHistory = history;
     const isFirstMessage = history.length === 1;
@@ -241,8 +242,6 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     clinicConfig: { adFirstReply: config, services, serviceAliases: aliases },
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
-    // This isolated decision-branch harness returns a synthetic provider object.
-    // Production correction behavior is covered separately with real parsed drafts.
     correctReplyLanguage: async draft => draft,
     console: { info: (...parts) => logs.push(parts.join(" ")) },
   });

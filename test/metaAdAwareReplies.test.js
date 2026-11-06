@@ -242,7 +242,7 @@ test("server verifies creative Meta context before it can drive result media", (
     "metaAdCreativeService = resolveMetaAdCreativeService(",
     loadAt
   );
-  const replyAt = serverSource.indexOf("const rawAiReply = await ai.getReply(replyHistory", verifyAt);
+  const replyAt = serverSource.indexOf("const rawAiReply = await ai.getReply(", verifyAt);
   const resultAt = serverSource.indexOf("resolveResultMediaForReply({", replyAt);
 
   assert.ok(loadAt >= 0, "server should load Meta ad reply context");
@@ -251,7 +251,7 @@ test("server verifies creative Meta context before it can drive result media", (
   assert.ok(resultAt > replyAt, "result media should resolve after the AI reply");
   assert.match(
     serverSource.slice(loadAt, replyAt + 400),
-    /const replyOptions = \{[\s\S]*?metaAdContext,[\s\S]*?replyLanguage: mediaLanguage/
+    /const modelReplyHistory = verifiedFirstReadableAd[\s\S]*?const replyOptions = \{[\s\S]*?metaAdContext/
   );
   assert.match(
     serverSource.slice(resultAt, resultAt + 900),
@@ -424,7 +424,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
 
   const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
-  assert.match(serverSource, /const replyOptions = \{[\s\S]*?generateFirstIntro/);
+  assert.match(serverSource, /const modelReplyHistory = verifiedFirstReadableAd[\s\S]*?const replyOptions = \{[\s\S]*?generateFirstIntro/);
   assert.match(serverSource, /isFirstMessage && !flagged && !generateFirstIntro/);
   assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply\)/);
 });
@@ -613,7 +613,7 @@ test("contextual media guard checks untruncated persisted history after sending 
   const resolveAt = source.indexOf("const resultBundle = await resolveResultMediaForReply({", creativeAt);
   assert.ok(sendAt >= 0 && historyAt > sendAt && creativeAt > historyAt && resolveAt > creativeAt);
   assert.match(source.slice(historyAt, resolveAt), /resultMediaCreativeService = null/);
-  assert.match(source.slice(resolveAt, resolveAt + 400), /priorCustomerTexts: verifiedPriorCustomerTexts/);
+  assert.match(source.slice(resolveAt, resolveAt + 700), /priorCustomerTexts: verifiedFirstReadableAd[\s\S]*?\? \[\] : verifiedPriorCustomerTexts/);
   assert.doesNotMatch(source, /customerMessages\.slice\(0, -1\)\.map/);
 });
 

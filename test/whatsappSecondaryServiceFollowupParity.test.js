@@ -41,7 +41,8 @@ test("in-window service reminders allow fresh initiated chats, but do not loosen
    assert.match(sql,/c\.whatsapp_opt_out_at IS NULL/);
    assert.match(sql,/c\.whatsapp_marketing_opt_out_at IS NULL/);
    assert.match(sql,/pending_accepted|booking_hold|booking_lead/);
-   assert.match(sql,/needs_attention=FALSE/);
+   assert.match(sql,/unavailable_review\.summary LIKE 'WhatsApp message unavailable \(Meta 131060\)%'/);
+   assert.match(sql,/other_review.category IS DISTINCT FROM 'information'/);
    assert.match(sql,/INTERVAL '8 hours'/);
    assert.match(sql,/reviewed/);
  }

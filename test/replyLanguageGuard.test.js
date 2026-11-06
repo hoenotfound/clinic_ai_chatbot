@@ -190,7 +190,7 @@ test("already flagged clinical review does not request a second model response",
 
 test("actual reply correction runs ahead of downstream pricing, booking and outbound guards", () => {
   const src = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
-  const draft = src.indexOf("const rawAiReply = await ai.getReply(replyHistory");
+  const draft = src.indexOf("const rawAiReply = await ai.getReply(modelReplyHistory");
   const guard = src.indexOf("const languageCheckedReply = await correctReplyLanguage(");
   const assembled = src.indexOf("let reply = isFirstMessage && !flagged");
   const sent = src.indexOf("const sendOutcome = await sendTrackedText(");

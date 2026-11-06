@@ -3,11 +3,14 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations}=require("../src/db/migrationRunner");
-const {isSecondaryAutomationEligible,secondaryAutomationEligibleSql}=
+const {isSecondaryAutomationEligible,secondaryAutomationEligibleSql,
+  isSecondaryAdsOnlyEligible,eligibleSecondaryAdsOnlyContactIds,
+  secondaryAutomationAttentionAllowedSql}=
   require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const followup=require("../src/services/whatsappSecondaryFollowUpService");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const media=require("../src/services/whatsappSecondaryAiMediaQueue");
+const firstAdProof=require("../src/db/whatsapp131060FirstAdRepo");
 
 const cs=process.env.TEST_DATABASE_URL;
 test("Postgres: fresh non-ad messages qualify without replay; old ad sequences survive",{
@@ -100,6 +103,153 @@ test("Postgres: fresh non-ad messages qualify without replay; old ad sequences s
     assert.equal(await isSecondaryAutomationEligible(ad.id,{
       database:db,env,inboundMessageId:oldAdMessage}),true,
       "previously approved ad-origin contact retains its active followup sequence");
+
+    // A new CTWA lead can start with a Meta 131060 placeholder that contains
+    // no readable text. The immediately subsequent signed ad referral is the
+    // first usable enquiry, not an old direct conversation.
+    const unavailable=await contact();
+    const unavailableAt=new Date(now-10000).toISOString();
+    const placeholder=await inbound(unavailable,{at:unavailableAt});
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [placeholder,unavailable.id,JSON.stringify({
+        unsupportedType:"unsupported",unsupportedErrors:[{code:131060}],
+      })]
+    );
+    const firstAd=await inbound(unavailable,{
+      at:new Date(now-7000).toISOString(),ad:true,
+    });
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [firstAd,unavailable.id,JSON.stringify({
+        text:"Interested",attribution:{
+          source:"meta_ads",sourceType:"ad",adId:"verified-ad-"+firstAd,
+        },
+      })]
+    );
+    const proof=await firstAdProof.recordVerifiedFirstAd({
+      contactId:unavailable.id,inboundMessageId:firstAd,
+      adId:"verified-ad-"+firstAd,
+    },db);
+    assert.equal(proof?.unavailable_message_id,placeholder,
+      "provider-verified first unreadable message becomes a durable proof");
+    assert.equal(proof?.first_ad_message_id,firstAd);
+    assert.deepEqual(await firstAdProof.getVerifiedFirstAdMessage(
+      unavailable.id,firstAd,db),{
+        first_ad_message_id:firstAd,unavailable_message_id:placeholder,
+      });
+    const adOnly={...env,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only"};
+    assert.equal(await isSecondaryAdsOnlyEligible(unavailable.id,{database:db,env:adOnly}),true,
+      "a single verified 131060 placeholder may precede the first real CTWA ad");
+    assert.deepEqual([...await eligibleSecondaryAdsOnlyContactIds([unavailable.id],{
+      database:db,env:adOnly})],[unavailable.id],
+      "Inbox bulk ads-only eligibility agrees with the single-contact rule");
+    // Ordinary pruning must not cancel the lead's 48h/66h/Day4/Day6
+    // eligibility when the first verified ad was preceded only by 131060.
+    await db.query(
+      "DELETE FROM inbound_processing_jobs WHERE message_id IN($1,$2)",
+      [placeholder,firstAd]);
+    assert.equal(await isSecondaryAdsOnlyEligible(unavailable.id,{
+      database:db,env:adOnly}),true,
+      "ads-only proof survives completed inbound-job cleanup");
+    assert.ok(await firstAdProof.getVerifiedFirstAdMessage(unavailable.id,firstAd,db),
+      "fixed greeting and contextual media proof also survives cleanup");
+    await db.query(
+      "INSERT INTO ai_review_items(contact_id,inbound_message_id,category,summary,status) "+
+      "VALUES($1,$2,'information','WhatsApp message unavailable (Meta 131060). Meta did not provide the content.','pending')",
+      [unavailable.id,placeholder]);
+    await db.query(
+      "UPDATE contacts SET needs_attention=TRUE,attention_reason='AI review requested: [Meta 131060]' WHERE id=$1",
+      [unavailable.id]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),true,
+      "a 131060-only informational review does not suppress the next eligible pictures and follow-ups");
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env,inboundMessageId:firstAd}),true,
+      "all-contact automation eligibility shares the same narrow review exception");
+    const permission=await db.query(
+      "SELECT "+secondaryAutomationAttentionAllowedSql("c")+" AS allowed FROM contacts c WHERE id=$1",
+      [unavailable.id]);
+    assert.equal(permission.rows[0].allowed,true);
+    await db.query(
+      "UPDATE ai_review_items SET category='clinical' WHERE contact_id=$1 AND inbound_message_id=$2",
+      [unavailable.id,placeholder]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "a clinical review still blocks all secondary automation");
+    await db.query(
+      "UPDATE ai_review_items SET category='information',summary='Unrelated unresolved question' "+
+      "WHERE contact_id=$1 AND inbound_message_id=$2",
+      [unavailable.id,placeholder]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "unrelated informational reviews must remain restrictive");
+    await db.query(
+      "UPDATE ai_review_items SET summary='WhatsApp message unavailable (Meta 131060)' "+
+      "WHERE contact_id=$1 AND inbound_message_id=$2",
+      [unavailable.id,placeholder]);
+    await db.query("UPDATE contacts SET attention_reason='Delivery failed: not accepted' WHERE id=$1",
+      [unavailable.id]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "delivery failures still block all secondary automation");
+    await db.query("UPDATE contacts SET attention_reason='Booking ready: pending staff' WHERE id=$1",
+      [unavailable.id]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "Booking ready is NOT an exception for pictures or follow-ups");
+    await db.query("UPDATE contacts SET attention_reason='AI review requested: pending',mode='human' WHERE id=$1",
+      [unavailable.id]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "staff takeover cannot be bypassed by the review exception");
+    await db.query("UPDATE contacts SET mode='ai',whatsapp_opt_out_at=NOW() WHERE id=$1",[unavailable.id]);
+    assert.equal(await isSecondaryAutomationEligible(unavailable.id,{
+      database:db,env:adOnly,inboundMessageId:firstAd}),false,
+      "customer opt-out still blocks automation");
+
+    // False positives: wrong Meta error or an additional earlier message
+    // can never turn an old/direct conversation into an ad-first enquiry.
+    const wrong=await contact();
+    const wrongPlaceholder=await inbound(wrong,{at:new Date(now-9000).toISOString()});
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [wrongPlaceholder,wrong.id,JSON.stringify({
+        unsupportedType:"unsupported",unsupportedErrors:[{code:131051}],
+      })]);
+    await inbound(wrong,{at:new Date(now-6000).toISOString(),ad:true});
+    assert.equal(await isSecondaryAdsOnlyEligible(wrong.id,{database:db,env:adOnly}),false,
+      "other unsupported messages never establish first-ad eligibility");
+    const olderConversation=await contact();
+    const earlier=await inbound(olderConversation,{at:new Date(now-15000).toISOString()});
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [earlier,olderConversation.id,JSON.stringify({
+        unsupportedType:"unsupported",unsupportedErrors:[{code:131060}],
+      })]);
+    await inbound(olderConversation,{at:new Date(now-12000).toISOString()});
+    await inbound(olderConversation,{at:new Date(now-9000).toISOString(),ad:true});
+    assert.equal(await isSecondaryAdsOnlyEligible(olderConversation.id,{
+      database:db,env:adOnly}),false,
+      "an intervening real customer message remains evidence of prior conversation");
+    const tooLate=await contact();
+    await db.query("UPDATE contacts SET created_at=$2::timestamptz WHERE id=$1",
+      [tooLate.id,new Date(now-5*60000).toISOString()]);
+    const oldPlaceholder=await inbound(tooLate,{at:new Date(now-150000).toISOString()});
+    await db.query(
+      "INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) "+
+      "VALUES($1,$2,'whatsapp',$3::jsonb,'completed')",
+      [oldPlaceholder,tooLate.id,JSON.stringify({
+        unsupportedType:"unsupported",unsupportedErrors:[{code:131060}],
+      })]);
+    await inbound(tooLate,{at:new Date(now-28000).toISOString(),ad:true});
+    assert.equal(await isSecondaryAdsOnlyEligible(tooLate.id,{database:db,env:adOnly}),false,
+      "a separate ad click outside two minutes cannot inherit first-contact status");
+
     const unknown=await contact(true);
     const unknownOld=await inbound(unknown,{at:new Date(now-50000).toISOString()});
     assert.equal(await isSecondaryAutomationEligible(unknown.id,{

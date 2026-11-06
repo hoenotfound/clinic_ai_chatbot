@@ -5,6 +5,7 @@ const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
+const firstAdProofRepo = require("../db/whatsapp131060FirstAdRepo");
 const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
 const whatsappConsentPromptRepo = require("../db/whatsappConsentPromptRepo");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
@@ -58,6 +59,7 @@ function createInboundMessageClaimService({
   attribution = leadAttributionService,
   processing = inboundProcessingRepo,
   freeEntryReferrals = freeEntryReferralsRepo,
+  firstAdProof = firstAdProofRepo,
   inboundConsent = whatsappInboundConsentRepo,
   buttonConsent = whatsappConsentPromptRepo,
   events = realtimeEvents,
@@ -315,6 +317,44 @@ function createInboundMessageClaimService({
       }
     }
 
+    // Store a compact, durable provider-verified exception BEFORE ordinary
+    // inbound-job retention removes Meta's 131060 payload. This separate
+    // proof does not change customer messages or relax previous-chat rules.
+    // Normal ad clicks do not qualify and cannot authorize a first reply.
+    let verifiedUnavailableFirstAd = false;
+    if (channel === "whatsapp" &&
+        contact?.whatsapp_sender_key === "neutro_secondary" &&
+        incoming?.attribution?.source === "meta_ads" &&
+        incoming?.attribution?.sourceType === "ad" &&
+        typeof incoming.text === "string" && incoming.text.trim() &&
+        incoming?.attribution?.adId) {
+      try {
+        const proof = await firstAdProof.recordVerifiedFirstAd({
+          contactId: contact.id,
+          inboundMessageId: savedInbound.id,
+          adId: incoming.attribution.adId,
+        },database);
+        verifiedUnavailableFirstAd =
+          Number(proof?.first_ad_message_id) === Number(savedInbound.id);
+      } catch (error) {
+        // Availability/attribution must not delay the customer indefinitely.
+        // Without proof, future marketing and special first-turn logic fail closed.
+        console.error("[Secondary 131060 first-ad proof] Verification unavailable:",error);
+      }
+    }
+    if (!startsThisJourney && verifiedUnavailableFirstAd &&
+        lead?.id && lead.source !== "meta_ads") {
+      try {
+        await attribution.recoverUnavailableFirstTouchAd?.({
+          lead, incoming, messageId:savedInbound.id,
+        });
+      } catch (error) {
+        // The verified sender proof stays durable. This optional CRM update
+        // must not stop the actual customer AI response.
+        console.error(`Failed to repair Meta 131060 first-touch for lead ${lead.id}:`,error);
+      }
+    }
+
     let wasFirstMessage = Boolean(derivedFirstMessage);
     if (!hasDerivedFirstMessage) {
       try {
@@ -340,6 +380,7 @@ function createInboundMessageClaimService({
       contact,
       savedInbound,
       wasFirstMessage,
+      verifiedUnavailableFirstAd,
       processingJobId: preparedJob?.id || processingJob?.id || null,
     };
   }
