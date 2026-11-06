@@ -69,6 +69,7 @@ const {
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
+const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -1067,6 +1068,25 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
+    // Only the single, provider-verified 131060 placeholder is neutral for
+    // first-contact presentation. Do not change the stored conversation or
+    // disregard any ordinary earlier customer/staff message.
+    let verifiedFirstReadableAd = secondaryAiConversation &&
+      history.length === 2 &&
+      preclaimed?.verifiedUnavailableFirstAd === true;
+    if (!verifiedFirstReadableAd && secondaryAiConversation &&
+        history.length === 2 &&
+        preclaimed?.verifiedUnavailableFirstAd == null &&
+        incoming?.attribution?.source === "meta_ads") {
+      try {
+        verifiedFirstReadableAd = Boolean(await firstAdProofRepo.getVerifiedFirstAdMessage(
+          contact.id,savedInbound.id
+        ));
+      } catch (err) {
+        console.warn("[Secondary 131060 first reply] Durable proof lookup unavailable:",
+          err?.message);
+      }
+    }
     const mediaLanguage = detectConversationLanguage(
       history
         .slice()
@@ -1082,7 +1102,8 @@ async function processIncomingMessage(
       ? history.map((entry, index) => index === history.length - 1 && entry?.role === "user"
           ? { ...entry, content: marketingStopQuestion } : entry)
       : history;
-    const isFirstMessage = forceFirstMessage || history.length === 1;
+    const isFirstMessage = forceFirstMessage || history.length === 1 ||
+      verifiedFirstReadableAd;
     const customerMessages = history.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
@@ -1171,8 +1192,8 @@ async function processIncomingMessage(
             config: clinicConfig.adFirstReply,
             // Use the durable all-message first-turn evidence. The AI context
             // filters failed/sticker rows and is not a reliable uniqueness test.
-            isFirstMessage: wasFirstMessage === true,
-            conversationHistory: history,
+            isFirstMessage: wasFirstMessage === true || verifiedFirstReadableAd,
+            conversationHistory: verifiedFirstReadableAd ? history.slice(-1) : history,
             customerText: text,
             language: mediaLanguage,
             metaAdContext,
@@ -1207,7 +1228,8 @@ async function processIncomingMessage(
         console.info("[Fixed ad first reply] contact=" + contact.id +
           " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
       } else {
-        const rawAiReply = await ai.getReply(replyHistory, {
+        const rawAiReply = await ai.getReply(
+          verifiedFirstReadableAd ? replyHistory.slice(-1) : replyHistory, {
           bookingContext,
           contactId: contact.id,
           isFirstMessage,
@@ -2454,7 +2476,13 @@ async function processIncomingMessage(
 
           if (isEarlyContextualAdEnquiry({
             customerText: text,
-            priorCustomerTexts: verifiedPriorCustomerTexts,
+            // A verified 131060 placeholder is neither a greeting nor an
+          // actual customer enquiry. Only discount this exact first turn,
+          // and only if the full persisted-history lookup succeeded.
+          priorCustomerTexts: verifiedFirstReadableAd &&
+            Array.isArray(verifiedPriorCustomerTexts) &&
+            verifiedPriorCustomerTexts.length === 1
+              ? [] : verifiedPriorCustomerTexts,
           })) {
             try {
               const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
@@ -2500,7 +2528,10 @@ async function processIncomingMessage(
           serviceQuerySource,
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
-          priorCustomerTexts: verifiedPriorCustomerTexts,
+          priorCustomerTexts: verifiedFirstReadableAd &&
+            Array.isArray(verifiedPriorCustomerTexts) &&
+            verifiedPriorCustomerTexts.length === 1
+              ? [] : verifiedPriorCustomerTexts,
           loadPriorResultContext,
           onSkip: (reason) => { auditReason = reason; },
           priceQuery,

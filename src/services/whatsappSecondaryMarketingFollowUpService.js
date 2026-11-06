@@ -10,7 +10,7 @@ const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
-  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
@@ -157,7 +157,7 @@ const CANDIDATES_SQL=`
    ${MARKETING_CUSTOMER_INTENT_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
-   AND c.mode='ai' AND c.needs_attention=FALSE
+   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL

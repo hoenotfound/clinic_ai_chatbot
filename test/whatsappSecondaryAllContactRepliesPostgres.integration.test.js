@@ -86,6 +86,41 @@ test("secondary all-contact AI replies accept only post-switch inbound on the co
     assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([historical.id,0,-1],{
       database:db,env})],[historical.id]);
 
+    // #8946: an informational Meta 131060 placeholder must not silence the
+    // customer's next readable message. The review remains pending for staff.
+    const unavailable=(await db.query(
+      "INSERT INTO ai_review_items(contact_id,inbound_message_id,category,summary,status) "+
+      "VALUES($1,$2,'information','WhatsApp message unavailable (Meta 131060). Meta did not provide the content.','pending') RETURNING id",
+      [historical.id,old])).rows[0].id;
+    await db.query(
+      "UPDATE contacts SET needs_attention=TRUE, attention_reason=$2 WHERE id=$1",
+      [historical.id,"AI review requested: [#"+old+"] WhatsApp message unavailable (Meta 131060)"]
+    );
+    assert.equal(await isSecondaryAiReplyEligible(historical.id,{
+      database:db,env,inboundMessageId:newMessage}),true,
+      "an informational 131060 review does not suppress a new valid AI reply");
+    assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([historical.id],{
+      database:db,env})],[historical.id],"Inbox must agree with per-message eligibility");
+    assert.equal((await db.query(
+      "SELECT status FROM ai_review_items WHERE id=$1",[unavailable])).rows[0].status,
+      "pending","the unreadable message still requires staff attention");
+
+    await db.query("UPDATE ai_review_items SET category='clinical' WHERE id=$1",[unavailable]);
+    assert.equal(await isSecondaryAiReplyEligible(historical.id,{
+      database:db,env,inboundMessageId:newMessage}),false,
+      "clinical reviews always block secondary replies");
+    await db.query("UPDATE ai_review_items SET category='information',summary='Other administrative review' WHERE id=$1",[unavailable]);
+    assert.equal(await isSecondaryAiReplyEligible(historical.id,{
+      database:db,env,inboundMessageId:newMessage}),false,
+      "unrelated informational reviews do not bypass staff holds");
+    await db.query("UPDATE ai_review_items SET summary='WhatsApp message unavailable (Meta 131060)' WHERE id=$1",[unavailable]);
+    await db.query("UPDATE contacts SET attention_reason='Delivery failed: Meta refused send' WHERE id=$1",[historical.id]);
+    assert.equal(await isSecondaryAiReplyEligible(historical.id,{
+      database:db,env,inboundMessageId:newMessage}),false,
+      "delivery and other more serious attention reasons still block");
+    await db.query("UPDATE contacts SET needs_attention=FALSE,attention_reason=NULL WHERE id=$1",[historical.id]);
+    await db.query("UPDATE ai_review_items SET status='resolved' WHERE id=$1",[unavailable]);
+
     await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[historical.id]);
     assert.equal(await isSecondaryAiReplyEligible(historical.id,{
       database:db,env,inboundMessageId:newMessage}),false,"staff takeover stays manual");

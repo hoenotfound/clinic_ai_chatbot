@@ -208,6 +208,158 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
   }
 }
 
+
+/**
+ * Repair a false "direct" first touch ONLY when Meta first delivered an
+ * unreadable 131060 placeholder and immediately followed it with a provider-
+ * verified CTWA ad message within two minutes in the same secondary conversation.
+ *
+ * Do not reattribute genuine direct leads, old chats, or later ad clicks.
+ * All evidence is verified inside the single transaction; a repeated webhook
+ * cannot update the row twice. This does not replay any customer message.
+ */
+async function recoverUnavailableFirstTouchAd({
+  leadId, inboundMessageId, attribution,
+}, database = pool) {
+  const lead = Number(leadId);
+  const inbound = Number(inboundMessageId);
+  if (!Number.isSafeInteger(lead) || lead <= 0 ||
+      !Number.isSafeInteger(inbound) || inbound <= 0 ||
+      attribution?.source !== "meta_ads" ||
+      attribution?.channel !== "whatsapp" ||
+      !attribution?.adId) return null;
+
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    // Best-effort CRM correction is not allowed to hold a live customer reply
+    // indefinitely behind Neon locks or heavy traffic.
+    await client.query("SET LOCAL statement_timeout = '2000ms'");
+    const result = await client.query(
+      `UPDATE lead_attributions la
+       SET first_message_id=verified.id,
+           source='meta_ads', platform=$4,
+           meta_ad_id=$3, meta_source_id=$5, meta_source_type=$6,
+           referral_ref=$7, referral_source=$8, referral_type=$9,
+           ctwa_clid=$10, source_url=$11, headline=$12, body=$13,
+           media_type=$14, media_url=$15, campaign_id=$16,
+           campaign_name=$17, adset_id=$18, adset_name=$19, ad_name=$20,
+           raw_referral=$21::jsonb, attributed_at=verified.created_at,
+           enrichment_status='pending', enrichment_attempts=0,
+           enrichment_last_error=NULL, enrichment_next_attempt_at=NULL,
+           updated_at=now()
+       FROM leads l, messages initial, messages verified
+       WHERE la.lead_id=$1 AND l.id=la.lead_id
+         AND l.is_closed IS NOT TRUE
+         AND la.source='whatsapp_unattributed'
+         AND la.channel='whatsapp' AND la.meta_ad_id IS NULL
+         AND l.source='whatsapp_unattributed'
+         AND initial.id=l.started_message_id
+         AND initial.id=la.first_message_id
+         AND initial.contact_id=l.contact_id
+         AND initial.role='user' AND initial.whatsapp_message_id IS NOT NULL
+         AND verified.id=$2 AND verified.contact_id=l.contact_id
+         AND verified.role='user' AND verified.whatsapp_message_id IS NOT NULL
+         AND NULLIF(BTRIM(verified.content),'') IS NOT NULL
+         AND (verified.created_at,verified.id)>(initial.created_at,initial.id)
+         AND initial.source_created_at IS NOT NULL
+         AND verified.source_created_at IS NOT NULL
+         AND verified.source_created_at>=initial.source_created_at
+         AND verified.source_created_at<=initial.source_created_at+INTERVAL '2 minutes'
+         AND verified.created_at<=initial.created_at+INTERVAL '2 minutes'
+         -- Proof of the unavailable payload must come from the accepted
+         -- Meta webhook, not a text placeholder that somebody typed.
+         AND EXISTS (
+           SELECT 1 FROM inbound_processing_jobs initial_job
+           WHERE initial_job.message_id=initial.id
+             AND initial_job.channel='whatsapp'
+             AND initial_job.incoming_payload->>'unsupportedType'='unsupported'
+             AND initial_job.incoming_payload->'unsupportedErrors'
+                 @> '[{"code":131060}]'::jsonb
+         )
+         -- The second message must carry an actual ad referral from Meta.
+         AND EXISTS (
+           SELECT 1 FROM inbound_processing_jobs verified_job
+           WHERE verified_job.message_id=verified.id
+             AND verified_job.channel='whatsapp'
+             AND verified_job.incoming_payload->'attribution'->>'adId'=$3
+             AND verified_job.incoming_payload->'attribution'->>'sourceType'='ad'
+             AND NULLIF(BTRIM(verified_job.incoming_payload->>'text'),'') IS NOT NULL
+         )
+         AND EXISTS (
+           SELECT 1 FROM whatsapp_sender_message_context first_context
+           JOIN whatsapp_sender_message_context ad_context
+             ON ad_context.conversation_id=first_context.conversation_id
+           JOIN whatsapp_sender_conversations sc
+             ON sc.id=first_context.conversation_id
+           JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id
+           WHERE first_context.message_id=initial.id
+             AND ad_context.message_id=verified.id
+             AND sc.contact_id=l.contact_id
+             AND sc.state='bound'
+             AND sa.sender_key='neutro_secondary' AND sa.state='active'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM messages between_messages
+           WHERE between_messages.contact_id=l.contact_id
+             AND (between_messages.created_at,between_messages.id)
+                 >(initial.created_at,initial.id)
+             AND (between_messages.created_at,between_messages.id)
+                 <(verified.created_at,verified.id)
+         )
+       RETURNING la.*, l.started_message_id AS unavailable_original_message_id`,
+      [
+        lead, inbound, String(attribution.adId),
+        attribution.platform || "meta",
+        attribution.sourceId || null, attribution.sourceType || null,
+        attribution.referralRef || null, attribution.referralSource || null,
+        attribution.referralType || null, attribution.ctwaClid || null,
+        attribution.sourceUrl || null, attribution.headline || null,
+        attribution.body || null, attribution.mediaType || null,
+        attribution.mediaUrl || null, attribution.campaignId || null,
+        attribution.campaignName || null, attribution.adsetId || null,
+        attribution.adsetName || null, attribution.adName || null,
+        toJson(attribution.rawReferral),
+      ]
+    );
+    const repaired = result.rows[0] || null;
+    if (repaired) {
+      // Only correct the false direct source. Never overwrite staff decisions.
+      await client.query(
+        `UPDATE leads
+         SET source='meta_ads',
+             campaign_name=CASE
+               WHEN NULLIF(BTRIM(campaign_name),'') IS NULL THEN $2
+               ELSE campaign_name END,
+             treatment_interest=CASE
+               WHEN NULLIF(BTRIM(treatment_interest),'') IS NULL THEN $3
+               ELSE treatment_interest END,
+             updated_at=now()
+         WHERE id=$1 AND source='whatsapp_unattributed'`,
+        [lead, attribution.campaignName || null,
+          inferConfiguredServiceFromText(attribution.adName)]
+      );
+      await client.query(
+        `INSERT INTO lead_activities
+           (lead_id,activity_type,description,actor,metadata)
+         VALUES ($1,'attribution','Meta 131060 unavailable entry: recovered verified first readable ad.', 'Automation',$2::jsonb)`,
+        [lead, toJson({
+          source: "meta_ads", metaAdId: String(attribution.adId),
+          verifiedInboundMessageId: inbound,
+          unavailableOriginalMessageId: repaired.unavailable_original_message_id,
+        })]
+      );
+    }
+    await client.query("COMMIT");
+    return repaired;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getForContactCurrentLead(contactId) {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -462,6 +614,7 @@ module.exports = {
   getForContactCurrentLead,
   getById,
   createFirstTouch,
+  recoverUnavailableFirstTouchAd,
   claimMetaEnrichmentById,
   claimMetaEnrichmentBatch,
   markMetaEnrichmentDeferred,
