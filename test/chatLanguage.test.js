@@ -100,3 +100,29 @@ test("short price/location questions keep an established Chinese or Malay reply 
     "How much is the current price?", "想了解 9D 护理",
   ]), "en");
 });
+
+test("English or Malay questions with Chinese treatment names use the customer's sentence", () => {
+  assert.equal(detectMessageLanguage("How much for 骨盆调理?"), "en");
+  assert.equal(detectMessageLanguage("Can I book 3D小颜术 tomorrow?"), "en");
+  assert.equal(detectMessageLanguage("We want to try 9D逆龄"), "en");
+  assert.equal(detectMessageLanguage("Saya nak tahu 骨盆调理"), "ms");
+  assert.equal(detectMessageLanguage("我想了解3D小颜术 price?"), "zh");
+  assert.equal(detectMessageLanguage("可以介绍 9D逆龄 package 吗？"), "zh");
+  // Ambiguous shorthand uses prior customer language, not a named treatment.
+  assert.equal(detectMessageLanguage("骨盆调理 price?"), null);
+  assert.equal(detectConversationLanguage(["骨盆调理 price?", "How much for 骨盆调理?"]), "en");
+  assert.equal(detectConversationLanguage(["骨盆调理 price?", "我想了解骨盆调理"]), "zh");
+});
+
+test("Hor Yen appointment conversation stays English despite Chinese AI replies", () => {
+  const customerOnlyLatestFirst = [
+    "ok sure thanks",
+    "ok no problem",
+    "10am ok",
+    "Morning dear. If morning ok?",
+    "Period heavy flow",
+  ];
+  assert.equal(detectConversationLanguage(customerOnlyLatestFirst), "en");
+  assert.equal(detectConversationLanguage(["10am ok", "Morning dear. If morning ok?"]), "en");
+  assert.equal(detectConversationLanguage(["ok ya", "Saya nak tanya harga"]), "ms");
+});
