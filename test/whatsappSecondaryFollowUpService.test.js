@@ -477,3 +477,54 @@ test("Neutro #8943 2h and 6h select pelvic videos despite later branch and packa
   assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,"approved-pelvic-"+slot);
  }
 });
+
+test("secondary 3D ad cannot replace a persisted 9D choice in video or caption",async()=>{
+ const config={
+  services:[{name:"3D 小颜术"},{name:"9D 逆龄抗衰"}],
+  serviceAliases:[{alias:"3D",officialService:"3D 小颜术"},
+    {alias:"9D",officialService:"9D 逆龄抗衰"}],
+  automatedFollowUp:{
+   message:"General 2h",translations:{en:"General 2h"},
+   serviceOverrides:[{serviceName:"3D 小颜术",translations:{en:"3D 2h"}},
+    {serviceName:"9D 逆龄抗衰",translations:{en:"9D 2h"}}],
+   additionalSteps:[{message:"General 6h",translations:{en:"General 6h"},
+     serviceOverrides:[{serviceName:"3D 小颜术",translations:{en:"3D 6h"}},
+      {serviceName:"9D 逆龄抗衰",translations:{en:"9D 6h"}}]}],
+  },
+ };
+ for(const slot of [2,6]){
+  const f=fake({rows:[{...candidate,slot_hours:slot,
+   customer_texts:["Where is your branch?","What is the difference?"],
+   treatment_interest:"3D 小颜术",verified_treatment_status:"selected",
+   verified_treatment_name:"9D 逆龄抗衰",
+   ad_followup_source:"meta_ads",ad_followup_headline:"3D 小颜术",
+   ad_followup_body:"Our 3D facial contouring treatment"}]});
+  let sends=0;
+  const result=await worker.runOnce({
+   ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+   getConfig:()=>config,
+   videoSelection:({treatmentInterest})=>{
+    assert.equal(treatmentInterest,"9D 逆龄抗衰");
+    return{mediaKey:"approved-9d-"+slot,mediaType:"video",
+      mediaMimeType:"video/mp4",mediaFilename:"clinic-9d.mp4"};
+   },
+   videoApproved:()=>true,
+   storage:{downloadMedia:async()=>Buffer.from("approved video")},
+   sendText:async payload=>{
+    assert.equal(payload.text,"9D "+slot+"h");
+    return payload.dispatchTransport({
+      uploadMedia:async()=>({success:true,mediaId:"verified9d"}),
+      sendMediaById:async(kind,id,options)=>{
+        sends++;assert.equal(kind,"video");
+        assert.equal(id,"verified9d");
+        assert.equal(options.caption,"9D "+slot+"h");
+        return{success:true,wamid:"wamid.verified-9d-"+slot};
+      },
+    });
+   },
+  });
+  assert.equal(result.accepted,1);
+  assert.equal(sends,1);
+  assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,"approved-9d-"+slot);
+ }
+});
