@@ -212,7 +212,7 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
 /**
  * Repair a false "direct" first touch ONLY when Meta first delivered an
  * unreadable 131060 placeholder and immediately followed it with a provider-
- * verified CTWA ad message in the same secondary sender conversation.
+ * verified CTWA ad message within two minutes in the same secondary conversation.
  *
  * Do not reattribute genuine direct leads, old chats, or later ad clicks.
  * All evidence is verified inside the single transaction; a repeated webhook
@@ -262,8 +262,8 @@ async function recoverUnavailableFirstTouchAd({
          AND initial.source_created_at IS NOT NULL
          AND verified.source_created_at IS NOT NULL
          AND verified.source_created_at>=initial.source_created_at
-         AND verified.source_created_at<=initial.source_created_at+INTERVAL '10 minutes'
-         AND verified.created_at<=initial.created_at+INTERVAL '10 minutes'
+         AND verified.source_created_at<=initial.source_created_at+INTERVAL '2 minutes'
+         AND verified.created_at<=initial.created_at+INTERVAL '2 minutes'
          -- Proof of the unavailable payload must come from the accepted
          -- Meta webhook, not a text placeholder that somebody typed.
          AND EXISTS (
