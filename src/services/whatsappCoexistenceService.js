@@ -145,7 +145,8 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       BUSINESS_APP_ACTOR,
       AI_HANDOFF_OWNER,
       null,
-      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null
+      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null,
+      echo.isForwarded === true
     );
 
     if (!persisted) {
