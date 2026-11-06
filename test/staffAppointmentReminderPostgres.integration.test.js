@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {createStaffBookingConfirmationService}=require("../src/services/staffBookingConfirmationService");
 const {pendingAcceptedAppointmentAllowedSql}=require("../src/utils/pendingAcceptedAppointmentFollowUp");
+const {INVALIDATE_SQL}=require("../src/db/staffAppointmentReminderRepo");
 const connectionString=process.env.TEST_DATABASE_URL;
 
 test("verified staff reminder persists once, suppresses sales, and reopens only for a later genuine enquiry",{
@@ -44,11 +45,24 @@ test("verified staff reminder persists once, suppresses sales, and reopens only 
     await db.query("INSERT INTO messages(id,contact_id,role,content,sent_by_username,whatsapp_message_id,delivery_status,created_at) VALUES(17282,1005,'assistant','Reminder: your appointment is tomorrow at 11:30am','WhatsApp Business App','wamid.next','delivered',NOW()-INTERVAL '2 hours')");
     assert.equal(await service(1005,"Reminder: your appointment is tomorrow at 11:30am",{providerAccepted:true,messageId:17282}),null);
     assert.equal((await db.query(guard)).rows[0].eligible,false);
+    // Editing a reminder to a tentative offer immediately releases only
+    // this provider message's hold, without changing the CRM booking status.
+    await db.query("UPDATE messages SET content='Appointment tomorrow 11.30am if it suits you' WHERE id=17282");
+    await db.query(INVALIDATE_SQL,[1005,17282,9001]);
+    assert.equal((await db.query(guard)).rows[0].eligible,true);
+    await db.query("UPDATE messages SET content='Reminder: your appointment is tomorrow at 11:30am' WHERE id=17282");
+    await service(1005,"Reminder: your appointment is tomorrow at 11:30am",{providerAccepted:true,messageId:17282});
+    assert.equal((await db.query(guard)).rows[0].eligible,false);
+    await db.query("UPDATE messages SET content='🗑️ [Message deleted from WhatsApp Business App]' WHERE id=17282");
+    await db.query(INVALIDATE_SQL,[1005,17282,9002]);
+    assert.equal((await db.query(guard)).rows[0].eligible,true);
+    await db.query(INVALIDATE_SQL,[1005,17282,9002]);
+    assert.equal((await db.query("SELECT count(*)::int n FROM lead_activities WHERE metadata->>'outcome'='staff_reminder_invalidated'")).rows[0].n,2);
     await db.query("INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata) VALUES(792,'updated','Reviewed','Staff','{\"outcome\":\"booking_hold_resolved\"}'::jsonb)");
     assert.equal((await db.query(guard)).rows[0].eligible,true);
     await db.query("INSERT INTO messages(id,contact_id,role,content,sent_by_username,created_at) VALUES(17283,1005,'assistant','Reminder: your appointment is tomorrow at 11:30am','WhatsApp Business App',NOW())");
     await service(1005,"Reminder: your appointment is tomorrow at 11:30am",{providerAccepted:true,messageId:17283});
-    assert.equal((await db.query("SELECT count(*)::int n FROM lead_activities WHERE metadata->>'outcome'='staff_appointment_reminder'")).rows[0].n,2);
+    assert.equal((await db.query("SELECT count(*)::int n FROM lead_activities WHERE metadata->>'outcome'='staff_appointment_reminder'")).rows[0].n,3);
     await db.query("UPDATE lead_activities SET created_at=NOW()-INTERVAL '31 days' WHERE metadata->>'outcome'='staff_appointment_reminder'");
     assert.equal((await db.query(guard)).rows[0].eligible,true);
     assert.equal((await db.query("SELECT appointment_status FROM leads WHERE id=792")).rows[0].appointment_status,"none");
