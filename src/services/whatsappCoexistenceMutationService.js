@@ -3,6 +3,9 @@
 // Out-of-order events are durably staged and resolved after their echo appears.
 // No edit/revoke ever creates a new AI reply, customer turn or Cloud API send.
 const {pool}=require("../db/db");
+const {CONVERSATION_LOCK_NAMESPACE}=require("../db/conversationLock");
+const {HOLD_SQL,INVALIDATE_SQL}=require("../db/staffAppointmentReminderRepo");
+const {isProactiveAppointmentReminder}=require("../utils/staffAppointmentReminderText");
 const senderRepo=require("../db/whatsappSenderConversationRepo");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 
@@ -30,6 +33,8 @@ async function applyPending({id,senderId},{
   const match=await client.query(LOOKUP_SQL,[senderId,id]);
   if(match.rows?.length!==1){await client.query("COMMIT");return null;}
   const target=match.rows[0];
+  // Serialize staff echo persistence, edits and reminder activity updates.
+  await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[target.contact_id]);
   const update=target.action==="revoke"?
     `UPDATE messages SET content='🗑️ [Message deleted from WhatsApp Business App]',
         media_key=NULL,media_url=NULL,media_mime_type=NULL
@@ -42,6 +47,14 @@ async function applyPending({id,senderId},{
     target.action==="revoke"?[target.target_id,target.contact_id]
       :[target.target_id,target.contact_id,target.replacement_text]);
   if(updated.rows?.length!==1)throw Error("Business App target changed.");
+  // The hold and source edit commit together. A deleted or tentative reminder
+  // must not leave an unrelated lead blocked. Valid edited reminders can add
+  // a new verified hold without inventing a CRM booking.
+  if(target.action==="revoke" || !isProactiveAppointmentReminder(target.replacement_text)){
+    await client.query(INVALIDATE_SQL,[target.contact_id,target.target_id,target.id]);
+  }else{
+    await client.query(HOLD_SQL,[target.contact_id,target.target_id,target.replacement_text]);
+  }
   await client.query(
     "UPDATE whatsapp_sender_coexistence_mutations SET status='applied',target_message_id=$2,updated_at=NOW() WHERE id=$1 AND status='pending'",
     [id,target.target_id]
