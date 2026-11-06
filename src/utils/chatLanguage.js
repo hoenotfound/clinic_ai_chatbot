@@ -186,6 +186,22 @@ function detectConversationLanguage(recentMessages, fallback = "en") {
     const explicit = detectExplicitLanguagePreference(message);
     if (explicit) return explicit;
     if (ENGLISH_ADMIN_SHORTHAND.test(String(message || "").trim())) continue;
+    // Preserve the prior follow-up/template language choice for Chinese
+    // names, independently of the finer interactive AI reply detection.
+    const detected = CHINESE_CHARACTERS.test(String(message || ""))
+      ? "zh" : detectMessageLanguage(message);
+    if (detected) return detected;
+  }
+  return fallback;
+}
+
+// This more precise variant is used only when producing an interactive AI
+// response (including its matching promotional/results media).
+function detectReplyConversationLanguage(recentMessages, fallback = "en") {
+  for (const message of recentMessages || []) {
+    const explicit = detectExplicitLanguagePreference(message);
+    if (explicit) return explicit;
+    if (ENGLISH_ADMIN_SHORTHAND.test(String(message || "").trim())) continue;
     const detected = detectMessageLanguage(message);
     if (detected) return detected;
   }
@@ -195,6 +211,7 @@ function detectConversationLanguage(recentMessages, fallback = "en") {
 module.exports = {
   detectMessageLanguage,
   detectConversationLanguage,
+  detectReplyConversationLanguage,
   detectExplicitLanguagePreference,
   isGreetingOrLanguageOnly,
   shouldGenerateLocalizedIntro,
