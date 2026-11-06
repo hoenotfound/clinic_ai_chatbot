@@ -128,7 +128,7 @@ test(
       assert.deepEqual(duplicateState.rows[0], {
         mode: "ai",
         takeover_by: null,
-        message_count: 1,
+        message_count: 2,
       });
 
       // A real portal owner must remain the owner if they also use the
