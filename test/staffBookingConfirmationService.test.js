@@ -219,6 +219,7 @@ test("informal Business App appointment reminders hold follow-ups in English, Ch
   ])assert.equal(isProactiveAppointmentReminder(text),true,text);
   for(const text of [
     "Do you want to book an appointment?",
+    "📷 Reminder: your appointment is tomorrow at 11:30am",
     "Reminder for your appointment tomorrow 11.30am if it suits you",
     "Please confirm your appointment tomorrow 11.30am",
     "Appointment is tentative for tomorrow at 11:30am",
