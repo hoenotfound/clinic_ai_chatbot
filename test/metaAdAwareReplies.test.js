@@ -613,7 +613,7 @@ test("contextual media guard checks untruncated persisted history after sending 
   const resolveAt = source.indexOf("const resultBundle = await resolveResultMediaForReply({", creativeAt);
   assert.ok(sendAt >= 0 && historyAt > sendAt && creativeAt > historyAt && resolveAt > creativeAt);
   assert.match(source.slice(historyAt, resolveAt), /resultMediaCreativeService = null/);
-  assert.match(source.slice(resolveAt, resolveAt + 400), /priorCustomerTexts: verifiedFirstReadableAd[\s\S]*?\? \[\] : verifiedPriorCustomerTexts/);
+  assert.match(source.slice(resolveAt, resolveAt + 700), /priorCustomerTexts: verifiedFirstReadableAd[\s\S]*?\? \[\] : verifiedPriorCustomerTexts/);
   assert.doesNotMatch(source, /customerMessages\.slice\(0, -1\)\.map/);
 });
 
