@@ -2423,6 +2423,22 @@ test("secondary AI media is not labeled Template; real approved templates retain
       imageMessage(32, "Pulse Wave result photo 2"),
       imageMessage(33, "Pulse Wave first trial RM388 graphic"),
       {
+        id: 35,
+        contact_id: 101,
+        role: "assistant",
+        content: "2-hour AI follow-up (not a Meta template)",
+        created_at: recentIso(),
+        delivery_status: "delivered",
+        whatsapp_message_id: "wamid.secondary.followup",
+        is_automated_follow_up: true,
+        whatsapp_template: {
+          automatedSecondaryFollowup: true,
+          senderKey: "neutro_secondary",
+          slotHours: 2,
+          anchorMessageId: 1,
+        },
+      },
+      {
         id: 34,
         contact_id: 101,
         role: "assistant",
@@ -2447,6 +2463,7 @@ test("secondary AI media is not labeled Template; real approved templates retain
   ]) {
     await expect(page.getByText(caption)).toBeVisible();
   }
+  await expect(page.getByText("2-hour AI follow-up (not a Meta template)")).toBeVisible();
   await expect(page.getByText("Template · follow_up_approved")).toBeVisible();
   await expect(page.getByText(/^Template ·\s*$/)).toHaveCount(0);
   await expect(page.getByText(/^Template ·/)).toHaveCount(1);
