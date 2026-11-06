@@ -1314,10 +1314,13 @@ async function sendCandidate(candidate) {
     }
   }
 
-  const language = detectConversationLanguage([
-    ...(candidate.recent_inbound_messages || []),
-    candidate.trigger_message_content,
-  ]);
+  // Only the customer can establish a preferred language. An outbound
+  // follow-up anchor may have been written by staff or an older AI reply in
+  // another language. Use that anchor only when customer history provides no
+  // meaningful language evidence.
+  const language = detectConversationLanguage(
+    candidate.recent_inbound_messages || [], null
+  ) || detectConversationLanguage([candidate.trigger_message_content], "en");
   const fallbackSelection = messageForCandidate(
     step,
     candidate,
