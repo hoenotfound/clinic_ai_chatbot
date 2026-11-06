@@ -67,7 +67,7 @@ function localizedFollowUpText({
    // A verified selection is authoritative; older customer text still
    // provides language evidence, never a competing treatment.
    const service=forceGeneral ? null : selectedTreatment!==undefined
-     ? (clinicConfig.services||[]).find(x=>x.name===selectedTreatment)?.name||null
+     ? (clinicConfig?.services||[]).find(x=>x.name===selectedTreatment)?.name||null
      : resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
    const selected=service?overrides.find(x=>x.serviceName===service):null;
    const source=selected||step;
