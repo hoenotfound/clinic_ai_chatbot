@@ -121,7 +121,7 @@ test("inbound preparation tries recovery only for an existing ad lead",()=>{
   const src=fs.readFileSync(path.join(__dirname,
     "../src/services/inboundMessageClaimService.js"),"utf8");
   assert.match(src,/if \(startsThisJourney\)/);
-  assert.match(src,/verifiedUnavailableFirstAd[\\s\\S]*?attribution\\.recoverUnavailableFirstTouchAd\\?\\.\\(/);
-  assert.match(src,/firstAdProof\\.recordVerifiedFirstAd\\(/);
+  assert.match(src,/verifiedUnavailableFirstAd[\s\S]*?attribution\.recoverUnavailableFirstTouchAd\?\.\(/);
+  assert.match(src,/firstAdProof\.recordVerifiedFirstAd\(/);
   assert.match(src,/Failed to repair Meta 131060 first-touch/);
 });
