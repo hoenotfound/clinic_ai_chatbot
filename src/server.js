@@ -58,6 +58,7 @@ const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
 const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
+const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
@@ -907,6 +908,20 @@ async function processIncomingMessage(
       // manufacture a human-intervention/AI-review flag for ordinary manual
       // Business App conversations: setAttention also sends Telegram alerts.
       return { wasFirstMessage, keywordReason };
+    }
+
+    // Only sender-verified customer decisions may persist; never overwrite
+    // staff-managed CRM or treat this as permission to send marketing.
+    if (secondaryAiConversation && !mediaType && !unsupportedType &&
+        typeof text==="string" && text.trim()) {
+      try {
+        await secondaryFollowUpTreatmentRepo.recordFromInbound({
+          contactId:contact.id,messageId:savedInbound.id,
+          senderKey:contact.whatsapp_sender_key,text,clinicConfig,
+        });
+      } catch (_) {
+        console.warn("[Secondary follow-up] treatment evidence write unavailable.");
+      }
     }
 
     // Photos/videos without captions and stickers contain no textual intent
