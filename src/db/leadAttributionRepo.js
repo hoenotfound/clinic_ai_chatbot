@@ -315,7 +315,8 @@ async function recoverUnavailableFirstTouchAd({
         attribution.body || null, attribution.mediaType || null,
         attribution.mediaUrl || null, attribution.campaignId || null,
         attribution.campaignName || null, attribution.adsetId || null,
-        attribution.adsetName || null, toJson(attribution.rawReferral),
+        attribution.adsetName || null, attribution.adName || null,
+        toJson(attribution.rawReferral),
       ]
     );
     const repaired = result.rows[0] || null;
