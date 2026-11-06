@@ -2,6 +2,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
+const { HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
@@ -194,37 +195,7 @@ function createStaffBookingConfirmationService({
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) {
       const sourceId=Number(messageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
-      const holdSql=`
-        INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
-        SELECT lead.id,'updated','Verified staff appointment reminder; sales follow-ups on hold.',
-               'Automation',jsonb_build_object('outcome','staff_appointment_reminder',
-                 'staffMessageId',staff.id,'source','verified_staff_send')
-        FROM messages staff
-        JOIN LATERAL (
-          SELECT l.id FROM leads l
-          WHERE l.contact_id=staff.contact_id AND l.is_closed=false
-            AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited','cancelled')
-            -- Do not attach an old staff replay to a newly-created lead.
-            AND l.created_at<=staff.created_at + INTERVAL '30 minutes'
-          ORDER BY l.created_at DESC,l.id DESC LIMIT 1
-        ) lead ON true
-        WHERE staff.id=$2 AND staff.contact_id=$1 AND staff.role='assistant'
-          AND staff.whatsapp_message_id IS NOT NULL
-          AND staff.is_forwarded IS DISTINCT FROM TRUE
-          AND staff.media_mime_type IS NULL
-          AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
-          AND staff.sent_by_username IS NOT NULL
-          AND staff.sent_by_username NOT IN
-            ('Follow-up automation','Consent request automation')
-          AND staff.delivery_status IS DISTINCT FROM 'failed'
-          AND staff.created_at>=NOW()-INTERVAL '7 days'
-          AND BTRIM(staff.content)=BTRIM($3)
-          AND NOT EXISTS(SELECT 1 FROM lead_activities prior
-            WHERE prior.lead_id=lead.id
-              AND prior.metadata->>'outcome'='staff_appointment_reminder'
-              AND prior.metadata->>'staffMessageId'=staff.id::text)
-        RETURNING id
-      `;
+      const holdSql=HOLD_SQL;
       const args=[contactId,sourceId,staffText];
       // Serialize duplicate webhook deliveries on the existing conversation
       // lock. The NOT EXISTS check then becomes race-safe without a migration.
