@@ -304,7 +304,7 @@ async function recoverUnavailableFirstTouchAd({
              AND (between_messages.created_at,between_messages.id)
                  <(verified.created_at,verified.id)
          )
-       RETURNING la.*`,
+       RETURNING la.*, l.started_message_id AS unavailable_original_message_id`,
       [
         lead, inbound, String(attribution.adId),
         attribution.platform || "meta",
@@ -342,8 +342,7 @@ async function recoverUnavailableFirstTouchAd({
         [lead, toJson({
           source: "meta_ads", metaAdId: String(attribution.adId),
           verifiedInboundMessageId: inbound,
-          unavailableOriginalMessageId: Number(repaired.first_message_id) === inbound
-            ? null : Number(repaired.first_message_id),
+          unavailableOriginalMessageId: repaired.unavailable_original_message_id,
         })]
       );
     }
