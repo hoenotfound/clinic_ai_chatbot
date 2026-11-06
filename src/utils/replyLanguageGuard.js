@@ -1,12 +1,34 @@
 "use strict";
 
 const clinicConfig = require("../config/clinicConfig");
+const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const CHINESE_TEXT = /[\u3400-\u4dbf\u4e00-\u9fff]/gu;
 const LATIN_TEXT = /[a-z]/giu;
 const MALAY_SIGNALS = /\b(?:saya|anda|kami|awak|boleh|untuk|harga|semak|temujanji|janji|dengan|beritahu|pihak|terima|kasih|rawatan|esok|pagi|petang|mahu|nak)\b/giu;
 const ENGLISH_SIGNALS = /\b(?:thanks|thank|you|your|we|will|can|please|check|let|know|appointment|tomorrow|morning|available|have|booked|confirm|confirmed|price|for|would|could|time)\b/giu;
 const MALAY_SENTENCE = /\b(?:saya|anda|kami|awak|boleh|untuk|semak|beritahu|terima\s+kasih|nak)\b/iu;
 const ENGLISH_SENTENCE = /\b(?:thanks|thank|you|your|we|will|please|check|let|know|appointment|tomorrow|morning|available|would|could)\b/iu;
+
+// Short Chinese acknowledgements are complete replies, not service names.
+const CHINESE_ACKNOWLEDGEMENTS = new Set([
+  "好", "好的", "好啊", "好的呀", "可以", "可以的", "可以呀",
+  "收到", "明白", "了解", "是的", "对", "對", "行", "嗯",
+  "谢谢", "謝謝", "不客气", "不客氣", "没问题", "沒問題",
+]);
+
+// Rewriting clinical meaning is not safe merely because JSON metadata, amounts
+// and time fields remain unchanged. Let staff handle sensitive replies.
+const CLINICAL_ADVICE = /\b(?:practitioner|doctor|medical|clinical|eligible|eligibility|suitability|suitable|contraindication|diagnos\w*|cure\w*|heal\w*|guarantee\w*|always\s+works|works\s+for\s+everyone|no\s+(?:side\s+effects?|risks?|pain)|permanent\s+results?|assess(?:ment)?\s+(?:your|the|whether|if)|no\s+need\s+for\s+(?:an?\s+)?assessment)\b|(?:中醫師|中医师|醫生|医生|診斷|诊断|安全|適合|适合|疗效|療效|副作用|保证|保證|根治|一定有效|沒有副作用|没有副作用|需要評估|需要评估|先評估|先评估|看過情況|看过情况)|\b(?:doktor|pengamal|penilaian\s+(?:kesihatan|kesesuaian)|sesuai|selamat|risiko|sembuh|dijamin|pasti\s+berkesan|tiada\s+kesan\s+sampingan)\b/iu;
+
+function clinicalCorrectionRisk(text) {
+  const value = String(text || "");
+  return hasClinicalMediaRisk(value) || CLINICAL_ADVICE.test(value);
+}
+
+function shortChineseAcknowledgement(text) {
+  const plain = String(text || "").replace(/[\s\p{P}\p{Extended_Pictographic}\uFE0F\u200D]/gu, "");
+  return CHINESE_ACKNOWLEDGEMENTS.has(plain);
+}
 
 function protectedNames() {
   return [
