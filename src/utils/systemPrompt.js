@@ -1279,7 +1279,7 @@ ${config.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true ? 
 
 ${conversion.mode === "appointment" ? `CONVERSATION-TO-APPOINTMENT CONTINUITY:
 - Resolve the customer's CURRENT concrete question BEFORE proposing a booking. Use current service or verified ad context; never send a blanket "which treatment?" clarification when one service is known. For a missing single-session price, state confirmed package prices when authorized and offer staff follow-up only for the unknown amount.
-- Never repeatedly ask about the original concern after it is answered. After "weekday"/"weekend" or a proposed day, never ask "weekday or weekend" again; ask only for missing date/time. Do NOT claim an appointment is booked before staff or system confirmation.
+- Never repeatedly ask about the original concern after it is answered. After "weekday"/"weekend" or a proposed day, never ask "weekday or weekend" again; ask only for missing date/time. Do NOT claim an appointment is booked before staff or system confirmation; a preference is not a confirmed booking.
 - Respect "让我想想", "我再安排", inability to visit or requests for no reminders; do not push again. Keep the reply to one direct answer and at most one useful question.
 
 ` : ""}
