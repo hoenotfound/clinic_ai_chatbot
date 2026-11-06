@@ -68,6 +68,7 @@ const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
 const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
+const clinicImage = require("../services/whatsappSecondaryClinicImage");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { resolveAutomatedVoicePlayback } = require("../services/followUpVoicePlaybackService");
@@ -836,6 +837,42 @@ async function sendStoredMessage(contact, message, options = {}) {
   }
 
   if (message.media_url) {
+    // Clinic Settings media is stored behind a private, relative preview path.
+    // Forwarded images on the verified secondary number must use its own
+    // media-upload transport, never hand that private preview path to Meta.
+    const secondaryClinicForward =
+      options.staffForward === true &&
+      channel === "whatsapp" &&
+      contact.whatsapp_sender_id != null &&
+      contact.whatsapp_sender_key === "neutro_secondary" &&
+      clinicImage.storedClinicImageRef(message.media_url);
+    if (secondaryClinicForward) {
+      let ownedImage;
+      try {
+        ownedImage = await clinicImage.loadOwnedClinicImage(message.media_url);
+      } catch {
+        // No patient media, private URLs or database details in logs.
+        console.warn("[Inbox forward] Stored secondary clinic image could not be verified.");
+      }
+      if (!ownedImage) {
+        return {
+          success: false, wamid: null, retryable: false, policyBlocked: true,
+          code: "secondary_forward_private_image_unavailable",
+          error: "The stored clinic image could not be verified. No message was sent.",
+        };
+      }
+      // The normal secondary dispatcher must still prove the persisted
+      // is_forwarded row, staff-forward permission, sender binding, service
+      // window and billing reservation before using Meta's secondary token.
+      return channelMessaging.sendImageBuffer(
+        contact,
+        ownedImage.buffer,
+        ownedImage.mimeType,
+        skipCaption ? undefined : (message.content || undefined),
+        ownedImage.filename,
+        socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      );
+    }
     return channelMessaging.sendImageByUrl(
       contact,
       message.media_url,
