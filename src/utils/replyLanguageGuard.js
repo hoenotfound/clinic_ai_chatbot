@@ -70,6 +70,7 @@ function clearReplyLanguageMismatch(reply, expectedLanguage, options = {}) {
        (malayCount >= 2 && hasMalayProse));
   }
 
+  if (shortChineseAcknowledgement(text)) return true;
   if (chineseCount >= 3 && chineseCount > latinCount * 0.35) return true;
   // Only identify high-confidence English/Malay mismatches, not natural
   // Malaysian code-switching. Unknown/short phrasing is left to the model's
@@ -111,6 +112,7 @@ function appointmentConfirmationClaim(text) {
 function correctionPreservesClaims(original, candidate, options = {}) {
   const before = String(original.text || "");
   const after = String(candidate.text || "");
+  if (clinicalCorrectionRisk(before) || clinicalCorrectionRisk(after)) return false;
   const originalAmounts = quotedAmounts(before);
   const updatedAmounts = quotedAmounts(after);
   if (JSON.stringify(originalAmounts) !== JSON.stringify(updatedAmounts)) return false;
@@ -150,6 +152,17 @@ function isUsableCorrection(original, candidate, language, options) {
     correctionPreservesClaims(original, candidate, options);
 }
 
+function staffLanguageHandoff(original, language) {
+  return {
+    ...original,
+    text: handoffAcknowledgement(language),
+    flagged: true,
+    reviewRequired: false,
+    bookingReady: false,
+    languageCorrectionFailed: true,
+  };
+}
+
 // The clinic booking-ready outcome contains staff-facing appointment evidence.
 // Do not ask a second generative model to rewrite a scheduling acknowledgement.
 // Only replace the customer-facing text with a fixed, unconfirmed acknowledgement,
@@ -163,6 +176,17 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
 
   if (original.bookingReady) {
     return { ...original, text: bookingAcknowledgement(language) };
+  }
+
+  // No second generative request for clinical or suitability conversations.
+  // Limit the customer-context check to the latest user turn so a past symptom
+  // does not cause an unrelated current administrative reply to be handed off.
+  const latestCustomerTurn = Array.isArray(history)
+    ? [...history].reverse().find(message => message?.role === "user")?.content
+    : null;
+  if (clinicalCorrectionRisk(original.text) ||
+      clinicalCorrectionRisk(latestCustomerTurn)) {
+    return staffLanguageHandoff(original, language);
   }
 
   try {
@@ -186,14 +210,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
   // Unlike information review, a true handoff cannot be silently cleared by
   // later price-review recovery logic. Don't send the wrong-language model
   // draft; keep the initial structured evidence in the staff audit context.
-  return {
-    ...original,
-    text: handoffAcknowledgement(language),
-    flagged: true,
-    reviewRequired: false,
-    bookingReady: false,
-    languageCorrectionFailed: true,
-  };
+  return staffLanguageHandoff(original, language);
 }
 
 module.exports = {
@@ -202,4 +219,5 @@ module.exports = {
   sameBookingFacts,
   correctionPreservesClaims,
   bookingAcknowledgement,
+  clinicalCorrectionRisk,
 };
