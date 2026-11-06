@@ -15,6 +15,9 @@ const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./wh
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+const {classifyVerifiedTreatmentTurn,isStoppedDecision,
+  chooseSecondaryFollowUpTreatment}=
+  require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
@@ -114,9 +117,31 @@ const SEQUENCE_DUE_SQL=`GREATEST(
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
  AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
+ -- If the same authenticated inbound explicitly replaces an old treatment,
+ -- its recorded new selection clears a lexical "not interested in 3D" match.
+ -- A failed/missing state write does NOT bypass the withdrawal guard.
+ AND (
+   (COALESCE(inbound.content,'') !~* '(算了.{0,20}(不要|不用)|((暂时|暫時)?(不要了|不用了|不需要了|不做了|不考虑了|不考慮了))|没兴趣|沒興趣|不感兴趣|不感興趣|not interested|no longer interested|tak berminat|tidak berminat)'
+    AND COALESCE(inbound.content,'') !~* '(我再(联系|聯繫|通知|回复|回覆)你|我(再)?(考虑|考慮)一下|let me (think|consider)|i will (let you know|get back)|saya akan hubungi nanti)')
+   OR EXISTS (
+     SELECT 1 FROM whatsapp_sender_followup_treatment_state explicit_switch
+     WHERE explicit_switch.sender_id=sa.id AND explicit_switch.contact_id=c.id
+       AND explicit_switch.source_message_id=inbound.id
+       AND explicit_switch.status='selected'
+   )
+ )
  AND NOT (
    COALESCE(inbound.content,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
    AND COALESCE(inbound.content,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
+ )
+`;
+// An explicit, sender-verified withdrawal or deferral blocks every reminder.
+const SECONDARY_DECISION_HOLD_SQL=`
+ AND NOT EXISTS(
+   SELECT 1 FROM whatsapp_sender_followup_treatment_state declined_state
+   WHERE declined_state.sender_id=sa.id AND declined_state.contact_id=c.id
+     AND declined_state.source_message_id<=inbound.id
+     AND declined_state.status IN('declined','deferred')
  )
 `;
 // A customer replying again must not cause the identical 2h or 6h video to
@@ -146,17 +171,29 @@ const CANDIDATES_SQL=`
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
+   treatment_state.status AS verified_treatment_status,
+   treatment_state.treatment_name AS verified_treatment_name,
    ad_followup.source AS ad_followup_source,
    ad_followup.headline AS ad_followup_headline,
    ad_followup.body AS ad_followup_body,
-   ARRAY(SELECT language_turn.content FROM messages language_turn
+   -- Carry forward a verified customer treatment choice after later price,
+   -- package or branch questions. Five turns excluded #8943's pelvic request.
+   -- Keep the sample recent, bounded and tied to THIS sender's conversation;
+   -- never use imported Business App history as treatment evidence.
+   ARRAY(SELECT LEFT(language_turn.content,500) FROM messages language_turn
      JOIN whatsapp_sender_message_context language_context
        ON language_context.message_id=language_turn.id
        AND language_context.conversation_id=sc.id
      WHERE language_turn.contact_id=c.id AND language_turn.role='user'
+       AND language_turn.whatsapp_message_id IS NOT NULL
+       AND language_turn.created_at >= inbound.created_at - INTERVAL '24 hours'
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.sender_id=sa.id AND historical.message_id=language_turn.id
+       )
        AND (language_turn.created_at,language_turn.id)
            <= (inbound.created_at,inbound.id)
-     ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 5
+     ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 20
    ) AS customer_texts
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
@@ -208,12 +245,16 @@ const CANDIDATES_SQL=`
    ORDER BY attribution.attributed_at DESC,attribution.id DESC
    LIMIT 1
  ) ad_followup ON true
+ LEFT JOIN whatsapp_sender_followup_treatment_state treatment_state
+   ON treatment_state.sender_id=sa.id AND treatment_state.contact_id=c.id
+   AND treatment_state.source_message_id<=inbound.id
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
    AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   ${SECONDARY_DECISION_HOLD_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('$4::timestamptz')}
@@ -330,6 +371,7 @@ const RECHECK_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
+   ${SECONDARY_DECISION_HOLD_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('NOW()')}
@@ -411,33 +453,43 @@ async function runOnce({
       customerTexts:candidate.customer_texts,
       services:clinicConfig?.services,serviceAliases:clinicConfig?.serviceAliases,
     });
-    const confirmedTreatment=adFollowUpPolicy
-      ? adFollowUpPolicy.treatment
-      : resolveFollowUpTreatment({
-          clinicConfig,customerTexts:candidate.customer_texts,
-          treatmentInterest:candidate.treatment_interest,
-        });
-    candidate={...candidate,adFollowUpPolicy};
+    const latestDecision=classifyVerifiedTreatmentTurn({
+      text:candidate.customer_texts?.[0],clinicConfig,
+    });
+    // Reject the entire reminder after an explicit withdrawal or deferral.
+    if(isStoppedDecision(latestDecision?.status) ||
+       isStoppedDecision(candidate.verified_treatment_status))continue;
+    const choice=chooseSecondaryFollowUpTreatment({
+      candidate,clinicConfig,adFollowUpPolicy,latestDecision,
+    });
+    const {generalOnly}=choice;
+    const confirmedTreatment=choice.treatment;
+    // The 20h AI invitation must not reuse a stale CRM/ad treatment either.
+    const effectivePolicy=confirmedTreatment
+      ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
+      : adFollowUpPolicy;
+    candidate={...candidate,adFollowUpPolicy:effectivePolicy};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
     const replyLanguage=customerLanguage ||
       detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
     const localized=neutralMixedAdFollowUp({
-      policy:adFollowUpPolicy,language:replyLanguage,slot,
+      policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
     }) || localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
       languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
       treatmentInterest:confirmedTreatment,
+      selectedTreatment:confirmedTreatment,
       clinicConfig,
-      forceGeneral:adFollowUpPolicy?.ambiguous === true,
+      forceGeneral:generalOnly,
     });
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!localized)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && !adFollowUpPolicy?.ambiguous &&
+    if(candidate.media_key && !generalOnly &&
        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
@@ -473,13 +525,13 @@ async function runOnce({
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
-      const selectedVideo=!adFollowUpPolicy?.ambiguous &&
+      const selectedVideo=!generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=adFollowUpPolicy?.ambiguous ? null
+      const key=generalOnly ? null
         : candidate.media_key || selectedVideo?.mediaKey || null;
       const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
       const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
@@ -522,7 +574,7 @@ async function runOnce({
       let outboundText=localized;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !adFollowUpPolicy?.ambiguous &&
+      if(slot===20 && !generalOnly &&
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){

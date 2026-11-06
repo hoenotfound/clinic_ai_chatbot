@@ -25,6 +25,9 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const combined=services.filter(name=>/3\s*d/i.test(name)&&/9\s*d/i.test(name));
  const joint=/3\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}9\s*d|9\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}3\s*d/i;
  const comparison=/\b(?:or|vs|versus|compare|difference|either)\b|还是|或者|比较|区别|分别|哪个|哪一个/i;
+ // A negative or discontinued treatment mention cannot authorize a video,
+ // even if an older CRM label still points to that treatment.
+ const declined=/(?:\b(?:don't want|do not want|not interested|no longer interested|rather not|not for me|stop (?:the )?treatment|cancel (?:the )?treatment)\b|不想(?:做|要|考虑|考慮)|不要(?:做|安排|这个|這個|骨盆|3D|9D)|没兴趣|沒興趣|不考虑|不考慮|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
    const named=services.filter(service=>{
@@ -32,6 +35,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
        .map(a=>a.alias)].map(normalize).filter(t=>t.length>1);
      return terms.some(term=>msg.includes(term));
    });
+   if(named.length && declined.test(msg))return null;
    if(combined.length===1 && /3\s*d/i.test(msg) && /9\s*d/i.test(msg) &&
      !comparison.test(msg)){
      const combinedName=combined[0];
@@ -48,7 +52,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
 }
 function localizedFollowUpText({
  slot,originalText,customerTexts,languageEvidenceTexts,treatmentInterest,clinicConfig,
- forceGeneral=false,
+ forceGeneral=false,selectedTreatment=undefined,
 }={}){
  const config=clinicConfig?.automatedFollowUp;
  if(config && [2,6,20].includes(Number(slot))){
@@ -60,7 +64,10 @@ function localizedFollowUpText({
    const step=Number(slot)===2?config:Number(slot)===6?config.additionalSteps?.[0]:config.additionalSteps?.[1];
    if(!step)return null;
    const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
-   const service=forceGeneral ? null
+   // A verified selection is authoritative; older customer text still
+   // provides language evidence, never a competing treatment.
+   const service=forceGeneral ? null : selectedTreatment!==undefined
+     ? (clinicConfig?.services||[]).find(x=>x.name===selectedTreatment)?.name||null
      : resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
    const selected=service?overrides.find(x=>x.serviceName===service):null;
    const source=selected||step;

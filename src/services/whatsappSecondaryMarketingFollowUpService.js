@@ -6,6 +6,8 @@ const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversati
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const contactsRepo=require("../db/contactsRepo");
 const messagesRepo=require("../db/messagesRepo");
+const configRepo=require("../db/configRepo");
+const {latestMarketingIntentMatches}=require("./whatsappSecondaryFollowUpDecision");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
@@ -152,6 +154,29 @@ const CANDIDATES_SQL=`
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
    AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
+   -- The latest verified choice must agree with the lead's service AND
+   -- its existing, treatment-scoped marketing consent. An unrelated consent
+   -- for 3D cannot authorize a 9D template after the customer switches.
+   AND NOT EXISTS(
+     SELECT 1 FROM whatsapp_sender_followup_treatment_state decision_hold
+     WHERE decision_hold.sender_id=sa.id AND decision_hold.contact_id=c.id
+       AND decision_hold.source_message_id<=inbound.id
+       AND (decision_hold.status IN('declined','deferred','ambiguous')
+         OR (decision_hold.status='selected' AND
+           LOWER(BTRIM(decision_hold.treatment_name))
+             IS DISTINCT FROM LOWER(BTRIM(lead.treatment_interest))))
+   )
+   -- A negative phrase in a verified 3D-to-9D switch is not a refusal.
+   -- If persistence fails, keep the conservative lexical send hold.
+   AND (
+     COALESCE(inbound.last_customer_text,'') !~* '(算了.{0,20}(不要|不用)|(暂时|暫時)?(不要了|不用了|不需要了|不做了|不考虑了|不考慮了)|没兴趣|沒興趣|not interested|no longer interested|tak berminat)'
+     OR EXISTS(
+       SELECT 1 FROM whatsapp_sender_followup_treatment_state explicit_switch
+       WHERE explicit_switch.sender_id=sa.id AND explicit_switch.contact_id=c.id
+         AND explicit_switch.source_message_id=inbound.id
+         AND explicit_switch.status='selected'
+     )
+   )
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${MARKETING_CUSTOMER_INTENT_SQL}
@@ -338,6 +363,7 @@ async function runOnce({
  env=process.env,database=pool,now=new Date(),limit=10,
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
+ getConfig=()=>configRepo.getConfig(),
 }={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
@@ -354,12 +380,18 @@ async function runOnce({
    candidates.push(...extra);
  }
  let attempted=0,accepted=0;
+ const intentMatches=entry=>latestMarketingIntentMatches({
+  customerMessages:entry.customer_messages,
+  treatmentInterest:entry.treatment_interest,
+  clinicConfig:getConfig(),
+ });
  for(const candidate of candidates){
   if(attempted>=maxAttempts)break;
   const slot=Number(candidate.slot_hours);
   if(!SLOTS.has(slot) ||
      (EXTENDED_SLOTS.has(slot) && !extendedEnabled(env)) ||
-     customerTemplateLocale(candidate.customer_messages)!==candidate.language_code)continue;
+     (customerTemplateLocale(candidate.customer_messages)!==candidate.language_code ||
+      !intentMatches(candidate)))continue;
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
      (sender_id,contact_id,anchor_message_id,slot_hours)
@@ -385,7 +417,8 @@ async function runOnce({
     x.template_signature===candidate.template_signature &&
     x.template_name===candidate.template_name &&
     x.language_code===candidate.language_code &&
-    customerTemplateLocale(x.customer_messages)===candidate.language_code)===true;
+    customerTemplateLocale(x.customer_messages)===candidate.language_code &&
+    intentMatches(x))===true;
   };
   try{
    if(!await current()){await fail("secondary_marketing_policy_changed");continue;}

@@ -203,7 +203,7 @@ test("verified single-service ad can provide context for a generic explicit enqu
  assert.deepEqual(selected?.items?.map(item=>item.imageUrl),["https://example.test/3d.jpg"]);
 });
 
-test("production paths use DB creative rather than model/CRM labels for both WhatsApps",()=>{
+test("ad creative provides context unless newer verified secondary customer choice wins",()=>{
  const primary=fs.readFileSync(path.join(__dirname,"../src/db/followUpRepo.js"),"utf8");
  const secondary=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  const main=fs.readFileSync(path.join(__dirname,"../src/services/followUpService.js"),"utf8");
@@ -215,6 +215,10 @@ test("production paths use DB creative rather than model/CRM labels for both Wha
  }
  assert.match(main,/adFollowUpPolicy\?\.ambiguous/);
  assert.match(main,/needsAiWork =[\s\S]{0,150}!candidate\.adFollowUpPolicy\?\.ambiguous/);
- assert.match(secondary,/!adFollowUpPolicy\?\.ambiguous/);
+ // Secondary prioritizes a newer sender-verified customer choice over the
+ // original ad; primary retains its existing creative-first fallback.
+ assert.match(secondary,/chooseSecondaryFollowUpTreatment/);
+ assert.match(secondary,/const effectivePolicy=confirmedTreatment/);
+ assert.match(secondary,/if\(slot===20 && !generalOnly/);
  assert.match(personalized,/candidate\.adFollowUpPolicy/);
 });
