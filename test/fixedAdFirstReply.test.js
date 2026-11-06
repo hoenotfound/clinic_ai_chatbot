@@ -241,6 +241,9 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     clinicConfig: { adFirstReply: config, services, serviceAliases: aliases },
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
+    // This isolated decision-branch harness returns a synthetic provider object.
+    // Production correction behavior is covered separately with real parsed drafts.
+    correctReplyLanguage: async draft => draft,
     console: { info: (...parts) => logs.push(parts.join(" ")) },
   });
   const optIn = "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看";
