@@ -21,14 +21,15 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
           AND NOT EXISTS (SELECT 1 FROM lead_activities booking_resolution
             WHERE booking_resolution.lead_id=booking_lead.id
               AND booking_resolution.metadata->>'outcome'='booking_hold_resolved'
-              AND booking_resolution.id > booking_acceptance.id)
+              AND (to_jsonb(booking_resolution)->>'id')::bigint >
+                  (to_jsonb(booking_acceptance)->>'id')::bigint)
           AND (
             booking_acceptance.metadata->>'outcome' <> 'staff_appointment_reminder'
             OR (
               -- A reminder is a temporary SALES hold, not a booked CRM slot.
               -- Never wake an old follow-up sequence solely because this
               -- protection expires. Existing due-time/24h/66h gates still apply.
-              booking_acceptance.created_at >= NOW() - INTERVAL '30 days'
+              COALESCE((to_jsonb(booking_acceptance)->>'created_at')::timestamptz, NOW()) >= NOW() - INTERVAL '30 days'
               AND NOT EXISTS (
                 SELECT 1 FROM messages reminder_source
                 JOIN messages fresh_interest
@@ -37,11 +38,11 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
                   NULLIF(booking_acceptance.metadata->>'staffMessageId','')::integer
                   AND reminder_source.contact_id=booking_lead.contact_id
                   AND reminder_source.role='assistant'
-                  AND reminder_source.whatsapp_message_id IS NOT NULL
+                  AND NULLIF(to_jsonb(reminder_source)->>'whatsapp_message_id','') IS NOT NULL
                   AND fresh_interest.role='user'
-                  AND fresh_interest.whatsapp_message_id IS NOT NULL
-                  AND fresh_interest.is_forwarded IS DISTINCT FROM TRUE
-                  AND fresh_interest.media_mime_type IS NULL
+                  AND NULLIF(to_jsonb(fresh_interest)->>'whatsapp_message_id','') IS NOT NULL
+                  AND COALESCE((to_jsonb(fresh_interest)->>'is_forwarded')::boolean,false) = false
+                  AND NULLIF(to_jsonb(fresh_interest)->>'media_mime_type','') IS NULL
                   -- The first 72 hours are kept for the original appointment.
                   -- Only a later, EXPLICIT new treatment enquiry reopens sales.
                   AND fresh_interest.created_at >=
