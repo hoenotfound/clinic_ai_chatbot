@@ -19,6 +19,8 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       followUpContext: null,
       conversationContext: null,
       bookingContext: null,
+      replyLanguage: null,
+      strictReplyLanguage: false,
       contactId: null,
       leadId: null,
     };
@@ -35,6 +37,9 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
     conversationContext: optionsOrFirstMessage?.conversationContext || null,
     bookingContext: optionsOrFirstMessage?.bookingContext || null,
+    replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
+      ? optionsOrFirstMessage.replyLanguage : null,
+    strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     contactId: optionsOrFirstMessage?.contactId || null,
     leadId: optionsOrFirstMessage?.leadId || null,
   };
@@ -1240,6 +1245,15 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
       ? `- For appointment-mode booking_ready, this business has exactly one configured ${terms.locationSingular} ("${locationNames[0]}"). Use that canonical location automatically even if the ${terms.customerSingular} did not name it, and do not ask them to choose a location solely for booking readiness.`
       : `- For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.`;
 
+  const requiredLanguageLabel = {
+    en: "English", ms: "Bahasa Malaysia", zh: "Simplified Chinese",
+  }[normalizedOptions.replyLanguage] || null;
+  // Put this per-turn suffix after the shared clinic facts so dynamic language
+  // selection does not invalidate the large static prompt/cache prefix.
+  const requiredLanguageInstruction = requiredLanguageLabel
+    ? `REQUIRED REPLY LANGUAGE FOR THIS TURN: ${requiredLanguageLabel}. The selection is based on CUSTOMER messages, not clinic instructions, Chinese treatment names, or staff/AI replies. Write the complete customer-facing "reply" in this language, while retaining configured proper names and natural Malaysian code-switching.${normalizedOptions.strictReplyLanguage ? " This is a language-correction attempt. Keep the same verified business facts and booking status. Do not output a translated version of the internal JSON keys." : ""}`
+    : "";
+
   return `You are ${config.aiAssistantName}, the chat assistant for ${context.businessName}. Business profile: ${context.businessDescription}.
 
 TONE: ${config.tone || "Warm, helpful, concise, and natural."}
@@ -1384,6 +1398,7 @@ CURRENT TURN CONTEXT:
 ${metaAdContextSection(normalizedOptions.metaAdContext)}
 
 LANGUAGE:
+${requiredLanguageInstruction}
 Write the "reply" in whichever language the ${terms.customerSingular} writes in — English, Bahasa Malaysia, or Chinese (Simplified). An explicit language request such as "English" or "BM" overrides the language of service names and previous conversation turns. A short English sales term such as "price", "trial price", "package" or "First Trial" inside an otherwise Chinese or Malay conversation does not by itself request a language switch. Follow the latest substantive customer language, unless they explicitly ask to switch. If they mix languages (common in Malaysia), mirror that mix naturally. Keep it short and appropriate to ${channelLabel(channel)} chat — a few sentences, not an email.
 
 Your job is to answer questions warmly and accurately, and actively guide genuinely interested ${terms.customerPlural} toward ${conversion.label} using the configured playbook. Any next step that requires staff confirmation must remain unconfirmed until a team member or connected system confirms it.`;
