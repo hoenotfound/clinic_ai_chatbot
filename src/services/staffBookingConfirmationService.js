@@ -1,6 +1,7 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
 // Only explicit staff confirmations with a complete calendar date can
@@ -206,7 +207,7 @@ function createStaffBookingConfirmationService({
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) {
       const sourceId=Number(messageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
-      await database.query(`
+      const holdSql=`
         INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
         SELECT lead.id,'updated','Verified staff appointment reminder; sales follow-ups on hold.',
                'Automation',jsonb_build_object('outcome','staff_appointment_reminder',
@@ -236,7 +237,24 @@ function createStaffBookingConfirmationService({
               AND prior.metadata->>'outcome'='staff_appointment_reminder'
               AND prior.metadata->>'staffMessageId'=staff.id::text)
         RETURNING id
-      `,[contactId,sourceId,staffText]);
+      `;
+      const args=[contactId,sourceId,staffText];
+      // Serialize duplicate webhook deliveries on the existing conversation
+      // lock. The NOT EXISTS check then becomes race-safe without a migration.
+      if(typeof database.connect === "function"){
+        const client=await database.connect();
+        try{
+          await client.query("BEGIN");
+          await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[contactId]);
+          await client.query(holdSql,args);
+          await client.query("COMMIT");
+        }catch(error){
+          await client.query("ROLLBACK").catch(()=>{});
+          throw error;
+        }finally{client.release();}
+      }else{
+        await database.query(holdSql,args);
+      }
       return null;
     }
     if(!strictSlot) {
