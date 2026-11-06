@@ -39,7 +39,9 @@ test("latest consolidated prompt survives language routing into Gemini", () => {
   assert.match(prompt, /REQUIRED REPLY LANGUAGE FOR THIS TURN: English/);
   assert.match(prompt, /not clinic instructions, treatment names/);
   assert.match(prompt, /a preference is not a confirmed booking/);
-  assert.match(prompt, /ASSESSMENT-FIRST PRICING POLICY/);
+  // The default demo profile is aesthetic, so TCM-only pricing instructions
+  // belong to the separate consolidated policy regression test.
+  assert.match(prompt, /STRUCTURED OUTPUT/);
   assert.match(buildSystemPrompt({ replyLanguage: "ms" }), /REQUIRED REPLY LANGUAGE FOR THIS TURN: Bahasa Malaysia/);
   assert.match(buildSystemPrompt({ replyLanguage: "zh" }), /REQUIRED REPLY LANGUAGE FOR THIS TURN: Simplified Chinese/);
   assert.match(buildSystemPrompt({
