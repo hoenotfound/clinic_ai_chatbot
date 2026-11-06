@@ -107,3 +107,41 @@ test("malformed, cross-number, and ungrounded mutation targets fail closed",asyn
    {...f,env: {...env,WHATSAPP_SECONDARY_SENDER_KEY:"wrong"}}),/sender mismatch/);
  assert.equal(f.calls.some(x=>x.sql.includes("INSERT INTO messages")),false);
 });
+
+
+test("Business App mutations change only the original verified reminder hold",async()=>{
+  const edited=make({mutation:{
+    ...echo,id:"wamid.edit-confirmed",
+    text:"Reminder: your appointment is tomorrow at 11:30am",
+  }});
+  await service.record({
+    ...echo,id:"wamid.edit-confirmed",
+    text:"Reminder: your appointment is tomorrow at 11:30am",
+  },contact,{...edited,env});
+  const recorded=edited.calls.find(x=>x.sql.includes("INSERT INTO lead_activities") &&
+    x.sql.includes("staff_appointment_reminder"));
+  assert.ok(recorded,"a verified edit to an actual appointment creates a durable hold");
+  assert.deepEqual(recorded.args,[14,55,"Reminder: your appointment is tomorrow at 11:30am"]);
+
+  const tentative=make({mutation:{
+    ...echo,id:"wamid.edit-tentative",
+    text:"Reminder for your appointment tomorrow at 11.30am if it suits you",
+  }});
+  await service.record({
+    ...echo,id:"wamid.edit-tentative",
+    text:"Reminder for your appointment tomorrow at 11.30am if it suits you",
+  },contact,{...tentative,env});
+  const invalid=tentative.calls.find(x=>x.sql.includes("staff_reminder_invalidated"));
+  assert.ok(invalid);
+  assert.deepEqual(invalid.args,[14,55,11]);
+  assert.match(invalid.sql,/staffMessageId/);
+  assert.match(invalid.sql,/prior_invalidation.id>reminder.id/);
+
+  const revoked=make({mutation:{
+    ...echo,id:"wamid.revoke-confirmed",type:"revoke",text:null,
+  }});
+  await service.record({...echo,id:"wamid.revoke-confirmed",type:"revoke",text:null},
+    contact,{...revoked,env});
+  assert.equal(revoked.calls.filter(x=>x.sql.includes("staff_reminder_invalidated")).length,1);
+  assert.equal(revoked.calls.some(x=>x.sql.includes("booking_hold_resolved")),false);
+});
