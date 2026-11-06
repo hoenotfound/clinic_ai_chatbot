@@ -19,7 +19,7 @@ test("verified staff reminder persists once, suppresses sales, and reopens only 
     created=true;
     await db.query("SET search_path TO "+schema);
     await db.query([
-      "CREATE TABLE contacts(id INT PRIMARY KEY, mode TEXT);",
+      "CREATE TABLE contacts(id INT PRIMARY KEY, mode TEXT, channel TEXT DEFAULT 'whatsapp');",
       "CREATE TABLE leads(id INT PRIMARY KEY,contact_id INT,is_closed BOOLEAN,appointment_status TEXT,created_at TIMESTAMPTZ DEFAULT now());",
       "CREATE TABLE messages(id INT PRIMARY KEY,contact_id INT,role TEXT,content TEXT,sent_by_username TEXT,whatsapp_message_id TEXT,is_forwarded BOOLEAN DEFAULT false,media_mime_type TEXT,is_automated_follow_up BOOLEAN DEFAULT false,delivery_status TEXT,created_at TIMESTAMPTZ DEFAULT now());",
       "CREATE TABLE lead_activities(id SERIAL PRIMARY KEY,lead_id INT,activity_type TEXT,description TEXT,actor TEXT,metadata JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ DEFAULT now());",
