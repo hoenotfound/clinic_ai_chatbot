@@ -30,10 +30,10 @@ test("a recovered ad must have trusted live SQL proof and writes atomically once
   assert.equal(got.first_message_id,17255);
   assert.equal(released,true);
   assert.deepEqual(queries.map(x=>x.sql.trim().replaceAll("\n"," ").split(" ").filter(Boolean).slice(0,2).join(" ")),[
-    "BEGIN","UPDATE lead_attributions","UPDATE leads",
+    "BEGIN","SET LOCAL","UPDATE lead_attributions","UPDATE leads",
     "INSERT INTO","COMMIT",
   ]);
-  const update=queries[1];
+  const update=queries[2];
   assert.equal(update.args.length,21,"every SQL placeholder has a bound value");
   for(const fragment of [
     "la.source='whatsapp_unattributed'","l.source='whatsapp_unattributed'",
@@ -69,7 +69,7 @@ test("no matching Meta 131060 pair means no lead update or alert",async()=>{
     leadId:12,inboundMessageId:22,attribution:ad,
   },{connect:async()=>client});
   assert.equal(result,null);
-  assert.deepEqual(statements.map(s=>s.slice(0,6)),["BEGIN","UPDATE","COMMIT"]);
+  assert.deepEqual(statements.map(s=>s.split(" ")[0]),["BEGIN","SET","UPDATE","COMMIT"]);
 });
 test("transaction rolls back after a failed proof or downstream lead update",async()=>{
   const statements=[];
@@ -121,6 +121,7 @@ test("inbound preparation tries recovery only for an existing ad lead",()=>{
   const src=fs.readFileSync(path.join(__dirname,
     "../src/services/inboundMessageClaimService.js"),"utf8");
   assert.match(src,/if \(startsThisJourney\)/);
-  assert.match(src,/else \{[\s\S]*?attribution\.recoverUnavailableFirstTouchAd\?\.\(/);
+  assert.match(src,/verifiedUnavailableFirstAd[\\s\\S]*?attribution\\.recoverUnavailableFirstTouchAd\\?\\.\\(/);
+  assert.match(src,/firstAdProof\\.recordVerifiedFirstAd\\(/);
   assert.match(src,/Failed to repair Meta 131060 first-touch/);
 });
