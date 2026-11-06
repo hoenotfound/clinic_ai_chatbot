@@ -13,10 +13,29 @@ const WITHDRAWN=[
 ];
 const DEFERRED=/(?:^(?:我|让我|讓我|先|暂时|暫時)?(?:再)?(?:考虑|考慮)(?:一下|看看|下|先)?[吧哦啊。.!！\s😊]*$|^(?:我再|我会再|我會再|迟点|遲點|过后|過後|之后|之後)(?:联系|聯繫|找|告诉|告訴|回复|回覆|通知)你|(?:let me (?:think|consider)|i(?:'ll| will) (?:let you know|get back(?: to you)?|contact you)|saya (?:akan )?(?:hubungi|beritahu) (?:nanti|kemudian)))/iu;
 
+// A customer may reject one treatment and select another in the SAME turn.
+// Only an affirmative clause AFTER the rejection can replace the previous
+// treatment. Never interpret an either/or comparison as a selection.
+function explicitSwitchChoice(value,clinicConfig){
+ const separator=/(?:[,，;；。]|但是|不過|不过|可是|而是|(?:\\bbut\\b)|(?:\\binstead\\b))/giu;
+ const affirmative=/^(?:我(?:现在|現在|更)?(?:想(?:了解|做|试|試)|要(?:了解|做)?|对|對|考虑|考慮)|(?:现在|現在)?(?:改成|换成|換成)|i(?:'m| am) interested in|i (?:want|prefer)|i(?:'d| would) (?:like|prefer)|saya (?:nak|mahu|berminat)|(?:3\\s*d|9\\s*d).{0,35}\\b(?:looks good|sounds good|is better)\\b)/iu;
+ for(const match of value.matchAll(separator)){
+   const phrase=value.slice(match.index+match[0].length).trim();
+   if(!affirmative.test(phrase) || WITHDRAWN.some(re=>re.test(phrase)) ||
+       DEFERRED.test(phrase))continue;
+   const chosen=resolveFollowUpTreatment({clinicConfig,customerTexts:[phrase]});
+   if(chosen)return chosen;
+ }
+ return null;
+}
 function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
  const value=String(text||"").normalize("NFKC").trim();
  if(!value || value.length>1500)return null;
- if(WITHDRAWN.some(pattern=>pattern.test(value)))return {status:"declined",treatment:null};
+ if(WITHDRAWN.some(pattern=>pattern.test(value))){
+   const replacement=explicitSwitchChoice(value,clinicConfig);
+   if(replacement)return {status:"selected",treatment:replacement};
+   return {status:"declined",treatment:null};
+ }
  if(DEFERRED.test(value))return {status:"deferred",treatment:null};
  const service=resolveFollowUpTreatment({clinicConfig,customerTexts:[value]});
  if(service)return {status:"selected",treatment:service};
