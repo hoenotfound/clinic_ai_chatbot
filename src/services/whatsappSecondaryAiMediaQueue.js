@@ -18,7 +18,7 @@ const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
 const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
-  isSecondaryAutomationEligible,originalAdsOnlyCutoff } = require("./whatsappSecondaryAdsOnlyEligibility");
+  isSecondaryAutomationEligible,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
@@ -93,7 +93,7 @@ async function enqueue({
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
           AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
-          AND c.needs_attention=FALSE
+          AND ${secondaryAutomationAttentionAllowedSql("c")}
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
@@ -155,7 +155,7 @@ const READY_SQL=`
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
    AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-   AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
+   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -192,7 +192,7 @@ const STILL_VALID_SQL=`
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
      AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-     AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
+     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -270,7 +270,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
          AND (
            job.expires_at<=NOW() OR
-           c.mode<>'ai' OR c.needs_attention=TRUE OR
+           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c")}) OR
            c.whatsapp_opt_out_at IS NOT NULL OR
            c.whatsapp_marketing_opt_out_at IS NOT NULL OR
            NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6","$7")}) OR
@@ -441,7 +441,7 @@ async function runOnce({
        if(check.rows?.[0]?.allowed!==true)return false;
        const current=await contacts.getContactById(job.contact_id);
        if(current?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
-          current.mode!=="ai" || current.needs_attention===true ||
+          current.mode!=="ai" ||
           !(await contacts.canSendAutomaticReviewMedia(current.id)))return false;
        const preview=await policy.previewSecondaryFreeformPolicy(current,{
          database,env,now:new Date(),purpose:"service",
