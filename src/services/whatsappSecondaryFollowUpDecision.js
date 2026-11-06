@@ -51,4 +51,35 @@ function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
 function isStoppedDecision(status){
  return status==="declined" || status==="deferred";
 }
-module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,WITHDRAWN,DEFERRED};
+
+// Always rank the newest verified customer choice ahead of older CRM fields
+// and Meta ad creatives. Keep the same choice for the text, video and 20h AI.
+function chooseSecondaryFollowUpTreatment({
+ candidate={},clinicConfig,adFollowUpPolicy=null,latestDecision=null,
+}={}){
+ const services=(clinicConfig?.services||[]).map(x=>x?.name).filter(Boolean);
+ const selectedLatest=latestDecision?.status==="selected" ? latestDecision.treatment : null;
+ const selectedStored=candidate.verified_treatment_status==="selected"
+   ? candidate.verified_treatment_name : null;
+ const customerChoice=selectedLatest||selectedStored;
+ if(customerChoice){
+   const valid=services.includes(customerChoice);
+   return{treatment:valid?customerChoice:null,generalOnly:!valid,
+     customerSelected:valid};
+ }
+ if(latestDecision?.status==="ambiguous" ||
+    candidate.verified_treatment_status==="ambiguous" ||
+    adFollowUpPolicy?.ambiguous===true)
+   return{treatment:null,generalOnly:true,customerSelected:false};
+ if(adFollowUpPolicy?.treatment)
+   return{treatment:services.includes(adFollowUpPolicy.treatment)
+     ? adFollowUpPolicy.treatment:null,
+     generalOnly:!services.includes(adFollowUpPolicy.treatment),
+     customerSelected:false};
+ return{treatment:resolveFollowUpTreatment({
+   clinicConfig,customerTexts:candidate.customer_texts,
+   treatmentInterest:candidate.treatment_interest,
+ }),generalOnly:false,customerSelected:false};
+}
+module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,
+ chooseSecondaryFollowUpTreatment,WITHDRAWN,DEFERRED};
