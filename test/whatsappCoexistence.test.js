@@ -435,3 +435,17 @@ test("duplicate echo can be released without permanently cancelling a later AI t
 
   assert.equal(aiReplyCancellation.safeToSend(key, token), true);
 });
+
+test("Business App forwarded echo is identified without changing ordinary echo event shape",()=>{
+  const flagged = echoPayload({
+    id:"wamid.forwarded-1",to:"60135550000",type:"text",
+    text:{body:"Reminder appointment tmr 11.30am"},
+    context:{forwarded:true},
+  });
+  assert.equal(whatsapp.parseBusinessAppEchoes(flagged)[0].isForwarded,true);
+  const ordinary=echoPayload({
+    id:"wamid.regular-1",to:"60135550000",type:"text",
+    text:{body:"Reminder appointment tmr 11.30am"},
+  });
+  assert.equal(Object.hasOwn(whatsapp.parseBusinessAppEchoes(ordinary)[0],"isForwarded"),false);
+});
