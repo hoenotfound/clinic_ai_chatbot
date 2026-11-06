@@ -2392,3 +2392,63 @@ test("Neutro voucher Pipeline handles a stale update without claiming successful
   expect(apiState.getVoucher().status).toBe("issued");
   expectNoUnexpectedApi(apiState);
 });
+
+test("secondary AI media is not labeled Template; real approved templates retain the badge", async ({ page }) => {
+  const imageSrc = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+  const imageMessage = (id, caption) => ({
+    id,
+    contact_id: 101,
+    role: "assistant",
+    content: caption,
+    created_at: recentIso(),
+    media_url: imageSrc,
+    media_mime_type: "image/png",
+    delivery_status: "delivered",
+    whatsapp_message_id: `wamid.secondary.ai.${id}`,
+    sent_by_username: null,
+    whatsapp_template: {
+      automatedSecondaryAiMedia: true,
+      senderKey: "neutro_secondary",
+      anchorMessageId: 1,
+    },
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      whatsapp_is_secondary: true,
+      whatsapp_sender_key: "neutro_secondary",
+    })],
+    initialMessages: [
+      ...inboundMessages(),
+      imageMessage(31, "Pulse Wave result photo 1"),
+      imageMessage(32, "Pulse Wave result photo 2"),
+      imageMessage(33, "Pulse Wave first trial RM388 graphic"),
+      {
+        id: 34,
+        contact_id: 101,
+        role: "assistant",
+        content: "Approved follow-up template",
+        created_at: recentIso(),
+        delivery_status: "delivered",
+        whatsapp_message_id: "wamid.approved.template",
+        whatsapp_template: {
+          name: "follow_up_approved",
+          language: "en_US",
+          category: "MARKETING",
+        },
+      },
+    ],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  for (const caption of [
+    "Pulse Wave result photo 1",
+    "Pulse Wave result photo 2",
+    "Pulse Wave first trial RM388 graphic",
+  ]) {
+    await expect(page.getByText(caption)).toBeVisible();
+  }
+  await expect(page.getByText("Template · follow_up_approved")).toBeVisible();
+  await expect(page.getByText(/^Template ·\s*$/)).toHaveCount(0);
+  await expect(page.getByText(/^Template ·/)).toHaveCount(1);
+  expectNoUnexpectedApi(apiState);
+});
