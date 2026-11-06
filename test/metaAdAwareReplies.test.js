@@ -251,7 +251,7 @@ test("server verifies creative Meta context before it can drive result media", (
   assert.ok(resultAt > replyAt, "result media should resolve after the AI reply");
   assert.match(
     serverSource.slice(loadAt, replyAt + 400),
-    /ai\.getReply\(replyHistory, \{[\s\S]*metaAdContext/
+    /const replyOptions = \{[\s\S]*?metaAdContext,[\s\S]*?replyLanguage: mediaLanguage/
   );
   assert.match(
     serverSource.slice(resultAt, resultAt + 900),
@@ -424,7 +424,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
 
   const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
-  assert.match(serverSource, /ai\.getReply\(replyHistory, \{[\s\S]*?generateFirstIntro/);
+  assert.match(serverSource, /const replyOptions = \{[\s\S]*?generateFirstIntro/);
   assert.match(serverSource, /isFirstMessage && !flagged && !generateFirstIntro/);
   assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply\)/);
 });
