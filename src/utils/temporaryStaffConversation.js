@@ -33,11 +33,11 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  // pause for a verified reminder or an active, explicitly booking-related
  // exchange between this customer and authenticated staff.
  // Natural appointment coordination rarely repeats the word "booking".
- // Require two-party booking evidence plus a real day/time offer, not a '?' alone.
+ // Require two-party booking evidence plus a concrete day AND time,
+ // including terse offers such as "Tomorrow 3pm?" or "周六下午3点?".
  const naturalStaffTimeOffer = `(
    COALESCE(staff.content,'') ~* '(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2})'
    AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點])'
-   AND COALESCE(staff.content,'') ~* '(come|visit|drop[[:space:]]+by|available|works?|suitable|convenient|swing[[:space:]]+by|boleh|datang|sesuai|jumpa|can[[:space:]]+(you|u)|方便|可以|过来|過來|到店|来店|來店|来|來|见|見|时间|時間|时段|時段)'
  )`;
  // A newer, explicitly unrelated service question releases only the
  // direct-reply hold. It cannot resolve an actual booking or schedule.
