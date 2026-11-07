@@ -4,7 +4,7 @@ const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("../src/utils/p
 const {categorizeAiReview}=require("../src/utils/aiReviewPolicy");
 const {correctUnsupportedBranchReply}=require("../src/utils/verifiedPricingBusinessFacts");
 const {detectConversationLanguage}=require("../src/utils/chatLanguage");
-const {hasRecentStaffConversation}=require("../src/db/messagesRepo");
+const {hasRecentStaffConversation,hasActiveStaffBookingConversation}=require("../src/db/messagesRepo");
 const {temporaryStaffConversationSql}=require("../src/utils/temporaryStaffConversation");
 test("Nov4 #1939 future visit is administrative, not clinical",()=>{
  assert.equal(isSimpleVisitTimingQuestion("我新年过后去可以吗"),true);
@@ -50,8 +50,17 @@ test("recent provider-verified human response blocks next Neutro AI reply withou
  assert.match(query,/INTERVAL '2 hours'/);
  assert.match(query,/NOT EXISTS\s*\(/);
  assert.equal(await hasRecentStaffConversation("x",123),false);
+ let bookingSql="";
+ assert.equal(await hasActiveStaffBookingConversation(16,123,async(sql,args)=>{
+  bookingSql=sql;assert.deepEqual(args,[16,123]);return{rows:[{staff_active:false}]};
+ }),false);
+ assert.match(bookingSql,/staff_appointment_reminder/);
+ assert.match(bookingSql,/previous_customer\.content/);
+ assert.notEqual(bookingSql,query);
+ assert.equal(await hasActiveStaffBookingConversation("x",123),false);
  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
- assert.match(server,/messagesRepo\.hasRecentStaffConversation\(contact\.id,savedInbound\.id\)/);
+ assert.match(server,/messagesRepo\.hasActiveStaffBookingConversation\(contact\.id,savedInbound\.id\)/);
+ assert.doesNotMatch(server,/await messagesRepo\.hasRecentStaffConversation\(contact\.id,savedInbound\.id\)/);
  assert.match(server,/correctUnsupportedBranchReply/);
  assert.match(server,/isSimpleVisitTimingQuestion\(text\)/);
  assert.match(server,/!keywordReason&&!urgentSafety/);
