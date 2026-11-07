@@ -20,6 +20,10 @@ const NON_TREATMENT_ANCHOR_PATTERN =
   /(assessment|consult(?:ation)?|evaluation|评估|評估|咨询|諮詢|面诊|面診)/iu;
 const SERVICE_DISCOVERY_PATTERN =
   /(what|which|show|list|any).{0,30}(treatments|services|options)|(other|more).{0,20}(treatments?|services?|options?)|(treatments|services).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
+// A customer selecting the facial-care CATEGORY has not selected 3D, 9D,
+// or an older pelvic service mentioned in the clinic's welcome menu.
+const FACIAL_CATEGORY_DISCOVERY =
+  /^(?:facial(?:\\s+(?:care|treatments?|services?))?|face\\s+(?:care|treatments?)|facecare|(?:脸|臉|面)部(?:护理|護理|保养|保養)|rawatan\\s+(?:muka|wajah)|penjagaan\\s+wajah)[\\s.!?？。！]*$/iu;
 const BROAD_PRICE_PATTERN =
   /(?:full|complete|all|whole).{0,20}(?:price|pricing|cost|fee)|(?:price|pricing|cost|fee).{0,20}(?:list|all|every|treatments|services)|(?:全部|所有|完整|整份).{0,20}(?:价|價|费用|費用|收费|收費)|(?:价|價|费用|費用).{0,20}(?:全部|所有)|senarai\s+harga|harga.{0,25}(?:semua|keseluruhan)|(?:semua|keseluruhan).{0,25}harga/iu;
 const PROMOTION_DETAIL_PATTERN =
@@ -84,7 +88,8 @@ function customerServiceIntent(text, candidates, promotions) {
   const packageServices = promotionReferencedServices(text, candidates, promotions)
     .filter((name) => !rejected.has(name));
   const explicitMatches = currentMatches.length ? currentMatches : packageServices;
-  const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(text);
+  const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(text) ||
+    (!currentMatches.length && FACIAL_CATEGORY_DISCOVERY.test(text));
   const broadPriceIntent = BROAD_PRICE_PATTERN.test(text);
   const topicChangeIntent = !explicitMatches.length && (TOPIC_CHANGE_PATTERN.test(text) || rejected.size > 0);
   const broadIntent = serviceDiscoveryIntent || broadPriceIntent || topicChangeIntent ||
