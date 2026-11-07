@@ -139,7 +139,7 @@ test("technical 9D device questions receive safe information-review acknowledgem
   assert.equal(categorizeAiReview("which device u use?","information"),"information");
 });
 
-test("device review cannot override staff, clinical risk, or unrelated treatment discussions", () => {
+test("device review uses only recent verified staff context and rejects clinical risk or unrelated treatments", () => {
   const prior = [turn("user","facial care",70),turn("assistant","9D is device-based",60)];
   const ask = content => [...prior,turn("user",content,40)];
   assert.equal(resolveNeutroFacialDeviceReview({
@@ -153,10 +153,20 @@ test("device review cannot override staff, clinical risk, or unrelated treatment
       turn("user","what device",40),
     ],services,now,
   }),null);
-  assert.equal(resolveNeutroFacialDeviceReview({
+  const afterVerifiedStaff = resolveNeutroFacialDeviceReview({
     customerText:"what device",
     conversationHistory:[
       turn("user","facial care",70),turn("assistant","9D is device-based",60,true),
+      turn("user","what device",40),
+    ],services,now,
+  });
+  assert.equal(afterVerifiedStaff?.reviewType,"information");
+  assert.match(afterVerifiedStaff.reply,/verified brand|team to confirm/iu);
+  // A staff mention from an earlier conversation cannot anchor a new enquiry.
+  assert.equal(resolveNeutroFacialDeviceReview({
+    customerText:"what device",
+    conversationHistory:[
+      turn("user","facial care",65*60),turn("assistant","9D is device-based",62*60,true),
       turn("user","what device",40),
     ],services,now,
   }),null);
