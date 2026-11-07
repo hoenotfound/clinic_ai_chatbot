@@ -126,3 +126,19 @@ test("server preserves ownership checks, booking holds and review evidence for n
  assert.match(source,/aiReplyCancellation\.settleBeforeSend/u);
  assert.match(source,/await auditResultMediaEarlyExit\("two_treatments_text_only"\)/u);
 });
+
+test("medical suitability questions skip the temporary booking hold and retain clinical review",()=>{
+ const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ // This boundary occurs BEFORE AI generation. Clinical concerns must reach
+ // the existing review pipeline even when staff is arranging a booking.
+ assert.match(server,/!hasClinicalMediaRisk\(text\)\s*&&\s*!isExplicitStaffRequest\(text\)[\s\S]{0,170}hasActiveStaffBookingConversation/u);
+ for(const message of [
+  "Is 9D safe if I am pregnant?",
+  "Can I do 9D after surgery?",
+  "我怀孕了，可以做9D吗？",
+  "Saya mengandung, boleh buat 9D?",
+ ]){
+  assert.equal(hasClinicalMediaRisk(message),true,message);
+  assert.equal(categorizeAiReview(message,"clinical"),"clinical",message);
+ }
+});
