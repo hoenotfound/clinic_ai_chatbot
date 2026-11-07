@@ -67,7 +67,7 @@ test("booking-only staff hold recognises natural appointments and releases unrel
   assert.equal(await check(5),true,"verified reminder remains held");
   await message(504,5,"user","Which device is used for 9D?",8);
   assert.equal(await check(5,504),false,"unrelated device enquiry releases direct AI");
-  assert.equal(await check(5,504,false),false,"follow-up predicate is separate from direct AI");
+  assert.equal(await check(5,504,false),true,"verified reminder still suppresses marketing follow-ups");
   await message(505,5,"user","ok",7);
   assert.equal(await check(5,505),true,"reminder holds ambiguous appointment acknowledgement");
 
