@@ -358,6 +358,71 @@ function resolveFacialCategoryPriceReply({
   return { prices, reply, source: "verified_facial_category_two_offers" };
 }
 
+// A staff-authored facial menu may establish WHICH two services the customer
+// means, never their price. Only a new customer monetary enquiry and two
+// independently verified active offers can authorize text-only prices.
+// This is a separate boundary: the normal staff-free pricing session must not
+// be weakened for other promotions, subsequent visits or optional media.
+function resolveVerifiedStaffFacialPriceReply({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  promotions = [], language = "en", now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!FACIAL_SHORT_AMOUNT.test(current) || !hasExplicitPriceRequest(current) ||
+      RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
+      COMBO.test(current) || REPEAT_SESSION_PRICE.test(current) ||
+      hasClinicalMediaRisk(current)) return null;
+  const turns = Array.isArray(conversationHistory) ? conversationHistory
+    .filter(t => t?.role === "assistant" || t?.role === "user") : [];
+  const last = turns.at(-1), menu = turns.at(-2);
+  const menuText = pricingMessageText(menu);
+  if (!Number.isFinite(now) || last?.role !== "user" ||
+      pricingMessageText(last).trim() !== current ||
+      menu?.role !== "assistant" || menu.pricingStaffAuthored !== true ||
+      !isVerifiedStaffTurn(menu) || menuText.length > 1500 ||
+      !Number.isFinite(menu.pricingCreatedAtMs) ||
+      !Number.isFinite(last.pricingCreatedAtMs) ||
+      now - menu.pricingCreatedAtMs > 30 * 60 * 1000 ||
+      menu.pricingCreatedAtMs > last.pricingCreatedAtMs ||
+      last.pricingCreatedAtMs > now + 60_000 ||
+      !/(?:facial|face\s+care|脸部|臉部|面部|rawatan\s+(?:muka|wajah)|penjagaan\s+wajah)/iu.test(menuText) ||
+      /(?:\b(?:booking|appointment|reschedule|cancel(?:lation)?)\b|预约|預約|取消|改期|\b(?:RM|MYR)\s*[1-9]\d+\b)/iu.test(menuText) ||
+      COMBO.test(menuText) || MULTIPLE_PACKAGES.test(menuText)) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  const names = separateServicesInMenu(menuText, candidates);
+  if (names.length !== 2 || !names.includes("3D 小颜术") ||
+      !names.includes("9D 逆龄抗衰") ||
+      findServicesInText(current, candidates).length) return null;
+
+  const active = getActivePromotions(promotions, new Date(now));
+  const prices = ["3D 小颜术", "9D 逆龄抗衰"].map(treatment => {
+    const campaigns = active.filter(p =>
+      p.linkedService === treatment && p.sendOnPriceQuery === true);
+    if (campaigns.length !== 1) return null;
+    const verified = verifiedPricesForService(treatment, promotions, current,
+      [last], { allowTextOnlyOffers: true });
+    if (!verified || verified.length !== 1 ||
+        !/^RM[1-9]\d{0,5}$/u.test(verified[0].price)) return null;
+    return {
+      treatment, amount: verified[0].price,
+      label: /first[\s-]*trial|首次(?:体验|體驗)/iu.test(campaigns[0].name)
+        ? "First Trial" : "Current offer",
+    };
+  });
+  if (prices.some(p => !p)) return null;
+  const lines = prices.map(p => "• " + p.treatment + " (" + p.label + "): " + p.amount);
+  const locale = String(language || "").toLowerCase();
+  const reply = locale.startsWith("zh")
+    ? "脸部护理目前有两种不同的项目，各自的优惠是：\n" + lines.join("\n") +
+      "\n\n3D 侧重脸型轮廓，9D 侧重紧致提升。你想进一步了解哪一项呢？😊"
+    : locale.startsWith("ms")
+      ? "Untuk rawatan wajah, dua tawaran ini berasingan:\n" + lines.join("\n") +
+        "\n\n3D fokus pada kontur wajah, manakala 9D fokus pada keanjalan. Anda lebih berminat yang mana? 😊"
+      : "For facial care, these are two separate offers:\n" + lines.join("\n") +
+        "\n\n3D focuses on facial contours, while 9D focuses on firmness and lifting appearance. Which one interests you more? 😊";
+  return {prices,reply,source:"verified_staff_facial_menu_two_offers"};
+}
+
 // Quote two SEPARATE, active verified treatment offers as TEXT ONLY when
 // the customer explicitly asks for both. This is not a combo promotion.
 function resolveTwoTreatmentPriceReply({
@@ -548,5 +613,6 @@ function resolveCustomerEngagedPrice({
 
 module.exports = {
   resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
-  resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply, canRecoverTwoPriceInformationReview,
+  resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
+  resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview,
 };
