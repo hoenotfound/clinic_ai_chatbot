@@ -21,7 +21,7 @@ test("booking-only staff hold recognises natural appointments and releases unrel
    "CREATE TABLE leads(id INT PRIMARY KEY,contact_id INT);",
    "CREATE TABLE lead_activities(id SERIAL PRIMARY KEY,lead_id INT,metadata JSONB);",
    "CREATE TABLE messages(id INT PRIMARY KEY,contact_id INT,role TEXT,content TEXT,sent_by_username TEXT,whatsapp_message_id TEXT,delivery_status TEXT,media_mime_type TEXT,is_automated_follow_up BOOLEAN DEFAULT FALSE,is_forwarded BOOLEAN DEFAULT FALSE,created_at TIMESTAMPTZ);",
-   "INSERT INTO contacts(id) SELECT n FROM generate_series(1,11) n;",
+   "INSERT INTO contacts(id) SELECT n FROM generate_series(1,22) n;",
    "INSERT INTO leads(id,contact_id) VALUES(50,5);",
   ].join("\n"));
   const message=async(id,contactId,role,content,minuteAgo,{staff=false,forwarded=false,delivery="sent"}={})=>{
@@ -94,6 +94,34 @@ test("booking-only staff hold recognises natural appointments and releases unrel
 
   await convo(11,"Can I book a visit?","Tomorrow at 3?","yes");
   assert.equal(await check(11),true,"English time without AM/PM is still a booking conversation");
+  // A calendar date and time in a staff message are not sufficient evidence
+  // of a booking. The customer must have an actual staff slot proposal.
+  await convo(12,"Can I book an appointment?","The promo offer ends tomorrow at 3pm","yes");
+  assert.equal(await check(12),false,"promo expiry must not become a booking hold");
+  await convo(13,"Can I book an appointment?","The clinic closes tomorrow at 3pm","yes");
+  assert.equal(await check(13),false,"closing hours must not become a booking hold");
+  await convo(14,"Can I book an appointment?","Please call me tomorrow at 3pm","yes");
+  assert.equal(await check(14),false,"callback arrangements must not become a visit booking");
+  await convo(15,"Can I book an appointment?","3D appointment promo ends tomorrow at 3pm","yes");
+  assert.equal(await check(15),false,"the word appointment in a promotion must not claim booking ownership");
+
+  // Booking-specific new questions stay with staff even when a treatment name
+  // and a general information/question word also appear in the same message.
+  await convo(16,"Can I book an appointment?","Your appointment is tomorrow at 3pm","How much is the deposit for 9D?");
+  assert.equal(await check(16),true,"9D deposit question belongs to existing booking");
+  await convo(17,"Can I book an appointment?","Your appointment is tomorrow at 3pm","What time is my 9D session?");
+  assert.equal(await check(17),true,"my booked 9D session time must remain staff-owned");
+  await convo(18,"Can I book an appointment?","Your appointment is tomorrow at 3pm","What is the 9D treatment duration?");
+  assert.equal(await check(18),false,"procedure duration is an independent treatment question");
+  await convo(19,"Can I book an appointment?","Your appointment is tomorrow at 3pm","Which device is used for 9D?");
+  assert.equal(await check(19),false,"device specifications are unrelated to the booking");
+  await convo(20,"Can I book an appointment?","Your appointment is tomorrow at 3pm","Is 9D safe if I am pregnant?");
+  assert.equal(await check(20),true,"SQL holds the booking, but server must exempt clinical safety risk");
+  await convo(21,"Can I book an appointment?","Tomorrow at 3?","How much is the booking fee for 9D?");
+  assert.equal(await check(21),true,"booking fee must remain staff-owned");
+  await convo(22,"Can I book an appointment?","Tomorrow at 3?","How much is 9D First Trial?");
+  assert.equal(await check(22),false,"unrelated verified treatment-price question can proceed");
+
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   if(created)await db.query('DROP SCHEMA "'+schema+'" CASCADE').catch(()=>{});
