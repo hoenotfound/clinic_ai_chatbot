@@ -2245,6 +2245,13 @@ async function processIncomingMessage(
       await auditResultMediaEarlyExit("verified_package_comparison_text_only");
       return { wasFirstMessage, keywordReason };
     }
+    if (twoTreatmentQuote) {
+      // Both offers were independently verified as TEXT only. No pricing or
+      // Before & After image may be inferred from the model's single-service
+      // label, even when the model incorrectly set serviceQuery/priceQuery.
+      await auditResultMediaEarlyExit("two_treatments_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
       // Once the matching First Trial image has been accepted, package and
       // staff-handoff turns are strictly text only.
