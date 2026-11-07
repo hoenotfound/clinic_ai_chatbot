@@ -1288,15 +1288,21 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
 // inbound message during this 2h interval must stay in Inbox for staff.
 // This is only used for Neutro's direct AI replies, not a global CRM mode
 // change or a marketing-consent decision. Follow-up automation is not staff.
-async function hasRecentStaffConversation(contactId,inboundMessageId,query=pool.query.bind(pool)){
+async function hasRecentStaffConversation(contactId,inboundMessageId,query=pool.query.bind(pool),{appointmentOnly=false}={}){
  const id=Number(contactId),message=Number(inboundMessageId);
  if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(message)||message<=0)return false;
  const result=await query(
-  `SELECT ${temporaryStaffConversationSql("c","inbound")} AS staff_active
+  `SELECT ${temporaryStaffConversationSql("c","inbound",{appointmentOnly})} AS staff_active
     FROM contacts c JOIN messages inbound
       ON inbound.contact_id=c.id AND inbound.id=$2 AND inbound.role='user'
     WHERE c.id=$1`,[id,message]);
  return result.rows[0]?.staff_active===true;
+}
+
+ // Only this narrowed predicate may suppress a direct AI reply after staff.
+ // The normal recent-staff predicate still protects scheduled follow-ups.
+async function hasActiveStaffBookingConversation(contactId,inboundMessageId,query=pool.query.bind(pool)){
+ return hasRecentStaffConversation(contactId,inboundMessageId,query,{appointmentOnly:true});
 }
 
 function normalizeReactionTimestamp(value) {
@@ -1875,6 +1881,7 @@ module.exports = {
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
   hasRecentStaffConversation,
+  hasActiveStaffBookingConversation,
   isDeletedWhatsappReactionEvent,
   applyWhatsappReaction,
   reconcilePendingWhatsappReactionsForMessage,
