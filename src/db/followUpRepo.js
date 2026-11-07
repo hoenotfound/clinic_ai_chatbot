@@ -307,7 +307,7 @@ async function findCandidates({
        FROM recent_inbound_contacts recent
        JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
-         SELECT id, created_at
+         SELECT id, content, created_at
          FROM messages
          WHERE contact_id = c.id
            AND role = 'user'
@@ -546,7 +546,7 @@ async function getNextCandidateDueAt({
        FROM recent_inbound_contacts recent
        JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
-         SELECT id, created_at
+         SELECT id, content, created_at
          FROM messages
          WHERE contact_id = c.id
            AND role = 'user'
@@ -779,7 +779,7 @@ async function saveIfStillEligible({
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), latest_inbound AS (
-       SELECT inbound.id, inbound.created_at
+       SELECT inbound.id, inbound.content, inbound.created_at
        FROM messages inbound, conversation_lock
        WHERE inbound.contact_id = $1
          AND inbound.role = 'user'
@@ -1069,7 +1069,7 @@ async function recordAiDecisionIfStillEligible({
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), latest_inbound AS (
-       SELECT inbound.id, inbound.created_at
+       SELECT inbound.id, inbound.content, inbound.created_at
        FROM messages inbound, conversation_lock
        WHERE inbound.contact_id = $1
          AND inbound.role = 'user'
@@ -1298,7 +1298,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
          ON anchor.id = claim.trigger_message_id
         AND anchor.contact_id = claim.contact_id
        JOIN LATERAL (
-         SELECT inbound.id,inbound.created_at
+         SELECT inbound.id,inbound.content,inbound.created_at
          FROM messages inbound
          WHERE inbound.contact_id=c.id AND inbound.role='user'
          ORDER BY inbound.created_at DESC,inbound.id DESC LIMIT 1

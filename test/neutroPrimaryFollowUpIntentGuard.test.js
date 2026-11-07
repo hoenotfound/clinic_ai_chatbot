@@ -27,3 +27,15 @@ test("primary TCM followups exclude non-patient commercial outreaches", () => {
    clinicConfig.businessName = originalName;
  }
 });
+
+test("all five primary follow-up worker paths select the customer text needed by the booking guard", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname, "..", "src/db/followUpRepo.js"), "utf8");
+  // Discovery and next-due scheduling both use a latest-inbound LATERAL row.
+  assert.equal((source.match(/SELECT id, content, created_at\s+FROM messages\s+WHERE contact_id = c\.id\s+AND role = 'user'/g) || []).length, 2);
+  // Send/decision claims use a latest-inbound CTE.
+  assert.equal((source.match(/SELECT inbound\.id, inbound\.content, inbound\.created_at\s+FROM messages inbound, conversation_lock/g) || []).length, 2);
+  // Final delivery eligibility must also project content.
+  assert.match(source, /SELECT inbound\.id,inbound\.content,inbound\.created_at\s+FROM messages inbound/);
+});
