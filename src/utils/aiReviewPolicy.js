@@ -3,6 +3,10 @@ const { pendingAcceptedAppointmentAllowedSql } = require("./pendingAcceptedAppoi
 const {pendingCancellationFollowupAllowedSql}=require("./appointmentCancellationSafety");
 
 const ADMINISTRATIVE_QUESTION = /\b(price|cost|how much|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|park|deposit|payment|credit card|debit card|card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|价钱|多少钱|收费|费用|优惠|配套|营业时间|营业|地址|地点|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
+// Exact technical/model enquiries are ordinary information requests. This
+// exception does not bypass the clinical/safety checks below.
+const TECHNICAL_DEVICE_QUESTION =
+  /^(?:(?:what|which|whose)\b.{0,65}\b(?:device|machine|equipment|instrument)\b.{0,35}|(?:用|使用|采用|採用).{0,12}(?:什么|什麼|哪[个個款种種])?.{0,8}(?:仪器|儀器|机器|機器|设备|設備)|(?:什么|什麼|哪[个個款种種]).{0,14}(?:仪器|儀器|机器|機器|设备|設備)|(?:mesin|alat)\s+(?:apa|jenis\s+apa|jenama\s+apa)|(?:apa|jenama|jenis)\s+(?:mesin|alat))[\s?!?？。.!！]*$/iu;
 const CLINICAL_PROCEDURE_TIMING = /\b(after|before|recent|just had)\b.{0,40}\b(hifu|filler|botox|laser|thread|peel|injection|procedure)\b|\b(hifu|filler|botox|laser|thread|peel|injection)\b.{0,40}\b(after|before|recent|just had)\b/iu;
 const CLINICAL_QUESTION = /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?section\w*|surgery|surgical|procedure\w*|suitab\w*|safe to|pain\w*|hurt\w*|discomfort|uncomfortable|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|uterus|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|treatment suitability|treatment risk|after treatment|after surgery|just had|recent procedure|can i do|is it safe|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|產後|产后|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|藥|药|安全|適合|适合|疼痛|会不会很痛|會不會很痛|会不会痛|會不會痛|会痛吗|會痛嗎|流血|出血|尿失禁|子宮|子宫|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|醫生|医生|中醫師|中医师|整骨風險|整骨风险|坐月子)|\b(hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|doktor|kesan sampingan)\b/iu;
 
@@ -101,7 +105,7 @@ function categorizeAiReview(customerText, proposedCategory) {
       !hasClinicalMediaRisk(customerText)))return 'information';
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
-  if (!ADMINISTRATIVE_QUESTION.test(text) ||
+  if ((!ADMINISTRATIVE_QUESTION.test(text) && !TECHNICAL_DEVICE_QUESTION.test(text)) ||
       CLINICAL_QUESTION.test(text) ||
       CLINICAL_PROCEDURE_TIMING.test(text) ||
       MEDICAL_HISTORY.test(text) ||
