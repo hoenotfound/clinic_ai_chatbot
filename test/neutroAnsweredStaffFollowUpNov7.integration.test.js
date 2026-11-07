@@ -13,7 +13,7 @@ test("Neutro primary follow-up guard keeps staff answer and booking checks disti
     clinicConfig.businessName = "Neutro Sense TCM Centre";
     const sql = customerFollowUpIntentGuardSql("c");
     assert.match(sql, /anchor\.sent_by_username IS NULL/);
-    assert.match(sql, /appointmentOnly: true/); // older verified staff booking holds
+    assert.match(sql, /staff\.content/); // older verified booking exchanges still checked
     assert.match(sql, /staff_anchor\.id = anchor\.id/);
     assert.match(sql, /booking_customer\.role = 'user'/);
     assert.match(sql, /staff_appointment_reminder/);
