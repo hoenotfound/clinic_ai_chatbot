@@ -37,7 +37,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  // including terse offers such as "Tomorrow 3pm?" or "周六下午3点?".
  const naturalStaffTimeOffer = `(
    COALESCE(staff.content,'') ~* '(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2})'
-   AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點])'
+   AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2}(?:[:.][0-5][0-9])?|at[[:space:]]+[0-9]{1,2})'
  )`;
  // A newer, explicitly unrelated service question releases only the
  // direct-reply hold. It cannot resolve an actual booking or schedule.
