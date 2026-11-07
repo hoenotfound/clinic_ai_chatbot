@@ -12,6 +12,75 @@ function clinicRescheduleHoldSql() {
     ? "COALESCE(latest_lead.appointment_status, 'none') <> 'reschedule'"
     : "TRUE";
 }
+// The sales follow-up anchor is the NEWEST accepted reply after the customer.
+// A question asked by staff BEFORE that customer reply must not continue
+// suppressing follow-ups once staff has actually answered again.
+// Keep earlier staff-question protection for AI-authored anchors and preserve
+// verified appointment/reminder holds for staff-authored anchors.
+function staffFollowUpConversationHoldSql(contactAlias = "c") {
+  return `((
+    anchor.sent_by_username IS NULL
+    AND ${temporaryStaffConversationSql(contactAlias, "latest_inbound")}
+  ) OR ${temporaryStaffConversationSql(contactAlias, "latest_inbound", { appointmentOnly: true })}
+  OR EXISTS (
+    SELECT 1 FROM messages staff_anchor
+    WHERE staff_anchor.id = anchor.id
+      AND staff_anchor.contact_id = ${contactAlias}.id
+      AND staff_anchor.role = 'assistant'
+      AND staff_anchor.sent_by_username IS NOT NULL
+      AND staff_anchor.sent_by_username <> 'Follow-up automation'
+      AND staff_anchor.whatsapp_message_id IS NOT NULL
+      AND staff_anchor.delivery_status IS DISTINCT FROM 'failed'
+      AND (
+        -- An authenticated reminder is stronger than any keyword heuristic.
+        EXISTS (
+          SELECT 1 FROM lead_activities reminder
+          JOIN leads reminder_lead ON reminder_lead.id = reminder.lead_id
+          WHERE reminder_lead.contact_id = ${contactAlias}.id
+            AND reminder.metadata->>'outcome' = 'staff_appointment_reminder'
+            AND reminder.metadata->>'staffMessageId' = staff_anchor.id::text
+            AND NOT EXISTS (
+              SELECT 1 FROM lead_activities resolved
+              WHERE resolved.lead_id = reminder.lead_id
+                AND resolved.metadata->>'outcome' = 'booking_hold_resolved'
+                AND resolved.id > reminder.id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM lead_activities invalidated
+              WHERE invalidated.lead_id = reminder.lead_id
+                AND invalidated.metadata->>'outcome' = 'staff_reminder_invalidated'
+                AND invalidated.metadata->>'staffMessageId' = staff_anchor.id::text
+                AND invalidated.id > reminder.id
+            )
+        )
+        OR (
+          -- A generic "book now" promotion is not appointment coordination:
+          -- require explicit customer booking intent within thirty minutes.
+          (
+            COALESCE(staff_anchor.content, '') ~*
+              '(booking|booked|appointment|appointments|reschedule|reservation|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu|预约|預約|已安排|已确认|已確認)'
+            OR (
+              COALESCE(staff_anchor.content, '') ~*
+                '(tomorrow|tmr|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|明天|后天|後天|周[一二三四五六日天]|週[一二三四五六日天]|星期[一二三四五六日天])'
+              AND COALESCE(staff_anchor.content, '') ~*
+                '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2})'
+            )
+          )
+          AND EXISTS (
+            SELECT 1 FROM messages booking_customer
+            WHERE booking_customer.contact_id = ${contactAlias}.id
+              AND booking_customer.role = 'user'
+              AND (booking_customer.created_at, booking_customer.id) <
+                  (staff_anchor.created_at, staff_anchor.id)
+              AND booking_customer.created_at >= staff_anchor.created_at - interval '30 minutes'
+              AND COALESCE(booking_customer.content, '') ~*
+                '(book|booking|appointment|appointments|reservation|reserve|reschedule|slot|visit|temujanji|janji[[:space:]]+temu|预约|預約|约时间|約時間|改期|可以过来|可以過來)'
+          )
+        )
+      )
+  ))`;
+}
+
 // Guard only TCM sales followups against clear commercial outreach, goodbyes
 // and unavailable-branch-only messages. Recheck before sending a claimed step.
 function customerFollowUpIntentGuardSql(contactAlias = "c") {
@@ -38,7 +107,7 @@ function customerFollowUpIntentGuardSql(contactAlias = "c") {
           '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
       )
     )
-  ) AND (${contactAlias}.channel <> 'whatsapp' OR NOT ${temporaryStaffConversationSql(contactAlias,'latest_inbound')}))`;
+  ) AND (${contactAlias}.channel <> 'whatsapp' OR NOT ${staffFollowUpConversationHoldSql(contactAlias)}))`;
 }
 
 function reserveFinalPricingWindow() {
