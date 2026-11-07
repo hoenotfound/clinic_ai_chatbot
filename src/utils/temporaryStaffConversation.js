@@ -32,8 +32,22 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  // but never silently suppress the next direct AI answer. Direct replies only
  // pause for a verified reminder or an active, explicitly booking-related
  // exchange between this customer and authenticated staff.
+ // Natural appointment coordination rarely repeats the word "booking".
+ // Require two-party booking evidence plus a real day/time offer, not a '?' alone.
+ const naturalStaffTimeOffer = `(
+   COALESCE(staff.content,'') ~* '(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2})'
+   AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點])'
+   AND COALESCE(staff.content,'') ~* '(come|visit|drop[[:space:]]+by|available|works?|suitable|convenient|swing[[:space:]]+by|boleh|datang|sesuai|jumpa|can[[:space:]]+(you|u)|方便|可以|过来|過來|到店|来店|來店|来|來|见|見|时间|時間|时段|時段)'
+ )`;
+ // A newer, explicitly unrelated service question releases only the
+ // direct-reply hold. It cannot resolve an actual booking or schedule.
+ // "How much?" alone stays with the booking staff because it is ambiguous.
+ const newTreatmentTopic = `(
+   COALESCE(${inbound}.content,'') ~* '((^|[^[:alnum:]])(3[[:space:]]*d|9[[:space:]]*d|facial|face[[:space:]]*care|pelvic|posture|pulse[[:space:]]*wave|device|machine|treatment|treatments|services|rawatan|mesin|alat)([^[:alnum:]]|$)|小颜|小顏|逆龄|逆齡|骨盆|脉冲|脈衝|脸部|臉部|仪器|儀器|疗程|療程|护理|護理)'
+   AND COALESCE(${inbound}.content,'') !~* '((^|[^[:alpha:]])(book|booking|booked|appointment|appointments|slot|reschedul(e|ing)|schedule|reserve|visit|come|arrive|tomorrow|tmr|today|date|time|cancel|temujanji|janji[[:space:]]*temu|esok)([^[:alpha:]]|$)|预约|預約|订位|訂位|明天|后天|後天|周[一二三四五六日天]|週[一二三四五六日天]|星期[一二三四五六日天]|改期|取消|时间|時間|时段|時段|到店|过来|過來)'
+ )`;
  const activeBookingExchange = `(
-   COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)'
+   (COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)' OR ${naturalStaffTimeOffer})
    AND EXISTS (
      SELECT 1 FROM messages previous_customer
      WHERE previous_customer.contact_id=staff.contact_id
@@ -44,7 +58,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
    )
  )`;
  const conversationEvidence = appointmentOnly
-   ? `(${persistedReminder} OR ${activeBookingExchange})`
+   ? `((${persistedReminder} OR ${activeBookingExchange}) AND NOT ${newTreatmentTopic})`
    : `(
       COALESCE(staff.content,'') ~ '[?？]'
       OR COALESCE(staff.content,'') ~* '(confirm|comfirm|confirmed|booked|booking|appointment|预约|預約|确认|確認|已安排|slot|时段|時段|can[[:space:]]+[0-9]{1,2}([:.][0-9]{2})?[[:space:]]*(am|pm))'
