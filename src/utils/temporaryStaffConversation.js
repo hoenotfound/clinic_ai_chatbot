@@ -44,7 +44,8 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  // "How much?" alone stays with the booking staff because it is ambiguous.
  const newTreatmentTopic = `(
    COALESCE(${inbound}.content,'') ~* '((^|[^[:alnum:]])(3[[:space:]]*d|9[[:space:]]*d|facial|face[[:space:]]*care|pelvic|posture|pulse[[:space:]]*wave|device|machine|treatment|treatments|services|rawatan|mesin|alat)([^[:alnum:]]|$)|小颜|小顏|逆龄|逆齡|骨盆|脉冲|脈衝|脸部|臉部|仪器|儀器|疗程|療程|护理|護理)'
-   AND COALESCE(${inbound}.content,'') !~* '((^|[^[:alpha:]])(book|booking|booked|appointment|appointments|slot|reschedul(e|ing)|schedule|reserve|visit|come|arrive|tomorrow|tmr|today|date|time|cancel|temujanji|janji[[:space:]]*temu|esok)([^[:alpha:]]|$)|预约|預約|订位|訂位|明天|后天|後天|周[一二三四五六日天]|週[一二三四五六日天]|星期[一二三四五六日天]|改期|取消|时间|時間|时段|時段|到店|过来|過來)'
+   AND COALESCE(${inbound}.content,'') ~* '((^|[^[:alpha:]])(what|which|why|how|price|pricing|cost|fee|info|information|details|explain|difference|describe|discuss|tell|know|understand|interested|offer|available|berapa|harga|apa|maklumat|jelaskan)([^[:alpha:]]|$)|想了解|想知道|想问|想問|请问|請問|介绍|介紹|是什么|是什麼|怎样|怎樣|怎么|怎麼|多少钱|多少錢|价钱|價錢|价格|價格|费用|費用|效果|怎么样|怎麼樣|有什么|有什麼)'
+   AND COALESCE(${inbound}.content,'') !~* '((^|[^[:alpha:]])(book|booking|booked|appointment|appointments|slot|reschedul(e|ing)|schedule|reserve|visit|come|arrive|tomorrow|tmr|cancel|temujanji|janji[[:space:]]*temu|esok|monday|tuesday|wednesday|thursday|friday|saturday|sunday)([^[:alpha:]]|$)|预约|預約|订位|訂位|明天|后天|後天|周[一二三四五六日天]|週[一二三四五六日天]|星期[一二三四五六日天]|改期|取消|时段|時段|到店|过来|過來)'
  )`;
  const activeBookingExchange = `(
    (COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)' OR ${naturalStaffTimeOffer})
