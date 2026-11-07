@@ -289,6 +289,75 @@ function requestedTwoTreatmentServices(current, before, services, aliases, expli
   return activeTwoServiceMenu(before, candidates);
 }
 
+// A category-level "facial care" enquiry followed immediately by a bot menu
+// for BOTH 3D and 9D is not a customer selection of either treatment. A short
+// amount question can receive both independently verified First Trial prices
+// as TEXT only, without granting media permission or selecting the combo.
+const FACIAL_CATEGORY_ONLY =
+  /^(?:facial(?:\s+(?:care|treatments?|services?))?|face\s+(?:care|treatments?)|(?:脸|臉|面)部(?:护理|護理|保养|保養)|rawatan\s+(?:muka|wajah)|penjagaan\s+wajah)[\s.!?？。！]*$/iu;
+const FACIAL_SHORT_AMOUNT =
+  /^(?:how\s+much(?:\s+(?:is\s+it|are\s+they))?|(?:what(?:'s|\s+is)?\s+)?(?:the\s+)?(?:price|cost)|多少钱|多少錢|价钱|價錢|价格|價格|多少[钱錢]|berapa\s+(?:harga|ringgit)|harga\s+berapa|harga)[\s?？.!。！]*$/iu;
+const REPEAT_SESSION_PRICE =
+  /(?:second\s+(?:session|time)|repeat\s+session|subsequent|next\s+session|二次|第二次|第2次|后续|後續|继续|繼續|续做|續做)/iu;
+
+function resolveFacialCategoryPriceReply({
+  customerText, session = [], services = [], serviceAliases = [],
+  promotions = [], language = "en", now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!FACIAL_SHORT_AMOUNT.test(current) || !hasExplicitPriceRequest(current) ||
+      RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
+      COMBO.test(current) || REPEAT_SESSION_PRICE.test(current) ||
+      hasClinicalMediaRisk(current)) return null;
+  const turns = recentTurns(session, now);
+  if (!turns || turns.length < 4 ||
+      pricingMessageText(turns.at(-1)).trim() !== current) return null;
+  // Require the customer to have chosen the category on the PREVIOUS user
+  // turn, and the assistant to have described exactly these two services.
+  const menu = turns.at(-2);
+  const customerCategory = turns.at(-3);
+  if (menu?.role !== "assistant" || isVerifiedStaffTurn(menu) ||
+      customerCategory?.role !== "user" ||
+      !FACIAL_CATEGORY_ONLY.test(pricingMessageText(customerCategory))) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  const names = separateServicesInMenu(pricingMessageText(menu), candidates);
+  if (names.length !== 2 || !names.includes("3D 小颜术") ||
+      !names.includes("9D 逆龄抗衰") ||
+      findServicesInText(current, candidates).length) return null;
+
+  const active = getActivePromotions(promotions, new Date(now));
+  const prices = ["3D 小颜术", "9D 逆龄抗衰"].map(treatment => {
+    const matches = active.filter(p => p.linkedService === treatment &&
+      p.sendOnPriceQuery === true);
+    if (matches.length !== 1) return null;
+    const verified = verifiedPricesForService(treatment, promotions, current, turns, {
+      allowTextOnlyOffers: true,
+    });
+    if (verified?.length !== 1 ||
+        !/^RM[1-9]\d{0,5}$/u.test(verified[0].price)) return null;
+    const firstTrial = /first[\s-]*trial|首次(?:体验|體驗)/iu.test(matches[0].name);
+    return { treatment, amount: verified[0].price, label: firstTrial ? "first_trial" : "current_offer" };
+  });
+  if (prices.some(price => !price)) return null;
+  const locale = String(language || "").toLowerCase();
+  const label = price => price.label === "first_trial"
+    ? "First Trial" : "Current offer";
+  const lines = prices.map(price => "• " + price.treatment +
+    " (" + label(price) + "): " + price.amount);
+  const reply = locale.startsWith("zh")
+    ? "脸部护理有两种不同的项目，目前各自的优惠价格是：\n" +
+      lines.join("\n") +
+      "\n\n3D 着重脸型与轮廓，9D 着重紧致与提升感。你比较想了解哪一项呢？😊"
+    : locale.startsWith("ms")
+      ? "Untuk rawatan wajah, ini harga tawaran bagi dua rawatan berasingan:\n" +
+        lines.join("\n") +
+        "\n\n3D lebih menumpukan kontur wajah, manakala 9D menumpukan keanjalan dan penampilan lebih tegang. Anda ingin tahu lebih lanjut tentang yang mana? 😊"
+      : "For facial care, these are our two separate offers:\n" +
+        lines.join("\n") +
+        "\n\n3D focuses on facial contours, while 9D focuses on firmness and lifting appearance. Which would you like to know more about? 😊";
+  return { prices, reply, source: "verified_facial_category_two_offers" };
+}
+
 // Quote two SEPARATE, active verified treatment offers as TEXT ONLY when
 // the customer explicitly asks for both. This is not a combo promotion.
 function resolveTwoTreatmentPriceReply({
@@ -479,5 +548,5 @@ function resolveCustomerEngagedPrice({
 
 module.exports = {
   resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
-  resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview,
+  resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply, canRecoverTwoPriceInformationReview,
 };
