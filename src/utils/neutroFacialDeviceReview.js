@@ -6,7 +6,7 @@ const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 // individual medical suitability or procedure-timing question. The clinic
 // knows that 9D is device-based, but has not verified a manufacturer/model.
 const DEVICE_QUESTION =
-  /^(?:(?:what|which|whose|do\s+you\s+know)\b.{0,65}\b(?:device|machine|equipment|instrument)\b|\b(?:device|machine)\b.{0,35}\b(?:brand|model|name|type|which|what)\b|(?:用|使用|采用|採用).{0,12}(?:什么|什麼|哪[个個款种種])?.{0,8}(?:仪器|儀器|机器|機器|设备|設備)|(?:什么|什麼|哪[个個款种種]).{0,14}(?:仪器|儀器|机器|機器|设备|設備)|(?:mesin|alat)\s+(?:apa|jenis\s+apa|jenama\s+apa)|(?:apa|jenama|jenis)\s+(?:mesin|alat))[\s?!?？。.!！]*$/iu;
+  /^(?:(?:what|which|whose|do\s+you\s+know)\b.{0,65}\b(?:device|machine|equipment|instrument)\b.{0,35}|\b(?:device|machine)\b.{0,35}\b(?:brand|model|name|type|which|what)\b|(?:用|使用|采用|採用).{0,12}(?:什么|什麼|哪[个個款种種])?.{0,8}(?:仪器|儀器|机器|機器|设备|設備)|(?:什么|什麼|哪[个個款种種]).{0,14}(?:仪器|儀器|机器|機器|设备|設備)|(?:mesin|alat)\s+(?:apa|jenis\s+apa|jenama\s+apa)|(?:apa|jenama|jenis)\s+(?:mesin|alat))[\s?!?？。.!！]*$/iu;
 const PREVIOUS_9D_DEVICE =
   /(?:9\s*d|逆龄抗衰|逆齡抗衰)/iu;
 const DEVICE_DESCRIPTION =
