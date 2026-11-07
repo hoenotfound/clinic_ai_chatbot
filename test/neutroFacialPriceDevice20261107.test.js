@@ -156,6 +156,7 @@ test("server keeps dual offers text-only and the device acknowledgement on the g
   assert.match(server,/resolveFacialCategoryPriceReply\(/u);
   assert.match(server,/if \(twoTreatmentQuote\) \{[\s\S]{0,500}reply = twoTreatmentQuote\.reply/u);
   assert.match(server,/if \(flagged && reviewRequired\) \{[\s\S]{0,550}setAiReviewAttention\(/u);
+  assert.match(server,/await auditResultMediaEarlyExit\("two_treatments_text_only"\);/u);
   assert.match(server,/clinicalAcknowledgement = deviceReview\.reply/u);
   assert.match(server,/await sendTrackedText\(/u);
 });
