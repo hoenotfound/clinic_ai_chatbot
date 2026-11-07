@@ -23,7 +23,7 @@ const SERVICE_DISCOVERY_PATTERN =
 // A customer selecting the facial-care CATEGORY has not selected 3D, 9D,
 // or an older pelvic service mentioned in the clinic's welcome menu.
 const FACIAL_CATEGORY_DISCOVERY =
-  /^(?:facial(?:\\s+(?:care|treatments?|services?))?|face\\s+(?:care|treatments?)|facecare|(?:脸|臉|面)部(?:护理|護理|保养|保養)|rawatan\\s+(?:muka|wajah)|penjagaan\\s+wajah)[\\s.!?？。！]*$/iu;
+  /^(?:facial(?:\s+(?:care|treatments?|services?))?|face\s+(?:care|treatments?)|facecare|(?:脸|臉|面)部(?:护理|護理|保养|保養)|rawatan\s+(?:muka|wajah)|penjagaan\s+wajah)[\s.!?？。！]*$/iu;
 const BROAD_PRICE_PATTERN =
   /(?:full|complete|all|whole).{0,20}(?:price|pricing|cost|fee)|(?:price|pricing|cost|fee).{0,20}(?:list|all|every|treatments|services)|(?:全部|所有|完整|整份).{0,20}(?:价|價|费用|費用|收费|收費)|(?:价|價|费用|費用).{0,20}(?:全部|所有)|senarai\s+harga|harga.{0,25}(?:semua|keseluruhan)|(?:semua|keseluruhan).{0,25}harga/iu;
 const PROMOTION_DETAIL_PATTERN =
