@@ -2,7 +2,7 @@
 // Reused by live reply handling and every sender's follow-up send checks.
 // Brief staff-led appointment coordination is not the same as a broadcast
 // greeting, promotion, media upload or historical staff chat.
-function temporaryStaffConversationSql(contact="c",inbound="inbound"){
+function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmentOnly=false}={}){
  for(const alias of [contact,inbound]){
   if(!/^[a-z][a-z0-9_]*$/iu.test(alias))throw new TypeError("Invalid SQL alias");
  }
@@ -28,6 +28,28 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
          AND invalidated.id>reminder.id
      )
  )`;
+ // The ordinary staff-question hold remains a sales follow-up safeguard,
+ // but never silently suppress the next direct AI answer. Direct replies only
+ // pause for a verified reminder or an active, explicitly booking-related
+ // exchange between this customer and authenticated staff.
+ const activeBookingExchange = `(
+   COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)'
+   AND EXISTS (
+     SELECT 1 FROM messages previous_customer
+     WHERE previous_customer.contact_id=staff.contact_id
+       AND previous_customer.role='user'
+       AND (previous_customer.created_at,previous_customer.id)<(staff.created_at,staff.id)
+       AND previous_customer.created_at>=staff.created_at-INTERVAL '30 minutes'
+       AND COALESCE(previous_customer.content,'') ~* '((^|[^[:alpha:]])(book|booking|appointment|appointments|slot|schedule|reschedule|availability|available|visit|tomorrow|can[[:space:]]+i[[:space:]]+come|temujanji|janji[[:space:]]+temu|boleh[[:space:]]+datang)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|明天|后天|後天|可以过来|可以過來|来店|來店|到店)'
+   )
+ )`;
+ const conversationEvidence = appointmentOnly
+   ? `(${persistedReminder} OR ${activeBookingExchange})`
+   : `(
+      COALESCE(staff.content,'') ~ '[?？]'
+      OR COALESCE(staff.content,'') ~* '(confirm|comfirm|confirmed|booked|booking|appointment|预约|預約|确认|確認|已安排|slot|时段|時段|can[[:space:]]+[0-9]{1,2}([:.][0-9]{2})?[[:space:]]*(am|pm))'
+      OR ${persistedReminder}
+    )`;
  return `EXISTS (
   SELECT 1 FROM messages staff
   WHERE staff.contact_id=${contact}.id
@@ -42,11 +64,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound"){
     AND staff.created_at>=${inbound}.created_at-INTERVAL '2 hours'
     AND (staff.media_mime_type IS NULL OR staff.media_mime_type NOT LIKE 'image/%')
     AND COALESCE(staff.content,'') !~* '(happy[[:space:]]+birthday|birthday|生日快乐|生日快樂|complimentary[[:space:]]+treat|本月限时优惠|本月限時優惠)'
-    AND (
-      COALESCE(staff.content,'') ~ '[?？]'
-      OR COALESCE(staff.content,'') ~* '(confirm|comfirm|confirmed|booked|booking|appointment|预约|預約|确认|確認|已安排|slot|时段|時段|can[[:space:]]+[0-9]{1,2}([:.][0-9]{2})?[[:space:]]*(am|pm))'
-      OR ${persistedReminder}
-    )
+    AND ${conversationEvidence}
     AND (
       EXISTS (
         SELECT 1 FROM messages previous_customer
