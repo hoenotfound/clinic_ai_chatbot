@@ -1034,14 +1034,15 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // If WhatsApp Business App staff has just replied, keep the next customer
-    // turn manual for two hours rather than immediately letting AI interrupt.
-    // Do not silently change the contact's explicit AI/Human mode.
+    // A routine staff greeting or treatment question does not pause AI on the
+    // next customer turn. Only independently verified appointment coordination
+    // may temporarily remain with staff. Same-turn staff replies and explicit
+    // Human-mode/clinical safeguards are checked separately.
     if(channel==="whatsapp"&&clinicConfig.businessType==="tcm_clinic"&&
        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
        !keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
        !isExplicitStaffRequest(text)&&!whatsappPolicy.classifyOptOutText(text)&&
-       await messagesRepo.hasRecentStaffConversation(contact.id,savedInbound.id)){
+       await messagesRepo.hasActiveStaffBookingConversation(contact.id,savedInbound.id)){
       // A cancellation arriving while staff is handling the booking must
       // reach the staff review queue; suppress the bot's competing reply.
       if(isDefiniteAppointmentCancellation(text)){
@@ -1049,7 +1050,7 @@ async function processIncomingMessage(
           contact.id,savedInbound.id,String(text).slice(0,350),
           hasClinicalMediaRisk(text)?"clinical":"information");
       }
-      console.info("Skipping Neutro AI response: recent authenticated staff conversation.");
+      console.info("Skipping Neutro AI response: verified active staff appointment coordination.");
       return {wasFirstMessage,keywordReason};
     }
 
