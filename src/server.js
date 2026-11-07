@@ -34,7 +34,8 @@ const { resolveScopedPackagePriceContinuation,
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
-const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
+const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
+  resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
@@ -65,6 +66,7 @@ const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPo
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
+const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -1383,6 +1385,31 @@ async function processIncomingMessage(
       }
     }
 
+    // A plain greeting is not a clinical review. Check durable clinical
+    // evidence before repairing a model misclassification; never clear an
+    // actual ongoing clinical concern or a real human takeover.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !bookingReady &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isSimpleGreeting(text)) {
+      const greetingEvidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+      if (greetingEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        clinicalAcknowledgement = null;
+        aiReply = safeGreetingReply(mediaLanguage);
+        serviceQuery = false;
+        priceQuery = false;
+        packageQuery = false;
+        details = null;
+        console.info("[Greeting review recovery] contact=" + contact.id + " inbound=" + savedInbound.id);
+      }
+    }
+
     // A verified, straightforward question about the 9D device brand/model
     // needs a useful acknowledgement and staff verification, not a silent
     // clinical review. Preserve safety flags, human handoffs, and staff turns.
@@ -1395,7 +1422,9 @@ async function processIncomingMessage(
         customerText: text, conversationHistory: history,
         services: clinicConfig.services, language: mediaLanguage,
       });
-      if (deviceReview) {
+      const deviceEvidence = deviceReview
+        ? await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id) : null;
+      if (deviceReview && deviceEvidence?.pendingClinicalReview === false) {
         flagged = true;
         reviewRequired = true;
         reviewType = deviceReview.reviewType;
@@ -1535,6 +1564,13 @@ async function processIncomingMessage(
         }) || resolveFacialCategoryPriceReply({
           customerText: text,
           session: recentVerifiedPricingSession(history, text),
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          language: mediaLanguage,
+        }) || resolveVerifiedStaffFacialPriceReply({
+          customerText: text,
+          conversationHistory: history,
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
