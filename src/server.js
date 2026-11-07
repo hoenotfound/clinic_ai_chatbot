@@ -34,7 +34,7 @@ const { resolveScopedPackagePriceContinuation,
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
-const { resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
+const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
@@ -64,6 +64,7 @@ const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
+const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -1381,6 +1382,34 @@ async function processIncomingMessage(
       }
     }
 
+    // A verified, straightforward question about the 9D device brand/model
+    // needs a useful acknowledgement and staff verification, not a silent
+    // clinical review. Preserve safety flags, human handoffs, and staff turns.
+    if (!keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !bookingReady && (!flagged || reviewRequired) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const deviceReview = resolveNeutroFacialDeviceReview({
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services, language: mediaLanguage,
+      });
+      if (deviceReview) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = deviceReview.reviewType;
+        clinicalAcknowledgement = deviceReview.reply;
+        aiReply = deviceReview.reply;
+        bookingReady = false;
+        serviceQuery = false;
+        priceQuery = false;
+        packageQuery = false;
+        details = null;
+        console.info("[Device information review] contact=" + contact.id +
+          " inbound=" + savedInbound.id + " reason=" + deviceReview.reason);
+      }
+    }
+
     // A bare visit-planning question after Chinese New Year is not a
     // diagnosis, suitability check or confirmed booking. If the model
     // incorrectly chooses a staff review, answer cautiously and normally.
@@ -1495,14 +1524,21 @@ async function processIncomingMessage(
       !bookingReady && !keywordReason && !urgentSafety &&
       !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
       !marketingStopQuestion
-      ? resolveTwoTreatmentPriceReply({
+      ? (resolveTwoTreatmentPriceReply({
           customerText: text,
           session: recentVerifiedPricingSession(history, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
-        }) : null;
+        }) || resolveFacialCategoryPriceReply({
+          customerText: text,
+          session: recentVerifiedPricingSession(history, text),
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          language: mediaLanguage,
+        })) : null;
     if (twoTreatmentQuote && recoverableTwoPriceReview) {
       const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
         contact.id, savedInbound.id
