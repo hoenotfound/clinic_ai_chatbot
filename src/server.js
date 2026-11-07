@@ -1043,6 +1043,7 @@ async function processIncomingMessage(
     if(channel==="whatsapp"&&clinicConfig.businessType==="tcm_clinic"&&
        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
        !keywordReason&&!urgentSafety&&!isActiveSafetyConcern(text)&&
+       !hasClinicalMediaRisk(text)&&
        !isExplicitStaffRequest(text)&&!whatsappPolicy.classifyOptOutText(text)&&
        await messagesRepo.hasActiveStaffBookingConversation(contact.id,savedInbound.id)){
       // A cancellation arriving while staff is handling the booking must
