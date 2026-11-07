@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { recentVerifiedPricingSession } = require("../src/utils/shadowPriceException");
+const { recentVerifiedPricingSession, resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { recentConversationServiceAnchor, serviceCandidates } = require("../src/utils/conversationPromptContext");
 const { resolveFacialCategoryPriceReply } = require("../src/utils/priceConversationRecovery");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
@@ -79,6 +79,18 @@ test("contact 8957: immediate 'how much' after a verified 3D/9D facial menu quot
   assert.match(result.reply, /9D/u);
   assert.match(result.reply, /RM488/u);
   assert.doesNotMatch(result.reply, /RM688|组合|骨盆/iu);
+});
+
+test("choosing 3D after two text prices still enables the original verified single-treatment offer", () => {
+  const quote = dual(thread);
+  const history = [...thread,turn("assistant",quote.reply,25),turn("user","3D",10)];
+  const result = resolveShadowPriceException({
+    customerText:"3D",conversationHistory:history,
+    services,serviceAliases:aliases,promotions,now,
+    complimentaryAssessmentExperienceEnabled:true,
+  });
+  assert.equal(result?.treatment,"3D 小颜术");
+  assert.deepEqual(result?.prices.map(p => p.price),["RM488"]);
 });
 
 test("facial category pricing fails closed for stale, unrelated, or unsafe context", () => {
