@@ -20,8 +20,8 @@ function clinicRescheduleHoldSql() {
 function staffFollowUpConversationHoldSql(contactAlias = "c") {
   return `((
     anchor.sent_by_username IS NULL
-    AND ${temporaryStaffConversationSql(contactAlias, "latest_inbound")}
-  ) OR ${temporaryStaffConversationSql(contactAlias, "latest_inbound", { appointmentOnly: true })}
+    AND ${temporaryStaffConversationSql(contactAlias,'latest_inbound')}
+  ) OR ${temporaryStaffConversationSql(contactAlias,'latest_inbound',{ appointmentOnly: true })}
   OR EXISTS (
     SELECT 1 FROM messages staff_anchor
     WHERE staff_anchor.id = anchor.id
