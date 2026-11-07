@@ -59,7 +59,7 @@ test("recent authenticated staff 3D/9D menu lets a new explicit price question r
 test("staff pricing context is never an independent price source or media permission",()=>{
  const unsafe=[
   [...history.slice(0,-2),turn("assistant",staffMenu,31*60,true),history.at(-1)],
-  [...history.slice(0,-2),turn("assistant",staffMenu.replace("facial care","pelvic care"),750,true),history.at(-1)],
+  [...history.slice(0,-2),turn("assistant",staffMenu.replace(/facial|face/giu,"body"),750,true),history.at(-1)],
   [...history.slice(0,-2),turn("assistant",staffMenu.replace("2. 9D","2. Pelvic 9D"),750,true),history.at(-1)],
   [...history.slice(0,-2),turn("assistant",staffMenu+" RM688",750,true),history.at(-1)],
   [...history.slice(0,-2),turn("assistant",staffMenu+" Book an appointment!",750,true),history.at(-1)],
@@ -69,10 +69,7 @@ test("staff pricing context is never an independent price source or media permis
   [...history.slice(0,-1),turn("user","how much for my second session?",600)],
   [...history.slice(0,-1),turn("user","how much for the 3D+9D combo?",600)],
  ];
- // The second case has an explicit FACIAL phrase still in first line,
- // so use a distinct treatment-alias mismatch rather than the category alone.
  for(let i=0;i<unsafe.length;i++){
-  if(i===1)continue;
   assert.equal(priced(unsafe[i],promotions,unsafe[i].at(-1).content),null,"unsafe case "+i);
  }
  assert.equal(priced(history,[promotions[0]]),null);
@@ -110,7 +107,7 @@ test("simple greetings are not clinical reviews and genuine symptoms remain prot
  for(const [value,language] of [["hi","en"],["Hi 👋","en"],["你好","zh"],["hai","ms"],["Good morning!","en"]]){
   assert.equal(isSimpleGreeting(value),true,value);
   assert.equal(categorizeAiReview(value,"clinical"),"information",value);
-  assert.match(safeGreetingReply(language),/\?/u.test(language) ? /./u : /./u);
+  assert.ok(safeGreetingReply(language).length>10);
  }
  for(const value of ["hi I am pregnant","hello, is this safe after surgery?","hi my wound is bleeding","can I do treatment while pregnant?"]){
   assert.equal(isSimpleGreeting(value),false,value);
