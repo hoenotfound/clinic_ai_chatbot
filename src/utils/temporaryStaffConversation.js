@@ -38,6 +38,14 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  const naturalStaffTimeOffer = `(
    COALESCE(staff.content,'') ~* '(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2})'
    AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2}(?:[:.][0-5][0-9])?|at[[:space:]]+[0-9]{1,2})'
+   AND COALESCE(staff.content,'') !~* '(promo|promotion|promosi|discount|diskaun|voucher|coupon|sale|offer[[:space:]]+(starts?|ends?|expires?|valid)|trial[[:space:]]+price|closing|closes?|opening[[:space:]]+hours|operating[[:space:]]+hours|business[[:space:]]+hours|call[[:space:]]+me|phone[[:space:]]+me|contact[[:space:]]+me|schedule[[:space:]]+a[[:space:]]+call|促销|促銷|优惠|優惠|折扣|营业|營業|关门|關門|打烊|截止|到期|打电话|打電話)'
+   AND (
+     COALESCE(staff.content,'') ~* '(can[[:space:]]+(you|u)[[:space:]]+(come|visit|make[[:space:]]+it)|could[[:space:]]+(you|u)[[:space:]]+(come|visit)|are[[:space:]]+you[[:space:]]+(free|available)|would[[:space:]]+.{0,35}(work|suit)|does[[:space:]]+.{0,35}[[:space:]]+work|how[[:space:]]+about|boleh[[:space:]]+datang|boleh[[:space:]]+jumpa|boleh[[:space:]]+pukul|jumpa[[:space:]]+esok|可以吗|可以嗎|方便吗|方便嗎|可以过来|可以過來|能过来|能過來|方便过来|方便過來|能来|能來|约在|約在|安排在)'
+     OR (
+       CHAR_LENGTH(TRIM(COALESCE(staff.content,''))) <= 55
+       AND TRIM(COALESCE(staff.content,'')) ~* '^(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2}).{0,45}[?？][[:space:]]*$'
+     )
+   )
  )`;
  // A newer, explicitly unrelated service question releases only the
  // direct-reply hold. It cannot resolve an actual booking or schedule.
