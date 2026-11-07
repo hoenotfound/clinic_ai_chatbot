@@ -21,7 +21,7 @@ test("booking-only staff hold recognises natural appointments and releases unrel
    "CREATE TABLE leads(id INT PRIMARY KEY,contact_id INT);",
    "CREATE TABLE lead_activities(id SERIAL PRIMARY KEY,lead_id INT,metadata JSONB);",
    "CREATE TABLE messages(id INT PRIMARY KEY,contact_id INT,role TEXT,content TEXT,sent_by_username TEXT,whatsapp_message_id TEXT,delivery_status TEXT,media_mime_type TEXT,is_automated_follow_up BOOLEAN DEFAULT FALSE,is_forwarded BOOLEAN DEFAULT FALSE,created_at TIMESTAMPTZ);",
-   "INSERT INTO contacts(id) SELECT n FROM generate_series(1,9) n;",
+   "INSERT INTO contacts(id) SELECT n FROM generate_series(1,11) n;",
    "INSERT INTO leads(id,contact_id) VALUES(50,5);",
   ].join("\n"));
   const message=async(id,contactId,role,content,minuteAgo,{staff=false,forwarded=false,delivery="sent"}={})=>{
@@ -88,6 +88,12 @@ test("booking-only staff hold recognises natural appointments and releases unrel
 
   await convo(9,"Can I book an appointment?","Tomorrow 3pm?","yes",{delivery:"failed"});
   assert.equal(await check(9),false,"failed staff sends never claim a conversation");
+
+  await convo(10,"Boleh saya buat temujanji?","Boleh datang esok pukul 3 petang?","boleh");
+  assert.equal(await check(10),true,"Malay natural day/time proposal keeps the booking with staff");
+
+  await convo(11,"Can I book a visit?","Tomorrow at 3?","yes");
+  assert.equal(await check(11),true,"English time without AM/PM is still a booking conversation");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   if(created)await db.query('DROP SCHEMA "'+schema+'" CASCADE').catch(()=>{});
