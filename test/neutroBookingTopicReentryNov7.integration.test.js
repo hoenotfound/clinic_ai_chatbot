@@ -59,6 +59,12 @@ test("booking-only staff hold recognises natural appointments and releases unrel
   assert.equal(await check(4,404),false,"explicit new 9D topic releases direct AI");
   await message(405,4,"user","Can I book 9D on Sunday instead?",7);
   assert.equal(await check(4,405),true,"booking intent involving 9D stays with staff");
+  await message(406,4,"user","9D",6);
+  assert.equal(await check(4,406),true,"bare 9D is a booking treatment selection, not a new enquiry");
+  await message(407,4,"user","3D please",5);
+  assert.equal(await check(4,407),true,"brief treatment selection must not interrupt a booking");
+  await message(408,4,"user","What is the 9D treatment time?",4);
+  assert.equal(await check(4,408),false,"specific treatment information question is a new topic");
 
   await convo(5,"Hi","See you soon","ok");
   await db.query("INSERT INTO lead_activities(lead_id,metadata) VALUES(50,$1::jsonb)",[
