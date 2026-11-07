@@ -31,12 +31,17 @@ function resolveNeutroFacialDeviceReview({
     Number.isFinite(t?.pricingCreatedAtMs) &&
     t.pricingCreatedAtMs >= now - MAX_THREAD_MS &&
     t.pricingCreatedAtMs <= now + 60_000);
-  if (recent.length < 3 || recent.at(-1) !== turns.at(-1) ||
-      recent.some(t => t.pricingStaffAuthored === true ||
-        (t.role === "assistant" && STAFF_PREFIX.test(String(t.content || ""))))) return null;
+  if (recent.length < 3 || recent.at(-1) !== turns.at(-1)) return null;
   const previousAssistant = recent.findLastIndex(t => t.role === "assistant");
   if (previousAssistant < 0) return null;
-  const explanation = String(recent[previousAssistant].content || "");
+  const lastExplanation = recent[previousAssistant];
+  // Verified staff may explain 9D and hand the conversation back to AI. That
+  // explanation supplies topic context, never an asserted device brand/model.
+  // Keep a tighter boundary for staff-authored context so a historical staff
+  // conversation cannot authorize a new device-information acknowledgement.
+  if (lastExplanation.pricingStaffAuthored === true &&
+      now - lastExplanation.pricingCreatedAtMs > 30 * 60 * 1000) return null;
+  const explanation = String(lastExplanation.content || "");
   if (!PREVIOUS_9D_DEVICE.test(explanation) ||
       !DEVICE_DESCRIPTION.test(explanation)) return null;
   // A repeated unanswered request is the only allowed intervening customer

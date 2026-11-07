@@ -32,8 +32,33 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
  // but never silently suppress the next direct AI answer. Direct replies only
  // pause for a verified reminder or an active, explicitly booking-related
  // exchange between this customer and authenticated staff.
+ // Natural appointment coordination rarely repeats the word "booking".
+ // Require two-party booking evidence plus a concrete day AND time,
+ // including terse offers such as "Tomorrow 3pm?" or "周六下午3点?".
+ const naturalStaffTimeOffer = `(
+   COALESCE(staff.content,'') ~* '(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2})'
+   AND COALESCE(staff.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|(?:上午|下午|早上|晚上|傍晚)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2}(?:[:.][0-5][0-9])?|at[[:space:]]+[0-9]{1,2})'
+   AND COALESCE(staff.content,'') !~* '(promo|promotion|promosi|discount|diskaun|voucher|coupon|sale|offer[[:space:]]+(starts?|ends?|expires?|valid)|trial[[:space:]]+price|closing|closes?|opening[[:space:]]+hours|operating[[:space:]]+hours|business[[:space:]]+hours|call[[:space:]]+me|phone[[:space:]]+me|contact[[:space:]]+me|schedule[[:space:]]+a[[:space:]]+call|促销|促銷|优惠|優惠|折扣|营业|營業|关门|關門|打烊|截止|到期|打电话|打電話)'
+   AND (
+     COALESCE(staff.content,'') ~* '(can[[:space:]]+(you|u)[[:space:]]+(come|visit|make[[:space:]]+it)|could[[:space:]]+(you|u)[[:space:]]+(come|visit)|are[[:space:]]+you[[:space:]]+(free|available)|would[[:space:]]+.{0,35}(work|suit)|does[[:space:]]+.{0,35}[[:space:]]+work|how[[:space:]]+about|boleh[[:space:]]+datang|boleh[[:space:]]+jumpa|boleh[[:space:]]+pukul|jumpa[[:space:]]+esok|可以吗|可以嗎|方便吗|方便嗎|可以过来|可以過來|能过来|能過來|方便过来|方便過來|能来|能來|约在|約在|安排在)'
+     OR (
+       CHAR_LENGTH(TRIM(COALESCE(staff.content,''))) <= 55
+       AND TRIM(COALESCE(staff.content,'')) ~* '^(tomorrow|tmr|today|this[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|next[[:space:]]+(mon|tue|wed|thu|fri|sat|sun)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|hari[[:space:]]+ini|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天]|[0-9]{1,2}[/-][0-9]{1,2}).{0,45}[?？][[:space:]]*$'
+     )
+   )
+ )`;
+ // A newer, explicitly unrelated service question releases only the
+ // direct-reply hold. It cannot resolve an actual booking or schedule.
+ // "How much?" alone stays with the booking staff because it is ambiguous.
+ const newTreatmentTopic = `(
+   COALESCE(${inbound}.content,'') ~* '((^|[^[:alnum:]])(3[[:space:]]*d|9[[:space:]]*d|facial|face[[:space:]]*care|pelvic|posture|pulse[[:space:]]*wave|device|machine|treatment|treatments|services|rawatan|mesin|alat)([^[:alnum:]]|$)|小颜|小顏|逆龄|逆齡|骨盆|脉冲|脈衝|脸部|臉部|仪器|儀器|疗程|療程|护理|護理)'
+   AND COALESCE(${inbound}.content,'') ~* '((^|[^[:alpha:]])(what|which|why|how|price|pricing|cost|fee|info|information|details|explain|difference|describe|discuss|tell|know|understand|interested|offer|available|berapa|harga|apa|maklumat|jelaskan)([^[:alpha:]]|$)|想了解|想知道|想问|想問|请问|請問|介绍|介紹|是什么|是什麼|怎样|怎樣|怎么|怎麼|多少钱|多少錢|价钱|價錢|价格|價格|费用|費用|效果|怎么样|怎麼樣|有什么|有什麼)'
+   AND COALESCE(${inbound}.content,'') !~* '((^|[^[:alpha:]])(book|booking|booked|appointment|appointments|slot|reschedul(e|ing)|schedule|reserve|visit|come|arrive|tomorrow|tmr|cancel|temujanji|janji[[:space:]]*temu|esok|monday|tuesday|wednesday|thursday|friday|saturday|sunday)([^[:alpha:]]|$)|预约|預約|订位|訂位|明天|后天|後天|周[一二三四五六日天]|週[一二三四五六日天]|星期[一二三四五六日天]|改期|取消|时段|時段|到店|过来|過來)'
+   AND COALESCE(${inbound}.content,'') !~* '((^|[^[:alpha:]])(deposit|deposits|down[[:space:]-]?payment|booking[[:space:]]+fee|reservation[[:space:]]+fee|appointment[[:space:]]+fee|booking[[:space:]]+time|appointment[[:space:]]+time|session[[:space:]]+time|booking[[:space:]]+date|appointment[[:space:]]+date|confirmation|confirmed[[:space:]]+slot|check[[:space:]]*in|my[[:space:]]+(3[[:space:]]*d|9[[:space:]]*d|facial|pelvic)?[[:space:]]*(session|slot|booking|appointment)|our[[:space:]]+(session|slot|booking|appointment)|the[[:space:]]+(session|slot|booking|appointment)|when[[:space:]]+is[[:space:]]+my|where[[:space:]]+is[[:space:]]+my|masa[[:space:]]+temujanji|waktu[[:space:]]+temujanji|bayaran[[:space:]]+tempahan|wang[[:space:]]+pendahuluan)([^[:alpha:]]|$)|订金|訂金|定金|按金|押金|预约时间|預約時間|预约几点|預約幾點|预约日期|預約日期|我的预约|我的預約|确认时间|確認時間|确认日期|確認日期|预约费用|預約費用|订位费用|訂位費用)'
+ )`;
  const activeBookingExchange = `(
-   COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)'
+   COALESCE(staff.content,'') !~* '(promo|promotion|promosi|discount|diskaun|voucher|coupon|sale|offer[[:space:]]+(starts?|ends?|expires?|valid)|trial[[:space:]]+price|closing|closes?|opening[[:space:]]+hours|operating[[:space:]]+hours|business[[:space:]]+hours|call[[:space:]]+me|phone[[:space:]]+me|contact[[:space:]]+me|schedule[[:space:]]+a[[:space:]]+call|促销|促銷|优惠|優惠|折扣|营业|營業|关门|關門|打烊|截止|到期|打电话|打電話)'
+   AND    (COALESCE(staff.content,'') ~* '((^|[^[:alpha:]])(appointment|appointments|booking|booked|reschedule|rescheduling|time[[:space:]]+slot|temujanji|janji[[:space:]]+temu)([^[:alpha:]]|$)|预约|預約|约时间|約時間|改期|改约|改約|时段|時段)' OR ${naturalStaffTimeOffer})
    AND EXISTS (
      SELECT 1 FROM messages previous_customer
      WHERE previous_customer.contact_id=staff.contact_id
@@ -44,7 +69,7 @@ function temporaryStaffConversationSql(contact="c",inbound="inbound",{appointmen
    )
  )`;
  const conversationEvidence = appointmentOnly
-   ? `(${persistedReminder} OR ${activeBookingExchange})`
+   ? `((${persistedReminder} OR ${activeBookingExchange}) AND NOT ${newTreatmentTopic})`
    : `(
       COALESCE(staff.content,'') ~ '[?？]'
       OR COALESCE(staff.content,'') ~* '(confirm|comfirm|confirmed|booked|booking|appointment|预约|預約|确认|確認|已安排|slot|时段|時段|can[[:space:]]+[0-9]{1,2}([:.][0-9]{2})?[[:space:]]*(am|pm))'

@@ -1,6 +1,7 @@
 const { checkKeywordTriggers } = require("./attentionTriggers");
 const { pendingAcceptedAppointmentAllowedSql } = require("./pendingAcceptedAppointmentFollowUp");
 const {pendingCancellationFollowupAllowedSql}=require("./appointmentCancellationSafety");
+const {isSimpleGreeting}=require("./simpleGreetingReviewRecovery");
 
 const ADMINISTRATIVE_QUESTION = /\b(price|cost|how much|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|park|deposit|payment|credit card|debit card|card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|价钱|多少钱|收费|费用|优惠|配套|营业时间|营业|地址|地点|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
 // Exact technical/model enquiries are ordinary information requests. This
@@ -94,6 +95,9 @@ function hasClinicalMediaRisk(customerText) {
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
+  // A lone greeting cannot on its own justify a clinical label. Higher-level
+  // server safeguards must separately check pending real clinical reviews.
+  if (isSimpleGreeting(customerText) && !hasClinicalMediaRisk(customerText)) return "information";
   // A time-planning enquiry is administrative, not clinical merely because
   // the model labeled an unanswered question as a medical review.
   const { isSimpleVisitTimingQuestion }=require('./plainVisitSchedulingReply');
