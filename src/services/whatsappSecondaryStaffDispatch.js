@@ -140,7 +140,7 @@ async function sendSecondaryStaffText({
       typeof text !== "string" || !text.trim() ||
       text.trim().length > 4096 ||
       (replyToProviderMessageId != null &&
-       !/^wamid\.[A-Za-z0-9._:-]{1,450}$/.test(replyToProviderMessageId))) {
+       !/^wamid\.[A-Za-z0-9._:+/=-]{1,450}$/.test(replyToProviderMessageId))) {
     return block("secondary_staff_send_invalid_input");
   }
   // A forwarded staff row is not general staff sending authority. Verify its

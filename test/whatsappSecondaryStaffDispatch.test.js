@@ -99,6 +99,32 @@ test("secondary staff dispatcher is OFF by default and cannot contact Meta",asyn
   assert.equal(calls.send.length,0);
 });
 
+test("secondary staff quoted replies accept real Meta base64 WAMIDs",async()=>{
+  const {opts,calls}=setup();
+  // Meta reply IDs may contain standard base64 symbols and padding.
+  const replyId="wamid.AB+CD/EF==";
+  const result=await sendSecondaryStaffText({
+    ...data,replyToProviderMessageId:replyId,
+  },opts);
+  assert.equal(result.success,true);
+  assert.equal(calls.reserved,1);
+  assert.equal(calls.send.length,1);
+  assert.deepEqual(calls.send[0],[data.text,{replyToProviderMessageId:replyId}]);
+});
+
+test("secondary quoted reply validation still blocks malformed IDs before billing or Meta",async()=>{
+  for(const replyId of ["wamid.bad?query","wamid.bad#fragment","wamid."+ "A".repeat(451)]){
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({
+      ...data,replyToProviderMessageId:replyId,
+    },opts);
+    assert.equal(result.code,"secondary_staff_send_invalid_input");
+    assert.equal(calls.verify,0);
+    assert.equal(calls.reserved,0);
+    assert.equal(calls.send.length,0);
+  }
+});
+
 test("verified staff text uses one sender-owned reservation and records acceptance",async()=>{
   const {opts,calls}=setup();
   const result=await sendSecondaryStaffText(data,opts);
