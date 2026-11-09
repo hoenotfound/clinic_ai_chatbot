@@ -412,7 +412,7 @@ test("short price and location follow-ups preserve queued media, while changes a
     assert.match(sql,/AND NOT \(/);
     assert.match(sql,/BTRIM\(newer\.content\)/);
     assert.match(sql,/newer\.role='user'/);
-    assert.match(sql,/staff\.sent_by_username IS NOT NULL/);
+    assert.match(sql,/(staff|human)\.sent_by_username IS NOT NULL/);
   }
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_url IS NULL/);
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_mime_type IS NULL/);
