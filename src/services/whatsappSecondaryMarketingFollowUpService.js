@@ -109,17 +109,24 @@ const CANDIDATES_SQL=`
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
- -- Every sendable 48h/66h slot needs a customer inbound in the
- -- last seven days. The separate Day4/Day6 query can refer to a verified
- -- ad origin up to 24h before its first reply, so use NINE days as the
- -- necessary-only shortlist for BOTH paths. Keep the existing exact latest
- -- inbound and provider/consent/booking/billing checks unchanged.
+ -- For 48h/66h, the first verified reply must occur within 24h of
+ -- the inbound, and can be no more than eight hours overdue. A five-day
+ -- shortlist safely covers 66+24+8 hours of possible sessions.
+ -- Day4/Day6 deliberately restores nine days below. The original sender,
+ -- consent, staff, booking, billing and one-shot checks still authorize sends.
  JOIN (
    SELECT DISTINCT recent.contact_id
    FROM messages recent
-   WHERE recent.created_at > $4::timestamptz - INTERVAL '9 days'
+   WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'
      AND recent.role='user'
      AND recent.whatsapp_message_id IS NOT NULL
+     -- The later latest-lead check requires an opted-in marketing lead.
+     -- This necessary-only prefilter cannot admit any new recipient.
+     AND EXISTS (
+       SELECT 1 FROM leads consent_seed
+       WHERE consent_seed.contact_id=recent.contact_id
+         AND consent_seed.marketing_consent='opted_in'
+     )
  ) recent_contact ON TRUE
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
    AND sc.state='bound' AND sc.contact_id=recent_contact.contact_id
@@ -299,6 +306,8 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
  .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)")
+ .replace("recent.created_at > $4::timestamptz - INTERVAL '5 days'",
+   "recent.created_at > $4::timestamptz - INTERVAL '9 days'")
  .replaceAll("first_reply.at","qualified_session.first_reply_at")
  .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
   "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
