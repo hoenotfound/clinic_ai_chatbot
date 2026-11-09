@@ -187,6 +187,18 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      },
    };
    await runMigrations(database,{quiet:true});
+   // The newer-media-plan lookup needs sender + contact + inbound-message
+   // keys; the original one-slot index omits contact_id.
+   const priorityIndex=(await db.query(
+     "SELECT indexdef FROM pg_indexes "+
+     "WHERE schemaname=current_schema() "+
+     "AND tablename='whatsapp_sender_ai_media_jobs' "+
+     "AND indexname='idx_sender_ai_media_contact_inbound'"
+   )).rows;
+   assert.equal(priorityIndex.length,1,"versioned migration creates the sender/contact lookup index");
+   assert.match(priorityIndex[0].indexdef,
+     /USING btree \\(sender_id, contact_id, inbound_message_id\\)/);
+
    const sender=Number((await db.query(
      "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
      "VALUES('neutro_secondary','100000000000002','200000000000002','Secondary','active') RETURNING id",
