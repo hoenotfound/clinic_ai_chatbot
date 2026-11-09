@@ -46,6 +46,7 @@ test("response size diagnostics are bounded, classified and contain no customer 
   assert.equal(coarseHttpRoute("/api/conversations/921"), "inbox_other");
   assert.equal(coarseHttpRoute("/api/config/secret"), "api_other");
   assert.equal(coarseHttpRoute("/webhook"), "webhook");
+  assert.equal(coarseHttpRoute("/whatsapp/default"), "whatsapp_ingress");
   assert.equal(recordHttpResponse({
     statusCode: 200, pathname: "/api/conversations/secret-person/messages/345/media",
     contentLength: 1048576, env: enabled,
@@ -53,6 +54,10 @@ test("response size diagnostics are bounded, classified and contain no customer 
   assert.equal(recordHttpResponse({
     statusCode: 503, pathname: "/api/conversations/secret-person/messages",
     contentLength: null, env: enabled,
+  }), true);
+  // WhatsApp retries remain untouched; only their diagnostic label differs.
+  assert.equal(recordHttpResponse({
+    statusCode: 503, pathname: "/whatsapp/default", contentLength: 0, env: enabled,
   }), true);
   assert.equal(recordDirectR2Video("redirected", enabled), true);
   assert.equal(recordDirectR2Video("error", enabled), true);
@@ -66,6 +71,7 @@ test("response size diagnostics are bounded, classified and contain no customer 
   });
   assert.equal(messages.status503, 1);
   assert.equal(messages.unknownResponseSize, 1);
+  assert.equal(snapshot.httpResponses.find(x => x.category === "whatsapp_ingress").status503, 1);
   assert.equal(snapshot.directR2Video.find(x => x.category === "redirected").count, 1);
   assert.equal(snapshot.directR2Video.find(x => x.category === "error").count, 1);
   assert.doesNotMatch(JSON.stringify(snapshot), /secret-person|\/345|\/921|unknown-status/);
