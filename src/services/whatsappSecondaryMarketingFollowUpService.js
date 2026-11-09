@@ -7,7 +7,7 @@ const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCance
 const contactsRepo=require("../db/contactsRepo");
 const messagesRepo=require("../db/messagesRepo");
 const configRepo=require("../db/configRepo");
-const {latestMarketingIntentMatches}=require("./whatsappSecondaryFollowUpDecision");
+const {latestMarketingIntentMatches,DISTANCE_OBJECTION_SQL}=require("./whatsappSecondaryFollowUpDecision");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
@@ -88,6 +88,7 @@ const FIRST_REPLY_SQL=`
 // The same SQL is inherited by the separately disabled Day4/Day6 path.
 const MARKETING_CUSTOMER_INTENT_SQL=String.raw`
  AND COALESCE(inbound.last_customer_text,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+ AND COALESCE(inbound.last_customer_text,'') !~* '${DISTANCE_OBJECTION_SQL}'
  AND COALESCE(inbound.last_customer_text,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
  AND NOT (
   COALESCE(inbound.last_customer_text,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'

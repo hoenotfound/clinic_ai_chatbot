@@ -199,7 +199,7 @@ test("live-only signed HTTP accepts exact second sender with no outbound token, 
     assert.equal(claimed[1].phone,config.WHATSAPP_PHONE_NUMBER_ID);
   });
 });
-test("live-only signed HTTP fails closed for missing/forged HMAC, wrong phone, foreign WABA and history",async t=>{
+test("live-only HTTP rejects unverified senders but acknowledges signed history without importing",async t=>{
   setEnv(t,liveOnlyConfig);readiness.markReady();
   let claims=0;
   await serve(liveOnlyApp(async()=>{claims++;return {syntheticClaim:true};}),async url=>{
@@ -216,8 +216,8 @@ test("live-only signed HTTP fails closed for missing/forged HMAC, wrong phone, f
     const foreign=liveMessage("999999999999999",
       config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,"wamid.synthetic-foreign");
     assert.equal((await post(url,foreign)).status,503);
-    assert.equal((await post(url,payload())).status,503,
-      "historical import must remain OFF for live-only receiver");
+    assert.equal((await post(url,payload())).status,200,
+      "signed historical sync is intentionally ignored in live-only mode");
     assert.equal(claims,0);
   });
 });

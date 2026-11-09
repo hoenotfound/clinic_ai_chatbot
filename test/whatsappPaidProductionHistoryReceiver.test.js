@@ -76,10 +76,12 @@ test("new signed secondary messages can be received without authorizing old-chat
     });
   assert.equal(response.statusCode,200);
   assert.equal(routed,1);
-  await assert.rejects(receiver.dispatch(req(body(entry(
+  const ignoredHistory=res();
+  await receiver.dispatch(req(body(entry(
     env.WHATSAPP_SECONDARY_WABA_ID,change("history")))),
-    res(),()=>{routed++;},{env:liveEnv,stageHistory:async()=>{throw Error("No staging");}}),
-    /Secondary history receiver not approved/);
+    ignoredHistory,()=>{routed++;},{env:liveEnv,
+      stageHistory:async()=>{throw Error("No staging");}});
+  assert.equal(ignoredHistory.statusCode,200);
   assert.equal(routed,1);
   for(const [key,value] of [
     ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
@@ -454,12 +456,14 @@ test("only explicit, fully guarded staff-text cutover can use signed paid LIVE r
     return response.sendStatus(200);
   },{env:live});
   assert.equal(routedResult.statusCode,200);
-  // The history receiver remains OFF; a late old-history callback must 503
-  // (not acknowledge as delivered or secretly import anything).
-  await assert.rejects(receiver.dispatch(req(body(
+  // A signed, pinned historical callback in live-only mode is acknowledged
+  // without importing, sending, or retrying it. An unsafe account still fails.
+  const ignored=res();
+  await receiver.dispatch(req(body(
     entry(env.WHATSAPP_SECONDARY_WABA_ID,change("history"))
-  )),res(),()=>{}, {env:live,stageHistory:async()=>{throw Error("Must not stage");}}),
-  /Secondary history receiver not approved/);
+  )),ignored,()=>{throw Error("Must not send");},
+  {env:live,stageHistory:async()=>{throw Error("Must not stage");}});
+  assert.equal(ignored.statusCode,200);
   // The old import/history receiver cannot ever be armed for sending.
   assert.throws(()=>receiver.assertConfig({...env,
     WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED:"true"

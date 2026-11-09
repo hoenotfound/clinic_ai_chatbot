@@ -16,7 +16,7 @@ const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
-  chooseSecondaryFollowUpTreatment}=
+  chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
@@ -116,6 +116,7 @@ const SEQUENCE_DUE_SQL=`GREATEST(
 // at discovery and immediately before dispatch.
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+ AND COALESCE(inbound.content,'') !~* '${DISTANCE_OBJECTION_SQL}'
  AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
  -- If the same authenticated inbound explicitly replaces an old treatment,
  -- its recorded new selection clears a lexical "not interested in 3D" match.
