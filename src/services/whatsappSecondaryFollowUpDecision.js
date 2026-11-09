@@ -6,6 +6,19 @@ const {resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
 // A clear withdrawal pauses reminders even when the customer does not repeat
 // a treatment name. Do not interpret questions such as "I don't know how" or
 // "不是很清楚" as a refusal.
+// An unambiguous distance objection pauses sales follow-ups, but does not
+// opt the person out of responding to later questions or booking requests.
+// Questions about travel distance are not withdrawals.
+const DISTANCE_OBJECTION=/^(?:(?:太|很|好)(?:远|遠)(?:了|啦|咯|啊)?|(?:(?:it(?:'s| is)|that(?:'s| is))\s+)?too\s+far(?:\s+(?:away|for\s+me))?|terlalu\s+jauh|jauh\s+(?:sangat|lah|la))[。.!！\s😊🙏]*$/iu;
+const DISTANCE_OBJECTION_SQL=String.raw`^(?:(太|很|好)(远|遠)(了|啦|咯|啊)?|((it.s|it is|that.s|that is)[[:space:]]+)?too[[:space:]]+far([[:space:]]+(away|for[[:space:]]+me))?|terlalu[[:space:]]+jauh|jauh[[:space:]]+(sangat|lah|la))[[:space:]。.!！😊🙏]*"use strict";
+// Only provider-verified customer text may set sender-specific follow-up context.
+// This never grants marketing consent or bypasses a follow-up's normal eligibility.
+const {resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+
+// A clear withdrawal pauses reminders even when the customer does not repeat
+// a treatment name. Do not interpret questions such as "I don't know how" or
+// "不是很清楚" as a refusal.
+;
 const WITHDRAWN=[
  /算了.{0,20}(?:不要|不做|不考虑|不考慮|不用)/iu,
  /(?:^|[，,。!！\s])(?:暂时|暫時)?(?:不要了|不用了|不需要了|不做了|不考虑了|不考慮了)(?:[。!！\s😊🙏]*$)/iu,
@@ -36,7 +49,8 @@ function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
    if(replacement)return {status:"selected",treatment:replacement};
    return {status:"declined",treatment:null};
  }
- if(DEFERRED.test(value))return {status:"deferred",treatment:null};
+ if(DISTANCE_OBJECTION.test(value) || DEFERRED.test(value))
+   return {status:"deferred",treatment:null};
  const service=resolveFollowUpTreatment({clinicConfig,customerTexts:[value]});
  if(service)return {status:"selected",treatment:service};
  // A comparison between distinct treatments is evidence that the older choice
@@ -95,4 +109,5 @@ function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinic
  return !latest || (latest.status==="selected" && latest.treatment===treatmentInterest);
 }
 module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,
- chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,WITHDRAWN,DEFERRED};
+ chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,WITHDRAWN,DEFERRED,
+ DISTANCE_OBJECTION,DISTANCE_OBJECTION_SQL};

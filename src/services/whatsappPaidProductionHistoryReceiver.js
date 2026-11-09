@@ -374,10 +374,15 @@ async function dispatch(req,res,primaryHandler,{
   const {selected,live,remaining,selectedCount}=partition(req.body,config);
   // Reject unsafe mixed batches before staging or acknowledging any change.
   if(live)assertSafeLiveRemainder(remaining,config);
-  // History consent and import flags are separate from permission to receive
-  // NEW messages. Never acknowledge or drop an old-history event in live-only.
-  if(selected&&!historyMode)throw Error("Secondary history receiver not approved");
-  if(selected){
+  // Live-only is explicitly configured NOT to import old Business App
+  // history. Once the full signed batch and pinned sender have been verified,
+  // intentionally disregard its history-only elements, rather than returning
+  // 503 forever. The historical payload is never stored or sent to AI.
+  // Mixed batches still forward verified new messages/statuses below.
+  if(selected&&!historyMode){
+    console.info("[Paid default router] Ignored signed secondary history in live-only mode");
+  }
+  if(selected&&historyMode){
     const result=await stageHistory(selected,{env});
     if(!result || result.enabled!==true || !Number.isSafeInteger(result.staged) ||
        result.staged<0 || result.staged>selectedCount*2000) {

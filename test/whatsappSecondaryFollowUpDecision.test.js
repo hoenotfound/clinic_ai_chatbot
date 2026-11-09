@@ -43,6 +43,21 @@ test("withdrawal without treatment name blocks follow-ups, including later gener
   assert.equal(isStoppedDecision(decision.status),true);
  }
 });
+test("unambiguous distance objections stop secondary sales sequences in Chinese, English and Malay",()=>{
+ for(const phrase of ["太远了","太遠了","很远了","Too far","It's too far away",
+  "too far for me","terlalu jauh","jauh sangat"]){
+   const decision=classifyVerifiedTreatmentTurn({text:phrase,clinicConfig:config});
+   assert.deepEqual(decision,{status:"deferred",treatment:null},phrase);
+   assert.equal(latestMarketingIntentMatches({
+     customerMessages:[phrase],treatmentInterest:"骨盆调理",clinicConfig:config,
+   }),false,phrase);
+ }
+ for(const phrase of ["会不会太远？","Is it too far?","太远了但我想预约",
+  "在哪里？","Could you tell me the location?"]){
+   assert.notEqual(classifyVerifiedTreatmentTurn({text:phrase,clinicConfig:config})?.status,
+     "deferred",phrase);
+ }
+});
 test("queries and questions are not wrongly counted as refusals",()=>{
  for(const text of ["我不是很清楚骨盆调理是什么",
   "I don't know how pelvic care works",
@@ -110,6 +125,15 @@ test("SQL refuses stopped contacts at discovery and final provider check",()=>{
   assert.match(sql,/explicit_switch\.status='selected'/);
  }
  assert.match(marketing,/whatsapp_sender_followup_treatment_state/);
+ for(const sql of [require("../src/services/whatsappSecondaryFollowUpService").CANDIDATES_SQL,
+   require("../src/services/whatsappSecondaryFollowUpService").RECHECK_SQL,
+   require("../src/services/whatsappSecondaryMarketingFollowUpService").CANDIDATES_SQL,
+   require("../src/services/whatsappSecondaryMarketingFollowUpService").RECHECK_SQL]){
+   assert.match(sql,/too\[\[:space:\]\]\+far/);
+   assert.match(sql,/terlalu\[\[:space:\]\]\+jauh/);
+   assert.match(sql,/太\|很\|好/);
+ }
+
  const migration=fs.readFileSync(path.join(__dirname,
   "../src/db/migrations/118_whatsapp_secondary_followup_treatment_state.sql"),"utf8");
  assert.match(migration,/PRIMARY KEY \(sender_id, contact_id\)/);

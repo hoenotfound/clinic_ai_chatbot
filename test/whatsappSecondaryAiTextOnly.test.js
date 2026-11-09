@@ -147,10 +147,12 @@ test("old imported history never enters AI through live-only route",async()=>{
   const old=packet(entry(LIVE.WHATSAPP_SECONDARY_WABA_ID,"history",
     LIVE.WHATSAPP_SECONDARY_PHONE_NUMBER_ID));
   let sent=0;
-  await assert.rejects(receiver.dispatch(request(old),res(),()=>{sent++;},{
+  const response=res();
+  await receiver.dispatch(request(old),response,()=>{sent++;},{
     env:LIVE,stageHistory:()=>{sent++;throw Error("Never import in AI mode");},
     dispatchPrimary:()=>{sent++;throw Error("Never fall through");},
-  }),/Secondary history receiver not approved/);
+  });
+  assert.equal(response.statusCode,200);
   assert.equal(sent,0);
 });
 
