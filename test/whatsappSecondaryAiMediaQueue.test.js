@@ -394,14 +394,15 @@ test("outdated queued Before & After images retire without calling Meta or re-se
 });
 
 
-test("short price and location follow-ups preserve queued media, while changes and clinical messages do not",async()=>{
+test("location and treatment-method questions preserve media, while price and clinical concerns supersede it",async()=>{
   for(const text of [
-    "Location", "location please", "How much", "how much for 1 session",
-    "请问多少钱", "想要了解价钱", "按一次多少钱", "我想要了解价位",
+    "Location", "location please", "Is it manual?", "Is it HIFU?",
+    "请问是徒手吗", "是HIFu吗？",
   ]){
     assert.equal(worker.isHarmlessContinuationQuestion(text),true,text);
   }
   for(const text of [
+    "How much", "how much for 1 session", "想要了解价钱", "按一次多少钱",
     "9D", "How much for 9D", "我是腹直肌分离", "体太不平衡",
     "Stop promotions", "不要一直发信息来", "Cancel appointment",
     "I'd like a different treatment", "Send the photo instead",
@@ -413,6 +414,8 @@ test("short price and location follow-ups preserve queued media, while changes a
     assert.match(sql,/BTRIM\(newer\.content\)/);
     assert.match(sql,/newer\.role='user'/);
     assert.match(sql,/(staff|human)\.sent_by_username IS NOT NULL/);
+    assert.match(sql,/successor\.sender_id=job\.sender_id/);
+    assert.match(sql,/successor\.contact_id=job\.contact_id/);
   }
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_url IS NULL/);
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_mime_type IS NULL/);
@@ -426,6 +429,9 @@ test("short price and location follow-ups preserve queued media, while changes a
   assert.match(calls[0].sql,/AND NOT \(/);
   assert.match(calls[0].sql,/BTRIM\(newer\.content\)/);
   assert.match(calls[0].sql,/job.state='pending'/);
+  assert.match(calls[0].sql,/successor\.sender_id=job\.sender_id/);
+  assert.match(calls[0].sql,/successor_inbound\.created_at/);
+  assert.match(worker.HARMLESS_CONTINUATION_SQL,/BTRIM\(newer\.content\) ~\*/);
 });
 
 test("receipt wake includes already-due images but remains contact-bound and billing-gated",async()=>{
@@ -441,4 +447,19 @@ test("receipt wake includes already-due images but remains contact-bound and bil
   assert.match(calls[0].sql,/job\.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/job\.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].args.slice(-1),[[42]]);
+});
+
+test("accepted image wakes after its state transition when the verified receipt arrived first",async()=>{
+  const args=mocks();
+  const r=await worker.runOnce({...args,env:approved});
+  assert.equal(r.accepted,1);
+  const accepted=args.calls.find(c=>c.sql?.includes("state='accepted'") &&
+    c.sql.includes("accepted_wamid"));
+  const wake=args.calls.find(c=>c.sql?.includes("UPDATE whatsapp_sender_ai_media_jobs AS job") &&
+    c.sql.includes("gate.state='idle'"));
+  assert.ok(accepted);
+  assert.ok(wake);
+  assert.ok(args.calls.indexOf(wake)>args.calls.indexOf(accepted));
+  assert.deepEqual(wake.args.slice(-1),[[job.contact_id]]);
+  assert.equal(args.calls.filter(c=>c.send).length,1,"Meta is never retried");
 });

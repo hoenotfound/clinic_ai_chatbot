@@ -1,6 +1,6 @@
 const path = require("path");
 const express = require("express");
-const { recordHttp503 } = require("./utils/outboundPayloadDiagnostics");
+const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDiagnostics");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
@@ -105,10 +105,19 @@ function createApp({
   if (process.env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
     app.use((req, res, next) => {
       const readyAtStart = startupReadiness.isReady();
-      res.once("finish", () => recordHttp503({
-        statusCode: res.statusCode, pathname: req.path,
-        readyAtStart,
-      }));
+      res.once("finish", () => {
+        // Count only declared Content-Length values. Chunked or compressed
+        // responses without a declared size remain explicitly unknown.
+        const declared = res.getHeader("content-length");
+        const contentLength = (typeof declared === "string" && /^\d+$/.test(declared))
+          ? Number(declared) : (Number.isSafeInteger(declared) ? declared : null);
+        recordHttpResponse({
+          statusCode: res.statusCode, pathname: req.path, contentLength,
+        });
+        recordHttp503({
+          statusCode: res.statusCode, pathname: req.path, readyAtStart,
+        });
+      });
       next();
     });
   }

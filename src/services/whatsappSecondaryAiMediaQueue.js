@@ -22,30 +22,41 @@ const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
 
 
 /**
- * An exact, short pricing/location question does not change the treatment or
- * revoke a previously queued image. Other new customer turns still supersede
- * pending media, including photos, treatment switches and clinical concerns.
+ * A location or narrow treatment-method question can preserve a queued
+ * image. A price request must move to the NEW pricing workflow. Other new
+ * messages, treatment switches, symptoms and opt-outs supersede stale media.
  * Keep this predicate identical in READY, STILL_VALID and cleanup queries.
  */
 const HARMLESS_QUESTION_EN =
-  "^(location|location please|address|address please|where is (your )?(clinic|shop)|how much|how much for (one|1) session|what is the price|what price|price|price please|berapa harga|harga|alamat|lokasi)[ ?.!]*$";
+  "^(location|location please|address|address please|where is (your )?(clinic|shop)|is it manual|is this manual|is it hifu|does it use hifu|alamat|lokasi)[ ?.!]*$";
 const HARMLESS_QUESTION_ZH =
-  "^(请问)?(多少钱|多少錢|价钱|價錢|价格|價格|什么价钱|什麼價錢|按一次多少钱|想要了解价钱|我想要了解价位|想了解价格)[ ?？。!！]*$";
+  "^(请问)?(是徒手吗|是徒手嗎|是手法吗|是手法嗎|是hifu吗|是hifu嗎)[ ?？。!！]*$";
 function isHarmlessContinuationQuestion(value) {
   if (typeof value !== "string") return false;
   const message=value.trim();
   return message.length>=2 && message.length<=80 &&
     (new RegExp(HARMLESS_QUESTION_EN,"i").test(message) ||
-      new RegExp(HARMLESS_QUESTION_ZH).test(message));
+      new RegExp(HARMLESS_QUESTION_ZH,"i").test(message));
 }
 const HARMLESS_CONTINUATION_SQL=`(
   newer.media_url IS NULL AND newer.media_mime_type IS NULL
   AND CHAR_LENGTH(BTRIM(COALESCE(newer.content,''))) BETWEEN 2 AND 80
   AND (
     BTRIM(newer.content) ~* '${HARMLESS_QUESTION_EN}'
-    OR BTRIM(newer.content) ~ '${HARMLESS_QUESTION_ZH}'
+    OR BTRIM(newer.content) ~* '${HARMLESS_QUESTION_ZH}'
   )
 )`;
+
+
+const NEWER_MEDIA_PLAN_SQL=`EXISTS(
+  SELECT 1 FROM whatsapp_sender_ai_media_jobs successor
+  JOIN messages successor_inbound ON successor_inbound.id=successor.inbound_message_id
+    AND successor_inbound.contact_id=c.id AND successor_inbound.role='user'
+  WHERE successor.sender_id=job.sender_id AND successor.contact_id=job.contact_id
+    AND (successor_inbound.created_at,successor_inbound.id)>(inbound.created_at,inbound.id)
+)`;
+// A newer media plan always replaces the previous one for this exact sender
+// and contact, even when an otherwise harmless question preceded that plan.
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
@@ -193,6 +204,7 @@ const READY_SQL=`
        AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
        AND NOT ${HARMLESS_CONTINUATION_SQL}
    )
+   AND NOT ${NEWER_MEDIA_PLAN_SQL}
    AND NOT EXISTS(
      SELECT 1 FROM messages staff WHERE staff.contact_id=c.id
        AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
@@ -231,6 +243,7 @@ const STILL_VALID_SQL=`
          AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
          AND NOT ${HARMLESS_CONTINUATION_SQL}
      )
+     AND NOT ${NEWER_MEDIA_PLAN_SQL}
      AND NOT EXISTS(
        SELECT 1 FROM messages human WHERE human.contact_id=c.id
          AND human.role='assistant' AND human.sent_by_username IS NOT NULL
@@ -309,6 +322,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
                AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
                AND NOT ${HARMLESS_CONTINUATION_SQL}
            ) OR
+           ${NEWER_MEDIA_PLAN_SQL} OR
            EXISTS(
              SELECT 1 FROM messages staff WHERE staff.contact_id=c.id
                AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
@@ -555,6 +569,15 @@ async function runOnce({
          [job.id,result.wamid]
        );
        accepted++;
+       // A signed receipt can clear the sender gate while this image is still
+       // 'claimed'. Wake again AFTER recording 'accepted' to close that race.
+       // A wake error cannot change a verified Meta-send outcome.
+       try{
+         await wakeAfterVerifiedReconciliation({contactIds:[job.contact_id],database,env});
+       }catch(err){
+         console.warn("[Secondary WhatsApp AI media] post-acceptance wake unavailable:",
+           err?.message);
+       }
      }else if(["secondary_staff_billing_blocked","secondary_billing_previous_send_unresolved",
        "secondary_billing_sender_alarm"].includes(result?.code) && !result?.unknown){
        // No provider call or billable reservation occurred. Safe to defer.
@@ -638,4 +661,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
