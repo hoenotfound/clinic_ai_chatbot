@@ -8,12 +8,12 @@ const REQUESTS = new Set([
   "meta_primary_json", "meta_secondary_json", "telegram_json",
   "anthropic_json", "gemini_sdk",
 ]);
-const HTTP_503 = ["startup", "health", "webhook", "api", "other"];
+const HTTP_503 = ["startup", "health", "webhook", "whatsapp_ingress", "api", "other"];
 // Fixed categories only. Never log the original request path, contact ID,
 // body, headers, signed R2 URL or customer data.
 const HTTP_ROUTES = [
   "inbox_list", "inbox_messages", "inbox_media", "inbox_other",
-  "api_other", "webhook", "health", "static", "other",
+  "api_other", "webhook", "whatsapp_ingress", "health", "static", "other",
 ];
 const R2_VIDEO_OUTCOMES = [
   "redirected", "disabled_or_proxy", "unowned", "invalid_object", "error",
@@ -27,6 +27,7 @@ function coarseHttpRoute(pathname) {
   if (/^\/api\/conversations\/[^/]+\/messages(?:\/|$)/.test(pathname)) return "inbox_messages";
   if (/^\/api\/conversations(?:\/|$)/.test(pathname)) return "inbox_other";
   if (pathname === "/webhook" || /^\/webhook\//.test(pathname)) return "webhook";
+  if (pathname === "/whatsapp" || /^\/whatsapp\//.test(pathname)) return "whatsapp_ingress";
   if (pathname === "/" || /^\/health(?:\/|$)/.test(pathname)) return "health";
   if (/^\/api(?:\/|$)/.test(pathname)) return "api_other";
   if (/\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf)$/.test(pathname)) return "static";
@@ -92,6 +93,8 @@ function recordHttp503({ statusCode, pathname, readyAtStart, env = process.env }
   else if (pathname === "/webhook" ||
            pathname === "/webhook/facebook" ||
            pathname === "/webhook/instagram") category = "webhook";
+  else if (pathname === "/whatsapp" ||
+           (typeof pathname === "string" && pathname.startsWith("/whatsapp/"))) category = "whatsapp_ingress";
   else if (typeof pathname === "string" &&
            (pathname === "/api" || pathname.startsWith("/api/"))) category = "api";
   failures.set(category, (failures.get(category) || 0) + 1);
