@@ -409,7 +409,8 @@ test("short price and location follow-ups preserve queued media, while changes a
     assert.equal(worker.isHarmlessContinuationQuestion(text),false,text);
   }
   for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
-    assert.match(sql,/AND NOT \$\{HARMLESS_CONTINUATION_SQL\}/);
+    assert.match(sql,/AND NOT \(/);
+    assert.match(sql,/BTRIM\(newer\.content\)/);
     assert.match(sql,/newer\.role='user'/);
     assert.match(sql,/staff\.sent_by_username IS NOT NULL/);
   }
@@ -422,7 +423,8 @@ test("short price and location follow-ups preserve queued media, while changes a
     return {rows:[{retired:0,messages_cancelled:0,inbound_ids:[],changed_messages:[]}],rowCount:1};
   }};
   await worker.cancelObsoletePending({database,env:approved});
-  assert.match(calls[0].sql,/AND NOT \$\{HARMLESS_CONTINUATION_SQL\}/);
+  assert.match(calls[0].sql,/AND NOT \(/);
+  assert.match(calls[0].sql,/BTRIM\(newer\.content\)/);
   assert.match(calls[0].sql,/job.state='pending'/);
 });
 
