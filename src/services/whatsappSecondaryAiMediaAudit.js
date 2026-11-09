@@ -4,7 +4,7 @@
 // delivered picture: only signed delivered/read status is counted as sent.
 // This is never an outbound pathway, and it does not touch the primary queue.
 const {pool}=require("../db/db");
-const {adsOnlyActivation}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {secondaryAutomationActivation}=require("./whatsappSecondaryAdsOnlyEligibility");
 
 const RECONCILE_SQL=`
  WITH totals AS (
@@ -65,6 +65,8 @@ const RECONCILE_SQL=`
 `;
 
 // One bounded startup repair for records created before the live audit fix.
+// Also repair expired images whose original pricing/result selector overwrote
+// the queued-image audit with a generic skip reason.
 // It only revisits terminal jobs with a stale "awaiting" / unconfirmed audit;
 // it does not claim pending jobs, change delivery state or invoke Meta.
 const RECENT_TERMINAL_SQL=`
@@ -77,8 +79,10 @@ const RECENT_TERMINAL_SQL=`
    AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND j.created_at>NOW()-INTERVAL '14 days'
    AND j.state IN('expired','accepted','unknown')
-   AND d.reason IN ('awaiting_sender_billing_receipt',
+   AND (d.reason IN ('awaiting_sender_billing_receipt',
      'result_media_delivery_unconfirmed','secondary_media_waiting_delivery_receipt')
+     OR (j.state='expired' AND d.status='skipped'
+       AND d.reason NOT LIKE 'secondary_media_%'))
  GROUP BY j.inbound_message_id
  ORDER BY MAX(j.updated_at) DESC
  LIMIT 50
@@ -90,7 +94,7 @@ async function reconcileSecondaryMediaAudit({
  const ids=[...new Set((Array.isArray(inboundMessageIds)?inboundMessageIds:[])
    .map(Number).filter(v=>Number.isSafeInteger(v)&&v>0))];
  // Require exact secondary identity plus the already-approved automation mode.
- if(!ids.length || !adsOnlyActivation(env) ||
+ if(!ids.length || !secondaryAutomationActivation(env) ||
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
     env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
     !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"")) ||
@@ -108,7 +112,7 @@ async function reconcileSecondaryMediaAudit({
 async function reconcileRecentTerminalMediaAudit({
  database=pool,env=process.env,
 }={}){
- if(!adsOnlyActivation(env) ||
+ if(!secondaryAutomationActivation(env) ||
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
     env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary")return 0;
  const result=await database.query(RECENT_TERMINAL_SQL,[
