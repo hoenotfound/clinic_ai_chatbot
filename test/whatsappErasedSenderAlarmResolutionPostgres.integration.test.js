@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const crypto=require("node:crypto");
 const {Client}=require("pg");
-const {runMigrations}=require("../src/db/migrationRunner");
+const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const svc=require("../src/services/whatsappErasedSenderAlarmResolutionService");
 const hash=s=>crypto.createHash("sha256").update(s).digest("hex");
 const reservation=hash("synthetic-purged-reservation");
@@ -110,7 +110,7 @@ test("disposable PostgreSQL: exact purged alarm releases once, records evidence,
    },query:(...a)=>db.query(...a),
   };
   await runMigrations(database,{quiet:true});
-  assert.equal((await db.query("SELECT MAX(version)::integer AS v FROM schema_migrations")).rows[0].v,118);
+  assert.equal((await db.query("SELECT MAX(version)::integer AS v FROM schema_migrations")).rows[0].v,loadMigrations().at(-1).version);
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
    "VALUES('neutro_secondary',$1,$2,'Secondary','active') RETURNING id",

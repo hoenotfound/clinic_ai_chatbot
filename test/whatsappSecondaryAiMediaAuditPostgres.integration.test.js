@@ -128,3 +128,176 @@ test("secondary media audit and contact wake operate on isolated PostgreSQL evid
    await db.end();
  }
 });
+
+
+test("all-contact secondary activation reconciles expired media and old generic-skip audits",async()=>{
+ const allContactsEnv={
+   ...env,
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+   WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+ };
+ const calls=[];
+ const database={query:async(sql,args)=>{
+   calls.push({sql,args});
+   if(sql===audit.RECENT_TERMINAL_SQL)return{rows:[{inbound_message_id:17919}],rowCount:1};
+   if(sql===audit.RECONCILE_SQL)return{rows:[{inbound_message_id:17919,status:"partial"}],rowCount:1};
+   assert.fail("Unexpected audit query");
+ }};
+ const repaired=await audit.reconcileRecentTerminalMediaAudit({
+   database,env:allContactsEnv,
+ });
+ assert.equal(repaired,1);
+ assert.equal(calls.length,2);
+ assert.match(calls[0].sql,/j\.state='expired' AND d\.status='skipped'/);
+ assert.match(calls[0].sql,/d\.reason NOT LIKE 'secondary_media_%'/);
+ assert.deepEqual(calls[1].args[0],[17919]);
+ assert.deepEqual(calls[1].args.slice(1),[
+   "neutro_secondary",allContactsEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   allContactsEnv.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ assert.equal(await audit.reconcileSecondaryMediaAudit({
+   inboundMessageIds:[17919],database,
+   env:{...allContactsEnv,WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:""},
+ }),0,"invalid automation cutover must not write an audit");
+});
+
+test("real all-contact PostgreSQL queue chooses newest plan, preserves benign questions, and blocks clinical media",{
+ skip:!connectionString,
+},async()=>{
+ const allEnv={
+   ...env,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+   WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+ };
+ const db=new Client({connectionString});
+ const schema="secondary_media_priority_"+process.pid+"_"+Date.now();
+ await db.connect();
+ try{
+   await db.query("CREATE SCHEMA "+schema);
+   await db.query("SET search_path TO "+schema);
+   const database={
+     query:(...args)=>db.query(...args),
+     async connect(){
+       const c=new Client({connectionString});await c.connect();
+       await c.query("SET search_path TO "+schema);
+       return {query:(...args)=>c.query(...args),release:()=>c.end()};
+     },
+   };
+   await runMigrations(database,{quiet:true});
+   // The newer-media-plan lookup needs sender + contact + inbound-message
+   // keys; the original one-slot index omits contact_id.
+   const priorityIndex=(await db.query(
+     "SELECT indexdef FROM pg_indexes "+
+     "WHERE schemaname=current_schema() "+
+     "AND tablename='whatsapp_sender_ai_media_jobs' "+
+     "AND indexname='idx_sender_ai_media_contact_inbound'"
+   )).rows;
+   assert.equal(priorityIndex.length,1,"versioned migration creates the sender/contact lookup index");
+   assert.match(priorityIndex[0].indexdef,
+     /USING btree \(sender_id, contact_id, inbound_message_id\)/);
+
+   const sender=Number((await db.query(
+     "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+     "VALUES('neutro_secondary','100000000000002','200000000000002','Secondary','active') RETURNING id",
+   )).rows[0].id);
+   let serial=0;
+   async function makeConversation(nextText,{newPlan=false}={}){
+     const number="6012"+String(++serial).padStart(7,"0");
+     const contact=Number((await db.query(
+       "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) "+
+       "VALUES('whatsapp',$1,$2) RETURNING id",[number,sender],
+     )).rows[0].id);
+     const conversation=Number((await db.query(
+       "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+       "VALUES($1,$2,$3,'bound') RETURNING id",[sender,number,contact],
+     )).rows[0].id);
+     const inbound=Number((await db.query(
+       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) "+
+       "VALUES($1,'user','我想了解骨盆调理',$2,NOW()) RETURNING id",
+       [contact,"wamid.original."+serial],
+     )).rows[0].id);
+     await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) "+
+       "VALUES($1,$2)",[inbound,conversation]);
+     const oldJob=Number((await db.query(
+       "INSERT INTO whatsapp_sender_ai_media_jobs(sender_id,contact_id,inbound_message_id,"+
+       "sequence_no,media_kind,image_url,caption,state,next_attempt_at,expires_at) "+
+       "VALUES($1,$2,$3,0,'result','https://example.test/pelvic-result.jpg',"+
+       "'Pelvic result','pending',NOW()-INTERVAL '1 minute',NOW()+INTERVAL '1 hour') "+
+       "RETURNING id",[sender,contact,inbound],
+     )).rows[0].id);
+     const follow=Number((await db.query(
+       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) "+
+       "VALUES($1,'user',$2,$3,NOW()) RETURNING id",
+       [contact,nextText,"wamid.next."+serial],
+     )).rows[0].id);
+     await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) "+
+       "VALUES($1,$2)",[follow,conversation]);
+     let newJob=null;
+     if(newPlan){
+       newJob=Number((await db.query(
+         "INSERT INTO whatsapp_sender_ai_media_jobs(sender_id,contact_id,inbound_message_id,"+
+         "sequence_no,media_kind,image_url,caption,state,next_attempt_at,expires_at) "+
+         "VALUES($1,$2,$3,0,'promotion','https://example.test/pelvic-package.jpg',"+
+         "'Pelvic package','pending',NOW()-INTERVAL '1 minute',NOW()+INTERVAL '1 hour') "+
+         "RETURNING id",[sender,contact,follow],
+       )).rows[0].id);
+     }
+     return{contact,inbound,oldJob,follow,newJob};
+   }
+   const location=await makeConversation("Location");
+   const method=await makeConversation("是徒手吗");
+   const price=await makeConversation("想要了解价钱",{newPlan:true});
+   const clinical=await makeConversation("我是腹直肌分离");
+   const newer=await makeConversation("Location",{newPlan:true});
+   const args=[allEnv.WHATSAPP_SECONDARY_SENDER_KEY,
+     allEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+     allEnv.WHATSAPP_SECONDARY_WABA_ID,20,
+     allEnv.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT,
+     "all_contacts",allEnv.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT];
+   // Exercise priority independently of the actual Malaysia clock. The
+   // production READY_SQL still forbids all sends during 00:00-06:59 MYT.
+   const quietHoursRule=
+     "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23";
+   assert.ok(queue.READY_SQL.includes(quietHoursRule));
+   const prioritySql=queue.READY_SQL.replace(quietHoursRule,
+     "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 0 AND 23");
+   const ready=(await db.query(prioritySql,args)).rows.map(r=>Number(r.id));
+   assert.ok(ready.includes(location.oldJob),"location preserves the media plan");
+   assert.ok(ready.includes(method.oldJob),"manual method question preserves media");
+   assert.ok(!ready.includes(price.oldJob),"price question retires old results");
+   assert.ok(ready.includes(price.newJob),"new price plan takes priority");
+   assert.ok(!ready.includes(clinical.oldJob),"clinical concern blocks media");
+   assert.ok(!ready.includes(newer.oldJob),"new media plan replaces older media");
+   assert.ok(ready.includes(newer.newJob));
+   const cleaned=await queue.cancelObsoletePending({database,env:allEnv});
+   assert.equal(cleaned.cancelled,3);
+   const states=(await db.query("SELECT id,state FROM whatsapp_sender_ai_media_jobs")).rows;
+   const s=new Map(states.map(row=>[Number(row.id),row.state]));
+   assert.equal(s.get(location.oldJob),"pending");
+   assert.equal(s.get(method.oldJob),"pending");
+   assert.equal(s.get(price.oldJob),"expired");
+   assert.equal(s.get(price.newJob),"pending");
+   assert.equal(s.get(clinical.oldJob),"expired");
+   assert.equal(s.get(newer.oldJob),"expired");
+   assert.equal(s.get(newer.newJob),"pending");
+   const auditRows=(await db.query(
+     "SELECT inbound_message_id,status,reason FROM result_media_decisions "+
+     "WHERE inbound_message_id=ANY($1::int[])",[[price.inbound,clinical.inbound,newer.inbound]],
+   )).rows;
+   assert.equal(auditRows.length,3);
+   for(const row of auditRows){
+     assert.equal(row.status,"skipped");
+     assert.equal(row.reason,"secondary_media_cancelled_before_send");
+   }
+   assert.equal((await db.query(
+     "SELECT COUNT(*)::int n FROM whatsapp_sender_billing_attempts",
+   )).rows[0].n,0,"cleanup cannot call Meta or reserve billing");
+ }finally{
+   await db.query("SET search_path TO public").catch(()=>{});
+   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+   await db.end();
+ }
+});
