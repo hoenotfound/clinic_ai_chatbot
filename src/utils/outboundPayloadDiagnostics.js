@@ -23,13 +23,13 @@ const directVideos = new Map();
 
 function coarseHttpRoute(pathname) {
   if (pathname === "/api/conversations") return "inbox_list";
-  if (/^\\/api\\/conversations\\/[^/]+\\/messages\\/[^/]+\\/media$/.test(pathname)) return "inbox_media";
-  if (/^\\/api\\/conversations\\/[^/]+\\/messages(?:\\/|$)/.test(pathname)) return "inbox_messages";
-  if (/^\\/api\\/conversations(?:\\/|$)/.test(pathname)) return "inbox_other";
-  if (pathname === "/webhook" || /^\\/webhook\\//.test(pathname)) return "webhook";
-  if (pathname === "/" || /^\\/health(?:\\/|$)/.test(pathname)) return "health";
-  if (/^\\/api(?:\\/|$)/.test(pathname)) return "api_other";
-  if (/\\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf)$/.test(pathname)) return "static";
+  if (/^\/api\/conversations\/[^/]+\/messages\/[^/]+\/media$/.test(pathname)) return "inbox_media";
+  if (/^\/api\/conversations\/[^/]+\/messages(?:\/|$)/.test(pathname)) return "inbox_messages";
+  if (/^\/api\/conversations(?:\/|$)/.test(pathname)) return "inbox_other";
+  if (pathname === "/webhook" || /^\/webhook\//.test(pathname)) return "webhook";
+  if (pathname === "/" || /^\/health(?:\/|$)/.test(pathname)) return "health";
+  if (/^\/api(?:\/|$)/.test(pathname)) return "api_other";
+  if (/\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf)$/.test(pathname)) return "static";
   return "other";
 }
 
