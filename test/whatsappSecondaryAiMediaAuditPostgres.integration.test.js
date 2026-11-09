@@ -245,7 +245,14 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      allEnv.WHATSAPP_SECONDARY_WABA_ID,20,
      allEnv.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT,
      "all_contacts",allEnv.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT];
-   const ready=(await db.query(queue.READY_SQL,args)).rows.map(r=>Number(r.id));
+   // Exercise priority independently of the actual Malaysia clock. The
+   // production READY_SQL still forbids all sends during 00:00-06:59 MYT.
+   const quietHoursRule=
+     "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23";
+   assert.ok(queue.READY_SQL.includes(quietHoursRule));
+   const prioritySql=queue.READY_SQL.replace(quietHoursRule,
+     "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 0 AND 23");
+   const ready=(await db.query(prioritySql,args)).rows.map(r=>Number(r.id));
    assert.ok(ready.includes(location.oldJob),"location preserves the media plan");
    assert.ok(ready.includes(method.oldJob),"manual method question preserves media");
    assert.ok(!ready.includes(price.oldJob),"price question retires old results");
