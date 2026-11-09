@@ -217,7 +217,7 @@ test("outbound diagnostics never record unless explicitly enabled", () => {
     DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED: "true",
   }), true);
   const got = takeOutboundPayloadSnapshot();
-  assert.equal(got.coverage, "attempted_upload_and_known_json_payload_only");
+  assert.equal(got.coverage, "attempted_upload_known_json_and_content_length_only");
   assert.deepEqual(got.buckets.find(x => x.category === "meta_secondary_media"), {
     category: "meta_secondary_media", attempts: 1, payloadMiB: 2,
   });

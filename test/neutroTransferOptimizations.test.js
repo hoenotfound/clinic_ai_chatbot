@@ -9,7 +9,7 @@ const marketing = require("../src/services/whatsappSecondaryMarketingFollowUpSer
 const { listInboxPageIndex, resetIndexCacheForTests } = require("../src/db/inboxPageIndexRepo");
 
 test("secondary follow-up shortlist preserves the current main branch safety windows", () => {
-  for (const [module, window] of [[service, "24 hours"], [marketing, "9 days"]]) {
+  for (const [module, window] of [[service, "24 hours"], [marketing, "5 days"]]) {
     assert.match(module.CANDIDATES_SQL, /SELECT DISTINCT recent\.contact_id/);
     assert.ok(module.CANDIDATES_SQL.includes(
       "recent.created_at > $4::timestamptz - INTERVAL '" + window + "'"
@@ -19,6 +19,8 @@ test("secondary follow-up shortlist preserves the current main branch safety win
     assert.match(module.CANDIDATES_SQL, /pending|opt_out|appointment/i);
   }
   assert.match(marketing.EXTENDED_CANDIDATES_SQL, /recent_contact/);
+  assert.match(marketing.EXTENDED_CANDIDATES_SQL,
+    /recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/);
   assert.match(marketing.RECHECK_SQL, /recent_contact/);
   assert.match(marketing.EXTENDED_RECHECK_SQL, /recent_contact/);
   assert.match(service.CANDIDATES_SQL, /whatsapp_opt_out_at IS NULL/);

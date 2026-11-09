@@ -8,7 +8,52 @@ const REQUESTS = new Set([
   "meta_primary_json", "meta_secondary_json", "telegram_json",
   "anthropic_json", "gemini_sdk",
 ]);
-const HTTP_503 = ["startup", "health", "webhook", "api", "other"];
+const HTTP_503 = ["startup", "health", "webhook", "whatsapp_ingress", "api", "other"];
+// Fixed categories only. Never log the original request path, contact ID,
+// body, headers, signed R2 URL or customer data.
+const HTTP_ROUTES = [
+  "inbox_list", "inbox_messages", "inbox_media", "inbox_other",
+  "api_other", "webhook", "whatsapp_ingress", "health", "static", "other",
+];
+const R2_VIDEO_OUTCOMES = [
+  "redirected", "disabled_or_proxy", "unowned", "invalid_object", "error",
+];
+const responses = new Map();
+const directVideos = new Map();
+
+function coarseHttpRoute(pathname) {
+  if (pathname === "/api/conversations") return "inbox_list";
+  if (/^\/api\/conversations\/[^/]+\/messages\/[^/]+\/media$/.test(pathname)) return "inbox_media";
+  if (/^\/api\/conversations\/[^/]+\/messages(?:\/|$)/.test(pathname)) return "inbox_messages";
+  if (/^\/api\/conversations(?:\/|$)/.test(pathname)) return "inbox_other";
+  if (pathname === "/webhook" || /^\/webhook\//.test(pathname)) return "webhook";
+  if (pathname === "/whatsapp" || /^\/whatsapp\//.test(pathname)) return "whatsapp_ingress";
+  if (pathname === "/" || /^\/health(?:\/|$)/.test(pathname)) return "health";
+  if (/^\/api(?:\/|$)/.test(pathname)) return "api_other";
+  if (/\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf)$/.test(pathname)) return "static";
+  return "other";
+}
+
+function recordHttpResponse({ statusCode, pathname, contentLength, env = process.env } = {}) {
+  if (!enabled(env)) return false;
+  const category = coarseHttpRoute(pathname);
+  const current = responses.get(category) || {
+    requests: 0, knownResponseBytes: 0, unknownResponseSize: 0, status503: 0,
+  };
+  current.requests++;
+  if (Number.isSafeInteger(contentLength) && contentLength >= 0) {
+    current.knownResponseBytes += contentLength;
+  } else current.unknownResponseSize++;
+  if (statusCode === 503) current.status503++;
+  responses.set(category, current);
+  return true;
+}
+
+function recordDirectR2Video(outcome, env = process.env) {
+  if (!enabled(env) || !R2_VIDEO_OUTCOMES.includes(outcome)) return false;
+  directVideos.set(outcome, (directVideos.get(outcome) || 0) + 1);
+  return true;
+}
 const counters = new Map();
 const failures = new Map();
 
@@ -48,6 +93,8 @@ function recordHttp503({ statusCode, pathname, readyAtStart, env = process.env }
   else if (pathname === "/webhook" ||
            pathname === "/webhook/facebook" ||
            pathname === "/webhook/instagram") category = "webhook";
+  else if (pathname === "/whatsapp" ||
+           (typeof pathname === "string" && pathname.startsWith("/whatsapp/"))) category = "whatsapp_ingress";
   else if (typeof pathname === "string" &&
            (pathname === "/api" || pathname.startsWith("/api/"))) category = "api";
   failures.set(category, (failures.get(category) || 0) + 1);
@@ -63,15 +110,31 @@ function takeOutboundPayloadSnapshot() {
   const http503 = HTTP_503.map(category => ({
     category, count: failures.get(category) || 0,
   }));
+  const httpResponses = HTTP_ROUTES.map(category => {
+    const v = responses.get(category) || {
+      requests: 0, knownResponseBytes: 0, unknownResponseSize: 0, status503: 0,
+    };
+    return {
+      category, requests: v.requests, status503: v.status503,
+      knownResponseMiB: Math.round(v.knownResponseBytes / 1048576 * 100) / 100,
+      unknownResponseSize: v.unknownResponseSize,
+    };
+  });
+  const directR2Video = R2_VIDEO_OUTCOMES.map(category => ({
+    category, count: directVideos.get(category) || 0,
+  }));
   counters.clear();
   failures.clear();
+  responses.clear();
+  directVideos.clear();
   return {
-    coverage: "attempted_upload_and_known_json_payload_only",
-    buckets, http503,
+    coverage: "attempted_upload_known_json_and_content_length_only",
+    buckets, http503, httpResponses, directR2Video,
   };
 }
 
 module.exports = {
   recordOutboundPayload, recordOutboundRequest, recordHttp503,
+  recordHttpResponse, recordDirectR2Video, coarseHttpRoute,
   takeOutboundPayloadSnapshot,
 };

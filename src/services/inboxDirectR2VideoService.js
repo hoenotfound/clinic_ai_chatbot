@@ -2,6 +2,7 @@
 
 // No global rollout: each deployment explicitly opts in. Public URLs and
 // credentials are never sent to the browser, only one short-lived signed GET.
+const { recordDirectR2Video } = require("../utils/outboundPayloadDiagnostics");
 const VIDEO_URL_TTL_SECONDS = 10 * 60;
 
 function shouldTryDirectInboxVideo(mediaRef, query = {}, env = process.env) {
@@ -12,17 +13,29 @@ function shouldTryDirectInboxVideo(mediaRef, query = {}, env = process.env) {
 }
 
 async function tryDirectInboxVideo({ mediaRef, query, res, storage, env = process.env }) {
-  if (!shouldTryDirectInboxVideo(mediaRef, query, env)) return false;
+  if (!shouldTryDirectInboxVideo(mediaRef, query, env)) {
+    if (mediaRef?.media_key &&
+        String(mediaRef?.media_mime_type || "").split(";")[0].trim().toLowerCase() === "video/mp4") {
+      recordDirectR2Video("disabled_or_proxy", env);
+    }
+    return false;
+  }
   // A database reference and the contact-level access check in the route are
   // mandatory. Refuse cross-client prefixes; legacy and shared follow-up keys
   // are deliberately accepted by the existing ownership helper.
-  if (!storage.isOwnedStoredMediaKey(mediaRef.media_key, env)) return false;
+  if (!storage.isOwnedStoredMediaKey(mediaRef.media_key, env)) {
+    recordDirectR2Video("unowned", env);
+    return false;
+  }
 
   try {
     const head = await storage.headMediaObject(mediaRef.media_key);
     // Respect the actual object's MIME type: don't force an octet-stream or
     // mislabeled legacy object into cross-origin Safari video playback.
-    if (head.mimeType !== "video/mp4" || !(head.bytes > 0)) return false;
+    if (head.mimeType !== "video/mp4" || !(head.bytes > 0)) {
+      recordDirectR2Video("invalid_object", env);
+      return false;
+    }
     const url = storage.createPresignedGetUrl(mediaRef.media_key, {
       expiresSeconds: VIDEO_URL_TTL_SECONDS,
     });
@@ -32,8 +45,10 @@ async function tryDirectInboxVideo({ mediaRef, query, res, storage, env = proces
       "X-Content-Type-Options": "nosniff",
     });
     res.redirect(302, url);
+    recordDirectR2Video("redirected", env);
     return true;
   } catch (err) {
+    recordDirectR2Video("error", env);
     // Never log the object key, signed URL, phone number or patient data.
     console.warn("[Inbox direct-R2 video] Using authenticated Render fallback", {
       reason: String(err?.code || err?.name || "unknown").slice(0, 64),

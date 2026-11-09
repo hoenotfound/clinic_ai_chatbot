@@ -60,12 +60,16 @@ test("service candidate and hint only scan recent inbound contacts before the or
  assert.match(service.RECHECK_SQL,/whatsapp_sender_followup_attempts attempt/);
  assert.doesNotMatch(service.RECHECK_SQL,/recent_contact/,
    "last provider recheck stays keyed to the exact reserved inbound");
- for(const sql of [marketing.CANDIDATES_SQL,marketing.POTENTIAL_DUE_SQL,
-   marketing.EXTENDED_CANDIDATES_SQL,marketing.RECHECK_SQL,
-   marketing.EXTENDED_RECHECK_SQL]){
+ for(const [sql, days] of [
+   [marketing.CANDIDATES_SQL, 5],
+   [marketing.POTENTIAL_DUE_SQL, 5],
+   [marketing.RECHECK_SQL, 5],
+   [marketing.EXTENDED_CANDIDATES_SQL, 9],
+   [marketing.EXTENDED_RECHECK_SQL, 9],
+ ]){
   assert.match(sql,/SELECT DISTINCT recent\.contact_id/);
-  assert.match(sql,/recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/,
-   "marketing and optional Day4/Day6 keep their full eligible seven-day sessions");
+  assert.ok(sql.includes("recent.created_at > $4::timestamptz - INTERVAL '" + days + " days'"),
+   "48h/66h need five days; Day4/Day6 preserve nine days");
   assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
   assert.match(sql,/whatsapp_marketing_consent_events consent/);
  }
