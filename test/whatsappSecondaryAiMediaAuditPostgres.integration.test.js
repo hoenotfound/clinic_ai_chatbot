@@ -197,7 +197,7 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
    )).rows;
    assert.equal(priorityIndex.length,1,"versioned migration creates the sender/contact lookup index");
    assert.match(priorityIndex[0].indexdef,
-     /USING btree \\(sender_id, contact_id, inbound_message_id\\)/);
+     /USING btree \(sender_id, contact_id, inbound_message_id\)/);
 
    const sender=Number((await db.query(
      "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
