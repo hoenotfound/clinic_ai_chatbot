@@ -20,6 +20,33 @@ const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
   isSecondaryAutomationEligible,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql } = require("./whatsappSecondaryAdsOnlyEligibility");
 
+
+/**
+ * An exact, short pricing/location question does not change the treatment or
+ * revoke a previously queued image. Other new customer turns still supersede
+ * pending media, including photos, treatment switches and clinical concerns.
+ * Keep this predicate identical in READY, STILL_VALID and cleanup queries.
+ */
+const HARMLESS_QUESTION_EN =
+  "^(location|location please|address|address please|where is (your )?(clinic|shop)|how much|how much for (one|1) session|what is the price|what price|price|price please|berapa harga|harga|alamat|lokasi)[ ?.!]*$";
+const HARMLESS_QUESTION_ZH =
+  "^(请问)?(多少钱|多少錢|价钱|價錢|价格|價格|什么价钱|什麼價錢|按一次多少钱|想要了解价钱|我想要了解价位|想了解价格)[ ?？。!！]*$";
+function isHarmlessContinuationQuestion(value) {
+  if (typeof value !== "string") return false;
+  const message=value.trim();
+  return message.length>=2 && message.length<=80 &&
+    (new RegExp(HARMLESS_QUESTION_EN,"i").test(message) ||
+      new RegExp(HARMLESS_QUESTION_ZH).test(message));
+}
+const HARMLESS_CONTINUATION_SQL=`(
+  newer.media_url IS NULL AND newer.media_mime_type IS NULL
+  AND CHAR_LENGTH(BTRIM(COALESCE(newer.content,''))) BETWEEN 2 AND 80
+  AND (
+    BTRIM(newer.content) ~* '${HARMLESS_QUESTION_EN}'
+    OR BTRIM(newer.content) ~ '${HARMLESS_QUESTION_ZH}'
+  )
+)`;
+
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
@@ -164,6 +191,7 @@ const READY_SQL=`
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
        AND newer.role='user'
        AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+       AND NOT ${HARMLESS_CONTINUATION_SQL}
    )
    AND NOT EXISTS(
      SELECT 1 FROM messages staff WHERE staff.contact_id=c.id
@@ -201,6 +229,7 @@ const STILL_VALID_SQL=`
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
          AND newer.role='user'
          AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+         AND NOT ${HARMLESS_CONTINUATION_SQL}
      )
      AND NOT EXISTS(
        SELECT 1 FROM messages human WHERE human.contact_id=c.id
@@ -278,6 +307,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
              SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
                AND newer.role='user'
                AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+               AND NOT ${HARMLESS_CONTINUATION_SQL}
            ) OR
            EXISTS(
              SELECT 1 FROM messages staff WHERE staff.contact_id=c.id
@@ -331,13 +361,15 @@ async function wakeAfterVerifiedReconciliation({
    .map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))];
  // No sender-wide wake. Only the EXACT contact whose signed Meta receipt
  // freed their individual billing gate may advance to a new image.
+ // Wake already-due jobs too: otherwise a verified first picture can leave
+ // the second picture asleep until the one-minute recovery sweep.
  if(!enabled(env)||!ids.length)return false;
  const pending=await database.query(
    `UPDATE whatsapp_sender_ai_media_jobs AS job
        SET next_attempt_at=NOW(),updated_at=NOW()
       FROM whatsapp_sender_accounts sa
      WHERE job.sender_id=sa.id AND job.state='pending'
-       AND job.next_attempt_at>NOW() AND job.expires_at>NOW()
+       AND job.expires_at>NOW()
        AND sa.state='active' AND sa.sender_key=$1
        AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
        AND job.contact_id=ANY($4::int[])
@@ -606,4 +638,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
