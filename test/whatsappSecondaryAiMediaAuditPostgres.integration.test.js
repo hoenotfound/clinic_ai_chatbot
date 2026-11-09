@@ -128,3 +128,37 @@ test("secondary media audit and contact wake operate on isolated PostgreSQL evid
    await db.end();
  }
 });
+
+
+test("all-contact secondary activation reconciles expired media and old generic-skip audits",async()=>{
+ const allContactsEnv={
+   ...env,
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+   WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+ };
+ const calls=[];
+ const database={query:async(sql,args)=>{
+   calls.push({sql,args});
+   if(sql===audit.RECENT_TERMINAL_SQL)return{rows:[{inbound_message_id:17919}],rowCount:1};
+   if(sql===audit.RECONCILE_SQL)return{rows:[{inbound_message_id:17919,status:"partial"}],rowCount:1};
+   assert.fail("Unexpected audit query");
+ }};
+ const repaired=await audit.reconcileRecentTerminalMediaAudit({
+   database,env:allContactsEnv,
+ });
+ assert.equal(repaired,1);
+ assert.equal(calls.length,2);
+ assert.match(calls[0].sql,/j\.state='expired' AND d\.status='skipped'/);
+ assert.match(calls[0].sql,/d\.reason NOT LIKE 'secondary_media_%'/);
+ assert.deepEqual(calls[1].args[0],[17919]);
+ assert.deepEqual(calls[1].args.slice(1),[
+   "neutro_secondary",allContactsEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   allContactsEnv.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ assert.equal(await audit.reconcileSecondaryMediaAudit({
+   inboundMessageIds:[17919],database,
+   env:{...allContactsEnv,WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:""},
+ }),0,"invalid automation cutover must not write an audit");
+});
