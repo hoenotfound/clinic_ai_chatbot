@@ -6,6 +6,7 @@ const path = require("node:path");
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
+  recoveryTreatmentButtons, validRecoveryTreatmentButtons,
 } = require("../src/services/whatsapp131060Recovery");
 
 const earlier = new Date(Date.now() - 60000).toISOString();
@@ -60,7 +61,7 @@ test("verified ad creative allows only a treatment-specific human-sounding welco
   const reply=build131060RecoveryReply(attributed,services);
   assert.match(reply,/骨盆调理/);
   assert.match(reply,/想了解骨盆调理对吗/);
-  assert.match(reply,/疗程效果、过程，还是预约体验/);
+  assert.match(reply,/可以点下面的选项/);
   assert.doesNotMatch(reply,/WhatsApp|无法|传送|没成功|resend|不能读取|bot|AI/i);
   assert.doesNotMatch(reply,/RM\d|discount|limited time|Before\s*&\s*After/i);
   assert.equal(verifiedAdTreatment({
@@ -75,6 +76,7 @@ test("missing referral only gives a natural clinic welcome, without guessing a t
   const reply=build131060RecoveryReply(unavailable,services);
   assert.doesNotMatch(reply,/骨盆调理|3D 小颜术|9D 逆龄|来自广告|广告联系/);
   assert.match(reply,/想了解哪方面的护理呢/);
+  assert.match(reply,/脉冲波/);
   assert.doesNotMatch(reply,/WhatsApp|resend|重新发送|没成功|AI|chatbot/i);
 });
 
@@ -114,7 +116,53 @@ test("runtime reserves the reply through existing guarded secondary billing and 
   assert.match(server,/await canSend131060Recovery\(/);
   assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig\)/);
   assert.match(server,/"system_fallback"/);
-  assert.match(server,/processingJobId,\s*latePreSendCheck:/);
+  assert.match(server,/processingJobId,\s*interactiveButtons: recoveryTreatmentButtons\(\),\s*latePreSendCheck:/);
   assert.match(server,/latePreSendCheck\(saved.id\)/);
   assert.match(server,/sendSecondaryStaffText\(/);
+});
+
+test("buttons are three fixed genuine treatments with a typed other-service escape", () => {
+  const buttons=recoveryTreatmentButtons();
+  assert.deepEqual(buttons,[
+    {id:"neutro_131060_pelvic",title:"骨盆调理"},
+    {id:"neutro_131060_3d",title:"3D 小颜术"},
+    {id:"neutro_131060_9d",title:"9D 逆龄"},
+  ]);
+  assert.equal(validRecoveryTreatmentButtons(buttons),true);
+  assert.equal(buttons.every(b=>b.title.length<=20&&b.id.length<=256),true);
+  assert.equal(validRecoveryTreatmentButtons(buttons.slice(0,2)),false);
+  assert.equal(validRecoveryTreatmentButtons([...buttons.slice(0,2),
+    {id:"neutro_131060_9d",title:"脉冲波"}]),false);
+  assert.equal(validRecoveryTreatmentButtons([...buttons].reverse()),false);
+  buttons[0].title="tampered";
+  assert.equal(validRecoveryTreatmentButtons(buttons),false);
+  assert.match(build131060RecoveryReply(unavailable,services),/其他护理（例如脉冲波）也可以直接告诉我们/);
+});
+
+test("genuine Meta button tap becomes a readable selected treatment without fabricating an ad", () => {
+  const {parseIncomingMessages}=require("../src/services/whatsappService");
+  const [incoming]=parseIncomingMessages({entry:[{id:"1852014482431209",changes:[{
+    field:"messages",value:{
+      metadata:{phone_number_id:"1318355951360575"},
+      messages:[{id:"wamid.button",from:"60123123456",timestamp:"1794217329",
+        type:"interactive",interactive:{type:"button_reply",button_reply:{
+          id:"neutro_131060_3d",title:"3D 小颜术"}}}],
+    },
+  }]}]});
+  assert.equal(incoming.text,"3D 小颜术");
+  assert.equal(incoming.interactiveReplyId,"neutro_131060_3d");
+  assert.equal(incoming.unsupportedType,null);
+  assert.equal(incoming.attribution,undefined);
+  assert.equal(incoming.businessPhoneNumberId,"1318355951360575");
+});
+
+test("secondary button sender is not a generic interactive-message bypass", () => {
+  const src=fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappSecondaryStaffDispatch.js"),"utf8");
+  assert.match(src,/if \(recoveryMenu && \(origin !== "system_fallback"/);
+  assert.match(src,/!recoveryActivation\(env\)/);
+  assert.match(src,/!validRecoveryTreatmentButtons\(interactiveButtons\)/);
+  assert.match(src,/transport\.sendInteractiveButtons\(text\.trim\(\), interactiveButtons\)/);
+  assert.match(src,/await stillEligible\(\)/);
+  assert.match(src,/reserveSecondaryBillingAttempt/);
 });
