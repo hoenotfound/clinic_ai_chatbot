@@ -386,6 +386,11 @@ function createApp({
           () => durablyClaimIncoming(identityQueueKey, rotation), "Secondary BSUID identity rotation");
         else await durablyClaimIncoming(identityQueueKey, rotation);
       } catch (error) {
+        // Pending staff echoes are only valid while this callback can still
+        // complete their durable writes. A rotation rejection must not leave
+        // an in-memory staff takeover barrier permanently latched.
+        for (const echo of businessAppEchoes)
+          whatsappCoexistence.releasePendingAiForEcho(echo);
         console.error("[WhatsApp identity rotation] could_not_verify_or_persist");
         return res.sendStatus(503);
       }
