@@ -143,7 +143,7 @@ test("a valid signed status has business identity and no implicit send permissio
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\.wamid=\$1/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sa\.meta_account_id=\$5/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=c\.whatsapp_number/);
-  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/c\.whatsapp_user_id=\$2/);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\.recipient_address=\$2/);
 });
 
 test("mixed signed webhook selects only Ariel statuses without exposing Neutro callbacks", () => {
@@ -596,7 +596,7 @@ test("signed BSUID receipts remain sender-bound and are verified only by exact I
   assert.equal(event.length,1);
   assert.equal(event[0].recipient,id);
   assert.equal(event[0].recipientVerified,true);
-  const missingPhone=status({recipient_id:undefined,user_id:id});
+  const missingPhone=status({recipient_id:undefined,recipient_user_id:id});
   delete missingPhone.recipient_id;
   const fallback=receipt.normalizedSignedEvents(
     signed(body([missingPhone])).rawBody,env);
@@ -606,4 +606,23 @@ test("signed BSUID receipts remain sender-bound and are verified only by exact I
     const parsed=receipt.normalizeStatusRecipient(bad);
     assert.equal(parsed?.verified ?? false,false);
   }
+});
+
+test("Meta direct Cloud API recipient_user_id is parsed, including paired recipient_id",()=>{
+  const userId="MY.13579ABCDEF";
+  const hidden=status({recipient_id:undefined,recipient_user_id:userId});
+  delete hidden.recipient_id;
+  const parsed=receipt.normalizedSignedEvents(signed(body([hidden])).rawBody,env);
+  assert.equal(parsed.length,1);
+  assert.equal(parsed[0].recipient,userId);
+  assert.deepEqual(parsed[0].recipientCandidates,[userId]);
+
+  const paired=receipt.normalizedSignedEvents(signed(body([status({
+    recipient_id:"60125550000",recipient_user_id:userId,
+  })])).rawBody,env);
+  assert.deepEqual(paired[0].recipientCandidates,["60125550000",userId]);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\\.recipient_address=\\$2/);
+  assert.doesNotMatch(receipt.MATCH_SECONDARY_ATTEMPT_SQL,
+    /whatsapp_last_customer_address=\\$2/,
+    "changing a contact's last inbound must not retarget an earlier receipt");
 });
