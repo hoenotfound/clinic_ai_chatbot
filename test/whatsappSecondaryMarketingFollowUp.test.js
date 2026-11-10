@@ -99,6 +99,15 @@ test("no marketing sends or database reads without all independent authorization
  }
  assert.equal(svc.enabled({...env,PR395_STAGING_MODE:"true"}),false);
  assert.match(svc.CANDIDATES_SQL,/consent\.consent_scope='treatment_followups_and_related_offers'/);
+ for(const sql of [svc.CANDIDATES_SQL,svc.RECHECK_SQL,
+    svc.EXTENDED_CANDIDATES_SQL,svc.EXTENDED_RECHECK_SQL,svc.POTENTIAL_DUE_SQL]){
+   assert.match(sql,/recent_seed AS MATERIALIZED/);
+   assert.match(sql,/verified_seed AS MATERIALIZED/);
+   assert.match(sql,/recent_contact\.legacy_ads_eligible/);
+   assert.match(sql,/whatsapp_secondary_ad_eligibility_reviews/);
+   assert.match(sql,/whatsapp_marketing_consent_events consent/);
+   assert.match(sql,/whatsapp_opt_out_at IS NULL/);
+ }
  assert.match(svc.CANDIDATES_SQL,/consent_ctx\.conversation_id=sc\.id/);
  assert.match(svc.CANDIDATES_SQL,/marketing_consent='opted_in'/);
  assert.match(svc.CANDIDATES_SQL,/whatsapp_sender_coexistence_history_messages/);

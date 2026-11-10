@@ -37,6 +37,12 @@ test("sender due hints keep all consent, ad, history and one-shot gates",()=>{
  }
  assert.match(service.POTENTIAL_DUE_SQL,/role='assistant'/);
  assert.match(marketing.POTENTIAL_DUE_SQL,/operator_billing_approved=TRUE/);
+ for(const sql of [marketing.CANDIDATES_SQL,marketing.RECHECK_SQL,
+   marketing.POTENTIAL_DUE_SQL,marketing.EXTENDED_CANDIDATES_SQL]){
+   assert.match(sql,/recent_seed AS MATERIALIZED/);
+   assert.match(sql,/verified_seed AS MATERIALIZED/);
+   assert.match(sql,/recent_contact\.legacy_ads_eligible/);
+ }
  assert.match(marketing.POTENTIAL_DUE_SQL,/consent\.consent_scope='treatment_followups_and_related_offers'/);
  assert.match(marketing.POTENTIAL_DUE_SQL,/NOT EXISTS \(\s*SELECT 1 FROM whatsapp_sender_marketing_followup_attempts/);
  assert.match(service.CANDIDATES_SQL,/BETWEEN 7 AND 23/);
