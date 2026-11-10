@@ -4,7 +4,6 @@ const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDi
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
-const { inboundIdentityKind } = require("./utils/whatsappCustomerIdentity");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
@@ -227,6 +226,12 @@ function createApp({
 
   let primaryWhatsappWebhookHandler;
   app.post("/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
+    // Keep diagnostics self-contained inside the extracted webhook handler:
+    // synthetic QA replays use this handler without the outer module closure.
+    const inboundIdentityKind = value =>
+      typeof value === "string" && /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/.test(value) ?
+        "bsuid" : typeof value === "string" && /^[0-9]{8,15}$/.test(value) ?
+          "phone" : "invalid";
     // The single-sender compatibility boundary runs only AFTER Meta signature
     // verification. It rejects explicitly foreign sender events before any
     // legacy customer lookups, AI cancellation, or receipt writes.
