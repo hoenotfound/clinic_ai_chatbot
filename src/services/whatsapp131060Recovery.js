@@ -42,14 +42,19 @@ function verifiedAdTreatment(incoming, config = {}) {
 }
 
 function build131060RecoveryReply(incoming, config = {}) {
+  // For an unreadable first message we cannot know the customer's language,
+  // question, or treatment. This Coexistence sender defaults to a short,
+  // natural Chinese clinic greeting rather than an error notice or a
+  // three-language script that would expose the integration problem.
+  // Once a readable customer message arrives, ordinary language detection,
+  // treatment routing, and genuine ad attribution resume.
   const treatment = verifiedAdTreatment(incoming, config);
-  const greeting = treatment
-    ? "Hi 😊 您刚才通过「" + treatment + "」广告联系我们。"
-    : "Hi 😊";
-  return greeting +
-    "\n不好意思，WhatsApp 没有成功传送您刚才的讯息。麻烦您重新发送一次问题好吗？" +
-    "\nSorry, we couldn't read your first message. Could you please resend it?" +
-    "\nMaaf, mesej pertama anda tidak dapat dibaca. Boleh hantar sekali lagi?";
+  return treatment
+    ? "Hi～欢迎来到 Neutro Sense 😊\n\n" +
+      "想了解" + treatment + "对吗～\n\n" +
+      "你比较想了解疗程效果、过程，还是预约体验呢？"
+    : "Hi～欢迎来到 Neutro Sense 😊\n\n" +
+      "想了解哪方面的护理呢？可以告诉我你目前比较在意的问题，我帮你看看～";
 }
 
 async function canSend131060Recovery({
