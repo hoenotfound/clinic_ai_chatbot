@@ -698,7 +698,13 @@ function parseIncomingMessages(body) {
         for (const message of value?.messages || []) {
           // Some username-mode callbacks provide the scoped user_id without
           // an exposed phone address. Never use a display username here.
-          if (!message?.id || (!message?.from && !message?.user_id)) continue;
+          if (!message?.id) continue;
+          if (!message.from && !message.user_id) {
+            // The signed Meta payload is visible to this receiver, but there
+            // is no safe way to address the customer. Make this diagnosable.
+            console.warn("[WhatsApp inbound parser] missing_customer_identity");
+            continue;
+          }
 
           // WhatsApp reactions are message metadata, not conversational turns.
           // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
