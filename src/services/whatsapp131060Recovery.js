@@ -131,27 +131,49 @@ async function getVerifiedRecoveryHistoryProof({
        JOIN whatsapp_sender_message_context initial_ctx
          ON initial_ctx.message_id=initial.id
          AND initial_ctx.conversation_id=sc.id
-       JOIN inbound_processing_jobs original_job ON original_job.message_id=initial.id
-         AND original_job.channel='whatsapp'
-         AND original_job.incoming_payload->>'unsupportedType'='unsupported'
-         AND original_job.incoming_payload->'unsupportedErrors'
-             @> '[{"code":131060}]'::jsonb
-       JOIN inbound_outbound_attempts recovery_attempt
-         ON recovery_attempt.inbound_message_id=initial.id
-         AND recovery_attempt.contact_id=c.id
-         AND recovery_attempt.origin='system_fallback'
-         AND recovery_attempt.outcome='accepted'
-         AND recovery_attempt.provider_message_id IS NOT NULL
-       JOIN messages recovery ON recovery.id=recovery_attempt.assistant_message_id
-         AND recovery.contact_id=c.id AND recovery.role='assistant'
+       JOIN messages recovery ON recovery.contact_id=c.id
+         AND recovery.role='assistant'
          AND recovery.whatsapp_message_id IS NOT NULL
          AND recovery.id>initial.id AND recovery.id<current_inbound.id
          AND recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
          AND recovery.content LIKE '%可以点下面的选项%'
+       LEFT JOIN inbound_processing_jobs original_job ON original_job.message_id=initial.id
+       LEFT JOIN inbound_outbound_attempts recovery_attempt
+         ON recovery_attempt.assistant_message_id=recovery.id
+         AND recovery_attempt.inbound_message_id=initial.id
+         AND recovery_attempt.contact_id=c.id
+         AND recovery_attempt.origin='system_fallback'
+         AND recovery_attempt.outcome='accepted'
+         AND recovery_attempt.provider_message_id=recovery.whatsapp_message_id
+       -- The 24h inbound-job cleanup cascades recovery_attempt. The
+       -- independent accepted-send evidence can prove this prompt-only
+       -- cleanup afterwards without creating ad attribution or consent.
+       LEFT JOIN outbound_message_evidence accepted_outbound
+         ON accepted_outbound.message_id=recovery.id
+         AND accepted_outbound.contact_id=c.id
+         AND accepted_outbound.channel='whatsapp'
+         AND accepted_outbound.origin='system_fallback'
+         AND accepted_outbound.accepted=TRUE
+         AND accepted_outbound.provider_message_id=recovery.whatsapp_message_id
        JOIN whatsapp_sender_message_context recovery_ctx
          ON recovery_ctx.message_id=recovery.id
          AND recovery_ctx.conversation_id=sc.id
        WHERE c.id=$1 AND c.channel='whatsapp'
+         AND (
+           (
+             original_job.channel='whatsapp'
+             AND original_job.incoming_payload->>'unsupportedType'='unsupported'
+             AND original_job.incoming_payload->'unsupportedErrors'
+                 @> '[{"code":131060}]'::jsonb
+             AND recovery_attempt.processing_job_id IS NOT NULL
+           )
+           OR (
+             original_job.id IS NULL
+             AND recovery_attempt.processing_job_id IS NULL
+             AND accepted_outbound.message_id IS NOT NULL
+             AND initial.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+           )
+         )
          AND NOT EXISTS (
            SELECT 1 FROM messages before_first
            WHERE before_first.contact_id=c.id AND before_first.id<initial.id
