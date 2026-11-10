@@ -144,7 +144,7 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           // Never infer a recipient from the WAMID, update a message,
           // release a billing reservation or resend the message.
           const category = classifyInvalidStatusRecipient(
-            item.recipient_id == null ? item.recipient_user_id : item.recipient_id);
+            item.recipient_id !== undefined ? item.recipient_id : item.recipient_user_id);
           onInvalidRecipient({
             // Fingerprint the *event*, not the envelope. Meta may replay a
             // status in a differently grouped webhook batch. Replays must
