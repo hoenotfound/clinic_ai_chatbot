@@ -417,12 +417,19 @@ async function getForContactCurrentLead(contactId) {
      -- Chat-only latest ad. Do not change immutable CRM first-touch attribution.
      -- The contact id is already scoped to its WhatsApp sender number.
      LEFT JOIN LATERAL (
-       SELECT r.meta_ad_id, r.ad_name, r.recorded_at
+       SELECT r.meta_ad_id, r.ad_name
        FROM whatsapp_free_entry_referrals r
+       JOIN messages latest_ad_message
+         ON latest_ad_message.id = r.origin_message_id
+        AND latest_ad_message.contact_id = r.contact_id
+        AND latest_ad_message.role = 'user'
        WHERE r.contact_id = l.contact_id
          AND r.source_type = 'ad'
          AND r.meta_ad_id IS NOT NULL
-       ORDER BY r.recorded_at DESC, r.origin_message_id DESC
+       -- Provider time wins if Meta retries an older click after a newer one.
+       ORDER BY COALESCE(latest_ad_message.source_created_at,
+                         latest_ad_message.created_at) DESC,
+                latest_ad_message.id DESC
        LIMIT 1
      ) latest_ref ON true
      LEFT JOIN LATERAL (
