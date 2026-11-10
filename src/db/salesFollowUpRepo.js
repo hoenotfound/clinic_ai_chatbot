@@ -2,6 +2,8 @@ const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { pendingSalesFollowUp, assertFollowUpOutcome } = require("../utils/salesFollowUpEligibility");
+const { isBsuid, isPhoneAddress, normalizeCustomerAddress } =
+  require("../utils/whatsappCustomerIdentity");
 
 function extendedFollowUpHoldHours(env = process.env) {
   const cfg = clinicConfig.automatedFollowUp;
@@ -19,7 +21,7 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
   const sql = `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
             s.name AS stage_name, s.stage_type, s.system_key,
-            c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
+            c.channel, c.whatsapp_number, c.whatsapp_last_customer_address, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
             c.whatsapp_opt_out_at, c.whatsapp_marketing_opt_out_at,
             COALESCE(NULLIF(BTRIM(c.name),''), NULLIF(BTRIM(c.whatsapp_profile_name),''), c.whatsapp_number) AS customer_name,
             last_inbound.id AS last_inbound_id, last_inbound.created_at AS last_inbound_at,
@@ -132,7 +134,10 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     lastCustomerReplyAt: row.last_inbound_at,
     summary: String(row.chat_summary || "").slice(0, 300),
     nextAction: String(row.next_action || "").slice(0, 150),
-    whatsappUrl: "https://wa.me/" + row.whatsapp_number,
+    whatsappUrl: !isBsuid(row.whatsapp_last_customer_address) &&
+      isPhoneAddress(normalizeCustomerAddress(row.whatsapp_number))
+      ? "https://wa.me/" + normalizeCustomerAddress(row.whatsapp_number) : null,
+    inboxUrl: "/inbox?contact=" + encodeURIComponent(row.contact_id),
     lastInboundId: row.last_inbound_id
   }));
 }
