@@ -7,6 +7,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
+  readableHistoryForRecoverySelection,
 } = require("../src/services/whatsapp131060Recovery");
 
 const earlier = new Date(Date.now() - 60000).toISOString();
@@ -165,4 +166,27 @@ test("secondary button sender is not a generic interactive-message bypass", () =
   assert.match(src,/transport\.sendInteractiveButtons\(text\.trim\(\), interactiveButtons\)/);
   assert.match(src,/await stillEligible\(\)/);
   assert.match(src,/reserveSecondaryBillingAttempt/);
+});
+
+test("selected treatment filters only the original 131060 placeholder from AI context", () => {
+  const history=[
+    {role:"user",content:"📎 [Customer sent a WhatsApp message that could not be displayed]"},
+    {role:"assistant",content:build131060RecoveryReply(unavailable,services)},
+    {role:"user",content:"9D 逆龄抗衰"},
+  ];
+  const inbound={text:"9D 逆龄抗衰",interactiveReplyId:"neutro_131060_9d"};
+  const cleaned=readableHistoryForRecoverySelection(history,inbound);
+  assert.equal(cleaned.length,2);
+  assert.deepEqual(cleaned,history.slice(1));
+  assert.equal(history.length,3,"persisted staff history never changes");
+  assert.equal(readableHistoryForRecoverySelection(history,{...inbound,interactiveReplyId:null}),history);
+  assert.equal(readableHistoryForRecoverySelection(history,{...inbound,interactiveReplyId:"random"}),history);
+  assert.equal(readableHistoryForRecoverySelection(history.map((row,i)=>
+    i===0?{...row,content:"What does this cost?"}:row),inbound).length,3);
+  assert.equal(readableHistoryForRecoverySelection([
+    {role:"user",content:"I messaged last month"},...history],inbound).length,4);
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  assert.match(server,/readableHistoryForRecoverySelection\(history, incoming\)/);
+  assert.match(server,/const replyHistory = marketingStopQuestion[\s\S]*?readableRecoveryHistory/);
+  assert.match(server,/const customerMessages = readableRecoveryHistory\.filter/);
 });
