@@ -17,6 +17,14 @@ function extendedFollowUpHoldHours(env = process.env) {
   return activeSlots.length ? Math.min(ceiling, Math.max(...activeSlots) + 12) : 0;
 }
 
+function currentWhatsAppPhoneForFollowUp(row) {
+  if (isBsuid(row?.whatsapp_last_customer_address)) return null;
+  const last = normalizeCustomerAddress(row?.whatsapp_last_customer_address);
+  if (isPhoneAddress(last)) return last;
+  const canonical = normalizeCustomerAddress(row?.whatsapp_number);
+  return isPhoneAddress(canonical) ? canonical : null;
+}
+
 async function listPending({ username, canViewAll = false, leadId = null, queryable = pool, now = new Date() }) {
   const sql = `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
@@ -122,7 +130,9 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     leadId: row.lead_id,
     contactId: row.contact_id,
     customerName: row.customer_name,
-    whatsappNumber: row.whatsapp_number,
+    whatsappNumber: currentWhatsAppPhoneForFollowUp(row) ||
+      (isBsuid(row.whatsapp_last_customer_address) ||
+       isBsuid(row.whatsapp_number) ? "Phone hidden" : row.whatsapp_number),
     treatment: row.treatment_interest || row.summary_treatment,
     temperature: row.temperature,
     stageName: row.stage_name,
@@ -134,9 +144,8 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     lastCustomerReplyAt: row.last_inbound_at,
     summary: String(row.chat_summary || "").slice(0, 300),
     nextAction: String(row.next_action || "").slice(0, 150),
-    whatsappUrl: !isBsuid(row.whatsapp_last_customer_address) &&
-      isPhoneAddress(normalizeCustomerAddress(row.whatsapp_number))
-      ? "https://wa.me/" + normalizeCustomerAddress(row.whatsapp_number) : null,
+    whatsappUrl: currentWhatsAppPhoneForFollowUp(row)
+      ? "https://wa.me/" + currentWhatsAppPhoneForFollowUp(row) : null,
     inboxUrl: "/inbox?contact=" + encodeURIComponent(row.contact_id),
     lastInboundId: row.last_inbound_id
   }));
