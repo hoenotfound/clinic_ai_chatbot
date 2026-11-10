@@ -30,10 +30,29 @@ function recoveryActivation(env = process.env) {
   return new Date(ms).toISOString();
 }
 
+// The configured creative matcher requires a full service name. A real ad
+// can instead mention shortened names like "9D 逆龄", which must still make
+// a pelvic + 9D creative ambiguous. This applies ONLY to the unverified
+// recovery greeting, not the normal ad attribution or treatment resolver.
+function conflictingRecoveryTreatments(creative) {
+  const text = String(creative || "").normalize("NFKC");
+  const mentions = [
+    /骨盆|盆骨|骨盤|pelvi(?:s|c)/iu,
+    /(?:^|[^a-z0-9])3\\s*d(?![a-z0-9])|小[颜顏]/iu,
+    /(?:^|[^a-z0-9])9\\s*d(?![a-z0-9])|逆[龄齡]/iu,
+    /脉冲|脈衝|pulse\\s*wave/iu,
+  ];
+  return mentions.filter(pattern => pattern.test(text)).length > 1;
+}
+
 function verifiedAdTreatment(incoming, config = {}) {
   const ref = incoming?.attribution;
   if (ref?.source !== "meta_ads" || String(ref?.sourceType || "").toLowerCase() !== "ad" ||
       !/^\d{5,30}$/.test(String(ref?.adId || ""))) return null;
+  // Fail closed even when one creative mention is an abbreviated service
+  // name that the exact configured matcher would otherwise miss.
+  if (conflictingRecoveryTreatments([ref.headline, ref.body].filter(Boolean).join(" ")))
+    return null;
   const treatment = resolveMetaAdCreativeService(
     { headline: ref.headline, body: ref.body },
     config.services || [], config.serviceAliases || []
