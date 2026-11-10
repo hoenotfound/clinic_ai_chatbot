@@ -579,3 +579,20 @@ test("gated 131060 treatment menu reaches secondary interactive transport, not p
  assert.equal(staffEcho.buttonCalls.length,0);
 });
 
+
+test("secondary sender refuses a changed recipient after billing reservation, without Meta send",async()=>{
+  const {opts,calls}=setup();
+  opts.billingRepo.reserveSecondaryBillingAttempt=async()=>({
+    reserved:true,reservationId,recipientAddress:"MY.SignedOld",
+  });
+  opts.createTransport=async()=>({
+    recipientAddress:"MY.SignedNew",
+    sendText:async()=>{calls.send.push("unexpected");throw Error("must not reach Meta");},
+  });
+  const result=await sendSecondaryStaffText(data,opts);
+  assert.equal(result.success,false);
+  assert.equal(result.code,"secondary_recipient_changed_before_provider");
+  assert.equal(calls.send.length,0);
+  assert.equal(calls.mark.length,1);
+  assert.equal(calls.mark[0].definitivelyRejected,true);
+});
