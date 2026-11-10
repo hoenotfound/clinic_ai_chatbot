@@ -142,7 +142,8 @@ test("a valid signed status has business identity and no implicit send permissio
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/mc\.conversation_id=sc\.id/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\.wamid=\$1/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sa\.meta_account_id=\$5/);
-  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=\$2/);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=c\.whatsapp_number/);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\.recipient_address=\$2/);
 });
 
 test("mixed signed webhook selects only Ariel statuses without exposing Neutro callbacks", () => {
@@ -272,7 +273,7 @@ test("signed opaque recipient is durably held unmatched with no billing release,
       if(sql.includes("INSERT INTO whatsapp_sender_status_receipts")) {
         assert.equal(params[2],null);
         assert.equal(params[3],null);
-        assert.equal(params[12],false);
+        assert.equal(params[13],false);
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       }
       if(sql.includes("MATCH_SECONDARY_ATTEMPT_SQL") ||
@@ -504,8 +505,8 @@ test("mixed signed secondary statuses quarantine unknown and missing recipients 
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       if(sql.includes("JOIN whatsapp_sender_message_context"))return {rows:[],rowCount:0};
       if(sql.includes("INSERT INTO whatsapp_sender_status_receipts")) {
-        assert.equal(params[6],"delivered");
-        assert.equal(params[12],false);
+        assert.equal(params[7],"delivered");
+        assert.equal(params[13],false);
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       }
       assert.doesNotMatch(sql,/UPDATE messages|whatsapp_sender_auto_reconciliations|UPDATE whatsapp_sender_billing_gates/);
@@ -583,4 +584,44 @@ test("unsupported statuses cannot bypass HMAC, sender scope, malformed-input or 
   },{env,database:{connect:async()=>{throw Error("temporarily offline");}}});
   assert.equal(unavailable.accepted,false);
   assert.equal(unavailable.code,"secondary_receipt_database_unavailable");
+});
+
+test("signed BSUID receipts remain sender-bound and are verified only by exact ID",()=>{
+  const id="MY."+"Ab12".repeat(24);
+  assert.equal(receipt.normalizeStatusRecipient(id).verified,true);
+  assert.equal(receipt.normalizeStatusRecipient(id).recipient,id);
+  const event=receipt.normalizedSignedEvents(signed(body([status({
+    recipient_id:id,
+  })])).rawBody,env);
+  assert.equal(event.length,1);
+  assert.equal(event[0].recipient,id);
+  assert.equal(event[0].recipientVerified,true);
+  const missingPhone=status({recipient_id:undefined,recipient_user_id:id});
+  delete missingPhone.recipient_id;
+  const fallback=receipt.normalizedSignedEvents(
+    signed(body([missingPhone])).rawBody,env);
+  assert.equal(fallback[0].recipient,id);
+  assert.equal(fallback[0].recipientVerified,true);
+  for(const bad of ["@Peggyteoh","MY.a-b","my.abcdef","XX."+"a".repeat(129)]) {
+    const parsed=receipt.normalizeStatusRecipient(bad);
+    assert.equal(parsed?.verified ?? false,false);
+  }
+});
+
+test("Meta direct Cloud API recipient_user_id is parsed, including paired recipient_id",()=>{
+  const userId="MY.13579ABCDEF";
+  const hidden=status({recipient_id:undefined,recipient_user_id:userId});
+  delete hidden.recipient_id;
+  const parsed=receipt.normalizedSignedEvents(signed(body([hidden])).rawBody,env);
+  assert.equal(parsed.length,1);
+  assert.equal(parsed[0].recipient,userId);
+  assert.deepEqual(parsed[0].recipientCandidates,[userId]);
+  const paired=receipt.normalizedSignedEvents(signed(body([status({
+    recipient_id:"60125550000",recipient_user_id:userId,
+  })])).rawBody,env);
+  assert.deepEqual(paired[0].recipientCandidates,["60125550000",userId]);
+  assert.ok(receipt.MATCH_SECONDARY_ATTEMPT_SQL.includes("a.recipient_address=$2"));
+  assert.equal(receipt.MATCH_SECONDARY_ATTEMPT_SQL.includes(
+    "whatsapp_last_customer_address=$2"),false,
+    "changing a contact's last inbound must not retarget an earlier receipt");
 });

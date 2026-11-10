@@ -9,6 +9,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 // Real Meta WAMIDs may use Base64 characters and up to two trailing padding =.
 // Never accept embedded padding, arbitrary symbols or an unbounded ID.
 const DELIVERY_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
+const { isBsuid } = require("../utils/whatsappCustomerIdentity");
 const MAX_EVENTS = 100;
 const MAX_BODY_BYTES = 1024 * 1024;
 const SIGNATURE_PATTERN = /^sha256=[0-9a-f]{64}$/;
@@ -51,10 +52,14 @@ function digest(input) { return crypto.createHash("sha256").update(input).digest
 function normalizeStatusRecipient(value) {
   // Never turn a modified/malformed recipient into a verified phone number by
   // trimming whitespace or control characters from the original Meta value.
-  if (typeof value !== "string" || !value || value.length > 64 ||
+  if (typeof value !== "string" || !value || value.length > 131 ||
       value !== value.trim() ||
       !/^[A-Za-z0-9._+*-]+$/.test(value)) return null;
   const raw=value;
+  // Preserve the old 64-byte cap for unknown/opaque values. Only a
+  // syntactically valid provider BSUID may exceed that limit.
+  if (raw.length > 64 && !isBsuid(raw)) return null;
+  if (isBsuid(raw)) return { recipient: raw, verified: true };
   const e164=/^\+([0-9]{8,15})$/.exec(raw);
   if (e164) return { recipient: e164[1], verified: true };
   if (/^[0-9]{8,15}$/.test(raw)) return { recipient: raw, verified: true };
@@ -67,7 +72,7 @@ function classifyInvalidStatusRecipient(value) {
   if (value === null) return "null";
   if (typeof value !== "string") return "non_string";
   if (!value.trim()) return "blank";
-  if (value.length > 64) return "oversize";
+  if (value.length > 64 && !isBsuid(value)) return "oversize";
   if (/[\x00-\x1f\x7f]/.test(value)) return "control";
   if (/[^\x20-\x7e]/.test(value)) return "non_ascii";
   return "unrecognized_format";
@@ -105,7 +110,18 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
             !/^[a-z][a-z0-9_]{0,63}$/.test(item.status)))
           return invalid("status_value_unsupported");
         if (++statusCount > MAX_EVENTS) return invalid("status_batch_too_large");
-        const recipient=normalizeStatusRecipient(item.recipient_id);
+        // Meta's direct Cloud API exposes recipient_user_id. Both IDs may
+        // appear on the same signed callback; match only the address stored
+        // for THIS exact outbound reservation, not the contact's latest ID.
+        const phoneRecipient = normalizeStatusRecipient(item.recipient_id);
+        const scopedRecipient = isBsuid(item.recipient_user_id)
+          ? normalizeStatusRecipient(item.recipient_user_id) : null;
+        const recipients = [...new Set([phoneRecipient, scopedRecipient]
+          .filter(item => item?.verified === true)
+          .map(item => item.recipient))];
+        const recipient = recipients.length
+          ? { recipient: recipients[0], verified: true }
+          : phoneRecipient;
         if (!recipient && typeof onInvalidRecipient !== "function")
           return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
@@ -127,7 +143,8 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           // hash and a bounded format category in existing quarantine.
           // Never infer a recipient from the WAMID, update a message,
           // release a billing reservation or resend the message.
-          const category = classifyInvalidStatusRecipient(item.recipient_id);
+          const category = classifyInvalidStatusRecipient(
+            item.recipient_id !== undefined ? item.recipient_id : item.recipient_user_id);
           onInvalidRecipient({
             // Fingerprint the *event*, not the envelope. Meta may replay a
             // status in a differently grouped webhook batch. Replays must
@@ -151,6 +168,7 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           wamid: item.id,
           recipient: recipient.recipient,
           recipientVerified: recipient.verified,
+          recipientCandidates: recipients,
           deliveryStatus: item.status,
           pricingType, pricingBillable, pricingCategory,
           phoneId: env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
@@ -162,6 +180,7 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           event.pricingType, String(event.pricingBillable),
           event.pricingCategory, clean(item.timestamp),
           JSON.stringify(item.errors ?? null),
+          ...(scopedRecipient ? [scopedRecipient.recipient] : []),
         ];
         event.fingerprint = digest(JSON.stringify(signatureMaterial));
         event.wamidHash = digest(event.wamid);
@@ -255,7 +274,9 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
  WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled')
    AND (g.reservation_id IS NULL OR
        (g.state IN ('awaiting_pricing','unknown') AND g.wamid=$1))
-   AND sc.customer_wa_id=$2 AND c.whatsapp_number=$2
+   AND sc.customer_wa_id=c.whatsapp_number
+   AND (a.recipient_address=$2 OR
+        (a.recipient_address IS NULL AND c.whatsapp_number=$2))
    AND sa.sender_key=$3 AND sa.meta_phone_number_id=$4
    AND sa.meta_account_id=$5 AND sa.state='active'
  FOR UPDATE OF a
@@ -360,35 +381,50 @@ async function recordSignedSecondaryStatusBatch({
     for (const event of events) {
       // Never identify a customer or release a billing reservation by a
       // WAMID alone when the signed provider recipient is opaque/masked.
-      const owner = event.recipientVerified
-        ? await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
-          event.wamid,event.recipient,env.WHATSAPP_SECONDARY_SENDER_KEY,
+      let attempt = null;
+      let matchedRecipient = null;
+      for (const address of event.recipientVerified
+          ? event.recipientCandidates : []) {
+        const owner = await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
+          event.wamid,address,env.WHATSAPP_SECONDARY_SENDER_KEY,
           event.phoneId,event.accountId,
-        ])
-        : { rows: [] };
-      const attempt = owner.rows?.length === 1 ? owner.rows[0] : null;
+        ]);
+        if (owner.rows?.length === 1) {
+          if (attempt) throw new Error("Ambiguous signed receipt recipient.");
+          attempt = owner.rows[0];
+          matchedRecipient = address;
+        }
+      }
       const stored = await client.query(
         `INSERT INTO whatsapp_sender_status_receipts
           (fingerprint,sender_id,reservation_id,wamid,wamid_hash,recipient_hash,
-           delivery_status,pricing_type,pricing_billable,pricing_category,
-           meta_phone_number_id,meta_account_id,matched)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           alternate_recipient_hash,delivery_status,pricing_type,pricing_billable,
+           pricing_category,meta_phone_number_id,meta_account_id,matched)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (fingerprint) DO UPDATE
          SET reservation_id=EXCLUDED.reservation_id,
              wamid=EXCLUDED.wamid,
+             recipient_hash=EXCLUDED.recipient_hash,
+             alternate_recipient_hash=EXCLUDED.alternate_recipient_hash,
              matched=TRUE
          WHERE whatsapp_sender_status_receipts.matched=FALSE
            AND EXCLUDED.matched=TRUE
            AND whatsapp_sender_status_receipts.sender_id=EXCLUDED.sender_id
            AND whatsapp_sender_status_receipts.wamid_hash=EXCLUDED.wamid_hash
-           AND whatsapp_sender_status_receipts.recipient_hash=EXCLUDED.recipient_hash
+           AND (whatsapp_sender_status_receipts.recipient_hash=EXCLUDED.recipient_hash
+             OR whatsapp_sender_status_receipts.alternate_recipient_hash=
+                EXCLUDED.recipient_hash)
            AND whatsapp_sender_status_receipts.meta_phone_number_id=
                EXCLUDED.meta_phone_number_id
            AND whatsapp_sender_status_receipts.meta_account_id=
                EXCLUDED.meta_account_id
          RETURNING fingerprint`,
         [event.fingerprint,senderId,attempt?.reservation_id || null,
-          attempt ? event.wamid : null,event.wamidHash,digest(event.recipient),
+          attempt ? event.wamid : null,event.wamidHash,
+          digest(matchedRecipient || event.recipient),
+          event.recipientCandidates.length > 1
+            ? digest(event.recipientCandidates.find(x => x !==
+                (matchedRecipient || event.recipient))) : null,
           event.deliveryStatus,event.pricingType,event.pricingBillable,
           event.pricingCategory,event.phoneId,event.accountId,Boolean(attempt)]
       );

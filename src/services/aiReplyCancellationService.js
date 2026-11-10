@@ -1,4 +1,5 @@
 const { conversationKeyForSender } = require("./whatsappSenderRouting");
+const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 const epochs = new Map();
 const epochTouchedAt = new Map();
@@ -51,7 +52,7 @@ function keyForWhatsAppNumber(number, senderKey = null) {
   if (senderKey !== null && senderKey !== undefined) {
     return conversationKeyForSender(senderKey, number);
   }
-  const value = String(number || "").replace(/\D/g, "");
+  const value = normalizeCustomerAddress(number);
   return value ? `whatsapp:${value}` : null;
 }
 
@@ -65,7 +66,11 @@ function keyForChannelContact(channel, externalId) {
 function keyForContact(contact) {
   const channel = String(contact?.channel || "whatsapp").trim().toLowerCase();
   return channel === "whatsapp"
-    ? keyForWhatsAppNumber(contact?.whatsapp_number, contact?.whatsapp_sender_key)
+    ? keyForWhatsAppNumber(
+        contact?.whatsapp_sender_key && isBsuid(contact?.whatsapp_user_id)
+          ? contact.whatsapp_user_id : contact?.whatsapp_number,
+        contact?.whatsapp_sender_key
+      )
     : keyForChannelContact(channel, contact?.channel_user_id);
 }
 

@@ -5,15 +5,23 @@
 // is never attributed until BOTH the exact WAMID and recipient hash match.
 const crypto = require("node:crypto");
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
+const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 async function applyStagedSecondaryReceipts({
   client, senderId, contactId, messageId, reservationId, acceptedWamid, env,
 }) {
   const owner = await client.query(
-    "SELECT whatsapp_number FROM contacts WHERE id=$1 AND whatsapp_sender_id=$2 AND channel='whatsapp'",
-    [contactId, senderId]
+    "SELECT c.whatsapp_number,c.whatsapp_user_id,a.recipient_address " +
+    "FROM contacts c JOIN whatsapp_sender_billing_attempts a " +
+    "ON a.contact_id=c.id AND a.sender_id=c.whatsapp_sender_id " +
+    "WHERE c.id=$1 AND c.whatsapp_sender_id=$2 AND c.channel='whatsapp' " +
+    "AND a.reservation_id=$3::uuid AND a.message_id=$4",
+    [contactId, senderId, reservationId, messageId]
   );
-  if (owner.rowCount !== 1 || !/^[0-9]{8,15}$/.test(owner.rows[0].whatsapp_number)) {
+  const found=owner.rows?.[0];
+  const address=found?.recipient_address || found?.whatsapp_number;
+  if (owner.rowCount !== 1 || normalizeCustomerAddress(address) !== address ||
+      (isBsuid(address) && found.whatsapp_user_id !== address)) {
     throw new Error("Early receipt owner cannot be verified");
   }
   // Even a valid Meta callback cannot be adopted by a different reservation.
@@ -23,7 +31,7 @@ async function applyStagedSecondaryReceipts({
   );
   if (duplicate.rowCount) throw new Error("Provider WAMID already belongs to another reservation");
   const pending = await client.query(
-    `SELECT fingerprint,recipient_hash,delivery_status,pricing_type,
+    `SELECT fingerprint,recipient_hash,alternate_recipient_hash,delivery_status,pricing_type,
             pricing_billable,pricing_category
        FROM whatsapp_sender_status_receipts
       WHERE sender_id=$1 AND wamid_hash=$2 AND matched=FALSE
@@ -33,17 +41,21 @@ async function applyStagedSecondaryReceipts({
       env.WHATSAPP_SECONDARY_WABA_ID]
   );
   if (!pending.rowCount) return { matched:0, autoReconciled:false, held:false };
-  const expectedRecipient = hash(owner.rows[0].whatsapp_number);
-  const wrongRecipient = pending.rows.some(r=>r.recipient_hash !== expectedRecipient);
-  const verified = pending.rows.filter(r=>r.recipient_hash === expectedRecipient);
+  const expectedRecipient = hash(address);
+  const matches = r => r.recipient_hash === expectedRecipient ||
+    r.alternate_recipient_hash === expectedRecipient;
+  const wrongRecipient = pending.rows.some(r => !matches(r));
+  const verified = pending.rows.filter(matches);
   if (!verified.length) return { matched:0, autoReconciled:false, held:false };
 
   for (const receipt of verified) {
     const promoted = await client.query(
       `UPDATE whatsapp_sender_status_receipts
-          SET reservation_id=$2::uuid,wamid=$3,matched=TRUE
+          SET reservation_id=$2::uuid,wamid=$3,matched=TRUE,
+              recipient_hash=$5
         WHERE fingerprint=$1 AND sender_id=$4 AND matched=FALSE
-          AND recipient_hash=$5 RETURNING fingerprint`,
+          AND (recipient_hash=$5 OR alternate_recipient_hash=$5)
+        RETURNING fingerprint`,
       [receipt.fingerprint,reservationId,acceptedWamid,senderId,expectedRecipient]
     );
     if (promoted.rowCount !== 1) throw new Error("Early receipt promotion lost identity");

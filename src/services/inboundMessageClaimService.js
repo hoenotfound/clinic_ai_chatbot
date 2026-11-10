@@ -460,6 +460,8 @@ function createInboundMessageClaimService({
           accountId: incoming.businessAccountId,
           phoneNumberId: incoming.businessPhoneNumberId,
           customerPhone: incoming.from,
+          customerUserId: incoming.customerUserId || null,
+          customerUsername: incoming.customerUsername || null,
           profileName: incoming.profileName,
         })
       : channel === "whatsapp"

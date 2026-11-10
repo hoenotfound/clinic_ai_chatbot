@@ -37,7 +37,8 @@ function verifiedPrimaryEchoIdentity(echo) {
       account !== String(process.env.WHATSAPP_WABA_ID || "").trim()) {
     throw new Error("Business App echo does not identify the verified primary sender.");
   }
-  return { accountId: account, phoneNumberId: phone, customerPhone: echo.to };
+  return { accountId: account, phoneNumberId: phone, customerPhone: echo.to,
+    ...(echo.toUserId ? { customerUserId: echo.toUserId } : {}) };
 }
 
 function verifiedEchoIdentity(echo) {
@@ -53,20 +54,28 @@ function verifiedEchoIdentity(echo) {
       throw primaryError;
     }
     return {accountId:account,phoneNumberId:phone,customerPhone:echo.to,
+      ...(echo.toUserId?{customerUserId:echo.toUserId}:{}),
       senderKey:String(process.env.WHATSAPP_SECONDARY_SENDER_KEY||"").trim()};
   }
 }
 
-function cancellationKeyForEcho(echo) {
+function cancellationKeysForEcho(echo) {
   if (!senderAwareEchoesEnabled()) {
-    return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+    return [aiReplyCancellation.keyForWhatsAppNumber(echo?.to)].filter(Boolean);
   }
-  // An unverified foreign echo must NEVER cancel the primary AI turn.
+  // Match both the old phone-keyed and new BSUID-keyed in-flight replies.
+  // A foreign/unverified sender never gains permission to cancel either.
   try {
-    const key = verifiedEchoIdentity(echo).senderKey;
-    return key ? aiReplyCancellation.keyForWhatsAppNumber(echo?.to, key) : null;
+    const senderKey = verifiedEchoIdentity(echo).senderKey;
+    return [...new Set([echo?.toUserId, echo?.to].map(address => {
+      try {
+        return senderKey && address
+          ? aiReplyCancellation.keyForWhatsAppNumber(address, senderKey)
+          : null;
+      } catch { return null; }
+    }).filter(Boolean))];
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -74,27 +83,35 @@ function beginPendingAiForEcho(echo) {
   // Edits/deletions of old staff messages are not new staff replies.
   // Never stall or cancel an unrelated in-flight AI response for them.
   if (echo?.type==="edit" || echo?.type==="revoke") return false;
-  return aiReplyCancellation.beginPendingEcho(
-    cancellationKeyForEcho(echo),
-    echo?.id
-  );
+  let started = false;
+  for (const key of cancellationKeysForEcho(echo)) {
+    if (aiReplyCancellation.beginPendingEcho(key, echo?.id)) started = true;
+  }
+  return started;
 }
 
 function releasePendingAiForEcho(echo) {
-  aiReplyCancellation.endPendingEcho(
-    cancellationKeyForEcho(echo),
-    echo?.id
-  );
+  for (const key of cancellationKeysForEcho(echo)) {
+    aiReplyCancellation.endPendingEcho(key, echo?.id);
+  }
 }
 
-function confirmPendingAiForEcho(echo) {
-  const key = cancellationKeyForEcho(echo);
-  aiReplyCancellation.cancel(key);
-  aiReplyCancellation.endPendingEcho(key, echo?.id);
+function confirmPendingAiForEcho(echo, contact = null) {
+  const keys = cancellationKeysForEcho(echo);
+  for (const key of keys) {
+    aiReplyCancellation.cancel(key);
+    aiReplyCancellation.endPendingEcho(key, echo?.id);
+  }
+  if (contact) {
+    const boundKey = aiReplyCancellation.keyForContact(contact);
+    if (boundKey && !keys.includes(boundKey)) aiReplyCancellation.cancel(boundKey);
+  }
 }
 
 function cancelPendingAiForEcho(echo) {
-  return aiReplyCancellation.cancel(cancellationKeyForEcho(echo));
+  for (const key of cancellationKeysForEcho(echo)) {
+    aiReplyCancellation.cancel(key);
+  }
 }
 
 async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
@@ -117,7 +134,9 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     const contact=isSecondaryMutation
       ? await senderConversations.findBoundContactForSender(identity)
       : senderAwareEchoesEnabled()
-        ? await senderConversations.claimSenderContact(identity)
+        ? await senderConversations.claimSenderContact({
+            ...identity, preserveLastCustomerAddress: true,
+          })
         : await contactsRepo.getOrCreateContact(echo.to);
     if (!contact) {
       releasePendingAiForEcho(echo);
@@ -181,7 +200,7 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       // Only a genuinely new app-originated staff action invalidates the
       // current AI turn. The pending flag was set synchronously before DB work
       // so an in-flight AI can fail closed while this transaction resolves.
-      confirmPendingAiForEcho(echo);
+      confirmPendingAiForEcho(echo, contact);
     } else {
       // A Meta retry may still need post-ACK bookkeeping to run again, but it
       // must not cancel a later AI turn or alter ownership.

@@ -226,6 +226,12 @@ function createApp({
 
   let primaryWhatsappWebhookHandler;
   app.post("/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
+    // Keep diagnostics self-contained inside the extracted webhook handler:
+    // synthetic QA replays use this handler without the outer module closure.
+    const inboundIdentityKind = value =>
+      typeof value === "string" && /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/.test(value) ?
+        "bsuid" : typeof value === "string" && /^[0-9]{8,15}$/.test(value) ?
+          "phone" : "invalid";
     // The single-sender compatibility boundary runs only AFTER Meta signature
     // verification. It rejects explicitly foreign sender events before any
     // legacy customer lookups, AI cancellation, or receipt writes.
@@ -365,8 +371,12 @@ function createApp({
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => {
+            // A phone-visible turn and a later BSUID-only turn from the same
+            // signed user must share a queue, not start competing AI replies.
+            const stableCustomerId = inboundIdentityKind(incoming.customerUserId) === "bsuid"
+              ? incoming.customerUserId : incoming.from;
             const queueKey = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
-              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from;
+              ? `whatsapp:${incoming.businessPhoneNumberId}:${stableCustomerId}` : incoming.from;
             try {
               const secondary = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
                 incoming.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
@@ -389,13 +399,30 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
+              // The event is HMAC-verified and durably saved before this log.
+              // Record only an identity TYPE, never a phone, BSUID, username,
+              // ad reference, original message or raw webhook.
+              if (secondary && inboundIdentityKind(incoming.from) === "bsuid" && durableClaim) {
+                console.info("[Secondary WhatsApp inbound identity] bsuid_claim_accepted");
+              }
               // Claim independently. An unrelated secondary DB error cannot
               // erase the successful Neutro claim; prepare/reply starts only
               // AFTER the webhook responds, including on a partial 503 retry.
               return { queueKey, durableClaim };
             } catch (error) {
               durabilityFailures += 1;
-              console.error("Failed to durably claim WhatsApp inbound message:", error);
+              if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+                  incoming.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) {
+                const msg = String(error?.message || "");
+                const category = /identity|BSUID|customer address|customer user ID/i.test(msg)
+                  ? "identity_validation" :
+                  error?.code === "SECONDARY_WEBHOOK_TIMEOUT" ? "claim_timeout" :
+                  "claim_failed";
+                console.error("[Secondary WhatsApp inbound claim] " + category +
+                  " kind=" + inboundIdentityKind(incoming.from));
+              } else {
+                console.error("Failed to durably claim WhatsApp inbound message:", error);
+              }
               return null;
             }
           })

@@ -7,6 +7,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("./db");
 const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
+const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
 function id(value) {
@@ -30,6 +31,8 @@ function gateEnabled(env) {
 
 const OWNED_SECONDARY_OUTBOUND_SQL = `
  SELECT sa.id AS sender_id,
+   COALESCE(c.whatsapp_last_customer_address,c.whatsapp_number) AS recipient_address,
+   c.whatsapp_user_id,
    (m.whatsapp_template->>'billingAcknowledged'='true'
     AND EXISTS(
       SELECT 1 FROM whatsapp_manual_template_billing_claims claim
@@ -145,6 +148,13 @@ async function reserveSecondaryBillingAttempt({
       return deny("secondary_billing_sender_mismatch");
     }
     const senderId = owner.rows[0].sender_id;
+    const recipientAddress = owner.rows[0].recipient_address;
+    if (normalizeCustomerAddress(recipientAddress) !== recipientAddress ||
+        (isBsuid(recipientAddress) &&
+          owner.rows[0].whatsapp_user_id !== recipientAddress)) {
+      await client.query("ROLLBACK"); inTransaction = false;
+      return deny("secondary_billing_recipient_unverified");
+    }
     // Templates require their one-time staff review; freeform messages use
     // the sender operator's explicit service-charge approval instead.
     // Neither an arbitrary caller boolean nor a 24h window proves RM0.
@@ -200,14 +210,15 @@ async function reserveSecondaryBillingAttempt({
     const reservationId = crypto.randomUUID();
     await client.query(
       "INSERT INTO whatsapp_sender_billing_attempts " +
-      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source,billing_review_claim_hash) " +
-      "VALUES($1,$2,$3,$4,$5,$6,$7)",
+      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source,billing_review_claim_hash,recipient_address) " +
+      "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
       [reservationId,senderId,cid,mid,
         billableAuthorized === true,
         serviceApproved ? "operator_acknowledged_service" :
           templateApproved ? "staff_template_billing_review" :
             automatedMarketingApproved ? "operator_approved_marketing_template" : null,
-        templateApproved ? owner.rows[0].billing_review_claim_hash : null]
+        templateApproved ? owner.rows[0].billing_review_claim_hash : null,
+        recipientAddress]
     );
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
@@ -216,7 +227,8 @@ async function reserveSecondaryBillingAttempt({
       [senderId,reservationId,cid,mid]
     );
     await client.query("COMMIT"); inTransaction = false;
-    return { reserved: true, sendAuthorized: false, reservationId };
+    return { reserved: true, sendAuthorized: false, reservationId,
+      recipientAddress };
   } catch {
     if (inTransaction && client) await client.query("ROLLBACK").catch(() => {});
     return deny("secondary_billing_database_unavailable");

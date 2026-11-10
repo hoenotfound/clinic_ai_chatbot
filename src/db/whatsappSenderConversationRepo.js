@@ -2,6 +2,9 @@
 
 const { pool } = require("./db");
 const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
+const {
+  normalizeCustomerAddress, normaliseUserId, isBsuid, safeUsername,
+} = require("../utils/whatsappCustomerIdentity");
 
 function digits(value, label) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -9,14 +12,9 @@ function digits(value, label) {
   return text;
 }
 function customerId(value) {
-  if (typeof value !== "string" || !/^[+\d\s().-]+$/.test(value)) {
-    throw new Error("Invalid WhatsApp customer number.");
-  }
-  const normalized = normalizeWhatsappNumber(value);
-  if (!/^\d{8,15}$/.test(normalized)) {
-    throw new Error("Invalid WhatsApp customer number.");
-  }
-  return normalized;
+  const address = normalizeCustomerAddress(value);
+  if (!address) throw new Error("Invalid WhatsApp customer address.");
+  return address;
 }
 function positiveId(value) {
   const number = Number(value);
@@ -51,7 +49,11 @@ async function findConversationBySender({ accountId, phoneNumberId, customerPhon
     "FROM whatsapp_sender_conversations sc " +
     "JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
     "WHERE sa.meta_account_id = $1 AND sa.meta_phone_number_id = $2 " +
-    "AND sc.customer_wa_id = $3 AND sa.state = 'active'",
+    "AND (sc.customer_wa_id = $3 OR " +
+    "EXISTS(SELECT 1 FROM contacts alias_contact " +
+    "WHERE alias_contact.id=sc.contact_id AND alias_contact.whatsapp_sender_id=sc.sender_id " +
+    "AND (alias_contact.whatsapp_last_customer_address=$3 OR alias_contact.whatsapp_user_id=$3))) " +
+    "AND sa.state = 'active'",
     [digits(accountId, "Meta WhatsApp account ID"),
       digits(phoneNumberId, "Meta receiving phone ID"), customerId(customerPhone)]
   );
@@ -112,7 +114,8 @@ async function findBoundContactForSender({accountId,phoneNumberId,customerPhone}
     "JOIN contacts c ON c.id=sc.contact_id AND c.channel='whatsapp' " +
     "AND c.whatsapp_sender_id=sc.sender_id AND c.whatsapp_number=sc.customer_wa_id " +
     "WHERE sa.meta_account_id=$1 AND sa.meta_phone_number_id=$2 " +
-    "AND sc.customer_wa_id=$3 AND sc.state='bound' LIMIT 1",
+    "AND (sc.customer_wa_id=$3 OR c.whatsapp_last_customer_address=$3 " +
+    "OR c.whatsapp_user_id=$3) AND sc.state='bound' LIMIT 1",
     [account,phone,customer]
   );
   return result.rows[0]||null;
@@ -123,11 +126,18 @@ async function findBoundContactForSender({accountId,phoneNumberId,customerPhone}
 // Nothing calls this on the legacy webhook until sender routing is verified.
 async function claimSenderContact({
   accountId, phoneNumberId, customerPhone, profileName = null,
+  customerUserId = null, customerUsername = null,
+  preserveLastCustomerAddress = false,
   coexistenceHistoryImport = null,
 }, database = pool, env = process.env) {
   const account = digits(accountId, "Meta WhatsApp account ID");
   const phone = digits(phoneNumberId, "Meta receiving phone ID");
   const customer = customerId(customerPhone);
+  // Meta-signed user_id is the ONLY secondary alias we trust. Never link by
+  // a display username, profile name, or similarity to an ad prefill.
+  const userId = normaliseUserId(customerUserId) || (isBsuid(customer) ? customer : null);
+  if (isBsuid(customer) && userId !== customer) throw new Error("WhatsApp BSUID identity mismatch.");
+  const username = safeUsername(customerUsername);
   const primaryPhone = String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
   const primaryAccount = String(env.WHATSAPP_WABA_ID || "").trim();
   const isVerifiedPrimary = primaryPhone === phone && primaryAccount === account;
@@ -156,13 +166,23 @@ async function claimSenderContact({
     // Serialize claims for one sender/customer across workers and webhook retries.
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
-      [phone, customer]
+      [phone, userId || customer]
     );
-    let contact = (await client.query(
+    // The same person may send a phone-visible message today and a BSUID-only
+    // message tomorrow. Reuse the authenticated user_id alias, retaining the
+    // original contact and conversation key without merging unrelated leads.
+    let contact = userId ? (await client.query(
+      "SELECT * FROM contacts WHERE channel='whatsapp' " +
+      "AND whatsapp_sender_id=$1 AND whatsapp_user_id=$2 FOR UPDATE",
+      [sender.id, userId]
+    )).rows[0] : null;
+    if (!contact) contact = (await client.query(
       "SELECT * FROM contacts WHERE channel='whatsapp' " +
       "AND whatsapp_sender_id=$1 AND whatsapp_number=$2 FOR UPDATE",
       [sender.id, customer]
     )).rows[0];
+    if (contact && userId && contact.whatsapp_user_id && contact.whatsapp_user_id !== userId)
+      throw new Error("WhatsApp customer user ID conflicts with existing contact.");
 
     if (!contact && isVerifiedPrimary) {
       // Preserve the original Neutro contact ID and historical data,
@@ -198,6 +218,20 @@ async function claimSenderContact({
       }
     }
     if (!contact) throw new Error("Could not claim sender-scoped contact.");
+    // Keep the canonical address stable, and the latest signed customer address
+    // separate for outbound delivery. In particular never discard the BSUID
+    // when Meta hides the phone and never promote an unverified username.
+    contact = (await client.query(
+      "UPDATE contacts SET whatsapp_user_id=COALESCE(whatsapp_user_id,$3), " +
+      "whatsapp_username=COALESCE($4,whatsapp_username), " +
+      "whatsapp_last_customer_address=CASE WHEN $6::boolean " +
+      "THEN whatsapp_last_customer_address ELSE $5 END, updated_at=NOW() " +
+      "WHERE id=$1 AND whatsapp_sender_id=$2 " +
+      "AND ($3::text IS NULL OR whatsapp_user_id IS NULL OR whatsapp_user_id=$3) " +
+      "RETURNING *",
+      [contact.id,sender.id,userId,username,customer,preserveLastCustomerAddress === true]
+    )).rows[0];
+    if (!contact) throw new Error("WhatsApp customer identity ownership conflict.");
     // Historical threads always exclude a contact. Contact-only sync marks
     // only NEW records: a later Business App echo must never revoke an
     // already verified first-ad lead. Both use the same atomic claim.
@@ -221,7 +255,7 @@ async function claimSenderContact({
       "WHERE whatsapp_sender_conversations.contact_id IS NULL " +
       "OR whatsapp_sender_conversations.contact_id=EXCLUDED.contact_id " +
       "RETURNING id",
-      [sender.id, customer, contact.id]
+      [sender.id, contact.whatsapp_number, contact.id]
     )).rows[0];
     if (!bound) throw new Error("Sender conversation belongs to a different contact.");
 

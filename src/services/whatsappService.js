@@ -1,4 +1,5 @@
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { whatsappRecipientFields } = require("../utils/whatsappCustomerIdentity");
 const { recordOutboundPayload, recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 const GRAPH_API_VERSION = "v26.0";
@@ -188,7 +189,7 @@ async function sendMessageUnchecked(to, text, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "text",
           text: { body: text },
           ...replyContext(options),
@@ -241,7 +242,7 @@ async function sendInteractiveButtonsUnchecked(to, body, buttons) {
         method:"POST",
         headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
         body:JSON.stringify({
-          messaging_product:"whatsapp",to,type:"interactive",
+          messaging_product:"whatsapp",...whatsappRecipientFields(to),type:"interactive",
           interactive:{
             type:"button",
             body:{text:body},
@@ -282,7 +283,7 @@ async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "image",
           image: caption ? { link: imageUrl, caption } : { link: imageUrl },
           ...replyContext(options),
@@ -391,7 +392,7 @@ async function sendImageByIdUnchecked(to, mediaId, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "image",
           image: caption ? { id: mediaId, caption } : { id: mediaId },
           ...replyContext(options),
@@ -433,7 +434,7 @@ async function sendVideoByIdUnchecked(to, mediaId, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "video",
           video: caption ? { id: mediaId, caption } : { id: mediaId },
           ...replyContext(options),
@@ -480,7 +481,7 @@ async function sendDocumentByIdUnchecked(to, mediaId, filename, caption, options
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "document",
           document,
           ...replyContext(options),
@@ -522,7 +523,7 @@ async function sendStickerByIdUnchecked(to, mediaId, options = {}) {
         },
         body: JSON.stringify({
         messaging_product: "whatsapp",
-        to,
+        ...whatsappRecipientFields(to),
         type: "sticker",
         sticker: { id: mediaId },
         ...replyContext(options),
@@ -575,7 +576,7 @@ async function sendVoiceByIdUnchecked(to, mediaId, options = {}) {
         },
         body: JSON.stringify({
         messaging_product: "whatsapp",
-        to,
+        ...whatsappRecipientFields(to),
         type: "audio",
         audio: { id: mediaId, voice: true },
         ...replyContext(options),
@@ -696,7 +697,15 @@ function parseIncomingMessages(body) {
         const contacts = value?.contacts || [];
 
         for (const message of value?.messages || []) {
-          if (!message?.id || !message?.from) continue;
+          // Some username-mode callbacks provide the scoped user_id without
+          // an exposed phone address. Never use a display username here.
+          if (!message?.id) continue;
+          if (!message.from && !message.from_user_id && !message.user_id) {
+            // The signed Meta payload is visible to this receiver, but there
+            // is no safe way to address the customer. Make this diagnosable.
+            console.warn("[WhatsApp inbound parser] missing_customer_identity");
+            continue;
+          }
 
           // WhatsApp reactions are message metadata, not conversational turns.
           // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
@@ -704,8 +713,18 @@ function parseIncomingMessages(body) {
           // follow-up/unread/attention state.
           if (message.type === "reaction") continue;
 
-          const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
+          // Meta's direct Cloud API supplies from_user_id on messages, and
+          // user_id / profile.username on the matching contacts[] item.
+          // Preserve the sender's phone if one is present; never use a
+          // display username as a routable identifier.
+          const fromUserId = message.from_user_id || message.user_id || null;
+          const whatsappContact = contacts.find((contact) =>
+            (message.from && contact.wa_id === message.from) ||
+            (fromUserId && contact.user_id === fromUserId));
           const profileName = whatsappContact?.profile?.name?.trim() || null;
+          const customerUserId = fromUserId || whatsappContact?.user_id || null;
+          const customerUsername = whatsappContact?.profile?.username ||
+            whatsappContact?.username || message.username || null;
           const attribution = message.referral
             ? normalizeWhatsAppReferral(message.referral)
             : null;
@@ -720,8 +739,10 @@ function parseIncomingMessages(body) {
           );
           const base = {
             id: message.id,
-            from: message.from,
+            from: message.from || customerUserId,
             profileName,
+            ...(typeof customerUserId === "string" ? { customerUserId } : {}),
+            ...(typeof customerUsername === "string" ? { customerUsername } : {}),
             ...senderMetadataForChange(entry, change),
             ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
@@ -840,11 +861,16 @@ function parseBusinessAppEchoes(body) {
         if (change?.field !== "smb_message_echoes") continue;
 
         for (const message of change?.value?.message_echoes || []) {
-          if (!message?.id || !message?.to) continue;
+          // Meta emits to_user_id for username-only Business App echoes.
+          // An echo can have no phone-number "to" at all.
+          const toUserId = message.to_user_id || null;
+          const recipient = message.to || toUserId;
+          if (!message?.id || !recipient) continue;
           const base = {
             id: message.id,
             from: message.from || null,
-            to: message.to,
+            to: recipient,
+            ...(typeof toUserId === "string" ? { toUserId } : {}),
             ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
             type: message.type || "unknown",

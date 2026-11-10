@@ -4,6 +4,7 @@
 // imports this file yet. An "allowed" policy result is never permission to
 // call Graph API: billing and receipt reconciliation are a separate gate.
 const { pool } = require("../db/db");
+const { normalizeCustomerAddress } = require("../utils/whatsappCustomerIdentity");
 
 const POLICY_MARGIN_MS = 2 * 60 * 1000;
 const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -58,7 +59,7 @@ async function secondaryPolicySnapshot(contact, { database = pool, env = process
   const id = Number(contact?.id);
   if (!Number.isSafeInteger(id) || id <= 0 ||
       contact?.channel !== "whatsapp" ||
-      !/^[0-9]{8,15}$/.test(clean(contact.whatsapp_number)) ||
+      normalizeCustomerAddress(clean(contact.whatsapp_number)) !== clean(contact.whatsapp_number) ||
       !numeric(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) ||
       !numeric(env.WHATSAPP_SECONDARY_WABA_ID) ||
       !numeric(env.WHATSAPP_PHONE_NUMBER_ID) ||
