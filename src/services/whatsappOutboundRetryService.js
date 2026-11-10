@@ -1,4 +1,5 @@
 const retryRepo = require("../db/whatsappOutboundRetryRepo");
+const { verifiedRecipientForContact } = require("../utils/whatsappCustomerIdentity");
 const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
@@ -374,7 +375,7 @@ function compatibleSender({
         };
       }
     }
-    return sendMessage(contact.whatsapp_number, text);
+    return sendMessage(verifiedRecipientForContact(contact), text);
   };
 }
 
@@ -490,7 +491,10 @@ async function runWhatsappOutboundRetryQueue({
       const contactForSend = {
         id: row.contact_id,
         channel: "whatsapp",
-        whatsapp_number: String(row.current_recipient || row.recipient || "").trim(),
+        whatsapp_number: String(row.current_recipient || "").trim(),
+        whatsapp_last_customer_address: row.current_last_address || null,
+        whatsapp_user_id: row.current_user_id || null,
+        whatsapp_sender_id: row.current_sender_id || null,
         mode: "ai",
       };
 
@@ -500,7 +504,12 @@ async function runWhatsappOutboundRetryQueue({
           repository,
           isAutomationEnabled
         );
-        if (!latest) return false;
+        if (!latest ||
+            verifiedRecipientForContact({
+              whatsapp_number: latest.current_recipient,
+              whatsapp_last_customer_address: latest.current_last_address,
+              whatsapp_user_id: latest.current_user_id,
+            }) !== verifiedRecipientForContact(contactForSend)) return false;
 
         const started = typeof repository.markSendStarted === "function"
           ? await repository.markSendStarted(row.id, leaseToken)
