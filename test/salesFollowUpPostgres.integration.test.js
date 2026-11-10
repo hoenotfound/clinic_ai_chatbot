@@ -68,6 +68,10 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     const phoneHidden=(await pending())[0];
     assert.equal(phoneHidden.whatsappUrl,null);
     assert.equal(phoneHidden.inboxUrl,"/inbox?contact="+contactId);
+    await client.query("UPDATE contacts SET whatsapp_last_customer_address='60129876543' WHERE id=$1",[contactId]);
+    const updatedPhone=(await pending())[0];
+    assert.equal(updatedPhone.whatsappUrl,"https://wa.me/60129876543");
+    assert.equal(updatedPhone.whatsappNumber,"60129876543");
     await client.query("UPDATE contacts SET whatsapp_last_customer_address=NULL WHERE id=$1",[contactId]);
     // Old WhatsApp Business App history is never eligible for sales outreach.
     await client.query(
