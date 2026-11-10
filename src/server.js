@@ -98,6 +98,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, readableHistoryForRecoverySelection,
+  getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
 const {
   deliveryErrorForSend,
@@ -1138,16 +1139,22 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
-    // Only the single, provider-verified 131060 placeholder is neutral for
-    // first-contact presentation. Do not change the stored conversation or
-    // disregard any ordinary earlier customer/staff message.
-    let verifiedFirstReadableAd = secondaryAiConversation &&
-      history.length === 2 &&
+    // A genuine 131060 first inbound can be followed by an accepted menu
+    // before Meta delivers a readable, verified CTWA referral. Do not use
+    // history.length === 2 as the proof boundary: the durable ad proof
+    // verifies both provider payloads and excludes unrelated intervening
+    // staff/customer messages. A button tap is not ad attribution.
+    const hasFirstUnreadablePlaceholder = secondaryAiConversation &&
+      history.length >= 2 && history[0]?.role === "user" &&
+      /^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u
+        .test(String(history[0]?.content || ""));
+    const isVerifiedAdInbound = hasFirstUnreadablePlaceholder &&
+      incoming?.attribution?.source === "meta_ads" &&
+      String(incoming.attribution?.sourceType || "").toLowerCase() === "ad";
+    let verifiedFirstReadableAd = isVerifiedAdInbound &&
       preclaimed?.verifiedUnavailableFirstAd === true;
-    if (!verifiedFirstReadableAd && secondaryAiConversation &&
-        history.length === 2 &&
-        preclaimed?.verifiedUnavailableFirstAd == null &&
-        incoming?.attribution?.source === "meta_ads") {
+    if (!verifiedFirstReadableAd && isVerifiedAdInbound &&
+        preclaimed?.verifiedUnavailableFirstAd == null) {
       try {
         verifiedFirstReadableAd = Boolean(await firstAdProofRepo.getVerifiedFirstAdMessage(
           contact.id,savedInbound.id
@@ -1157,9 +1164,18 @@ async function processIncomingMessage(
           err?.message);
       }
     }
-    const readableRecoveryHistory = secondaryAiConversation
-      ? readableHistoryForRecoverySelection(history, incoming)
-      : history;
+    // An accepted, sender-bound recovery menu permits ONLY removing the
+    // original unreadable placeholder from the model's prompt. The customer
+    // may choose a button or type a treatment, and later turns still work.
+    // Never change staff-visible history or infer a missing advertisement.
+    const recoveryPromptProof = hasFirstUnreadablePlaceholder &&
+      history.length >= 3
+      ? await getVerifiedRecoveryHistoryProof({
+          contactId: contact.id, inboundMessageId: savedInbound.id,
+        }) : null;
+    const readableRecoveryHistory = readableHistoryForRecoverySelection(
+      history, recoveryPromptProof
+    );
     const mediaLanguage = detectReplyConversationLanguage(
       readableRecoveryHistory
         .slice()
