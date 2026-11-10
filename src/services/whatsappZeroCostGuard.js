@@ -288,10 +288,10 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
   const recipient=normalizeCustomerAddress(to);
   const ownerPredicate=isBsuid(recipient)
     ? "c.whatsapp_user_id=$2"
-    : "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2";
+    : phoneRecipientPredicate("c","$2");
   const priorOwnerPredicate=isBsuid(recipient)
     ? "owner.whatsapp_user_id=$2"
-    : "regexp_replace(owner.whatsapp_number,'[^0-9]','','g')=$2";
+    : phoneRecipientPredicate("owner","$2");
   const stamp=new Date(now);
   if (!Number.isSafeInteger(messageId) || messageId<=0 || !recipient ||
       !Number.isFinite(stamp.getTime())) return null;
@@ -417,17 +417,31 @@ function blockedResult(check) {
 // Keep the existing indexed phone-number SQL unchanged. Only a verified
 // BSUID uses the new identity column, so old isolated test schemas and
 // legacy deployments do not require that column for phone-number traffic.
+function phoneRecipientPredicate(alias, parameter) {
+  // The signed last address can contain a new phone after Meta rotates a
+  // customer's number. Require the full phone and a currently verified
+  // contact; never compare digits from opaque BSUID values.
+  return "(" +
+    "regexp_replace(" + alias + ".whatsapp_number,'[^0-9]','','g')=" + parameter +
+    " OR (" + alias + ".whatsapp_last_customer_address=" + parameter +
+    " AND " + alias + ".whatsapp_last_customer_address ~ '^[0-9]{8,15}$'))";
+}
+
 const recipientSqlCache = new Map();
-function sqlForCustomerAddress(sql, recipient) {
-  if (!isBsuid(recipient)) return sql;
-  if (recipientSqlCache.has(sql)) return recipientSqlCache.get(sql);
-  const withBsuid = sql
-    .replaceAll("regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$3::text",
-      "c.whatsapp_user_id=$3::text")
-    .replaceAll("regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2::text",
-      "c.whatsapp_user_id=$2::text");
-  recipientSqlCache.set(sql, withBsuid);
-  return withBsuid;
+function sqlForCustomerAddress(sql, recipient, { verifiedPhoneAlias = false } = {}) {
+  if (!isBsuid(recipient) && !verifiedPhoneAlias) return sql;
+  const cacheKey=(isBsuid(recipient)?"bsuid:":"verified_phone:")+sql;
+  if (recipientSqlCache.has(cacheKey)) return recipientSqlCache.get(cacheKey);
+  let adjusted=sql;
+  for (const index of [3,2]) {
+    const original="regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$"+index+"::text";
+    const replacement=isBsuid(recipient)
+      ? "c.whatsapp_user_id=$"+index+"::text"
+      : phoneRecipientPredicate("c","$"+index+"::text");
+    adjusted=adjusted.replaceAll(original,replacement);
+  }
+  recipientSqlCache.set(cacheKey,adjusted);
+  return adjusted;
 }
 
 // Use one immutable WhatsApp contact as the billing authority in sender-aware mode.
@@ -493,7 +507,7 @@ async function primaryBillingContactId(to, {
     "WHERE c.channel='whatsapp' " +
     "AND " + (isBsuid(customer)
       ? "c.whatsapp_user_id=$1 "
-      : "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$1 ") +
+      : phoneRecipientPredicate("c","$1")+" ") +
     "AND (c.whatsapp_sender_id IS NULL OR " +
     "(sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3 AND sa.state='active')) " +
     "LIMIT 2",
@@ -578,9 +592,10 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     return deny("zero_cost_configuration_invalid","Strict WhatsApp billing preflight configuration is invalid.");
   }
   try {
-    const scopedId = senderAwareBillingReads()
+    const requireScoped=senderAwareBillingReads() || isBsuid(recipient) || contactId != null;
+    const scopedId = requireScoped
       ? await primaryBillingContactId(to, { database, expectedContactId: contactId }) : null;
-    if (senderAwareBillingReads() && !scopedId)
+    if (requireScoped && !scopedId)
       return deny("zero_cost_sender_unverified",
         "Billing eligibility could not be tied to the verified primary WhatsApp contact.");
     const gate=await database.query(
@@ -620,8 +635,9 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     const windowArgs=[ceiling,stamp.toISOString(),recipient,null,null,
       kind === "freeform" ? "freeform" : "template"];
     if (scopedId) windowArgs.push(scopedId);
-    const eligible=await database.query(sqlForCustomerAddress(scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL,recipient),
-      windowArgs);
+    const eligible=await database.query(sqlForCustomerAddress(
+      scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL,
+      recipient,{verifiedPhoneAlias:Boolean(scopedId)}),windowArgs);
     if (eligible.rows?.[0]?.eligible!==true)
       return deny("zero_cost_unverified_free_entry",kind === "freeform"
         ? "No active, fully proven free-entry free-form window."
@@ -714,7 +730,8 @@ async function inspectFreeTemplateWindow(to, {
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
   let scopedId=null;
-  if(senderAwareBillingReads() || isBsuid(normalizeCustomerAddress(to))) {
+  if(senderAwareBillingReads() || isBsuid(normalizeCustomerAddress(to)) ||
+      context.contactId != null) {
     try {
       scopedId=await primaryBillingContactId(to,{
         database, expectedContactId:context.contactId,
@@ -756,7 +773,9 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
 
   const exactOwnerPredicate = isBsuid(recipient)
     ? "c.whatsapp_user_id=$2"
-    : "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2";
+    : scopedId
+      ? phoneRecipientPredicate("c","$2")
+      : "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2";
   let client;
   let transaction = false;
   let rejected = null;
@@ -864,7 +883,8 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
           context.messageKind === "template" ? "template" : "freeform"];
       if(scopedId) windowArgs.push(scopedId);
       const eligible=(await client.query(
-        sqlForCustomerAddress(scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL,recipient), windowArgs)).rows[0];
+        sqlForCustomerAddress(scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL,
+          recipient,{verifiedPhoneAlias:Boolean(scopedId)}), windowArgs)).rows[0];
       if (eligible?.eligible!==true) {
         // The ONLY exception to preexisting FEP pricing proof: one first
         // free-form text reply that opens the entry point for a verified ad.
@@ -876,7 +896,8 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
           const firstArgs=[clock.toISOString(),recipient,currentMessageId];
           if(scopedId) firstArgs.push(scopedId);
           const first=(await client.query(
-            sqlForCustomerAddress(scopedId ? SCOPED_CTWA_FIRST_REPLY_SQL : CTWA_FIRST_REPLY_SQL,recipient),
+            sqlForCustomerAddress(scopedId ? SCOPED_CTWA_FIRST_REPLY_SQL : CTWA_FIRST_REPLY_SQL,
+              recipient,{verifiedPhoneAlias:Boolean(scopedId)}),
             firstArgs)).rows[0];
           initialEligible=first?.eligible_first_reply===true;
         }
