@@ -107,7 +107,13 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
 
   const routing = [];
   const deliveryIssues = [];
+  const identityRotations = [];
   for (const item of quarantined) {
+    if (typeof item.field === "string" &&
+        item.field.startsWith("bsuid_identity_rotation_")) {
+      identityRotations.push(item);
+      continue;
+    }
     if (isVerifiedSecondaryStatus(item, env)) {
       if (item.expectedSecondaryStatus === true &&
           item.secondaryStatusRequiresReview !== true) {
@@ -122,6 +128,11 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
     routing.push(item);
   }
 
+  if (identityRotations.length) {
+    logger.warn("[WhatsApp BSUID rotation] " + identityRotations.length +
+      " identity change(s) require manual review; audit fingerprints=" +
+      identityRotations.map(item => item.fingerprint.slice(0,12)).join(","));
+  }
   if (routing.length) {
     logger.warn("[WhatsApp sender quarantine] " + routing.length +
       " routing event(s) isolated; reasons=" +
@@ -134,6 +145,16 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
     logger.warn("[WhatsApp secondary delivery status] " + deliveryIssues.length +
       " failed/unrecognized receipt event(s) retained for review; audit refs=" + refs.join(","));
   }
+
+  const identitySent = await postNotice(identityRotations, {
+    category: "rotation", now, env, post, logger,
+    message: (events) =>
+      "⚠️ WhatsApp customer identity change needs review\n" +
+      events.length + " verified provider BSUID rotation event(s) could not be safely applied.\n" +
+      "Audit refs: " + events.map(item => item.fingerprint.slice(0,12)).join(", ") + "\n" +
+      "Review the sender-specific Inbox and the quarantined-event audit. " +
+      "Do not merge contacts or resend messages automatically.",
+  });
 
   // Genuine routing events are deduplicated by fingerprint, NOT by reason:
   // independent callback mistakes can both trigger within ten minutes.
@@ -158,7 +179,7 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
       "Review Render's secondary delivery-status logs and the quarantine audit. " +
       "This is not evidence of a missing incoming customer message. Do not resend automatically.",
   });
-  return routingSent || deliverySent;
+  return identitySent || routingSent || deliverySent;
 }
 
 module.exports = { notifyWhatsAppSenderQuarantine };
