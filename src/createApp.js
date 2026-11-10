@@ -4,6 +4,7 @@ const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDi
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const { inboundIdentityKind } = require("./utils/whatsappCustomerIdentity");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
@@ -389,13 +390,30 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
+              // The event is HMAC-verified and durably saved before this log.
+              // Record only an identity TYPE, never a phone, BSUID, username,
+              // ad reference, original message or raw webhook.
+              if (secondary && inboundIdentityKind(incoming.from) === "bsuid" && durableClaim) {
+                console.info("[Secondary WhatsApp inbound identity] bsuid_claim_accepted");
+              }
               // Claim independently. An unrelated secondary DB error cannot
               // erase the successful Neutro claim; prepare/reply starts only
               // AFTER the webhook responds, including on a partial 503 retry.
               return { queueKey, durableClaim };
             } catch (error) {
               durabilityFailures += 1;
-              console.error("Failed to durably claim WhatsApp inbound message:", error);
+              if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+                  incoming.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) {
+                const msg = String(error?.message || "");
+                const category = /identity|BSUID|customer address|customer user ID/i.test(msg)
+                  ? "identity_validation" :
+                  error?.code === "SECONDARY_WEBHOOK_TIMEOUT" ? "claim_timeout" :
+                  "claim_failed";
+                console.error("[Secondary WhatsApp inbound claim] " + category +
+                  " kind=" + inboundIdentityKind(incoming.from));
+              } else {
+                console.error("Failed to durably claim WhatsApp inbound message:", error);
+              }
               return null;
             }
           })
