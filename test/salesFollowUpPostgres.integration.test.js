@@ -34,6 +34,10 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     for (const file of files) {
       await client.query(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     }
+    // PR #570 extends contacts with a nullable signed provider address.
+    // This fixture intentionally uses a short migration list, so add its
+    // field explicitly without running unrelated sender infrastructure.
+    await client.query("ALTER TABLE contacts ADD COLUMN whatsapp_last_customer_address TEXT");
     // This isolated fixture predates WhatsApp coexistence. The production
     // history table is created by migration 099; supply its lookup shape here.
     await client.query(`
@@ -60,6 +64,11 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
       return listPending({ username, queryable: client, now: NOW });
     }
     assert.equal((await pending()).length, 1);
+    await client.query("UPDATE contacts SET whatsapp_last_customer_address='MY.Signed123' WHERE id=$1",[contactId]);
+    const phoneHidden=(await pending())[0];
+    assert.equal(phoneHidden.whatsappUrl,null);
+    assert.equal(phoneHidden.inboxUrl,"/inbox?contact="+contactId);
+    await client.query("UPDATE contacts SET whatsapp_last_customer_address=NULL WHERE id=$1",[contactId]);
     // Old WhatsApp Business App history is never eligible for sales outreach.
     await client.query(
       "INSERT INTO whatsapp_sender_coexistence_history_messages(message_id) VALUES ($1)",
