@@ -20,6 +20,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS contacts_sender_whatsapp_user_id_unique
   ON contacts(whatsapp_sender_id, whatsapp_user_id)
   WHERE whatsapp_sender_id IS NOT NULL AND whatsapp_user_id IS NOT NULL;
 
+-- Primary sender lookup can be sender-scoped or a legacy untagged contact.
+-- Keep this small partial index for direct BSUID lookup without a full scan.
+CREATE INDEX IF NOT EXISTS contacts_whatsapp_user_id_lookup
+  ON contacts(whatsapp_user_id)
+  WHERE whatsapp_user_id IS NOT NULL;
+
 ALTER TABLE whatsapp_sender_conversations
   DROP CONSTRAINT IF EXISTS whatsapp_sender_conversations_customer_wa_id_check;
 ALTER TABLE whatsapp_sender_conversations
