@@ -142,7 +142,8 @@ test("a valid signed status has business identity and no implicit send permissio
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/mc\.conversation_id=sc\.id/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\.wamid=\$1/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sa\.meta_account_id=\$5/);
-  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=\$2/);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=c\.whatsapp_number/);
+  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/c\.whatsapp_user_id=\$2/);
 });
 
 test("mixed signed webhook selects only Ariel statuses without exposing Neutro callbacks", () => {
@@ -583,4 +584,26 @@ test("unsupported statuses cannot bypass HMAC, sender scope, malformed-input or 
   },{env,database:{connect:async()=>{throw Error("temporarily offline");}}});
   assert.equal(unavailable.accepted,false);
   assert.equal(unavailable.code,"secondary_receipt_database_unavailable");
+});
+
+test("signed BSUID receipts remain sender-bound and are verified only by exact ID",()=>{
+  const id="MY."+"Ab12".repeat(24);
+  assert.equal(receipt.normalizeStatusRecipient(id).verified,true);
+  assert.equal(receipt.normalizeStatusRecipient(id).recipient,id);
+  const event=receipt.normalizedSignedEvents(signed(body([status({
+    recipient_id:id,
+  })])).rawBody,env);
+  assert.equal(event.length,1);
+  assert.equal(event[0].recipient,id);
+  assert.equal(event[0].recipientVerified,true);
+  const missingPhone=status({recipient_id:undefined,user_id:id});
+  delete missingPhone.recipient_id;
+  const fallback=receipt.normalizedSignedEvents(
+    signed(body([missingPhone])).rawBody,env);
+  assert.equal(fallback[0].recipient,id);
+  assert.equal(fallback[0].recipientVerified,true);
+  for(const bad of ["@Peggyteoh","MY.a-b","my.abcdef","XX."+"a".repeat(129)]) {
+    const parsed=receipt.normalizeStatusRecipient(bad);
+    assert.equal(parsed?.verified ?? false,false);
+  }
 });
