@@ -323,7 +323,7 @@ test("queued Before & After results do not become obsolete solely due to a new q
   assert.match(source,/newer\.sent_by_username IS NOT NULL/);
   assert.match(source,/resultSupersessionSql/);
   assert.match(source,/RESULT_CONVERSATION_CHANGED_SQL/);
-  assert.match(source,/aiReplyCancellation\.hasPendingEcho\(cancellationKey\)/);
+  assert.match(source,/aiReplyCancellation\.hasPendingEcho\(aiReplyCancellation\.keyForContact\(contact\)\)/);
   assert.match(source,/aiReplyCancellation\.safeToSend\(cancellationKey,cancellationEpoch\)/);
   assert.match(source,/whatsappPolicy\.checkFreeformAllowed/);
 });
@@ -349,16 +349,18 @@ test("staff cancellation during primary image upload still blocks provider send"
   mock(t,zeroCost,"preflightFreeform",async()=>({allowed:true}));
   mock(t,conversationStore,"appendMessageForContact",async()=>({id:991}));
   mock(t,messagesRepo,"deleteUnsentAssistantMessage",async()=>({id:991}));
-  let attempts=0;
+  let providerCalls=0;
   await queue.runOne({
     db,strictEnabled:()=>true,eligibility:async()=>contact,
     sender:async(_contact,_url,_caption,options)=>{
       aiReplyCancellation.cancelForContact(contact);
-      assert.equal(await options.preSendCheck(),false,
+      const allowed=await options.preSendCheck();
+      if(allowed)providerCalls++;
+      assert.equal(allowed,false,
         "staff cancellation epoch must block result media just before Meta");
       return{success:false,cancelled:true};
     },
   });
-  assert.equal(attempts,0,"there must be no provider attempt after staff cancellation");
+  assert.equal(providerCalls,0,"there must be no provider attempt after staff cancellation");
   assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3")&&x.params?.includes("skipped")));
 });
