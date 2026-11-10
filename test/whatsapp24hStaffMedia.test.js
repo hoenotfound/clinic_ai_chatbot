@@ -74,7 +74,7 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
     await db.query("SET search_path TO "+schema);
     await db.query(`
       CREATE TABLE contacts(
-        id INTEGER PRIMARY KEY,channel TEXT,whatsapp_number TEXT);
+        id INTEGER PRIMARY KEY,channel TEXT,whatsapp_number TEXT,whatsapp_last_customer_address TEXT);
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY,contact_id INTEGER REFERENCES contacts(id),
         role TEXT,created_at TIMESTAMPTZ,whatsapp_message_id TEXT,
@@ -94,7 +94,7 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
         wamid TEXT PRIMARY KEY,pricing_type TEXT,billable BOOLEAN,
         delivery_status TEXT,updated_at TIMESTAMPTZ DEFAULT now()
       );
-      INSERT INTO contacts VALUES
+      INSERT INTO contacts (id,channel,whatsapp_number) VALUES
         (1,'whatsapp','60121234567'),(2,'facebook','60129999999');
       INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id)
         VALUES(1,1,'user',now()-interval '10 minutes','wamid.real.inbound');
