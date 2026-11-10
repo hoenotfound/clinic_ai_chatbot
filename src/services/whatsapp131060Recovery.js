@@ -41,20 +41,39 @@ function verifiedAdTreatment(incoming, config = {}) {
   return typeof treatment === "string" && treatment.length <= 80 ? treatment : null;
 }
 
+// Three WhatsApp reply buttons is the provider maximum. Another treatment,
+// including 脉冲波, remains selectable by typing its name. Button IDs are
+// fixed, independent of ad metadata, and each title is a configured treatment.
+// A button tap is first-party CUSTOMER interest, never proof of ad attribution.
+const RECOVERY_TREATMENTS = Object.freeze([
+  Object.freeze({id:"neutro_131060_pelvic",title:"骨盆调理"}),
+  Object.freeze({id:"neutro_131060_3d",title:"3D 小颜术"}),
+  Object.freeze({id:"neutro_131060_9d",title:"9D 逆龄"}),
+]);
+
+function recoveryTreatmentButtons() {
+  return RECOVERY_TREATMENTS.map(button => ({...button}));
+}
+
+function validRecoveryTreatmentButtons(buttons) {
+  return Array.isArray(buttons) &&
+    buttons.length === RECOVERY_TREATMENTS.length &&
+    buttons.every((button,index) =>
+      button?.id === RECOVERY_TREATMENTS[index].id &&
+      button?.title === RECOVERY_TREATMENTS[index].title);
+}
+
 function build131060RecoveryReply(incoming, config = {}) {
-  // For an unreadable first message we cannot know the customer's language,
-  // question, or treatment. This Coexistence sender defaults to a short,
-  // natural Chinese clinic greeting rather than an error notice or a
-  // three-language script that would expose the integration problem.
-  // Once a readable customer message arrives, ordinary language detection,
-  // treatment routing, and genuine ad attribution resume.
+  // A natural clinic receptionist prompt. Never expose the unsupported Meta
+  // message, fabricate a patient's treatment or claim an unknown ad source.
+  // We cannot infer language from an unreadable first message, so use the
+  // Coexistence number's default Chinese greeting until a readable reply.
   const treatment = verifiedAdTreatment(incoming, config);
-  return treatment
-    ? "Hi～欢迎来到 Neutro Sense 😊\n\n" +
-      "想了解" + treatment + "对吗～\n\n" +
-      "你比较想了解疗程效果、过程，还是预约体验呢？"
-    : "Hi～欢迎来到 Neutro Sense 😊\n\n" +
-      "想了解哪方面的护理呢？可以告诉我你目前比较在意的问题，我帮你看看～";
+  return "Hi～欢迎来到 Neutro Sense 😊\n\n" +
+    (treatment
+      ? "想了解" + treatment + "对吗？也可以选择其他护理～"
+      : "想了解哪方面的护理呢？") +
+    "\n\n可以点下面的选项，其他护理（例如脉冲波）也可以直接告诉我们～";
 }
 
 async function canSend131060Recovery({
@@ -120,4 +139,5 @@ async function canSend131060Recovery({
 module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
+  recoveryTreatmentButtons, validRecoveryTreatmentButtons,
 };
