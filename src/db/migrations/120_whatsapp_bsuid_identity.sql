@@ -21,7 +21,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS contacts_sender_whatsapp_user_id_unique
   WHERE whatsapp_sender_id IS NOT NULL AND whatsapp_user_id IS NOT NULL;
 
 ALTER TABLE whatsapp_sender_conversations
-  DROP CONSTRAINT IF EXISTS whatsapp_sender_conversation_customer_wa_id_check;
+  DROP CONSTRAINT IF EXISTS whatsapp_sender_conversations_customer_wa_id_check;
 ALTER TABLE whatsapp_sender_conversations
   ADD CONSTRAINT whatsapp_sender_conversation_customer_wa_id_check CHECK (
     customer_wa_id ~ '^([0-9]{8,15}|[A-Z]{2}[.][A-Za-z0-9]{1,128})$'
