@@ -1,4 +1,5 @@
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { whatsappRecipientFields } = require("../utils/whatsappCustomerIdentity");
 const { recordOutboundPayload, recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 const GRAPH_API_VERSION = "v26.0";
@@ -188,7 +189,7 @@ async function sendMessageUnchecked(to, text, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "text",
           text: { body: text },
           ...replyContext(options),
@@ -241,7 +242,7 @@ async function sendInteractiveButtonsUnchecked(to, body, buttons) {
         method:"POST",
         headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
         body:JSON.stringify({
-          messaging_product:"whatsapp",to,type:"interactive",
+          messaging_product:"whatsapp",...whatsappRecipientFields(to),type:"interactive",
           interactive:{
             type:"button",
             body:{text:body},
@@ -282,7 +283,7 @@ async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "image",
           image: caption ? { link: imageUrl, caption } : { link: imageUrl },
           ...replyContext(options),
@@ -391,7 +392,7 @@ async function sendImageByIdUnchecked(to, mediaId, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "image",
           image: caption ? { id: mediaId, caption } : { id: mediaId },
           ...replyContext(options),
@@ -433,7 +434,7 @@ async function sendVideoByIdUnchecked(to, mediaId, caption, options = {}) {
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "video",
           video: caption ? { id: mediaId, caption } : { id: mediaId },
           ...replyContext(options),
@@ -480,7 +481,7 @@ async function sendDocumentByIdUnchecked(to, mediaId, filename, caption, options
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to,
+          ...whatsappRecipientFields(to),
           type: "document",
           document,
           ...replyContext(options),
@@ -522,7 +523,7 @@ async function sendStickerByIdUnchecked(to, mediaId, options = {}) {
         },
         body: JSON.stringify({
         messaging_product: "whatsapp",
-        to,
+        ...whatsappRecipientFields(to),
         type: "sticker",
         sticker: { id: mediaId },
         ...replyContext(options),
@@ -575,7 +576,7 @@ async function sendVoiceByIdUnchecked(to, mediaId, options = {}) {
         },
         body: JSON.stringify({
         messaging_product: "whatsapp",
-        to,
+        ...whatsappRecipientFields(to),
         type: "audio",
         audio: { id: mediaId, voice: true },
         ...replyContext(options),
