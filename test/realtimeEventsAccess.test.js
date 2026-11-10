@@ -88,7 +88,7 @@ test("chat-only ad notifications reveal no contact ids to restricted SSE users",
     realtimeEvents.publish("inbox_latest_ad_changed", { contactId: 999 });
     assert.equal(restricted.writes.length, 1);
     assert.match(restricted.writes[0], /event: inbox_latest_ad_changed/);
-    assert.match(restricted.writes[0], /data: \\{\\}/);
+    assert.ok(restricted.writes[0].includes("data: {}"));
     assert.doesNotMatch(restricted.writes[0], /999/);
     assert.equal(unrestricted.writes.length, 1);
     assert.match(unrestricted.writes[0], /event: inbox_latest_ad_changed/);
