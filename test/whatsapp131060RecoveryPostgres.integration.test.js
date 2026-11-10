@@ -3,7 +3,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client } = require("pg");
 const { runMigrations } = require("../src/db/migrationRunner");
-const { canSend131060Recovery } = require("../src/services/whatsapp131060Recovery");
+const {
+  canSend131060Recovery, build131060RecoveryReply,
+  getVerifiedRecoveryHistoryProof, readableHistoryForRecoverySelection,
+} = require("../src/services/whatsapp131060Recovery");
 const {
   recordVerifiedFirstAd, getVerifiedFirstAdMessage,
 } = require("../src/db/whatsapp131060FirstAdRepo");
@@ -75,12 +78,16 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
     assert.equal(await eligible(),true);
     const recoveryMessage=(await db.query(
       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) " +
-      "VALUES($1,'assistant','Please resend','wamid.recovery-out') RETURNING id",
-      [contact]
+      "VALUES($1,'assistant',$2,'wamid.recovery-out') RETURNING id",
+      [contact,build131060RecoveryReply({unsupportedType:"unsupported"})]
     )).rows[0].id;
     await db.query(
-      "INSERT INTO inbound_outbound_attempts(processing_job_id,inbound_message_id,assistant_message_id,contact_id,origin,outcome) " +
-      "VALUES($1,$2,$3,$4,'system_fallback','accepted')",
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [recoveryMessage,conv]
+    );
+    await db.query(
+      "INSERT INTO inbound_outbound_attempts(processing_job_id,inbound_message_id,assistant_message_id,contact_id,origin,outcome,provider_message_id) " +
+      "VALUES($1,$2,$3,$4,'system_fallback','accepted','wamid.recovery-out')",
       [job,initial,recoveryMessage,contact]
     );
     assert.equal(await eligible(),false,"a reserved outbound must be explicitly excluded at last send check");
@@ -106,6 +113,27 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
       "VALUES($1,$2,$3,'ad')",[ad,contact,adId]
     );
     assert.equal(await eligible(),false,"readable customer reply stops duplicate recovery");
+    const cleanupProof=await getVerifiedRecoveryHistoryProof({
+      contactId:contact,inboundMessageId:ad,database:db,
+    });
+    assert.equal(Number(cleanupProof?.unavailable_message_id),Number(initial));
+    assert.equal(Number(cleanupProof?.recovery_message_id),Number(recoveryMessage));
+    const savedHistory=[
+      {role:"user",content:"📎 [Customer sent a WhatsApp message that could not be displayed]"},
+      {role:"assistant",content:build131060RecoveryReply({unsupportedType:"unsupported"})},
+      {role:"user",content:"Hi, I would like to know about this"},
+    ];
+    assert.deepEqual(readableHistoryForRecoverySelection(savedHistory,cleanupProof),
+      savedHistory.slice(1),"the model sees only the menu and readable customer enquiry");
+    await db.query(
+      "UPDATE inbound_outbound_attempts SET outcome='ambiguous' WHERE processing_job_id=$1",[job]
+    );
+    assert.equal(await getVerifiedRecoveryHistoryProof({
+      contactId:contact,inboundMessageId:ad,database:db,
+    }),null,"an unconfirmed menu must not change the model's history");
+    await db.query(
+      "UPDATE inbound_outbound_attempts SET outcome='accepted' WHERE processing_job_id=$1",[job]
+    );
     const proof=await recordVerifiedFirstAd({contactId:contact,inboundMessageId:ad,adId},db);
     assert.equal(Number(proof.first_ad_message_id),Number(ad),
       "a single tracked system fallback must not erase a provider-verified first ad");
