@@ -97,7 +97,7 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentButtons,
+  recoveryTreatmentButtons, readableHistoryForRecoverySelection,
 } = require("./services/whatsapp131060Recovery");
 const {
   deliveryErrorForSend,
@@ -1157,8 +1157,11 @@ async function processIncomingMessage(
           err?.message);
       }
     }
+    const readableRecoveryHistory = secondaryAiConversation
+      ? readableHistoryForRecoverySelection(history, incoming)
+      : history;
     const mediaLanguage = detectReplyConversationLanguage(
-      history
+      readableRecoveryHistory
         .slice()
         .reverse()
         .filter((message) => message?.role === "user")
@@ -1169,12 +1172,13 @@ async function processIncomingMessage(
     // current-turn context is narrowed to the separately asked service question
     // so it cannot interpret the marketing refusal as a request for a deal.
     const replyHistory = marketingStopQuestion
-      ? history.map((entry, index) => index === history.length - 1 && entry?.role === "user"
-          ? { ...entry, content: marketingStopQuestion } : entry)
-      : history;
+      ? readableRecoveryHistory.map((entry, index) =>
+          index === readableRecoveryHistory.length - 1 && entry?.role === "user"
+            ? { ...entry, content: marketingStopQuestion } : entry)
+      : readableRecoveryHistory;
     const isFirstMessage = forceFirstMessage || history.length === 1 ||
       verifiedFirstReadableAd;
-    const customerMessages = history.filter((message) => message?.role === "user");
+    const customerMessages = readableRecoveryHistory.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
       newestCustomerText,
