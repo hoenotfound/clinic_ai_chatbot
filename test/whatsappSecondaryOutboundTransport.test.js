@@ -304,3 +304,31 @@ test("secondary outbound classifies failures without sending twice", async () =>
     assert.equal(calls, 1);
   }
 });
+
+test("username-mode secondary sends use Meta recipient, never phone to",async()=>{
+  const bsuid="MY.Aa1234Bb";
+  for (const [saved, row] of [
+    [{...contact,whatsapp_number:bsuid},
+      {...boundRow(),whatsapp_number:bsuid,customer_wa_id:bsuid,
+        whatsapp_user_id:bsuid,whatsapp_last_customer_address:bsuid}],
+    [contact,
+      {...boundRow(),whatsapp_user_id:bsuid,whatsapp_last_customer_address:bsuid}],
+  ]) {
+    const calls=[];
+    const client=await createVerifiedSecondaryOutboundTransport(saved,{
+      env,database:{query:async()=>({rows:[row]})},fetchImpl:mockedFetch(calls),
+    });
+    assert.equal((await client.sendText("您好，请问需要了解什么疗程？")).success,true);
+    assert.equal(calls.length,1);
+    const json=JSON.parse(calls[0].options.body);
+    assert.equal(json.recipient,bsuid);
+    assert.equal(Object.hasOwn(json,"to"),false);
+    assert.equal(calls[0].options.headers.Authorization,"Bearer secondary-secret");
+  }
+  await denied(createVerifiedSecondaryOutboundTransport(contact,{
+    env,database:{query:async()=>({rows:[{
+      ...boundRow(),whatsapp_user_id:"MY.SomeoneElse",
+      whatsapp_last_customer_address:bsuid,
+    }]})},
+  }));
+});
