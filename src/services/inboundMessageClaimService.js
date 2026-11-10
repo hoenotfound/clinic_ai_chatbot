@@ -313,9 +313,8 @@ function createInboundMessageClaimService({
         if (recorded) {
           // The chat banner should refresh after the verified referral is saved.
           // Reuse permission-filtered SSE; do not add Inbox polling.
-          events.publish("pipeline_changed", {
+          events.publish("inbox_latest_ad_changed", {
             contactId: contact.id,
-            reason: "inbox_latest_ad_changed",
           });
         }
       } catch (err) {
