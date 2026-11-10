@@ -7,7 +7,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
-  readableHistoryForRecoverySelection,
+  readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 } = require("../src/services/whatsapp131060Recovery");
 
 const earlier = new Date(Date.now() - 60000).toISOString();
@@ -168,25 +168,71 @@ test("secondary button sender is not a generic interactive-message bypass", () =
   assert.match(src,/reserveSecondaryBillingAttempt/);
 });
 
-test("selected treatment filters only the original 131060 placeholder from AI context", () => {
-  const history=[
+test("validated menu removes the first unreadable placeholder for buttons, typing and later turns", () => {
+  const history = [
     {role:"user",content:"📎 [Customer sent a WhatsApp message that could not be displayed]"},
     {role:"assistant",content:build131060RecoveryReply(unavailable,services)},
     {role:"user",content:"9D 逆龄抗衰"},
   ];
-  const inbound={text:"9D 逆龄抗衰",interactiveReplyId:"neutro_131060_9d"};
-  const cleaned=readableHistoryForRecoverySelection(history,inbound);
-  assert.equal(cleaned.length,2);
+  const verified = {unavailable_message_id:72,recovery_message_id:73};
+  const cleaned = readableHistoryForRecoverySelection(history,verified);
   assert.deepEqual(cleaned,history.slice(1));
-  assert.equal(history.length,3,"persisted staff history never changes");
-  assert.equal(readableHistoryForRecoverySelection(history,{...inbound,interactiveReplyId:null}),history);
-  assert.equal(readableHistoryForRecoverySelection(history,{...inbound,interactiveReplyId:"random"}),history);
-  assert.equal(readableHistoryForRecoverySelection(history.map((row,i)=>
-    i===0?{...row,content:"What does this cost?"}:row),inbound).length,3);
+  assert.equal(history.length,3,"the staff-visible transcript must not change");
+  assert.equal(readableHistoryForRecoverySelection(history,null),history);
+  assert.equal(readableHistoryForRecoverySelection(history,{unavailable_message_id:null}),history);
+  assert.deepEqual(readableHistoryForRecoverySelection([
+    ...history,{role:"user",content:"What are the steps?"}],verified),
+    [...history.slice(1),{role:"user",content:"What are the steps?"}],
+    "additional customer turns must be preserved");
+  assert.deepEqual(readableHistoryForRecoverySelection([
+    history[0],history[1],{role:"user",content:"脉冲波"}],verified),
+    [history[1],{role:"user",content:"脉冲波"}],
+    "typed alternate treatments are valid, not only interactive replies");
   assert.equal(readableHistoryForRecoverySelection([
-    {role:"user",content:"I messaged last month"},...history],inbound).length,4);
+    {role:"user",content:"What does this cost?"},...history],verified).length,4);
+  assert.equal(readableHistoryForRecoverySelection([
+    history[0],{role:"user",content:"staff-visible followup"}],verified).length,2);
+});
+
+test("database proof requires a first Meta 131060 error and an accepted same-inbound menu",async () => {
+  let sqlCheckCount=0;
+  const database = {async query(sql,values) {
+    sqlCheckCount++;
+    assert.deepEqual(values,[17,21]);
+    assert.match(sql,/original_job\.incoming_payload->'unsupportedErrors'/);
+    assert.match(sql,/"code":131060/);
+    assert.match(sql,/recovery_attempt\.inbound_message_id=initial\.id/);
+    assert.match(sql,/recovery_attempt\.origin='system_fallback'/);
+    assert.match(sql,/recovery_attempt\.outcome='accepted'/);
+    assert.match(sql,/recovery_attempt\.provider_message_id IS NOT NULL/);
+    assert.match(sql,/recovery_ctx\.conversation_id=sc\.id/);
+    assert.match(sql,/current_ctx\.conversation_id=sc\.id/);
+    assert.match(sql,/NOT EXISTS \(\s*SELECT 1 FROM messages before_first/);
+    return {rows:[{unavailable_message_id:11,recovery_message_id:12}]};
+  }};
+  assert.deepEqual(await getVerifiedRecoveryHistoryProof({
+    contactId:17,inboundMessageId:21,database,
+  }),{unavailable_message_id:11,recovery_message_id:12});
+  assert.equal(sqlCheckCount,1);
+  assert.equal(await getVerifiedRecoveryHistoryProof({
+    contactId:17,inboundMessageId:0,database,
+  }),null);
+  assert.equal(sqlCheckCount,1);
+  assert.equal(await getVerifiedRecoveryHistoryProof({
+    contactId:17,inboundMessageId:21,
+    database:{query:async()=>({rows:[]})},
+  }),null);
+});
+
+test("server restores verified ad-first treatment after an intervening recovery menu", () => {
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(server,/readableHistoryForRecoverySelection\(history, incoming\)/);
-  assert.match(server,/const replyHistory = marketingStopQuestion[\s\S]*?readableRecoveryHistory/);
-  assert.match(server,/const customerMessages = readableRecoveryHistory\.filter/);
+  const section=server.slice(server.indexOf("const history = await conversationStore.getHistoryForContact"),
+    server.indexOf("const mediaLanguage = detectReplyConversationLanguage"));
+  assert.match(section,/isVerifiedAdInbound/);
+  assert.match(section,/preclaimed\?\.verifiedUnavailableFirstAd === true/);
+  assert.match(section,/firstAdProofRepo\.getVerifiedFirstAdMessage/);
+  assert.doesNotMatch(section,/history\.length === 2\s*&&/);
+  assert.match(section,/await getVerifiedRecoveryHistoryProof\(/);
+  assert.match(section,/readableHistoryForRecoverySelection\(\s*history, recoveryPromptProof/);
+  assert.match(server,/isFirstMessage: wasFirstMessage === true \|\| verifiedFirstReadableAd/);
 });
