@@ -5,15 +5,20 @@
 // is never attributed until BOTH the exact WAMID and recipient hash match.
 const crypto = require("node:crypto");
 const hash = value => crypto.createHash("sha256").update(value).digest("hex");
+const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 async function applyStagedSecondaryReceipts({
   client, senderId, contactId, messageId, reservationId, acceptedWamid, env,
 }) {
   const owner = await client.query(
-    "SELECT whatsapp_number FROM contacts WHERE id=$1 AND whatsapp_sender_id=$2 AND channel='whatsapp'",
+    "SELECT whatsapp_number,whatsapp_user_id,whatsapp_last_customer_address " +
+    "FROM contacts WHERE id=$1 AND whatsapp_sender_id=$2 AND channel='whatsapp'",
     [contactId, senderId]
   );
-  if (owner.rowCount !== 1 || !/^[0-9]{8,15}$/.test(owner.rows[0].whatsapp_number)) {
+  const found=owner.rows?.[0];
+  const address=found?.whatsapp_last_customer_address || found?.whatsapp_number;
+  if (owner.rowCount !== 1 || normalizeCustomerAddress(address) !== address ||
+      (isBsuid(address) && found.whatsapp_user_id !== address)) {
     throw new Error("Early receipt owner cannot be verified");
   }
   // Even a valid Meta callback cannot be adopted by a different reservation.
@@ -33,7 +38,7 @@ async function applyStagedSecondaryReceipts({
       env.WHATSAPP_SECONDARY_WABA_ID]
   );
   if (!pending.rowCount) return { matched:0, autoReconciled:false, held:false };
-  const expectedRecipient = hash(owner.rows[0].whatsapp_number);
+  const expectedRecipient = hash(address);
   const wrongRecipient = pending.rows.some(r=>r.recipient_hash !== expectedRecipient);
   const verified = pending.rows.filter(r=>r.recipient_hash === expectedRecipient);
   if (!verified.length) return { matched:0, autoReconciled:false, held:false };
