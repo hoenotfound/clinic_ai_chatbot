@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isBsuid, normalizeCustomerAddress, normaliseUserId,
-  whatsappRecipientFields, inboundIdentityKind,
+  whatsappRecipientFields, verifiedRecipientForContact, inboundIdentityKind,
 } = require("../src/utils/whatsappCustomerIdentity");
 
 test("BSUID is preserved verbatim; it is not a telephone or a display username",()=>{
@@ -30,4 +30,18 @@ test("reject unrecognized identifiers instead of silently inventing numbers",()=
     assert.equal(normalizeCustomerAddress(bad),null);
   }
   assert.throws(()=>whatsappRecipientFields("@Peggyteoh"),/Invalid/);
+});
+
+test("primary contact phone history can route to last signed BSUID without altering contact key",()=>{
+  const contact={whatsapp_number:"60123456789",
+    whatsapp_user_id:"MY.Verified123",
+    whatsapp_last_customer_address:"MY.Verified123"};
+  assert.equal(verifiedRecipientForContact(contact),"MY.Verified123");
+  assert.equal(contact.whatsapp_number,"60123456789");
+  assert.equal(verifiedRecipientForContact({...contact,
+    whatsapp_user_id:"MY.Other"}),"60123456789");
+  assert.equal(verifiedRecipientForContact({...contact,
+    whatsapp_last_customer_address:"60129876543"}),"60129876543");
+  assert.equal(verifiedRecipientForContact({whatsapp_number:"MY.Verified123"}),
+    "MY.Verified123");
 });
