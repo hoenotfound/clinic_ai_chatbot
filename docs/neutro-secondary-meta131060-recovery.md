@@ -19,12 +19,13 @@ missing webhook text or the original ad ID from this error alone.
 - Reserve the response through the existing durable inbound/outbound attempt
   ledger, and recheck current sender, AI ownership, opt-out, message order,
   service window, billing and staff cancellation immediately before dispatch.
-- Send one short text requesting a resend. Do NOT run Gemini, invent customer
-  content, send prices or Before/After media, or treat the placeholder as a
-  follow-up anchor.
+- Send one natural, treatment-neutral clinic greeting with a simple
+  question. Do NOT mention WhatsApp errors, AI, unavailable messages or
+  resend instructions, and do NOT run Gemini, invent customer content, send
+  prices or Before/After media, or treat the placeholder as a follow-up anchor.
 - If the signed webhook includes a genuine Meta ad ID and an unambiguous
-  treatment in its creative, the resend request may mention that treatment.
-  Otherwise use a generic multilingual resend request. Never infer the ad
+  treatment in its creative, the greeting may ask about that treatment.
+  Otherwise use a short generic Chinese welcome, the secondary sender's default. A readable follow-up resumes normal language routing. Never infer the ad
   from a recent active campaign, prefilled text from an unavailable message,
   or a prior contact's CRM treatment.
 - If a subsequent READABLE inbound includes a verified CTWA referral within
@@ -45,7 +46,7 @@ missing webhook text or the original ad ID from this error alone.
 3. Set a fresh UTC activation timestamp and enable only this feature.
 4. Send a new first-time CTWA test to the secondary number and inspect the
    webhook: whether the 131060 event included a referral/ad ID.
-5. Confirm one resend text at most, the actual Meta delivery receipt and
+5. Confirm one natural welcome text at most, the actual Meta delivery receipt and
    sender-specific billing outcome. No reply if staff responds first.
 6. Resend the customer enquiry; confirm AI uses a **verified** Meta ad context
    where present and otherwise asks/answers based on customer wording.
