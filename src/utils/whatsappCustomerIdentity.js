@@ -35,11 +35,20 @@ function whatsappRecipientFields(address) {
   // Meta Cloud API: to is a telephone, recipient is a BSUID.
   return isBsuid(verified) ? { recipient: verified } : { to: verified };
 }
+function verifiedRecipientForContact(contact) {
+  const canonical = normalizeCustomerAddress(contact?.whatsapp_number);
+  const last = normalizeCustomerAddress(contact?.whatsapp_last_customer_address);
+  if (last && (!isBsuid(last) || last === contact?.whatsapp_user_id)) {
+    return last;
+  }
+  return canonical;
+}
 function inboundIdentityKind(value) {
   return isBsuid(value) ? "bsuid" : isPhoneAddress(value) ? "phone" : "invalid";
 }
 
 module.exports = {
   isBsuid, normalizeCustomerAddress, isPhoneAddress,
-  normaliseUserId, safeUsername, whatsappRecipientFields, inboundIdentityKind,
+  normaliseUserId, safeUsername, whatsappRecipientFields,
+  verifiedRecipientForContact, inboundIdentityKind,
 };
