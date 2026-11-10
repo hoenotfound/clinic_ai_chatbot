@@ -38,9 +38,9 @@ function conflictingRecoveryTreatments(creative) {
   const text = String(creative || "").normalize("NFKC");
   const mentions = [
     /骨盆|盆骨|骨盤|pelvi(?:s|c)/iu,
-    /(?:^|[^a-z0-9])3\\s*d(?![a-z0-9])|小[颜顏]/iu,
-    /(?:^|[^a-z0-9])9\\s*d(?![a-z0-9])|逆[龄齡]/iu,
-    /脉冲|脈衝|pulse\\s*wave/iu,
+    /(?:^|[^a-z0-9])3\s*d(?![a-z0-9])|小[颜顏]/iu,
+    /(?:^|[^a-z0-9])9\s*d(?![a-z0-9])|逆[龄齡]/iu,
+    /脉冲|脈衝|pulse\s*wave/iu,
   ];
   return mentions.filter(pattern => pattern.test(text)).length > 1;
 }
