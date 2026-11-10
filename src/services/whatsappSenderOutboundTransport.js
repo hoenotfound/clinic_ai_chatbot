@@ -7,6 +7,9 @@ const { pool } = require("../db/db");
 const { recordOutboundPayload, recordOutboundRequest } = require("../utils/outboundPayloadDiagnostics");
 const { classifyWhatsappSendFailure, classifyWhatsappAcceptedResponse } = require("./whatsappService");
 const { safeNetworkCause } = require("./whatsappSecondaryMetaReadOnlyProbe");
+const {
+  normalizeCustomerAddress, isBsuid, whatsappRecipientFields,
+} = require("../utils/whatsappCustomerIdentity");
 
 const GRAPH_VERSION = "v26.0";
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -51,7 +54,7 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
 
   const id = Number(contact?.id);
   if (contact?.channel !== "whatsapp" || !Number.isSafeInteger(id) || id <= 0 ||
-      !/^[0-9]{8,15}$/.test(clean(contact?.whatsapp_number)) ||
+      normalizeCustomerAddress(clean(contact?.whatsapp_number)) !== clean(contact?.whatsapp_number) ||
       !digits(env.WHATSAPP_PHONE_NUMBER_ID) || !digits(env.WHATSAPP_WABA_ID) ||
       !digits(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) ||
       !digits(env.WHATSAPP_SECONDARY_WABA_ID) ||
@@ -66,6 +69,7 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
   try {
     result = await database.query(
       "SELECT c.whatsapp_number, c.whatsapp_sender_id, " +
+      "c.whatsapp_user_id, c.whatsapp_last_customer_address, " +
       "sc.sender_id AS bound_sender_id, sc.customer_wa_id, sc.state AS binding_state, " +
       "sa.sender_key, sa.meta_phone_number_id, sa.meta_account_id, " +
       "sa.state AS sender_state, sa.coexistence_enabled AS sender_coexistence_enabled " +
@@ -100,13 +104,16 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
         contact.whatsapp_sender_phone_number_id !== row.meta_phone_number_id) ||
       (contact.whatsapp_sender_account_id &&
         contact.whatsapp_sender_account_id !== row.meta_account_id)) reject();
+  const recipient = clean(row.whatsapp_last_customer_address) || row.customer_wa_id;
+  if (normalizeCustomerAddress(recipient) !== recipient ||
+      (isBsuid(recipient) && row.whatsapp_user_id !== recipient)) reject();
   return Object.freeze({
     senderKey: row.sender_key,
     phoneNumberId: row.meta_phone_number_id,
     accountId: row.meta_account_id,
     // Never serialize, log, or return this object to an HTTP endpoint.
     token: clean(env.WHATSAPP_SECONDARY_TOKEN),
-    recipient: row.customer_wa_id,
+    recipient,
   });
 }
 
@@ -156,10 +163,17 @@ function createSecondaryOutboundTransport(binding, {
     }
   }
   async function send(payload) {
+    // Meta Cloud API uses "recipient" for a BSUID and "to" for a phone.
+    // Never permit a caller to override the sender-authorized destination.
+    if (Object.prototype.hasOwnProperty.call(payload, "to") ||
+        Object.prototype.hasOwnProperty.call(payload, "recipient")) reject();
     const result = await request("/messages", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: recipient, ...payload }),
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        ...whatsappRecipientFields(recipient), ...payload,
+      }),
     });
     if (!result.success) return result;
     const accepted = classifyWhatsappAcceptedResponse(result.data);
