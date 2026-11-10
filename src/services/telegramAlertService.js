@@ -6,6 +6,8 @@ const {pool}=require("../db/db");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
+const { isBsuid, normalizeCustomerAddress, isPhoneAddress } =
+  require("../utils/whatsappCustomerIdentity");
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_TIMEOUT_MS = 8000;
@@ -25,15 +27,16 @@ function clean(value, fallback = "Not captured") {
 }
 
 function formatWhatsappNumber(value) {
-  const digits = String(value || "").replace(/[^\d]/g, "");
-  return digits ? `+${digits}` : "Not captured";
+  if (isBsuid(value)) return "Phone hidden (WhatsApp user ID)";
+  const phone = normalizeCustomerAddress(value);
+  return isPhoneAddress(phone) ? `+${phone}` : "Not captured";
 }
 
 function buildWhatsappChatUrl(contact) {
   const channel = String(contact?.channel || "whatsapp").toLowerCase();
-  if (channel !== "whatsapp") return null;
-  const digits = String(contact?.whatsapp_number || "").replace(/[^\d]/g, "");
-  return digits ? `https://wa.me/${digits}` : null;
+  if (channel !== "whatsapp" || isBsuid(contact?.whatsapp_last_customer_address)) return null;
+  const phone = normalizeCustomerAddress(contact?.whatsapp_number);
+  return isPhoneAddress(phone) ? `https://wa.me/${phone}` : null;
 }
 
 function shouldShowBranch(config) {
