@@ -576,6 +576,6 @@ test("BSUID never becomes a fabricated WhatsApp telephone or wa.me link",()=>{
       whatsapp_last_customer_address:"MY.Ab1234"},
     score,env:{PUBLIC_BASE_URL:"https://neutrosense.dasmarketingsolution.com"},
   });
-  assert.doesNotMatch(summary,/wa\\.me\\/1234/);
-  assert.match(summary,/inbox\\?contact=12/);
+  assert.equal(summary.includes("wa.me/1234"),false);
+  assert.equal(summary.includes("inbox?contact=12"),true);
 });
