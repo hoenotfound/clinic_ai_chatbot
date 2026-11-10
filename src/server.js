@@ -411,6 +411,12 @@ async function sendTrackedText(
 
     if (
       contact.channel === "whatsapp" &&
+      // Generic retries use primary Cloud API credentials. A secondary
+      // sender must never enter that queue, even on a transient failure.
+      (contact.whatsapp_sender_id == null ||
+        (contact.whatsapp_sender_key === process.env.WHATSAPP_PRIMARY_SENDER_KEY &&
+         contact.whatsapp_sender_phone_number_id === process.env.WHATSAPP_PHONE_NUMBER_ID &&
+         contact.whatsapp_sender_account_id === process.env.WHATSAPP_WABA_ID)) &&
       sendResult.retryable === true &&
       sendResult.ambiguous !== true &&
       ["ai_reply", "system_fallback"].includes(origin)
