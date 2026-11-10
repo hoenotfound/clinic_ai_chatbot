@@ -15,6 +15,7 @@ const configRepo=require("../db/configRepo");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
+const {resultSupersessionSql}=require("../utils/resultMediaSupersessionSql");
 const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
@@ -68,10 +69,11 @@ const HARMLESS_CONTINUATION_SQL=`(
 )`;
 
 
-// Block explicit stop requests even if the contact opt-out update is pending.
-const EXPLICIT_STOP_SQL="BTRIM(COALESCE(newer.content,'')) ~* '(^|[[:space:]])(stop|unsubscribe|opt[ -]?out)([[:space:][:punct:]]|$)|不要再发|停止发送|停止推送|别再发|不要再联系|jangan hantar|jangan mesej'";
+// Customer replies preserve result images unless consent, clinical safety
+// or treatment interest genuinely changed. Price graphics retain old rules.
+const RESULT_MEDIA_SUPERSESSION_SQL=resultSupersessionSql("inbound","newer");
 const NEWER_CUSTOMER_SUPERSESSION_SQL=`(
-  (job.media_kind='result' AND ${EXPLICIT_STOP_SQL})
+  (job.media_kind='result' AND ${RESULT_MEDIA_SUPERSESSION_SQL})
   OR (job.media_kind<>'result' AND NOT ${HARMLESS_CONTINUATION_SQL})
 )`;
 const NEWER_MEDIA_PLAN_SQL=`EXISTS(
