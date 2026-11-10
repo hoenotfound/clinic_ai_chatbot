@@ -81,6 +81,40 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
       "SELECT customer_wa_id FROM whatsapp_sender_conversations ORDER BY id");
     assert.deepEqual(rows.rows.map(x=>x.customer_wa_id),
       ["60123456789","MY.OtherBsuid"]);
+
+    await assert.rejects(senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.OtherBsuid",
+    },pool),/merge two contacts/);
+    const rotated=await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.RotatedABC",
+    },pool);
+    assert.equal(rotated.updated,true);
+    assert.equal(rotated.contactId,first.id);
+    const existing=await senderContacts.claimSenderContact({
+      ...sender,customerPhone:"MY.RotatedABC",customerUserId:"MY.RotatedABC",
+    },pool,env);
+    assert.equal(existing.id,first.id);
+    assert.equal(existing.whatsapp_number,"60123456789");
+    assert.equal(existing.whatsapp_last_customer_address,"MY.RotatedABC");
+    assert.equal((await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.RotatedABC",
+    },pool)).updated,false,"signed rotation replay must be idempotent");
+
+    const withNewPhone=await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:"MY.RotatedABC",
+      newUserId:"MY.RotatedAgain",newPhone:"60129876543",
+    },pool);
+    assert.equal(withNewPhone.updated,true);
+    const updated=await setup.query(
+      "SELECT whatsapp_number,whatsapp_user_id,whatsapp_last_customer_address " +
+      "FROM contacts WHERE id=$1",[first.id]);
+    assert.equal(updated.rows[0].whatsapp_number,"60123456789",
+      "preserve historical conversation ownership");
+    assert.equal(updated.rows[0].whatsapp_user_id,"MY.RotatedAgain");
+    assert.equal(updated.rows[0].whatsapp_last_customer_address,"60129876543",
+      "new phone number may be used only when provided by signed Meta system event");
+    const finalCount=await setup.query("SELECT count(*)::integer n FROM contacts");
+    assert.equal(finalCount.rows[0].n,2);
   }finally{
     await setup.query("SET search_path TO public").catch(()=>{});
     await setup.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
