@@ -48,7 +48,7 @@ function verifiedAdTreatment(incoming, config = {}) {
 const RECOVERY_TREATMENTS = Object.freeze([
   Object.freeze({id:"neutro_131060_pelvic",title:"骨盆调理"}),
   Object.freeze({id:"neutro_131060_3d",title:"3D 小颜术"}),
-  Object.freeze({id:"neutro_131060_9d",title:"9D 逆龄"}),
+  Object.freeze({id:"neutro_131060_9d",title:"9D 逆龄抗衰"}),
 ]);
 
 function recoveryTreatmentButtons() {
