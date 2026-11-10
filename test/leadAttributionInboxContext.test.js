@@ -16,7 +16,13 @@ test("loads the current Inbox lead with Meta hierarchy fallback", async (t) => {
     assert.match(sql, /FROM meta_ad_insights_daily mi/);
     assert.match(sql, /FROM whatsapp_free_entry_referrals r/);
     assert.ok(sql.includes("r.contact_id = l.contact_id"));
-    assert.ok(sql.includes("ORDER BY r.recorded_at DESC, r.origin_message_id DESC"));
+    assert.ok(sql.includes("JOIN messages latest_ad_message"));
+    assert.ok(sql.includes("latest_ad_message.contact_id = r.contact_id"));
+    assert.ok(sql.includes("latest_ad_message.role = 'user'"));
+    assert.ok(sql.includes("COALESCE(latest_ad_message.source_created_at,"));
+    assert.ok(sql.includes("latest_ad_message.created_at) DESC"));
+    assert.equal(sql.includes("ORDER BY r.recorded_at DESC"), false,
+      "a delayed webhook must not make an older Meta click look latest");
     assert.ok(sql.includes("mi.ad_id = latest_ref.meta_ad_id"));
     assert.match(sql, /ORDER BY l\.is_closed ASC/);
     assert.deepEqual(params, [42]);
