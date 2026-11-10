@@ -204,7 +204,9 @@ test("database proof requires a first Meta 131060 error and an accepted same-inb
     assert.match(sql,/recovery_attempt\.inbound_message_id=initial\.id/);
     assert.match(sql,/recovery_attempt\.origin='system_fallback'/);
     assert.match(sql,/recovery_attempt\.outcome='accepted'/);
-    assert.match(sql,/recovery_attempt\.provider_message_id IS NOT NULL/);
+    assert.match(sql,/recovery_attempt\.provider_message_id=recovery\.whatsapp_message_id/);
+    assert.match(sql,/outbound_message_evidence accepted_outbound/);
+    assert.match(sql,/accepted_outbound\.accepted=TRUE/);
     assert.match(sql,/recovery_ctx\.conversation_id=sc\.id/);
     assert.match(sql,/current_ctx\.conversation_id=sc\.id/);
     assert.match(sql,/NOT EXISTS \(\s*SELECT 1 FROM messages before_first/);
@@ -235,4 +237,17 @@ test("server restores verified ad-first treatment after an intervening recovery 
   assert.match(section,/await getVerifiedRecoveryHistoryProof\(/);
   assert.match(section,/readableHistoryForRecoverySelection\(\s*history, recoveryPromptProof/);
   assert.match(server,/isFirstMessage: wasFirstMessage === true \|\| verifiedFirstReadableAd/);
+});
+
+test("first-ad neutral recovery marker requires accepted provider proof after pruning", () => {
+  const {is131060RecoveryAssistantSql}=require("../src/utils/whatsapp131060RecoverySql");
+  const sql=is131060RecoveryAssistantSql("prior","initial");
+  assert.match(sql,/recovery_out\.outcome='accepted'/);
+  assert.match(sql,/recovery_out\.provider_message_id=prior\.whatsapp_message_id/);
+  assert.match(sql,/outbound_message_evidence accepted_menu/);
+  assert.match(sql,/accepted_menu\.accepted=TRUE/);
+  assert.match(sql,/accepted_menu\.origin='system_fallback'/);
+  assert.match(sql,/initial\.content LIKE/);
+  assert.match(sql,/prior\.content LIKE/);
+  assert.throws(()=>is131060RecoveryAssistantSql("prior; DROP TABLE contacts","initial"),TypeError);
 });
