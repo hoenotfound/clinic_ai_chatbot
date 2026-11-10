@@ -95,27 +95,95 @@ function build131060RecoveryReply(incoming, config = {}) {
     "\n\n可以点下面的选项，其他护理（例如脉冲波）也可以直接告诉我们～";
 }
 
-// Only when a genuine Meta button_reply exactly matches our recorded
-// three-message first-contact sequence, omit the unavailable placeholder from
-// the model's CURRENT reply context. Persisted conversation and staff review
-// remain intact. Unrelated button callbacks and earlier customer history are
-// never filtered.
-function readableHistoryForRecoverySelection(history, incoming) {
-  if (!Array.isArray(history) || history.length !== 3 ||
-      !incoming?.interactiveReplyId) return history;
-  const choice = RECOVERY_TREATMENTS.find(button =>
-    button.id === incoming.interactiveReplyId &&
-    button.title === String(incoming.text || "").trim());
-  if (!choice) return history;
-  const [placeholder, greeting, selection] = history;
-  if (placeholder?.role !== "user" ||
+// This is a narrow, read-only proof for AI prompt cleanup, not permission to
+// send messages or assign an ad. Require an actual Meta 131060 first message,
+// the secondary sender binding, and an accepted recovery menu backed by the
+// SAME inbound's durable outbound attempt. Customer typing another treatment
+// is just as valid as pressing a button.
+async function getVerifiedRecoveryHistoryProof({
+  contactId, inboundMessageId, database = pool,
+} = {}) {
+  const cid = Number(contactId);
+  const mid = Number(inboundMessageId);
+  if (!Number.isSafeInteger(cid) || cid <= 0 ||
+      !Number.isSafeInteger(mid) || mid <= 0) return null;
+  try {
+    const result = await database.query(
+      String.raw`SELECT initial.id AS unavailable_message_id,
+              recovery.id AS recovery_message_id
+       FROM contacts c
+       JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
+         AND sa.sender_key='neutro_secondary' AND sa.state='active'
+       JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
+         AND sc.contact_id=c.id AND sc.state='bound'
+         AND sc.customer_wa_id=c.whatsapp_number
+       JOIN messages current_inbound ON current_inbound.id=$2
+         AND current_inbound.contact_id=c.id
+         AND current_inbound.role='user'
+         AND current_inbound.whatsapp_message_id IS NOT NULL
+         AND current_inbound.source_created_at IS NOT NULL
+       JOIN whatsapp_sender_message_context current_ctx
+         ON current_ctx.message_id=current_inbound.id
+         AND current_ctx.conversation_id=sc.id
+       JOIN messages initial ON initial.contact_id=c.id
+         AND initial.role='user' AND initial.whatsapp_message_id IS NOT NULL
+         AND initial.id<current_inbound.id
+       JOIN whatsapp_sender_message_context initial_ctx
+         ON initial_ctx.message_id=initial.id
+         AND initial_ctx.conversation_id=sc.id
+       JOIN inbound_processing_jobs original_job ON original_job.message_id=initial.id
+         AND original_job.channel='whatsapp'
+         AND original_job.incoming_payload->>'unsupportedType'='unsupported'
+         AND original_job.incoming_payload->'unsupportedErrors'
+             @> '[{"code":131060}]'::jsonb
+       JOIN inbound_outbound_attempts recovery_attempt
+         ON recovery_attempt.inbound_message_id=initial.id
+         AND recovery_attempt.contact_id=c.id
+         AND recovery_attempt.origin='system_fallback'
+         AND recovery_attempt.outcome='accepted'
+         AND recovery_attempt.provider_message_id IS NOT NULL
+       JOIN messages recovery ON recovery.id=recovery_attempt.assistant_message_id
+         AND recovery.contact_id=c.id AND recovery.role='assistant'
+         AND recovery.whatsapp_message_id IS NOT NULL
+         AND recovery.id>initial.id AND recovery.id<current_inbound.id
+         AND recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+         AND recovery.content LIKE '%可以点下面的选项%'
+       JOIN whatsapp_sender_message_context recovery_ctx
+         ON recovery_ctx.message_id=recovery.id
+         AND recovery_ctx.conversation_id=sc.id
+       WHERE c.id=$1 AND c.channel='whatsapp'
+         AND NOT EXISTS (
+           SELECT 1 FROM messages before_first
+           WHERE before_first.contact_id=c.id AND before_first.id<initial.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM messages between_first_and_menu
+           WHERE between_first_and_menu.contact_id=c.id
+             AND between_first_and_menu.id>initial.id
+             AND between_first_and_menu.id<recovery.id
+         )
+       LIMIT 1`,
+      [cid, mid]
+    );
+    return result.rows?.[0] || null;
+  } catch (err) {
+    // Missing evidence leaves the stored history intact and never blocks a
+    // customer reply. DB errors cannot turn arbitrary text into ad proof.
+    console.warn("[Meta 131060 recovery] Prompt cleanup proof unavailable:",
+      err?.message);
+    return null;
+  }
+}
+
+// Prompt-only cleanup. Exact first-message/accepted-send evidence is fetched
+// above, so this cannot be triggered merely by spoofing a button ID or by
+// typing "9D". Keep the actual Inbox history, staff messages and later
+// customer texts unchanged.
+function readableHistoryForRecoverySelection(history, proof) {
+  if (!Array.isArray(history) || !proof?.unavailable_message_id ||
+      history.length < 3 || history[0]?.role !== "user" ||
       !/^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u.test(
-        String(placeholder?.content || "")) ||
-      greeting?.role !== "assistant" ||
-      !String(greeting?.content || "").startsWith("Hi～欢迎来到 Neutro Sense 😊") ||
-      !String(greeting?.content || "").includes("可以点下面的选项") ||
-      selection?.role !== "user" ||
-      String(selection.content || "").trim() !== choice.title) return history;
+        String(history[0]?.content || ""))) return history;
   return history.slice(1);
 }
 
@@ -183,5 +251,5 @@ module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
-  readableHistoryForRecoverySelection,
+  readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 };
