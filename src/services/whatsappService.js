@@ -704,8 +704,14 @@ function parseIncomingMessages(body) {
           // follow-up/unread/attention state.
           if (message.type === "reaction") continue;
 
-          const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
+          const whatsappContact = contacts.find((contact) =>
+            contact.wa_id === message.from ||
+            (typeof message.user_id === "string" && contact.user_id === message.user_id));
           const profileName = whatsappContact?.profile?.name?.trim() || null;
+          // Meta's user_id is a business-scoped identity, not a display
+          // username or phone. A phone may disappear on the NEXT webhook.
+          const customerUserId = message.user_id || whatsappContact?.user_id || null;
+          const customerUsername = message.username || whatsappContact?.username || null;
           const attribution = message.referral
             ? normalizeWhatsAppReferral(message.referral)
             : null;
@@ -722,6 +728,8 @@ function parseIncomingMessages(body) {
             id: message.id,
             from: message.from,
             profileName,
+            ...(typeof customerUserId === "string" ? { customerUserId } : {}),
+            ...(typeof customerUsername === "string" ? { customerUsername } : {}),
             ...senderMetadataForChange(entry, change),
             ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
