@@ -262,6 +262,7 @@ async function sendInteractiveButtons(to,body,buttons,options={}) {
   if (senderBlocked) return senderBlocked;
   return whatsappZeroCostGuard.perform(to,
     ()=>sendInteractiveButtonsUnchecked(to,body,buttons), {
+      ...(options.contactId != null ? { contactId:options.contactId } : {}),
       currentMessageId:options.currentMessageId,
       messageKind:"interactive_consent",
     });
@@ -700,6 +701,32 @@ function parseIncomingMessages(body) {
           // Some username-mode callbacks provide the scoped user_id without
           // an exposed phone address. Never use a display username here.
           if (!message?.id) continue;
+          // Meta delivers BSUID rotations as signed system messages on the
+          // ordinary messages webhook. They are not customer enquiries:
+          // preserve only provider identity evidence and never trigger AI,
+          // a 24-hour reply window, a marketing follow-up or a new lead.
+          if (message.type === "system") {
+            const system = message.system || {};
+            if (["user_changed_number", "user_changed_user_id"].includes(system.type) &&
+                message.id && typeof system.previous_user_id === "string" &&
+                typeof system.user_id === "string") {
+              parsed.push({
+                id: message.id,
+                channel: "whatsapp",
+                from: system.previous_user_id,
+                identityRotationOnly: true,
+                previousUserId: system.previous_user_id,
+                newUserId: system.user_id,
+                // Only user_changed_number may reveal the new telephone.
+                ...(system.type === "user_changed_number" &&
+                    typeof system.wa_id === "string"
+                    ? { newPhone: system.wa_id } : {}),
+                ...senderMetadataForChange(entry, change),
+              });
+            }
+            continue;
+          }
+
           if (!message.from && !message.from_user_id && !message.user_id) {
             // The signed Meta payload is visible to this receiver, but there
             // is no safe way to address the customer. Make this diagnosable.
@@ -1046,12 +1073,13 @@ function parseStatusUpdates(body) {
   const senderBlocked = blockUnverifiedOutgoingSender(null, options);
   if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
+    ...(options.contactId != null ? { contactId: options.contactId } : {}),
     currentMessageId: options.currentMessageId,
     messageKind: options.autoFollowUp === true ? "auto_followup_text" : "first_reply_text",
   });
  }
  function mediaGuardContext(options={}) {
-   return { currentMessageId: options.currentMessageId,
+   return { ...(options.contactId != null ? { contactId: options.contactId } : {}), currentMessageId: options.currentMessageId,
      messageKind: options.autoFollowUp === true ? "auto_followup_media" : options.staffMedia === true ? "staff_media" : "media" };
  }
  async function sendImage(to,url,caption,options={}) {

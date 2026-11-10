@@ -135,7 +135,7 @@ async function claimSenderContact({
   const customer = customerId(customerPhone);
   // Meta-signed user_id is the ONLY secondary alias we trust. Never link by
   // a display username, profile name, or similarity to an ad prefill.
-  const userId = normaliseUserId(customerUserId) || (isBsuid(customer) ? customer : null);
+  let userId = normaliseUserId(customerUserId) || (isBsuid(customer) ? customer : null);
   if (isBsuid(customer) && userId !== customer) throw new Error("WhatsApp BSUID identity mismatch.");
   const username = safeUsername(customerUsername);
   const primaryPhone = String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
@@ -176,6 +176,23 @@ async function claimSenderContact({
       "AND whatsapp_sender_id=$1 AND whatsapp_user_id=$2 FOR UPDATE",
       [sender.id, userId]
     )).rows[0] : null;
+    // Signed old BSUID messages may be delivered after a verified rotation.
+    // Follow the sender-scoped alias to the SAME contact, but never roll its
+    // canonical user ID or most recent send address back to the old value.
+    let historicalAlias=false;
+    if (!contact && userId) {
+      contact = (await client.query(
+        "SELECT c.* FROM whatsapp_sender_user_id_aliases alias " +
+        "JOIN contacts c ON c.id=alias.contact_id " +
+        "AND c.whatsapp_sender_id=alias.sender_id AND c.channel='whatsapp' " +
+        "WHERE alias.sender_id=$1 AND alias.previous_user_id=$2 FOR UPDATE OF c",
+        [sender.id,userId]
+      )).rows[0];
+      if (contact) {
+        historicalAlias=true;
+        userId=contact.whatsapp_user_id;
+      }
+    }
     if (!contact) contact = (await client.query(
       "SELECT * FROM contacts WHERE channel='whatsapp' " +
       "AND whatsapp_sender_id=$1 AND whatsapp_number=$2 FOR UPDATE",
@@ -229,7 +246,8 @@ async function claimSenderContact({
       "WHERE id=$1 AND whatsapp_sender_id=$2 " +
       "AND ($3::text IS NULL OR whatsapp_user_id IS NULL OR whatsapp_user_id=$3) " +
       "RETURNING *",
-      [contact.id,sender.id,userId,username,customer,preserveLastCustomerAddress === true]
+      [contact.id,sender.id,userId,username,customer,
+        preserveLastCustomerAddress === true || historicalAlias]
     )).rows[0];
     if (!contact) throw new Error("WhatsApp customer identity ownership conflict.");
     // Historical threads always exclude a contact. Contact-only sync marks
@@ -314,9 +332,111 @@ async function senderForContact(existingContactId, database = pool) {
   return result.rows[0] || null;
 }
 
+// This event is not a new customer message. Meta's signed system payload
+// proves the previous and replacement BSUID are the same portfolio user.
+// Preserve the contact, Inbox history, lead and original conversation key;
+// never merge a different contact or take a phone from the message body.
+async function rotateSenderUserId({
+  accountId, phoneNumberId, previousUserId, newUserId, newPhone = null,
+}, database = pool) {
+  const account=digits(accountId,"Meta WhatsApp account ID");
+  const phone=digits(phoneNumberId,"Meta receiving phone ID");
+  const oldUser=normaliseUserId(previousUserId);
+  const nextUser=normaliseUserId(newUserId);
+  if (!oldUser || !nextUser || oldUser===nextUser ||
+      typeof database?.connect!=="function") {
+    throw new Error("Invalid signed WhatsApp user identity rotation.");
+  }
+  const verifiedNewPhone=normalizeCustomerAddress(newPhone);
+  const destination=verifiedNewPhone && !isBsuid(verifiedNewPhone)
+    ? verifiedNewPhone : nextUser;
+  const client=await database.connect();
+  try {
+    await client.query("BEGIN");
+    const sender=(await client.query(
+      "SELECT id FROM whatsapp_sender_accounts WHERE meta_account_id=$1 " +
+      "AND meta_phone_number_id=$2 AND state='active' FOR SHARE",
+      [account,phone]
+    )).rows[0];
+    if (!sender) throw new Error("WhatsApp rotation has no active verified sender.");
+    // The claimant locks its current BSUID; a rotation must lock BOTH IDs
+    // in deterministic order so concurrent webhooks cannot each create a
+    // contact during the handover or deadlock on reversed rotations.
+    for (const identity of [oldUser,nextUser].sort()) {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
+        [phone,identity]
+      );
+    }
+    const priorAlias=(await client.query(
+      "SELECT contact_id,replacement_user_id FROM whatsapp_sender_user_id_aliases " +
+      "WHERE sender_id=$1 AND previous_user_id=$2",
+      [sender.id,oldUser]
+    )).rows[0];
+    if (priorAlias) {
+      await client.query("COMMIT");
+      return {updated:false,reason:priorAlias.replacement_user_id===nextUser
+        ? "already_rotated" : "conflicting_rotation_replay"};
+    }
+    const matches=await client.query(
+      "SELECT c.id FROM contacts c " +
+      "JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id " +
+      "AND sc.sender_id=c.whatsapp_sender_id AND sc.state='bound' " +
+      "AND sc.customer_wa_id=c.whatsapp_number " +
+      "WHERE c.channel='whatsapp' AND c.whatsapp_sender_id=$1 " +
+      "AND c.whatsapp_user_id=$2 FOR UPDATE OF c",
+      [sender.id,oldUser]
+    );
+    if (matches.rows.length!==1) {
+      // No automatic linking by profile name, old phone or old WAMID.
+      // This can be a replay, missing history or a conflicting contact.
+      await client.query("COMMIT");
+      return {updated:false,reason:"old_identity_not_bound"};
+    }
+    const owner=matches.rows[0].id;
+    const collision=await client.query(
+      "SELECT c.id FROM contacts c WHERE c.channel='whatsapp' " +
+      "AND c.whatsapp_sender_id=$1 AND c.whatsapp_user_id=$2 AND c.id<>$3 " +
+      "UNION ALL SELECT alias.contact_id FROM whatsapp_sender_user_id_aliases alias " +
+      "WHERE alias.sender_id=$1 AND alias.previous_user_id=$2 " +
+      "AND alias.contact_id<>$3 LIMIT 1",
+      [sender.id,nextUser,owner]
+    );
+    if (collision.rows.length) {
+      // Never merge a pre-existing new-ID contact, even when an earlier
+      // webhook claimed the new identity before this system event arrived.
+      await client.query("COMMIT");
+      return {updated:false,reason:"replacement_identity_already_bound"};
+    }
+    const changed=await client.query(
+      "UPDATE contacts SET whatsapp_user_id=$2, " +
+      "whatsapp_last_customer_address=$3, updated_at=NOW() " +
+      "WHERE id=$1 AND whatsapp_sender_id=$4 AND whatsapp_user_id=$5 " +
+      "RETURNING id",
+      [owner,nextUser,destination,sender.id,oldUser]
+    );
+    if (changed.rowCount!==1) throw new Error("WhatsApp identity changed during rotation.");
+    const linked=await client.query(
+      "INSERT INTO whatsapp_sender_user_id_aliases " +
+      "(sender_id,previous_user_id,replacement_user_id,contact_id) " +
+      "VALUES ($1,$2,$3,$4) ON CONFLICT (sender_id,previous_user_id) " +
+      "DO NOTHING RETURNING contact_id",
+      [sender.id,oldUser,nextUser,owner]
+    );
+    if (linked.rowCount!==1)
+      throw new Error("WhatsApp identity alias was modified during rotation.");
+    await client.query("COMMIT");
+    return {updated:true,contactId:owner};
+  } catch(error) {
+    await client.query("ROLLBACK").catch(()=>{});
+    throw error;
+  } finally { client.release(); }
+}
+
 module.exports = {
   reservePendingConversation,
   claimSenderContact,
+  rotateSenderUserId,
   findConversationBySender,
   findBoundContactForSender,
   bindExistingContact,

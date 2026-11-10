@@ -81,6 +81,117 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
       "SELECT customer_wa_id FROM whatsapp_sender_conversations ORDER BY id");
     assert.deepEqual(rows.rows.map(x=>x.customer_wa_id),
       ["60123456789","MY.OtherBsuid"]);
+
+    const conflictingRotation=await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.OtherBsuid",
+    },pool);
+    assert.deepEqual(conflictingRotation,
+      {updated:false,reason:"replacement_identity_already_bound"});
+    const rotated=await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.RotatedABC",
+    },pool);
+    assert.equal(rotated.updated,true);
+    assert.equal(rotated.contactId,first.id);
+    const existing=await senderContacts.claimSenderContact({
+      ...sender,customerPhone:"MY.RotatedABC",customerUserId:"MY.RotatedABC",
+    },pool,env);
+    assert.equal(existing.id,first.id);
+    assert.equal(existing.whatsapp_number,"60123456789");
+    assert.equal(existing.whatsapp_last_customer_address,"MY.RotatedABC");
+    assert.equal((await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:bsuid,newUserId:"MY.RotatedABC",
+    },pool)).updated,false,"signed rotation replay must be idempotent");
+
+    const withNewPhone=await senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:"MY.RotatedABC",
+      newUserId:"MY.RotatedAgain",newPhone:"60129876543",
+    },pool);
+    assert.equal(withNewPhone.updated,true);
+    const updated=await setup.query(
+      "SELECT whatsapp_number,whatsapp_user_id,whatsapp_last_customer_address " +
+      "FROM contacts WHERE id=$1",[first.id]);
+    assert.equal(updated.rows[0].whatsapp_number,"60123456789",
+      "preserve historical conversation ownership");
+    assert.equal(updated.rows[0].whatsapp_user_id,"MY.RotatedAgain");
+    assert.equal(updated.rows[0].whatsapp_last_customer_address,"60129876543",
+      "new phone number may be used only when provided by signed Meta system event");
+    const delayedOld=await senderContacts.claimSenderContact({
+      ...sender,customerPhone:bsuid,customerUserId:bsuid,
+    },pool,env);
+    assert.equal(delayedOld.id,first.id,
+      "late signed messages from previous IDs retain the original contact");
+    assert.equal(delayedOld.whatsapp_user_id,"MY.RotatedAgain");
+    assert.equal(delayedOld.whatsapp_last_customer_address,"60129876543",
+      "old user-ID messages must not roll the recipient backward");
+    const aliases=await setup.query(
+      "SELECT previous_user_id,replacement_user_id FROM whatsapp_sender_user_id_aliases " +
+      "ORDER BY previous_user_id");
+    assert.deepEqual(aliases.rows,[
+      {previous_user_id:bsuid,replacement_user_id:"MY.RotatedABC"},
+      {previous_user_id:"MY.RotatedABC",replacement_user_id:"MY.RotatedAgain"},
+    ]);
+    const beforeConcurrent=(await setup.query(
+      "SELECT count(*)::integer n FROM contacts")).rows[0].n;
+    // Both operations require the same sender-scoped advisory locks. Either
+    // ordering must keep a single contact, without losing a delayed old turn.
+    const [concurrentRotation, concurrentOld]=await Promise.all([
+      senderContacts.rotateSenderUserId({
+        ...sender,previousUserId:"MY.RotatedAgain",
+        newUserId:"MY.ConcurrentFinal",
+      },pool),
+      senderContacts.claimSenderContact({
+        ...sender,customerPhone:"MY.RotatedAgain",
+        customerUserId:"MY.RotatedAgain",
+      },pool,env),
+    ]);
+    assert.equal(concurrentRotation.updated,true);
+    assert.equal(concurrentOld.id,first.id);
+    assert.equal((await setup.query(
+      "SELECT count(*)::integer n FROM contacts")).rows[0].n,
+      beforeConcurrent);
+    const latest=await setup.query(
+      "SELECT whatsapp_user_id,whatsapp_last_customer_address FROM contacts WHERE id=$1",
+      [first.id]);
+    assert.equal(latest.rows[0].whatsapp_user_id,"MY.ConcurrentFinal");
+    assert.equal(latest.rows[0].whatsapp_last_customer_address,"MY.ConcurrentFinal");
+
+    // Hold both DB locks while an inbound claims the replacement user ID on
+    // a separate connection. It must wait for the rotation and reuse owner.
+    let reachedNewLock;
+    const newLockReached=new Promise(resolve=>{reachedNewLock=resolve;});
+    let releaseRotation;
+    const rotationUnblock=new Promise(resolve=>{releaseRotation=resolve;});
+    const newId="MY.QueuedNewID";
+    const pausedPool={
+      async connect() {
+        const client=await pool.connect();
+        return {
+          query:async(sql,...args)=>{
+            const result=await client.query(sql,...args);
+            if (String(sql).includes("pg_advisory_xact_lock") &&
+                args[0]?.[1]===newId) {
+              reachedNewLock();
+              await rotationUnblock;
+            }
+            return result;
+          },
+          release:()=>client.release(),
+        };
+      },
+    };
+    const rotating=senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:"MY.ConcurrentFinal",newUserId:newId,
+    },pausedPool);
+    await newLockReached;
+    const claiming=senderContacts.claimSenderContact({
+      ...sender,customerPhone:newId,customerUserId:newId,
+    },pool,env);
+    releaseRotation();
+    const [rotationResult,claimResult]=await Promise.all([rotating,claiming]);
+    assert.equal(rotationResult.updated,true);
+    assert.equal(claimResult.id,first.id);
+    const finalCount=await setup.query("SELECT count(*)::integer n FROM contacts");
+    assert.equal(finalCount.rows[0].n,2);
   }finally{
     await setup.query("SET search_path TO public").catch(()=>{});
     await setup.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});

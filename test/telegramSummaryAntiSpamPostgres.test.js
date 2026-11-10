@@ -23,6 +23,8 @@ test(
         CREATE TABLE contacts (
           id INTEGER PRIMARY KEY,
           whatsapp_number TEXT,
+          whatsapp_last_customer_address TEXT,
+          whatsapp_username TEXT,
           name TEXT,
           whatsapp_profile_name TEXT,
           channel TEXT,

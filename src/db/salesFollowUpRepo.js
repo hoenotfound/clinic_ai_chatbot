@@ -2,6 +2,8 @@ const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { pendingSalesFollowUp, assertFollowUpOutcome } = require("../utils/salesFollowUpEligibility");
+const { isBsuid, isPhoneAddress, normalizeCustomerAddress } =
+  require("../utils/whatsappCustomerIdentity");
 
 function extendedFollowUpHoldHours(env = process.env) {
   const cfg = clinicConfig.automatedFollowUp;
@@ -15,11 +17,19 @@ function extendedFollowUpHoldHours(env = process.env) {
   return activeSlots.length ? Math.min(ceiling, Math.max(...activeSlots) + 12) : 0;
 }
 
+function currentWhatsAppPhoneForFollowUp(row) {
+  if (isBsuid(row?.whatsapp_last_customer_address)) return null;
+  const last = normalizeCustomerAddress(row?.whatsapp_last_customer_address);
+  if (isPhoneAddress(last)) return last;
+  const canonical = normalizeCustomerAddress(row?.whatsapp_number);
+  return isPhoneAddress(canonical) ? canonical : null;
+}
+
 async function listPending({ username, canViewAll = false, leadId = null, queryable = pool, now = new Date() }) {
   const sql = `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
             s.name AS stage_name, s.stage_type, s.system_key,
-            c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
+            c.channel, c.whatsapp_number, c.whatsapp_last_customer_address, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
             c.whatsapp_opt_out_at, c.whatsapp_marketing_opt_out_at,
             COALESCE(NULLIF(BTRIM(c.name),''), NULLIF(BTRIM(c.whatsapp_profile_name),''), c.whatsapp_number) AS customer_name,
             last_inbound.id AS last_inbound_id, last_inbound.created_at AS last_inbound_at,
@@ -120,7 +130,9 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     leadId: row.lead_id,
     contactId: row.contact_id,
     customerName: row.customer_name,
-    whatsappNumber: row.whatsapp_number,
+    whatsappNumber: currentWhatsAppPhoneForFollowUp(row) ||
+      (isBsuid(row.whatsapp_last_customer_address) ||
+       isBsuid(row.whatsapp_number) ? "Phone hidden" : row.whatsapp_number),
     treatment: row.treatment_interest || row.summary_treatment,
     temperature: row.temperature,
     stageName: row.stage_name,
@@ -132,7 +144,9 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     lastCustomerReplyAt: row.last_inbound_at,
     summary: String(row.chat_summary || "").slice(0, 300),
     nextAction: String(row.next_action || "").slice(0, 150),
-    whatsappUrl: "https://wa.me/" + row.whatsapp_number,
+    whatsappUrl: currentWhatsAppPhoneForFollowUp(row)
+      ? "https://wa.me/" + currentWhatsAppPhoneForFollowUp(row) : null,
+    inboxUrl: "/inbox?contact=" + encodeURIComponent(row.contact_id),
     lastInboundId: row.last_inbound_id
   }));
 }

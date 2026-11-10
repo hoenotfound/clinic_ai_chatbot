@@ -100,7 +100,14 @@ async function enqueueDeliveryFailureRetry({
        SELECT
          m.id AS message_id,
          c.id AS contact_id,
-         c.whatsapp_number AS recipient,
+         COALESCE(
+           CASE WHEN c.whatsapp_last_customer_address ~ '^[A-Z]{2}[.][A-Za-z0-9]{1,128}$'
+                     AND c.whatsapp_last_customer_address=c.whatsapp_user_id
+                THEN c.whatsapp_last_customer_address
+                WHEN c.whatsapp_last_customer_address ~ '^[0-9]{8,15}$'
+                THEN c.whatsapp_last_customer_address END,
+           c.whatsapp_number
+         ) AS recipient,
          a.origin
        FROM messages m
        JOIN contacts c ON c.id = m.contact_id
@@ -212,6 +219,13 @@ async function claimDue({ limit = 10 } = {}, database = pool) {
        c.mode AS contact_mode,
        c.channel AS contact_channel,
        c.whatsapp_number AS current_recipient,
+       c.whatsapp_user_id AS current_user_id,
+       c.whatsapp_last_customer_address AS current_last_address,
+       c.whatsapp_sender_id AS current_sender_id,
+       sa.sender_key AS current_sender_key,
+       sa.meta_phone_number_id AS current_sender_phone_number_id,
+       sa.meta_account_id AS current_sender_account_id,
+       sa.state AS current_sender_state,
        c.needs_attention AS contact_needs_attention,
        EXISTS (
          SELECT 1
@@ -232,6 +246,7 @@ async function claimDue({ limit = 10 } = {}, database = pool) {
      FROM claimed
      JOIN messages m ON m.id = claimed.message_id
      JOIN contacts c ON c.id = claimed.contact_id
+     LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
      ORDER BY claimed.next_attempt_at ASC, claimed.id ASC`,
     [safeLimit, leaseToken]
   );
@@ -254,6 +269,13 @@ async function checkSendEligibility({
        c.mode AS contact_mode,
        c.channel AS contact_channel,
        c.whatsapp_number AS current_recipient,
+       c.whatsapp_user_id AS current_user_id,
+       c.whatsapp_last_customer_address AS current_last_address,
+       c.whatsapp_sender_id AS current_sender_id,
+       sa.sender_key AS current_sender_key,
+       sa.meta_phone_number_id AS current_sender_phone_number_id,
+       sa.meta_account_id AS current_sender_account_id,
+       sa.state AS current_sender_state,
        c.needs_attention AS contact_needs_attention,
        EXISTS (
          SELECT 1
@@ -275,6 +297,7 @@ async function checkSendEligibility({
        ) AS has_newer_staff_message
      FROM whatsapp_outbound_retries q
      JOIN contacts c ON c.id = q.contact_id
+     LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
      WHERE q.id = $1
        AND q.lease_token = $2
        AND q.message_id = $3

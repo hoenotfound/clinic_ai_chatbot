@@ -69,7 +69,7 @@ test("WhatsApp quoted reply context reaches the provider sender", async (t) => {
   assert.deepEqual(whatsappCall, {
     to: "60123456789",
     text: "Quoted reply",
-    options: { replyToProviderMessageId: "wamid-original" },
+    options: { contactId: 12, replyToProviderMessageId: "wamid-original" },
   });
 });
 
@@ -117,7 +117,7 @@ test("WhatsApp sticker bytes upload then send as a sticker", async (t) => {
       kind: "send",
       to: "60123456789",
       mediaId: "wa-sticker-media",
-      options: { replyToProviderMessageId: undefined },
+      options: { contactId: 13, replyToProviderMessageId: undefined },
     },
   ]);
 });
@@ -178,7 +178,7 @@ test("WhatsApp stored service video uploads privately then sends by media id", a
       to: "60123456789",
       mediaId: "wa-video-media",
       caption: "Here is the service video",
-      options: { replyToProviderMessageId: undefined },
+      options: { contactId: 14, replyToProviderMessageId: undefined },
     },
   ]);
 });

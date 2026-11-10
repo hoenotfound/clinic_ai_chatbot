@@ -27,9 +27,20 @@ test(
       await client.query(`CREATE SCHEMA ${schemaName}`);
       await client.query(`SET search_path TO ${schemaName}`);
       await client.query(`
+        CREATE TABLE whatsapp_sender_accounts (
+          id BIGSERIAL PRIMARY KEY,
+          sender_key TEXT NOT NULL,
+          meta_phone_number_id TEXT NOT NULL,
+          meta_account_id TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'active'
+        );
+
         CREATE TABLE contacts (
           id SERIAL PRIMARY KEY,
           whatsapp_number TEXT NOT NULL,
+          whatsapp_user_id TEXT,
+          whatsapp_last_customer_address TEXT,
+          whatsapp_sender_id BIGINT,
           channel TEXT NOT NULL DEFAULT 'whatsapp',
           mode TEXT NOT NULL DEFAULT 'ai',
           needs_attention BOOLEAN NOT NULL DEFAULT false
@@ -112,7 +123,12 @@ test(
       assert.equal(queued.status, "scheduled");
       assert.equal(queued.attempts, 0);
 
+      await client.query(
+        "UPDATE contacts SET whatsapp_user_id='MY.RetryABC', " +
+        "whatsapp_last_customer_address='MY.RetryABC' WHERE id=$1",[contact.id]);
       const [firstClaim] = await retryRepo.claimDue({ limit: 1 }, client);
+      assert.equal(firstClaim.current_user_id,"MY.RetryABC");
+      assert.equal(firstClaim.current_last_address,"MY.RetryABC");
       assert.equal(firstClaim.claimed_from_status, "scheduled");
       assert.equal(firstClaim.processing_kind, "send_pending");
       assert.equal(firstClaim.attempts, 1);
@@ -127,6 +143,8 @@ test(
         client
       );
       assert.equal(eligible.contact_mode, "ai");
+      assert.equal(eligible.current_user_id,"MY.RetryABC");
+      assert.equal(eligible.current_last_address,"MY.RetryABC");
       assert.equal(eligible.has_newer_customer_message, false);
       assert.equal(eligible.has_newer_staff_message, false);
 

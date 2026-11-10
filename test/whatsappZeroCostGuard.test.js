@@ -246,3 +246,87 @@ test("freeform media preflight never substitutes template-only eligibility",asyn
   assert.equal(media.allowed,true);
   assert.equal(mediaQuery.params[5],"freeform");
 });
+
+test("strict primary billing proves BSUID belongs to verified message and contact",async t=>{
+  mode(t);
+  const oldWaba=process.env.WHATSAPP_WABA_ID;
+  const oldRead=process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+  process.env.WHATSAPP_WABA_ID="987654321";
+  process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED="true";
+  t.after(()=>{
+    if(oldWaba===undefined)delete process.env.WHATSAPP_WABA_ID;
+    else process.env.WHATSAPP_WABA_ID=oldWaba;
+    if(oldRead===undefined)delete process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+    else process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED=oldRead;
+  });
+  const db=mockedDatabase();
+  const base=db.query;
+  db.query=async(sql,args=[])=>{
+    if(sql.includes("SELECT c.id FROM contacts c") &&
+       sql.includes("c.whatsapp_user_id=$1"))
+      return {rows:[{id:77}]};
+    if(sql.includes("SELECT contact_id FROM messages WHERE id=$1"))
+      return {rows:[{contact_id:77}]};
+    if(sql.includes("SELECT m.id FROM messages m JOIN contacts c") &&
+       sql.includes("c.whatsapp_user_id=$2"))
+      return {rows:[{id:122}]};
+    return base(sql,args);
+  };
+  db.connect=async()=>({query:db.query,release(){}});
+  const result=await guard.reserve("MY.Safe123",{
+    database:db,context:{contactId:77,currentMessageId:122,messageKind:"first_reply_text"}
+  });
+  assert.equal(result.allowed,true);
+  assert.equal(db.calls.some(x=>x.sql.includes(
+    "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2") &&
+    x.sql.includes("SELECT m.id FROM messages m JOIN contacts c")),false);
+});
+
+test("primary strict billing accepts a Meta-verified replacement phone for the SAME contact",async t=>{
+  mode(t);
+  const previousAccount=process.env.WHATSAPP_WABA_ID;
+  const previousReads=process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+  process.env.WHATSAPP_WABA_ID="987654321";
+  process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED="false";
+  t.after(()=>{
+    if(previousAccount===undefined)delete process.env.WHATSAPP_WABA_ID;
+    else process.env.WHATSAPP_WABA_ID=previousAccount;
+    if(previousReads===undefined)delete process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+    else process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED=previousReads;
+  });
+  const db=mockedDatabase();
+  const base=db.query;
+  db.query=async(sql,args=[])=>{
+    if(sql.includes("SELECT c.id FROM contacts c") &&
+       sql.includes("c.whatsapp_last_customer_address=$1")) {
+      assert.equal(args[0],"60129876543");
+      return {rows:[{id:77}]};
+    }
+    if(sql.includes("SELECT contact_id FROM messages WHERE id=$1"))
+      return {rows:[{contact_id:77}]};
+    if(sql.includes("SELECT m.id FROM messages m JOIN contacts c")) {
+      assert.ok(sql.includes("c.whatsapp_last_customer_address=$2"));
+      assert.ok(sql.includes("c.id=$4"));
+      return {rows:[{id:122}]};
+    }
+    return base(sql,args);
+  };
+  db.connect=async()=>({query:db.query,release(){}});
+  const authorized=await guard.reserve("60129876543",{
+    database:db,context:{contactId:77,currentMessageId:122,messageKind:"first_reply_text"}
+  });
+  assert.equal(authorized.allowed,true);
+  const eligible=db.calls.find(x=>x.sql.includes("AS eligible"));
+  assert.ok(eligible.sql.includes("c.whatsapp_last_customer_address=$3::text"));
+  const denied=await guard.primaryBillingContactId("60129876543",{
+    database:{query:async()=>({rows:[]})},expectedContactId:77,
+  });
+  assert.equal(denied,null);
+});
+
+test("verified new phone alias only changes scoped policy SQL",()=>{
+  const original=guard.SCOPED_VERIFIED_WINDOW_SQL;
+  const alias=guard.sqlForCustomerAddress(original,"60129876543",{verifiedPhoneAlias:true});
+  assert.ok(alias.includes("c.whatsapp_last_customer_address=$3::text"));
+  assert.equal(guard.sqlForCustomerAddress(original,"60129876543"),original);
+});

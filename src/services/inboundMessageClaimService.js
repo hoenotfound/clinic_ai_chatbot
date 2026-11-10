@@ -1,6 +1,9 @@
+const crypto = require("node:crypto");
 const contactsRepo = require("../db/contactsRepo");
 const { pool } = require("../db/db");
 const senderConversations = require("../db/whatsappSenderConversationRepo");
+const { recordQuarantinedWhatsAppChanges } = require("../db/whatsappSenderQuarantineRepo");
+const { notifyWhatsAppSenderQuarantine } = require("./whatsappSenderQuarantineAlert");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
@@ -67,6 +70,8 @@ function createInboundMessageClaimService({
   reengagement = leadReengagementAlertService,
   config = clinicConfig,
   senderIdentity = senderConversations,
+  rotationAudit = recordQuarantinedWhatsAppChanges,
+  rotationNotify = notifyWhatsAppSenderQuarantine,
   database = pool,
 } = {}) {
   function customerOptOutScope(incoming) {
@@ -398,6 +403,45 @@ function createInboundMessageClaimService({
    * handlers can await it before returning HTTP 200 to Meta.
    */
   async function storeIncomingMessage(incoming) {
+    if (incoming?.identityRotationOnly === true) {
+      if (process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED !== "true") {
+        throw new Error("WhatsApp BSUID rotation requires verified sender-scoped ingress.");
+      }
+      const result=await senderIdentity.rotateSenderUserId({
+        accountId:incoming.businessAccountId,
+        phoneNumberId:incoming.businessPhoneNumberId,
+        previousUserId:incoming.previousUserId,
+        newUserId:incoming.newUserId,
+        newPhone:incoming.newPhone || null,
+      },database);
+      // Provider notifications for missing/ambiguous identities must be
+      // visible to operators. Never merge by name, phone similarity or ad.
+      // A SHA256 fingerprint is stored instead of customer identifiers.
+      if (!result.updated && result.reason !== "already_rotated") {
+        const reason=String(result.reason || "unmatched").replace(/[^a-z0-9_]/g,"").slice(0,48);
+        const fingerprint=crypto.createHash("sha256").update([
+          "whatsapp_bsuid_rotation",incoming.businessAccountId,
+          incoming.businessPhoneNumberId,incoming.previousUserId,incoming.newUserId,
+          reason,
+        ].join("|")).digest("hex");
+        const notice={
+          fingerprint,reason:"unsupported_whatsapp_event",
+          field:"bsuid_identity_rotation_"+reason,
+          accountId:incoming.businessAccountId,
+          phoneNumberId:incoming.businessPhoneNumberId,
+        };
+        await rotationAudit([notice],database);
+        // Only optional notification delivery is asynchronous. The database
+        // audit must finish before ACK; failure retries the signed webhook.
+        void Promise.resolve().then(()=>rotationNotify([notice])).catch(
+          ()=>console.warn("[WhatsApp identity rotation] operator alert unavailable"));
+      }
+      // No customer turn, AI, opt-in, service window or follow-up is created.
+      console.info("[WhatsApp identity rotation]",result.updated
+        ? "verified_contact_updated"
+        : result.reason === "already_rotated" ? "verified_duplicate" : "needs_manual_review");
+      return null;
+    }
     // message_edit can represent a brand-new Meta message while containing no
     // sender or text. Persist that unresolved event before the webhook ACK so
     // a Render restart cannot erase the only notification that the message

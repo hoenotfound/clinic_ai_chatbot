@@ -124,7 +124,7 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
     await db.query("CREATE SCHEMA "+schema);
     await db.query("SET search_path TO "+schema);
     await db.query(`
-      CREATE TABLE contacts(id INTEGER PRIMARY KEY,channel TEXT,whatsapp_number TEXT);
+      CREATE TABLE contacts(id INTEGER PRIMARY KEY,channel TEXT,whatsapp_number TEXT,whatsapp_last_customer_address TEXT);
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY,contact_id INTEGER REFERENCES contacts(id),
         role TEXT,created_at TIMESTAMPTZ, whatsapp_message_id TEXT,
@@ -141,7 +141,7 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
         wamid TEXT PRIMARY KEY,pricing_type TEXT,billable BOOLEAN,
         delivery_status TEXT,updated_at TIMESTAMPTZ DEFAULT now()
       );
-      INSERT INTO contacts VALUES(1,'whatsapp','60121234567');
+      INSERT INTO contacts (id,channel,whatsapp_number) VALUES(1,'whatsapp','60121234567');
       INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id)
       VALUES(1,1,'user',now()-interval '2 minutes','wamid.inbound');
       INSERT INTO messages(id,contact_id,role,created_at)

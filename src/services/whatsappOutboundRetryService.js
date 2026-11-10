@@ -1,4 +1,5 @@
 const retryRepo = require("../db/whatsappOutboundRetryRepo");
+const { verifiedRecipientForContact } = require("../utils/whatsappCustomerIdentity");
 const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
@@ -374,8 +375,28 @@ function compatibleSender({
         };
       }
     }
-    return sendMessage(contact.whatsapp_number, text);
+    return sendMessage(verifiedRecipientForContact(contact), text);
   };
+}
+
+// The generic retry worker only has the PRIMARY Cloud API transport.
+// Never send a sender-scoped secondary message through that transport,
+// including rows queued before this protection was introduced.
+function primaryRetrySenderVerified(row, env = process.env) {
+  if (row?.current_sender_id == null) {
+    return row?.current_sender_key == null &&
+      row?.current_sender_phone_number_id == null &&
+      row?.current_sender_account_id == null;
+  }
+  return Boolean(
+    env.WHATSAPP_PRIMARY_SENDER_KEY &&
+    env.WHATSAPP_PHONE_NUMBER_ID &&
+    env.WHATSAPP_WABA_ID &&
+    row.current_sender_key === env.WHATSAPP_PRIMARY_SENDER_KEY &&
+    row.current_sender_phone_number_id === env.WHATSAPP_PHONE_NUMBER_ID &&
+    row.current_sender_account_id === env.WHATSAPP_WABA_ID &&
+    row.current_sender_state === "active"
+  );
 }
 
 async function runWhatsappOutboundRetryQueue({
@@ -487,10 +508,21 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
+      if (!primaryRetrySenderVerified(row)) {
+        await finishAttention(row,
+          "Automatic retry blocked: this message belongs to a different or unverified WhatsApp sender. Review the original chat before resending.", {
+            terminal: "cancelled", repository, contacts, inbound, leaseToken,
+          });
+        continue;
+      }
+
       const contactForSend = {
         id: row.contact_id,
         channel: "whatsapp",
-        whatsapp_number: String(row.current_recipient || row.recipient || "").trim(),
+        whatsapp_number: String(row.current_recipient || "").trim(),
+        whatsapp_last_customer_address: row.current_last_address || null,
+        whatsapp_user_id: row.current_user_id || null,
+        whatsapp_sender_id: row.current_sender_id || null,
         mode: "ai",
       };
 
@@ -500,7 +532,14 @@ async function runWhatsappOutboundRetryQueue({
           repository,
           isAutomationEnabled
         );
-        if (!latest) return false;
+        if (!latest ||
+            !primaryRetrySenderVerified(latest) ||
+            String(latest.current_sender_id || "") !== String(row.current_sender_id || "") ||
+            verifiedRecipientForContact({
+              whatsapp_number: latest.current_recipient,
+              whatsapp_last_customer_address: latest.current_last_address,
+              whatsapp_user_id: latest.current_user_id,
+            }) !== verifiedRecipientForContact(contactForSend)) return false;
 
         const started = typeof repository.markSendStarted === "function"
           ? await repository.markSendStarted(row.id, leaseToken)
@@ -712,6 +751,7 @@ module.exports = {
   recordAcceptedEvidence,
   retryDelayForAttempt,
   runWhatsappOutboundRetryQueue,
+  primaryRetrySenderVerified,
   startWhatsappOutboundRetryWorker,
   wakeWhatsappOutboundRetry,
 };

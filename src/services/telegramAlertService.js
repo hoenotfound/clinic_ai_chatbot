@@ -6,6 +6,8 @@ const {pool}=require("../db/db");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
+const { isBsuid, normalizeCustomerAddress, isPhoneAddress } =
+  require("../utils/whatsappCustomerIdentity");
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_TIMEOUT_MS = 8000;
@@ -25,15 +27,24 @@ function clean(value, fallback = "Not captured") {
 }
 
 function formatWhatsappNumber(value) {
-  const digits = String(value || "").replace(/[^\d]/g, "");
-  return digits ? `+${digits}` : "Not captured";
+  if (isBsuid(value)) return "Phone hidden (WhatsApp user ID)";
+  const phone = normalizeCustomerAddress(value);
+  return isPhoneAddress(phone) ? `+${phone}` : "Not captured";
 }
 
+function verifiedWhatsappLinkPhone(contact) {
+  // Phone visibility and phone changes are provider-scoped. Never construct
+  // a wa.me link from the digits embedded in a BSUID or an obsolete number.
+  if (isBsuid(contact?.whatsapp_last_customer_address)) return null;
+  const last = normalizeCustomerAddress(contact?.whatsapp_last_customer_address);
+  if (isPhoneAddress(last)) return last;
+  const canonical = normalizeCustomerAddress(contact?.whatsapp_number);
+  return isPhoneAddress(canonical) ? canonical : null;
+}
 function buildWhatsappChatUrl(contact) {
-  const channel = String(contact?.channel || "whatsapp").toLowerCase();
-  if (channel !== "whatsapp") return null;
-  const digits = String(contact?.whatsapp_number || "").replace(/[^\d]/g, "");
-  return digits ? `https://wa.me/${digits}` : null;
+  if (String(contact?.channel || "whatsapp").toLowerCase() !== "whatsapp") return null;
+  const phone = verifiedWhatsappLinkPhone(contact);
+  return phone ? `https://wa.me/${phone}` : null;
 }
 
 function shouldShowBranch(config) {
@@ -53,7 +64,9 @@ function channelLabel(channel) {
 function formatContactIdentifier(contact) {
   const channel = contact?.channel || "whatsapp";
   if (channel === "whatsapp") {
-    return formatWhatsappNumber(contact?.whatsapp_number);
+    return isBsuid(contact?.whatsapp_last_customer_address)
+      ? "Phone hidden (WhatsApp username)"
+      : formatWhatsappNumber(verifiedWhatsappLinkPhone(contact));
   }
   return `${channelLabel(channel)}: ${clean(contact?.channel_user_id)}`;
 }
