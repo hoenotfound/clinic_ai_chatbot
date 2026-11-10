@@ -48,7 +48,7 @@ test("activation is explicit, post-cutover and fail closed", () => {
   assert.ok(RECOVERY_DELAY_MS>=3000);
 });
 
-test("verified ad creative allows only a treatment-specific resend prompt", () => {
+test("verified ad creative allows only a treatment-specific human-sounding welcome", () => {
   const attributed = {
     ...unavailable,
     attribution: {
@@ -59,8 +59,9 @@ test("verified ad creative allows only a treatment-specific resend prompt", () =
   assert.equal(verifiedAdTreatment(attributed,services),"骨盆调理");
   const reply=build131060RecoveryReply(attributed,services);
   assert.match(reply,/骨盆调理/);
-  assert.match(reply,/重新发送一次/);
-  assert.match(reply,/resend/i);
+  assert.match(reply,/想了解骨盆调理对吗/);
+  assert.match(reply,/疗程效果、过程，还是预约体验/);
+  assert.doesNotMatch(reply,/WhatsApp|无法|传送|没成功|resend|不能读取|bot|AI/i);
   assert.doesNotMatch(reply,/RM\d|discount|limited time|Before\s*&\s*After/i);
   assert.equal(verifiedAdTreatment({
     ...attributed,attribution:{...attributed.attribution,adId:null},
@@ -70,11 +71,11 @@ test("verified ad creative allows only a treatment-specific resend prompt", () =
   },services),null);
 });
 
-test("missing referral never guesses the advertised treatment", () => {
+test("missing referral only gives a natural clinic welcome, without guessing a treatment", () => {
   const reply=build131060RecoveryReply(unavailable,services);
   assert.doesNotMatch(reply,/骨盆调理|3D 小颜术|9D 逆龄|来自广告|广告联系/);
-  assert.match(reply,/WhatsApp/);
-  assert.match(reply,/resend/i);
+  assert.match(reply,/想了解哪方面的护理呢/);
+  assert.doesNotMatch(reply,/WhatsApp|resend|重新发送|没成功|AI|chatbot/i);
 });
 
 test("the replay-proof eligibility check is limited to persisted sender and message", async () => {
