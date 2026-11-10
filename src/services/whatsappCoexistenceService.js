@@ -38,7 +38,7 @@ function verifiedPrimaryEchoIdentity(echo) {
     throw new Error("Business App echo does not identify the verified primary sender.");
   }
   return { accountId: account, phoneNumberId: phone, customerPhone: echo.to,
-    customerUserId: echo.toUserId || null };
+    ...(echo.toUserId ? { customerUserId: echo.toUserId } : {}) };
 }
 
 function verifiedEchoIdentity(echo) {
@@ -54,7 +54,7 @@ function verifiedEchoIdentity(echo) {
       throw primaryError;
     }
     return {accountId:account,phoneNumberId:phone,customerPhone:echo.to,
-      customerUserId:echo.toUserId || null,
+      ...(echo.toUserId?{customerUserId:echo.toUserId}:{}),
       senderKey:String(process.env.WHATSAPP_SECONDARY_SENDER_KEY||"").trim()};
   }
 }
