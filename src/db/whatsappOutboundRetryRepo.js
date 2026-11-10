@@ -215,9 +215,6 @@ async function claimDue({ limit = 10 } = {}, database = pool) {
        c.whatsapp_user_id AS current_user_id,
        c.whatsapp_last_customer_address AS current_last_address,
        c.whatsapp_sender_id AS current_sender_id,
-       c.whatsapp_user_id AS current_user_id,
-       c.whatsapp_last_customer_address AS current_last_address,
-       c.whatsapp_sender_id AS current_sender_id,
        c.needs_attention AS contact_needs_attention,
        EXISTS (
          SELECT 1
@@ -260,6 +257,9 @@ async function checkSendEligibility({
        c.mode AS contact_mode,
        c.channel AS contact_channel,
        c.whatsapp_number AS current_recipient,
+       c.whatsapp_user_id AS current_user_id,
+       c.whatsapp_last_customer_address AS current_last_address,
+       c.whatsapp_sender_id AS current_sender_id,
        c.needs_attention AS contact_needs_attention,
        EXISTS (
          SELECT 1
