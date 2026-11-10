@@ -273,7 +273,7 @@ test("signed opaque recipient is durably held unmatched with no billing release,
       if(sql.includes("INSERT INTO whatsapp_sender_status_receipts")) {
         assert.equal(params[2],null);
         assert.equal(params[3],null);
-        assert.equal(params[12],false);
+        assert.equal(params[13],false);
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       }
       if(sql.includes("MATCH_SECONDARY_ATTEMPT_SQL") ||
@@ -505,8 +505,8 @@ test("mixed signed secondary statuses quarantine unknown and missing recipients 
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       if(sql.includes("JOIN whatsapp_sender_message_context"))return {rows:[],rowCount:0};
       if(sql.includes("INSERT INTO whatsapp_sender_status_receipts")) {
-        assert.equal(params[6],"delivered");
-        assert.equal(params[12],false);
+        assert.equal(params[7],"delivered");
+        assert.equal(params[13],false);
         return {rows:[{fingerprint:params[0]}],rowCount:1};
       }
       assert.doesNotMatch(sql,/UPDATE messages|whatsapp_sender_auto_reconciliations|UPDATE whatsapp_sender_billing_gates/);
