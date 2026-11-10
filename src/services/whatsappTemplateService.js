@@ -1,3 +1,4 @@
+const { whatsappRecipientFields } = require("../utils/whatsappCustomerIdentity");
 const crypto = require("crypto");
 const whatsappPolicy = require("./whatsappPolicyService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
@@ -538,7 +539,7 @@ async function sendApprovedTemplateUnchecked(
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to: contact.whatsapp_number,
+          ...whatsappRecipientFields(contact.whatsapp_number),
           type: "template",
           template,
         }),
