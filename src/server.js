@@ -95,6 +95,10 @@ const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsapp
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
+  RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
+  build131060RecoveryReply, canSend131060Recovery,
+} = require("./services/whatsapp131060Recovery");
+const {
   deliveryErrorForSend,
   publicDeliveryError,
 } = require("./utils/socialDeliveryError");
@@ -203,7 +207,7 @@ async function sendTrackedText(
   contact,
   text,
   origin = "ai_reply",
-  { canSend = null, processingJobId = null } = {}
+  { canSend = null, processingJobId = null, latePreSendCheck = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -303,7 +307,10 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
-          preSendCheck: guarded ? canSend : null,
+          preSendCheck: guarded ? async () =>
+            canSend() === true &&
+            (typeof latePreSendCheck !== "function" ||
+              await latePreSendCheck(saved.id)) : null,
         })
       : await channelMessaging.sendText(
           contact,
@@ -705,6 +712,42 @@ async function processIncomingMessage(
           }),
           "information"
         );
+      }
+      // Meta 131060 on the Coexistence number contains no customer text.
+      // Only an explicit post-activation option may send ONE short resend
+      // request. Never manufacture an advertising referral, service intent,
+      // pricing response, image or follow-up from the unavailable message.
+      // The delay allows a readable first message or staff Business App echo
+      // to arrive, and both checks fail closed if another turn has appeared.
+      if (secondaryAiConversation && is131060Message(incoming) &&
+          recoveryActivation(process.env)) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, RECOVERY_DELAY_MS));
+          const recoveryAllowed = await canSend131060Recovery({
+            contactId: contact.id, inboundMessageId: savedInbound.id,
+          });
+          if (recoveryAllowed && (!canSendAutomatedReply ||
+              canSendAutomatedReply() === true)) {
+            await sendTrackedText(
+              contact, build131060RecoveryReply(incoming, clinicConfig),
+              "system_fallback",
+              {
+                canSend: canSendAutomatedReply,
+                processingJobId,
+                latePreSendCheck: (reservedMessageId) =>
+                  canSend131060Recovery({
+                    contactId: contact.id,
+                    inboundMessageId: savedInbound.id,
+                    ignoreOutboundMessageId: reservedMessageId,
+                  }),
+              }
+            );
+          }
+        } catch (recoveryErr) {
+          // Preserve the original Meta 131060 staff review. If Meta rejects
+          // the reply, the existing tracked-send delivery alert is retained.
+          console.error("[Meta 131060 recovery] Resend request failed:", recoveryErr);
+        }
       }
       return { wasFirstMessage, keywordReason };
     }
