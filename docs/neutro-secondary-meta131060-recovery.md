@@ -19,10 +19,17 @@ missing webhook text or the original ad ID from this error alone.
 - Reserve the response through the existing durable inbound/outbound attempt
   ledger, and recheck current sender, AI ownership, opt-out, message order,
   service window, billing and staff cancellation immediately before dispatch.
-- Send one natural, treatment-neutral clinic greeting with a simple
-  question. Do NOT mention WhatsApp errors, AI, unavailable messages or
-  resend instructions, and do NOT run Gemini, invent customer content, send
-  prices or Before/After media, or treat the placeholder as a follow-up anchor.
+- Send one natural clinic greeting with 3 native WhatsApp reply buttons:
+  骨盆调理 / 3D 小颜术 / 9D 逆龄. More treatments (including 脉冲波)
+  remain available by typing a name. WhatsApp only permits three buttons
+  in one interactive message.
+- A genuine Meta button_reply webhook supplies its ID and readable title,
+  so the regular treatment knowledge and AI conversation resume based on the
+  customer's explicit selection. A button tap is not evidence of which ad
+  the customer clicked and must never upgrade an unattributed CRM lead.
+- Do NOT mention WhatsApp errors, AI, unavailable messages or resend,
+  and do NOT run Gemini, invent customer content, send prices or Before/After
+  media, or treat the placeholder as a follow-up anchor.
 - If the signed webhook includes a genuine Meta ad ID and an unambiguous
   treatment in its creative, the greeting may ask about that treatment.
   Otherwise use a short generic Chinese welcome, the secondary sender's default. A readable follow-up resumes normal language routing. Never infer the ad
@@ -46,11 +53,15 @@ missing webhook text or the original ad ID from this error alone.
 3. Set a fresh UTC activation timestamp and enable only this feature.
 4. Send a new first-time CTWA test to the secondary number and inspect the
    webhook: whether the 131060 event included a referral/ad ID.
-5. Confirm one natural welcome text at most, the actual Meta delivery receipt and
-   sender-specific billing outcome. No reply if staff responds first.
-6. Resend the customer enquiry; confirm AI uses a **verified** Meta ad context
-   where present and otherwise asks/answers based on customer wording.
-7. Check that no 2h/6h/20h follow-up or result/price media was triggered by
+5. Confirm one native three-button menu at most, the actual Meta delivery
+   receipt and sender-specific billing outcome. No send if staff responds first.
+6. Select each button from a customer phone. Confirm the signed inbound
+   contains the expected interactive button ID/title, AI understands the
+   selected treatment, and CRM source remains unattributed unless Meta later
+   supplies real ad proof.
+7. Also test entering 脉冲波 manually and a customer sending normal text.
+   Confirm AI continues normally, without duplicating the first menu.
+8. Check that no 2h/6h/20h follow-up or result/price media was triggered by
    the 131060 placeholder.
 
 ## Rollback
