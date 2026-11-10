@@ -86,12 +86,12 @@ test("primary Cloud API text uses recipient for BSUID and to for normal phone",a
 
 test("primary billing routes BSUID separately while retaining indexed phone SQL",()=>{
   const id="MY.Ab12CD34";
-  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_VERIFIED_WINDOW_SQL,id),
-    /c\\.whatsapp_user_id=\\$3/);
-  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_CTWA_FIRST_REPLY_SQL,id),
-    /c\\.whatsapp_user_id=\\$2/);
-  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_SESSION_WINDOW_SQL,id),
-    /c\\.whatsapp_user_id=\\$3/);
-  assert.doesNotMatch(guard.SCOPED_VERIFIED_WINDOW_SQL,/c\\.whatsapp_user_id/);
-  assert.match(guard.SCOPED_VERIFIED_WINDOW_SQL,/regexp_replace/);
+  assert.ok(guard.sqlForCustomerAddress(guard.SCOPED_VERIFIED_WINDOW_SQL,id)
+    .includes("c.whatsapp_user_id=$3"));
+  assert.ok(guard.sqlForCustomerAddress(guard.SCOPED_CTWA_FIRST_REPLY_SQL,id)
+    .includes("c.whatsapp_user_id=$2"));
+  assert.ok(guard.sqlForCustomerAddress(guard.SCOPED_SESSION_WINDOW_SQL,id)
+    .includes("c.whatsapp_user_id=$3"));
+  assert.equal(guard.SCOPED_VERIFIED_WINDOW_SQL.includes("c.whatsapp_user_id"),false);
+  assert.ok(guard.SCOPED_VERIFIED_WINDOW_SQL.includes("regexp_replace"));
 });
