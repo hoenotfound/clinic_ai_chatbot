@@ -48,7 +48,9 @@ test("early paired phone/BSUID receipt matches the sent BSUID after contact swit
 });
 test("unrelated paired recipient IDs never get matched to a frozen attempt",async()=>{
   const {client,calls}=db({savedRecipient:"MY.OtherUser",alternate:"MY.Verified42"});
-  const result=await applyStagedSecondaryReceipts({client,...args});
-  assert.equal(result.matched,0);
+  await assert.rejects(
+    applyStagedSecondaryReceipts({client,...args}),
+    /Early receipt owner cannot be verified/,
+    "an unrelated recipient must fail closed before any update");
   assert.equal(calls.some(x=>x.sql.startsWith("UPDATE whatsapp_sender_status_receipts")),false);
 });
