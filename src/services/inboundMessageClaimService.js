@@ -307,9 +307,16 @@ function createInboundMessageClaimService({
     // verified FEP window without overwriting attribution or marketing consent.
     if (channel === "whatsapp" && incoming?.attribution) {
       try {
-        await freeEntryReferrals.recordIfQualifying(
+        const recorded = await freeEntryReferrals.recordIfQualifying(
           contact.id, savedInbound.id, incoming.attribution
         );
+        if (recorded) {
+          // The chat banner should refresh after the verified referral is saved.
+          // Reuse permission-filtered SSE; do not add Inbox polling.
+          events.publish("inbox_latest_ad_changed", {
+            contactId: contact.id,
+          });
+        }
       } catch (err) {
         // If the referral record fails, the customer reply must not wait.
         // The extended marketing worker fails closed without that evidence.

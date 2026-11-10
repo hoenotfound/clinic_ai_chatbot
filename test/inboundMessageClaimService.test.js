@@ -13,6 +13,7 @@ function makeService({
   reengagement = undefined,
   inboundConsent = undefined,
   config = undefined,
+  freeEntryReferrals = undefined,
 } = {}) {
   const calls = [];
   let completed = false;
@@ -125,7 +126,7 @@ function makeService({
   };
   const events = {
     publish(event, payload) {
-      calls.push(["event", event, payload.messageId]);
+      calls.push(["event", event, payload.messageId ?? payload.contactId]);
     },
   };
   const reengagementService = reengagement || {
@@ -142,6 +143,7 @@ function makeService({
     attribution,
     events,
     reengagement: reengagementService,
+    ...(freeEntryReferrals ? { freeEntryReferrals } : {}),
     ...(policy ? { policy } : {}),
     inboundConsent: inboundConsent || { async inheritForNewLead(){ return { inherited:false }; } },
     ...(config ? { config } : {}),
@@ -198,6 +200,43 @@ test("live preparation leases the durable job and preserves the persistence-time
     "prepared",
   ]);
   assert.equal(calls.some((call) => call[0] === "first-message"), false);
+});
+
+test("verified new ad refreshes the open Inbox banner only after the referral is stored", async () => {
+  const stored = [];
+  const { calls, claim } = makeService({
+    freeEntryReferrals: {
+      async recordIfQualifying(contactId, messageId, referral) {
+        stored.push([contactId, messageId, referral.adId]);
+        return true;
+      },
+    },
+  });
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-ad", from: "60123456789", channel: "whatsapp",
+    text: "Interested in pelvis care",
+    attribution: { source: "meta_ads", sourceType: "ad", adId: "120246874060840540" },
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.deepEqual(stored, [[42, 777, "120246874060840540"]]);
+  assert.deepEqual(calls.filter((entry) => entry[0] === "event" && entry[1] === "inbox_latest_ad_changed"),
+    [["event", "inbox_latest_ad_changed", 42]],
+    "only the verified contact triggers a chat-banner refresh");
+  assert.equal(calls.some((entry) => entry[1] === "pipeline_changed"), false,
+    "a new click must not refresh the pipeline or full Inbox list");
+});
+
+test("duplicate ad referral does not trigger another Inbox attribution refresh", async () => {
+  const { calls, claim } = makeService({
+    freeEntryReferrals: { async recordIfQualifying() { return false; } },
+  });
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-ad-retry", from: "60123456789", channel: "whatsapp",
+    text: "Interested in pelvis care",
+    attribution: { source: "meta_ads", sourceType: "ad", adId: "120246874060840540" },
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.equal(calls.some((entry) => entry[0] === "event" && entry[1] === "inbox_latest_ad_changed"), false);
 });
 
 test("live preparation evaluates lead re-engagement after the lead is resolved", async () => {

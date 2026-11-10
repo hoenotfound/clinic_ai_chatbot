@@ -4171,6 +4171,12 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
           ad_name: "Pelvis Creative",
           enrichment_status: "enriched",
         },
+        latestAd: {
+          source: "meta_ads",
+          meta_ad_id: "301",
+          ad_name: "Pelvis Relaunch",
+          campaign_name: "New Pelvis Campaign",
+        },
       },
     },
     metaAdsLeadPreview: {
@@ -4211,11 +4217,14 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
   const conversationThread = page.locator('section[aria-label="Conversation with Alice Meta Lead"]');
   await expect(conversationThread).toBeVisible();
   await expect(conversationThread.getByRole("heading", { name: "Alice Meta Lead", exact: true })).toBeVisible();
-  await expect(page.getByText("Meta Ads", { exact: true })).toBeVisible();
-  await expect(page.getByText("Pelvis Creative", { exact: true })).toBeVisible();
+  const latestAdBanner = conversationThread.getByText("Latest Meta Ad", { exact: true }).locator("..");
+  await expect(latestAdBanner).toBeVisible();
+  await expect(latestAdBanner).toContainText("Pelvis Relaunch");
+  await expect(latestAdBanner).not.toContainText("Pelvis Creative");
   const viewport = page.viewportSize();
   if (viewport && viewport.width >= 640) {
-    await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
+    await expect(latestAdBanner).toContainText("New Pelvis Campaign");
+    await expect(latestAdBanner).not.toContainText("October Campaign");
   }
 
   const sidebar = page.getByTestId("app-sidebar");

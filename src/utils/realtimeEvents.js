@@ -67,13 +67,18 @@ function payloadForClient(client, event, payload) {
   if (!client.access) return payload;
 
   const restricted = client.access.contactIds !== null || client.access.leadIds !== null;
-  if (restricted && (event === "conversation_changed" || event === "pipeline_changed")) {
+  if (restricted && (
+    event === "conversation_changed" ||
+    event === "pipeline_changed" ||
+    event === "inbox_latest_ad_changed"
+  )) {
     // Restricted staff only need these events as refresh signals. Never put a
     // contact/lead id on their long-lived SSE connection: ownership may change
     // after the connection opens, while the next API refresh will always run a
     // fresh DB authorization check and return the correct newly assigned set.
-    // Count only that a permission-redacted change required a full Inbox
-    // reconciliation. Never log the client, contact or staff identity.
+    // Keep new-ad notifications identifier-free for restricted staff too.
+    // The selected thread re-fetches through its permission-checked API.
+    // Never log the client, contact or staff identity.
     recordSseLifecycle("redacted_change");
     return {};
   }
