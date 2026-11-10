@@ -422,7 +422,8 @@ function phoneRecipientPredicate(alias, parameter) {
   // customer's number. Require the full phone and a currently verified
   // contact; never compare digits from opaque BSUID values.
   return "(" +
-    "regexp_replace(" + alias + ".whatsapp_number,'[^0-9]','','g')=" + parameter +
+    "(" + alias + ".whatsapp_number ~ '^[+0-9(). -]+$' AND " +
+    "regexp_replace(" + alias + ".whatsapp_number,'[^0-9]','','g')=" + parameter + ")" +
     " OR (" + alias + ".whatsapp_last_customer_address=" + parameter +
     " AND " + alias + ".whatsapp_last_customer_address ~ '^[0-9]{8,15}$'))";
 }
