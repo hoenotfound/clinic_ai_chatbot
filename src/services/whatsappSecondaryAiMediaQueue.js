@@ -22,10 +22,10 @@ const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
 
 
 /**
- * A location or narrow treatment-method question can preserve a queued
- * image. A price request must move to the NEW pricing workflow. Other new
- * messages, treatment switches, symptoms and opt-outs supersede stale media.
- * Keep this predicate identical in READY, STILL_VALID and cleanup queries.
+ * Customer replies must not cancel an already-selected Before & After result.
+ * Promotions keep their narrow continuation rule. Stop requests, newer result
+ * plans and staff takeover still supersede media before dispatch.
+ * Keep the rule aligned in READY, STILL_VALID and cleanup queries.
  */
 const HARMLESS_QUESTION_EN =
   "^(location|location please|address|address please|where is (your )?(clinic|shop)|is it manual|is this manual|is it hifu|does it use hifu|alamat|lokasi)[ ?.!]*$";
@@ -68,20 +68,27 @@ const HARMLESS_CONTINUATION_SQL=`(
 )`;
 
 
+// Block explicit stop requests even if the contact opt-out update is pending.
+const EXPLICIT_STOP_SQL="BTRIM(COALESCE(newer.content,'')) ~* '(^|[[:space:]])(stop|unsubscribe|opt[ -]?out)([[:space:][:punct:]]|$)|不要再发|停止发送|停止推送|别再发|不要再联系|jangan hantar|jangan mesej'";
+const NEWER_CUSTOMER_SUPERSESSION_SQL=`(
+  (job.media_kind='result' AND ${EXPLICIT_STOP_SQL})
+  OR (job.media_kind<>'result' AND NOT ${HARMLESS_CONTINUATION_SQL})
+)`;
 const NEWER_MEDIA_PLAN_SQL=`EXISTS(
   SELECT 1 FROM whatsapp_sender_ai_media_jobs successor
   JOIN messages successor_inbound ON successor_inbound.id=successor.inbound_message_id
     AND successor_inbound.contact_id=c.id AND successor_inbound.role='user'
   WHERE successor.sender_id=job.sender_id AND successor.contact_id=job.contact_id
     AND (successor_inbound.created_at,successor_inbound.id)>(inbound.created_at,inbound.id)
+    AND (job.media_kind<>'result' OR successor.media_kind='result')
 )`;
-// A newer media plan always replaces the previous one for this exact sender
-// and contact, even when an otherwise harmless question preceded that plan.
+// Only a newer result-image plan supersedes a prior result. A price graphic
+// should not erase a queued Before & After result.
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
-const CANCELLED_ERROR="Image not sent. The customer replied or the original send window ended before this image could be sent.";
+const CANCELLED_ERROR="Image not sent. The media was superseded, sending was stopped, or its allowed window ended.";
 
 function publishSecondaryMediaStatus(message,env=process.env){
  if(!message?.id || !message?.contact_id)return;
@@ -222,7 +229,7 @@ const READY_SQL=`
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
        AND newer.role='user'
        AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
-       AND NOT ${HARMLESS_CONTINUATION_SQL}
+       AND ${NEWER_CUSTOMER_SUPERSESSION_SQL}
    )
    AND NOT ${NEWER_MEDIA_PLAN_SQL}
    AND NOT EXISTS(
@@ -261,7 +268,7 @@ const STILL_VALID_SQL=`
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
          AND newer.role='user'
          AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
-         AND NOT ${HARMLESS_CONTINUATION_SQL}
+         AND ${NEWER_CUSTOMER_SUPERSESSION_SQL}
      )
      AND NOT ${NEWER_MEDIA_PLAN_SQL}
      AND NOT EXISTS(
@@ -340,7 +347,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
              SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
                AND newer.role='user'
                AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
-               AND NOT ${HARMLESS_CONTINUATION_SQL}
+               AND ${NEWER_CUSTOMER_SUPERSESSION_SQL}
            ) OR
            ${NEWER_MEDIA_PLAN_SQL} OR
            EXISTS(
