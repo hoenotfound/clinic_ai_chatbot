@@ -398,6 +398,23 @@ function createInboundMessageClaimService({
    * handlers can await it before returning HTTP 200 to Meta.
    */
   async function storeIncomingMessage(incoming) {
+    if (incoming?.identityRotationOnly === true) {
+      if (process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED !== "true") {
+        throw new Error("WhatsApp BSUID rotation requires verified sender-scoped ingress.");
+      }
+      const result=await senderIdentity.rotateSenderUserId({
+        accountId:incoming.businessAccountId,
+        phoneNumberId:incoming.businessPhoneNumberId,
+        previousUserId:incoming.previousUserId,
+        newUserId:incoming.newUserId,
+        newPhone:incoming.newPhone || null,
+      },database);
+      // Do not create a contact/message, initiate AI, open a 24-hour window,
+      // or trigger follow-ups for identity-only Meta system notifications.
+      console.info("[WhatsApp identity rotation]",
+        result.updated ? "verified_contact_updated" : "unmatched_old_identity");
+      return null;
+    }
     // message_edit can represent a brand-new Meta message while containing no
     // sender or text. Persist that unresolved event before the webhook ACK so
     // a Render restart cannot erase the only notification that the message
