@@ -20,7 +20,7 @@ missing webhook text or the original ad ID from this error alone.
   ledger, and recheck current sender, AI ownership, opt-out, message order,
   service window, billing and staff cancellation immediately before dispatch.
 - Send one natural clinic greeting with 3 native WhatsApp reply buttons:
-  骨盆调理 / 3D 小颜术 / 9D 逆龄. More treatments (including 脉冲波)
+  骨盆调理 / 3D 小颜术 / 9D 逆龄抗衰. More treatments (including 脉冲波)
   remain available by typing a name. WhatsApp only permits three buttons
   in one interactive message.
 - A genuine Meta button_reply webhook supplies its ID and readable title,
