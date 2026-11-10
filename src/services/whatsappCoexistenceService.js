@@ -83,8 +83,11 @@ function beginPendingAiForEcho(echo) {
   // Edits/deletions of old staff messages are not new staff replies.
   // Never stall or cancel an unrelated in-flight AI response for them.
   if (echo?.type==="edit" || echo?.type==="revoke") return false;
-  return cancellationKeysForEcho(echo).some(key =>
-    aiReplyCancellation.beginPendingEcho(key, echo?.id));
+  let started = false;
+  for (const key of cancellationKeysForEcho(echo)) {
+    if (aiReplyCancellation.beginPendingEcho(key, echo?.id)) started = true;
+  }
+  return started;
 }
 
 function releasePendingAiForEcho(echo) {
@@ -127,7 +130,9 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     const contact=isSecondaryMutation
       ? await senderConversations.findBoundContactForSender(identity)
       : senderAwareEchoesEnabled()
-        ? await senderConversations.claimSenderContact(identity)
+        ? await senderConversations.claimSenderContact({
+            ...identity, preserveLastCustomerAddress: true,
+          })
         : await contactsRepo.getOrCreateContact(echo.to);
     if (!contact) {
       releasePendingAiForEcho(echo);
