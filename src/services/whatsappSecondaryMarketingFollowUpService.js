@@ -138,7 +138,9 @@ const CANDIDATES_SQL=`
        )
    ), verified_seed AS MATERIALIZED (
      SELECT recent_seed.contact_id,
-       ${LEGACY_AD_PROOF_SQL} AS legacy_ads_eligible
+       CASE WHEN $7::text='all_contacts'
+         THEN ${LEGACY_AD_PROOF_SQL}
+         ELSE FALSE END AS legacy_ads_eligible
      FROM recent_seed JOIN contacts c ON c.id=recent_seed.contact_id
    )
    SELECT contact_id,legacy_ads_eligible FROM verified_seed
