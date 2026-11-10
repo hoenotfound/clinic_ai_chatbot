@@ -293,6 +293,16 @@ async function sendSecondaryStaffText({
   if (!reserved.reserved || !reserved.reservationId) {
     return block(reserved.code || "secondary_staff_billing_blocked");
   }
+  // Freeze the exact destination used for both provider dispatch and later
+  // billing receipts. An intervening customer webhook can change the contact's
+  // most-recent address, but it must not rewrite a reserved destination.
+  if (reserved.recipientAddress && transport.recipientAddress &&
+      reserved.recipientAddress !== transport.recipientAddress) {
+    await billingRepo.recordSecondaryProviderOutcome({
+      reservationId: reserved.reservationId, definitivelyRejected: true,
+    }, { database, env });
+    return block("secondary_recipient_changed_before_provider");
+  }
   // Once reserved, fail/timeout/connection errors cannot silently unlock it.
   // This prevents accidental second sends after an ambiguous Meta response.
   const markUnknown = async () => {
