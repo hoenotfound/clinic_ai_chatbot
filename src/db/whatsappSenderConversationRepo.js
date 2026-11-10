@@ -127,6 +127,7 @@ async function findBoundContactForSender({accountId,phoneNumberId,customerPhone}
 async function claimSenderContact({
   accountId, phoneNumberId, customerPhone, profileName = null,
   customerUserId = null, customerUsername = null,
+  preserveLastCustomerAddress = false,
   coexistenceHistoryImport = null,
 }, database = pool, env = process.env) {
   const account = digits(accountId, "Meta WhatsApp account ID");
@@ -223,11 +224,12 @@ async function claimSenderContact({
     contact = (await client.query(
       "UPDATE contacts SET whatsapp_user_id=COALESCE(whatsapp_user_id,$3), " +
       "whatsapp_username=COALESCE($4,whatsapp_username), " +
-      "whatsapp_last_customer_address=$5, updated_at=NOW() " +
+      "whatsapp_last_customer_address=CASE WHEN $6::boolean " +
+      "THEN whatsapp_last_customer_address ELSE $5 END, updated_at=NOW() " +
       "WHERE id=$1 AND whatsapp_sender_id=$2 " +
       "AND ($3::text IS NULL OR whatsapp_user_id IS NULL OR whatsapp_user_id=$3) " +
       "RETURNING *",
-      [contact.id,sender.id,userId,username,customer]
+      [contact.id,sender.id,userId,username,customer,preserveLastCustomerAddress === true]
     )).rows[0];
     if (!contact) throw new Error("WhatsApp customer identity ownership conflict.");
     // Historical threads always exclude a contact. Contact-only sync marks
