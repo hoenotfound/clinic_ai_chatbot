@@ -204,7 +204,7 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      "VALUES('neutro_secondary','100000000000002','200000000000002','Secondary','active') RETURNING id",
    )).rows[0].id);
    let serial=0;
-   async function makeConversation(nextText,{newPlan=false}={}){
+   async function makeConversation(nextText,{newPlan=false,originalText="我想了解骨盆调理"}={}){
      const number="6012"+String(++serial).padStart(7,"0");
      const contact=Number((await db.query(
        "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) "+
@@ -216,8 +216,8 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      )).rows[0].id);
      const inbound=Number((await db.query(
        "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) "+
-       "VALUES($1,'user','我想了解骨盆调理',$2,NOW()) RETURNING id",
-       [contact,"wamid.original."+serial],
+       "VALUES($1,'user',$3,$2,NOW()) RETURNING id",
+       [contact,"wamid.original."+serial,originalText],
      )).rows[0].id);
      await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) "+
        "VALUES($1,$2)",[inbound,conversation]);
@@ -249,6 +249,10 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
    }
    const location=await makeConversation("Location");
    const method=await makeConversation("是徒手吗");
+   const facial=await makeConversation("四方脸",{
+     originalText:"Hi～想了解 Neutro Sense TCM 3D 小颜术",
+   });
+   const pelvicSwitch=await makeConversation("四方脸");
    const price=await makeConversation("想要了解价钱",{newPlan:true});
    const clinical=await makeConversation("我是腹直肌分离");
    const newer=await makeConversation("Location",{newPlan:true});
@@ -267,17 +271,23 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
    const ready=(await db.query(prioritySql,args)).rows.map(r=>Number(r.id));
    assert.ok(ready.includes(location.oldJob),"location preserves the media plan");
    assert.ok(ready.includes(method.oldJob),"manual method question preserves media");
+   assert.ok(ready.includes(facial.oldJob),
+     "short face-shape clarification preserves its original 3D result image");
+   assert.ok(!ready.includes(pelvicSwitch.oldJob),
+     "face-shape interest must not preserve a pelvic result image");
    assert.ok(!ready.includes(price.oldJob),"price question retires old results");
    assert.ok(ready.includes(price.newJob),"new price plan takes priority");
    assert.ok(!ready.includes(clinical.oldJob),"clinical concern blocks media");
    assert.ok(!ready.includes(newer.oldJob),"new media plan replaces older media");
    assert.ok(ready.includes(newer.newJob));
    const cleaned=await queue.cancelObsoletePending({database,env:allEnv});
-   assert.equal(cleaned.cancelled,3);
+   assert.equal(cleaned.cancelled,4);
    const states=(await db.query("SELECT id,state FROM whatsapp_sender_ai_media_jobs")).rows;
    const s=new Map(states.map(row=>[Number(row.id),row.state]));
    assert.equal(s.get(location.oldJob),"pending");
    assert.equal(s.get(method.oldJob),"pending");
+   assert.equal(s.get(facial.oldJob),"pending");
+   assert.equal(s.get(pelvicSwitch.oldJob),"expired");
    assert.equal(s.get(price.oldJob),"expired");
    assert.equal(s.get(price.newJob),"pending");
    assert.equal(s.get(clinical.oldJob),"expired");
