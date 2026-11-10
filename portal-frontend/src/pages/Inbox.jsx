@@ -2696,7 +2696,9 @@ function AcquisitionContextBar({ context, loading }) {
     );
   }
 
-  const attribution = context?.attribution;
+  // Prefer the most recent provider-verified WhatsApp ad in the chat header.
+  // First-touch attribution remains unchanged for CRM and analytics.
+  const attribution = context?.latestAd || context?.attribution;
   const lead = context?.lead;
   if (!attribution || attribution.source !== "meta_ads") return null;
 
@@ -2710,7 +2712,7 @@ function AcquisitionContextBar({ context, loading }) {
     <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 sm:border-blue-100 sm:bg-blue-50/70 sm:px-5 sm:py-2">
       <div className="flex min-w-0 items-center gap-1.5 text-[10px] sm:gap-2 sm:text-[11px]">
         <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 font-bold text-blue-700">
-          Meta Ads
+          {context?.latestAd ? "Latest Meta Ad" : "Meta Ads"}
         </span>
         <span className="min-w-0 truncate font-semibold text-[var(--color-text)]" title={adName || undefined}>
           {adName}
