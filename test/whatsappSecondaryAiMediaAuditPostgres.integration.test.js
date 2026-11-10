@@ -240,14 +240,17 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
        newJob=Number((await db.query(
          "INSERT INTO whatsapp_sender_ai_media_jobs(sender_id,contact_id,inbound_message_id,"+
          "sequence_no,media_kind,image_url,caption,state,next_attempt_at,expires_at) "+
-         "VALUES($1,$2,$3,0,'promotion','https://example.test/pelvic-package.jpg',"+
+         "VALUES($1,$2,$3,0,$4,'https://example.test/pelvic-package.jpg',"+
          "'Pelvic package','pending',NOW()-INTERVAL '1 minute',NOW()+INTERVAL '1 hour') "+
-         "RETURNING id",[sender,contact,follow],
+         "RETURNING id",[sender,contact,follow,newPlan===true?"promotion":newPlan],
        )).rows[0].id);
      }
      return{contact,inbound,oldJob,follow,newJob};
    }
    const location=await makeConversation("Location");
+   const chineseLocation=await makeConversation("地址在哪",{
+     originalText:"你好！想了解你们家的【黄金脉冲技术】",
+   });
    const method=await makeConversation("是徒手吗");
    const facial=await makeConversation("四方脸",{
      originalText:"Hi～想了解 Neutro Sense TCM 3D 小颜术",
@@ -256,6 +259,11 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
    const price=await makeConversation("想要了解价钱",{newPlan:true});
    const clinical=await makeConversation("我是腹直肌分离");
    const newer=await makeConversation("Location",{newPlan:true});
+   const differentTreatment=await makeConversation("我想了解脉冲波");
+   const stop=await makeConversation("Stop promotions");
+   const newerResult=await makeConversation("我想了解9D",{
+     newPlan:"result",originalText:"想了解 3D 小颜术",
+   });
    const args=[allEnv.WHATSAPP_SECONDARY_SENDER_KEY,
      allEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
      allEnv.WHATSAPP_SECONDARY_WABA_ID,20,
@@ -270,34 +278,46 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 0 AND 23");
    const ready=(await db.query(prioritySql,args)).rows.map(r=>Number(r.id));
    assert.ok(ready.includes(location.oldJob),"location preserves the media plan");
+   assert.ok(ready.includes(chineseLocation.oldJob),
+     "Cindy's Chinese address question preserves pulse-wave results");
    assert.ok(ready.includes(method.oldJob),"manual method question preserves media");
    assert.ok(ready.includes(facial.oldJob),
      "short face-shape clarification preserves its original 3D result image");
    assert.ok(!ready.includes(pelvicSwitch.oldJob),
      "face-shape interest must not preserve a pelvic result image");
-   assert.ok(!ready.includes(price.oldJob),"price question retires old results");
+   assert.ok(ready.includes(price.oldJob),"price question preserves selected results");
    assert.ok(ready.includes(price.newJob),"new price plan takes priority");
    assert.ok(!ready.includes(clinical.oldJob),"clinical concern blocks media");
-   assert.ok(!ready.includes(newer.oldJob),"new media plan replaces older media");
+   assert.ok(ready.includes(newer.oldJob),"new pricing plan does not erase prior results");
    assert.ok(ready.includes(newer.newJob));
+   assert.ok(!ready.includes(differentTreatment.oldJob),
+     "switching from pelvic to pulse-wave treatment supersedes old results");
+   assert.ok(!ready.includes(stop.oldJob),"stop request forbids pending result");
+   assert.ok(!ready.includes(newerResult.oldJob),"new result plan supersedes old result");
+   assert.ok(ready.includes(newerResult.newJob),"new result plan is eligible");
    const cleaned=await queue.cancelObsoletePending({database,env:allEnv});
-   assert.equal(cleaned.cancelled,4);
+   assert.equal(cleaned.cancelled,5);
    const states=(await db.query("SELECT id,state FROM whatsapp_sender_ai_media_jobs")).rows;
    const s=new Map(states.map(row=>[Number(row.id),row.state]));
    assert.equal(s.get(location.oldJob),"pending");
+   assert.equal(s.get(chineseLocation.oldJob),"pending");
    assert.equal(s.get(method.oldJob),"pending");
    assert.equal(s.get(facial.oldJob),"pending");
    assert.equal(s.get(pelvicSwitch.oldJob),"expired");
-   assert.equal(s.get(price.oldJob),"expired");
+   assert.equal(s.get(price.oldJob),"pending");
    assert.equal(s.get(price.newJob),"pending");
    assert.equal(s.get(clinical.oldJob),"expired");
-   assert.equal(s.get(newer.oldJob),"expired");
+   assert.equal(s.get(newer.oldJob),"pending");
    assert.equal(s.get(newer.newJob),"pending");
+   assert.equal(s.get(differentTreatment.oldJob),"expired");
+   assert.equal(s.get(stop.oldJob),"expired");
+   assert.equal(s.get(newerResult.oldJob),"expired");
+   assert.equal(s.get(newerResult.newJob),"pending");
    const auditRows=(await db.query(
      "SELECT inbound_message_id,status,reason FROM result_media_decisions "+
-     "WHERE inbound_message_id=ANY($1::int[])",[[price.inbound,clinical.inbound,newer.inbound]],
+     "WHERE inbound_message_id=ANY($1::int[])",[[pelvicSwitch.inbound,clinical.inbound,differentTreatment.inbound,stop.inbound,newerResult.inbound]],
    )).rows;
-   assert.equal(auditRows.length,3);
+   assert.equal(auditRows.length,5);
    for(const row of auditRows){
      assert.equal(row.status,"skipped");
      assert.equal(row.reason,"secondary_media_cancelled_before_send");
