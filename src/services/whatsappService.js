@@ -700,13 +700,6 @@ function parseIncomingMessages(body) {
           // Some username-mode callbacks provide the scoped user_id without
           // an exposed phone address. Never use a display username here.
           if (!message?.id) continue;
-          if (!message.from && !message.from_user_id && !message.user_id) {
-            // The signed Meta payload is visible to this receiver, but there
-            // is no safe way to address the customer. Make this diagnosable.
-            console.warn("[WhatsApp inbound parser] missing_customer_identity");
-            continue;
-          }
-
           // Meta delivers BSUID rotations as signed system messages on the
           // ordinary messages webhook. They are not customer enquiries:
           // preserve only provider identity evidence and never trigger AI,
@@ -730,6 +723,13 @@ function parseIncomingMessages(body) {
                 ...senderMetadataForChange(entry, change),
               });
             }
+            continue;
+          }
+
+          if (!message.from && !message.from_user_id && !message.user_id) {
+            // The signed Meta payload is visible to this receiver, but there
+            // is no safe way to address the customer. Make this diagnosable.
+            console.warn("[WhatsApp inbound parser] missing_customer_identity");
             continue;
           }
 
