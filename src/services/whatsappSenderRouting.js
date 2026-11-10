@@ -3,6 +3,7 @@
 // Read-only multi-number foundation. This is not wired to live webhooks or
 // outbound sending until all sender-specific identity/policy work is ready.
 const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
+const { normalizeCustomerAddress } = require("../utils/whatsappCustomerIdentity");
 
 const REGISTRY_LOOKUPS = new WeakMap();
 const ROUTABLE_FIELDS = new Set(["messages", "smb_message_echoes"]);
@@ -223,21 +224,14 @@ function validateWhatsAppWebhookSenders(body, registry) {
 
 function conversationKeyForSender(senderKey, customerPhone) {
   const key = requireSenderKey(senderKey);
-  if (typeof customerPhone !== "string"
-      || !/^[+\d\s().-]+$/.test(customerPhone)) {
+  const address = normalizeCustomerAddress(customerPhone);
+  if (!address) {
     throw new WhatsAppSenderRoutingError(
       "WHATSAPP_CONVERSATION_IDENTITY_INVALID",
-      "A valid customer phone number is required."
+      "A valid customer phone or Meta BSUID is required."
     );
   }
-  const phone = normalizeWhatsappNumber(customerPhone);
-  if (!/^\d{8,15}$/.test(phone)) {
-    throw new WhatsAppSenderRoutingError(
-      "WHATSAPP_CONVERSATION_IDENTITY_INVALID",
-      "A valid customer phone number is required."
-    );
-  }
-  return `whatsapp:${key}:${phone}`;
+  return `whatsapp:${key}:${address}`;
 }
 
 module.exports = {
