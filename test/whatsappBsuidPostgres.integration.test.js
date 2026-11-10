@@ -154,6 +154,42 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
       [first.id]);
     assert.equal(latest.rows[0].whatsapp_user_id,"MY.ConcurrentFinal");
     assert.equal(latest.rows[0].whatsapp_last_customer_address,"MY.ConcurrentFinal");
+
+    // Hold both DB locks while an inbound claims the replacement user ID on
+    // a separate connection. It must wait for the rotation and reuse owner.
+    let reachedNewLock;
+    const newLockReached=new Promise(resolve=>{reachedNewLock=resolve;});
+    let releaseRotation;
+    const rotationUnblock=new Promise(resolve=>{releaseRotation=resolve;});
+    const newId="MY.QueuedNewID";
+    const pausedPool={
+      async connect() {
+        const client=await pool.connect();
+        return {
+          query:async(sql,...args)=>{
+            const result=await client.query(sql,...args);
+            if (String(sql).includes("pg_advisory_xact_lock") &&
+                args[0]?.[1]===newId) {
+              reachedNewLock();
+              await rotationUnblock;
+            }
+            return result;
+          },
+          release:()=>client.release(),
+        };
+      },
+    };
+    const rotating=senderContacts.rotateSenderUserId({
+      ...sender,previousUserId:"MY.ConcurrentFinal",newUserId:newId,
+    },pausedPool);
+    await newLockReached;
+    const claiming=senderContacts.claimSenderContact({
+      ...sender,customerPhone:newId,customerUserId:newId,
+    },pool,env);
+    releaseRotation();
+    const [rotationResult,claimResult]=await Promise.all([rotating,claiming]);
+    assert.equal(rotationResult.updated,true);
+    assert.equal(claimResult.id,first.id);
     const finalCount=await setup.query("SELECT count(*)::integer n FROM contacts");
     assert.equal(finalCount.rows[0].n,2);
   }finally{
