@@ -31,7 +31,7 @@ async function applyStagedSecondaryReceipts({
   );
   if (duplicate.rowCount) throw new Error("Provider WAMID already belongs to another reservation");
   const pending = await client.query(
-    `SELECT fingerprint,recipient_hash,delivery_status,pricing_type,
+    `SELECT fingerprint,recipient_hash,alternate_recipient_hash,delivery_status,pricing_type,
             pricing_billable,pricing_category
        FROM whatsapp_sender_status_receipts
       WHERE sender_id=$1 AND wamid_hash=$2 AND matched=FALSE
@@ -42,16 +42,20 @@ async function applyStagedSecondaryReceipts({
   );
   if (!pending.rowCount) return { matched:0, autoReconciled:false, held:false };
   const expectedRecipient = hash(address);
-  const wrongRecipient = pending.rows.some(r=>r.recipient_hash !== expectedRecipient);
-  const verified = pending.rows.filter(r=>r.recipient_hash === expectedRecipient);
+  const matches = r => r.recipient_hash === expectedRecipient ||
+    r.alternate_recipient_hash === expectedRecipient;
+  const wrongRecipient = pending.rows.some(r => !matches(r));
+  const verified = pending.rows.filter(matches);
   if (!verified.length) return { matched:0, autoReconciled:false, held:false };
 
   for (const receipt of verified) {
     const promoted = await client.query(
       `UPDATE whatsapp_sender_status_receipts
-          SET reservation_id=$2::uuid,wamid=$3,matched=TRUE
+          SET reservation_id=$2::uuid,wamid=$3,matched=TRUE,
+              recipient_hash=$5
         WHERE fingerprint=$1 AND sender_id=$4 AND matched=FALSE
-          AND recipient_hash=$5 RETURNING fingerprint`,
+          AND (recipient_hash=$5 OR alternate_recipient_hash=$5)
+        RETURNING fingerprint`,
       [receipt.fingerprint,reservationId,acceptedWamid,senderId,expectedRecipient]
     );
     if (promoted.rowCount !== 1) throw new Error("Early receipt promotion lost identity");
