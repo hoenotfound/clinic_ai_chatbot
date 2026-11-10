@@ -97,6 +97,7 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
+  recoveryTreatmentButtons,
 } = require("./services/whatsapp131060Recovery");
 const {
   deliveryErrorForSend,
@@ -207,7 +208,8 @@ async function sendTrackedText(
   contact,
   text,
   origin = "ai_reply",
-  { canSend = null, processingJobId = null, latePreSendCheck = null } = {}
+  { canSend = null, processingJobId = null, latePreSendCheck = null,
+    interactiveButtons = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -307,6 +309,7 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
+          interactiveButtons,
           preSendCheck: guarded ? async () =>
             canSend() === true &&
             (typeof latePreSendCheck !== "function" ||
@@ -714,8 +717,8 @@ async function processIncomingMessage(
         );
       }
       // Meta 131060 on the Coexistence number contains no customer text.
-      // Only an explicit post-activation option may send ONE short resend
-      // request. Never manufacture an advertising referral, service intent,
+      // Only an explicit post-activation option may send ONE natural treatment
+      // selection menu. Never manufacture advertising referral, service intent,
       // pricing response, image or follow-up from the unavailable message.
       // The delay allows a readable first message or staff Business App echo
       // to arrive, and both checks fail closed if another turn has appeared.
@@ -734,6 +737,7 @@ async function processIncomingMessage(
               {
                 canSend: canSendAutomatedReply,
                 processingJobId,
+                interactiveButtons: recoveryTreatmentButtons(),
                 latePreSendCheck: (reservedMessageId) =>
                   canSend131060Recovery({
                     contactId: contact.id,
@@ -746,7 +750,7 @@ async function processIncomingMessage(
         } catch (recoveryErr) {
           // Preserve the original Meta 131060 staff review. If Meta rejects
           // the reply, the existing tracked-send delivery alert is retained.
-          console.error("[Meta 131060 recovery] Resend request failed:", recoveryErr);
+          console.error("[Meta 131060 recovery] Treatment menu failed:", recoveryErr);
         }
       }
       return { wasFirstMessage, keywordReason };
