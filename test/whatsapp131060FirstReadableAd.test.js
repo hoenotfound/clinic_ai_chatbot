@@ -66,7 +66,10 @@ test("complete runtime wiring uses durable evidence for fixed intro, AI and medi
   const prunedJobs=fs.readFileSync(path.join(__dirname,
     "../src/db/inboundProcessingRepo.js"),"utf8");
   assert.match(inbound,/verifiedUnavailableFirstAd[\s\S]*?recordVerifiedFirstAd/);
-  assert.match(server,/verifiedFirstReadableAd\s*=\s*secondaryAiConversation/);
+  assert.match(server,/let verifiedFirstReadableAd = isVerifiedAdInbound/);
+  assert.match(server,/firstAdProofRepo\.getVerifiedFirstAdMessage/);
+  assert.match(server,/preclaimed\?\.verifiedUnavailableFirstAd !== true/);
+  assert.doesNotMatch(server,/history\.length === 2\s*&&\s*preclaimed\?\.verifiedUnavailableFirstAd/);
   assert.match(server,/isFirstMessage:\s*wasFirstMessage\s*===\s*true\s*\|\|\s*verifiedFirstReadableAd/);
   assert.match(server,/conversationHistory:\s*verifiedFirstReadableAd\s*\?\s*history\.slice\(-1\)/);
   assert.match(server,/const modelReplyHistory\s*=\s*verifiedFirstReadableAd[\s\S]*?\?\s*replyHistory\.slice\(-1\)[\s\S]*?ai\.getReply\(modelReplyHistory,\s*replyOptions\)/);
