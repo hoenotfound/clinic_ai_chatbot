@@ -179,6 +179,29 @@ test("image, buttons, audio voice, video, documents and templates keep Ariel cre
   assert.equal(JSON.parse(calls[6].options.body).template.name, "appointment_reminder");
 });
 
+test("transport carries three native treatment buttons using only secondary credentials", async () => {
+  const calls=[];
+  const client=await transport(calls);
+  const buttons=[
+    {id:"neutro_131060_pelvic",title:"骨盆调理"},
+    {id:"neutro_131060_3d",title:"3D 小颜术"},
+    {id:"neutro_131060_9d",title:"9D 逆龄"},
+  ];
+  const send=await client.sendInteractiveButtons("请选择护理项目～",buttons);
+  assert.equal(send.success,true);
+  assert.equal(calls.length,1);
+  const request=JSON.parse(calls[0].options.body);
+  assert.equal(request.to,contact.whatsapp_number);
+  assert.equal(request.type,"interactive");
+  assert.equal(request.interactive.type,"button");
+  assert.deepEqual(request.interactive.action.buttons,
+    buttons.map(button=>({type:"reply",reply:button})));
+  assert.equal(calls[0].options.headers.Authorization,"Bearer secondary-secret");
+  assert.equal((await client.sendInteractiveButtons("Invalid",[
+    ...buttons,{id:"fourth",title:"脉冲波"}])).success,false);
+  assert.equal(calls.length,1,"more than three buttons must never reach Meta");
+});
+
 test("media is uploaded to the same Ariel phone with no primary-token fallback", async () => {
   const calls = [];
   const client = await transport(calls, {
