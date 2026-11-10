@@ -266,7 +266,9 @@ async function createVerifiedSecondaryOutboundTransport(contact, options = {}) {
   }
   const methods = ["sendText", "sendInteractiveButtons", "sendImageByUrl",
     "sendMediaById", "sendTemplatePayload", "uploadMedia"];
-  const wrapped = { senderKey: transport.senderKey };
+  // Internal binding evidence only. The dispatch layer must compare this
+  // address with the billing reservation before the first Meta request.
+  const wrapped = { senderKey: transport.senderKey, recipientAddress: binding.recipient };
   for (const method of methods) {
     wrapped[method] = async (...args) => {
       // A manual staging test is text-only even if a different caller tries
