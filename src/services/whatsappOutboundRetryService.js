@@ -379,6 +379,26 @@ function compatibleSender({
   };
 }
 
+// The generic retry worker only has the PRIMARY Cloud API transport.
+// Never send a sender-scoped secondary message through that transport,
+// including rows queued before this protection was introduced.
+function primaryRetrySenderVerified(row, env = process.env) {
+  if (row?.current_sender_id == null) {
+    return row?.current_sender_key == null &&
+      row?.current_sender_phone_number_id == null &&
+      row?.current_sender_account_id == null;
+  }
+  return Boolean(
+    env.WHATSAPP_PRIMARY_SENDER_KEY &&
+    env.WHATSAPP_PHONE_NUMBER_ID &&
+    env.WHATSAPP_WABA_ID &&
+    row.current_sender_key === env.WHATSAPP_PRIMARY_SENDER_KEY &&
+    row.current_sender_phone_number_id === env.WHATSAPP_PHONE_NUMBER_ID &&
+    row.current_sender_account_id === env.WHATSAPP_WABA_ID &&
+    row.current_sender_state === "active"
+  );
+}
+
 async function runWhatsappOutboundRetryQueue({
   repository = retryRepo,
   messages = messagesRepo,
@@ -488,6 +508,14 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
+      if (!primaryRetrySenderVerified(row)) {
+        await finishAttention(row,
+          "Automatic retry blocked: this message belongs to a different or unverified WhatsApp sender. Review the original chat before resending.", {
+            terminal: "cancelled", repository, contacts, inbound, leaseToken,
+          });
+        continue;
+      }
+
       const contactForSend = {
         id: row.contact_id,
         channel: "whatsapp",
@@ -505,6 +533,8 @@ async function runWhatsappOutboundRetryQueue({
           isAutomationEnabled
         );
         if (!latest ||
+            !primaryRetrySenderVerified(latest) ||
+            String(latest.current_sender_id || "") !== String(row.current_sender_id || "") ||
             verifiedRecipientForContact({
               whatsapp_number: latest.current_recipient,
               whatsapp_last_customer_address: latest.current_last_address,
@@ -721,6 +751,7 @@ module.exports = {
   recordAcceptedEvidence,
   retryDelayForAttempt,
   runWhatsappOutboundRetryQueue,
+  primaryRetrySenderVerified,
   startWhatsappOutboundRetryWorker,
   wakeWhatsappOutboundRetry,
 };
