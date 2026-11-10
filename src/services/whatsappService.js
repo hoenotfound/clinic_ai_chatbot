@@ -262,7 +262,7 @@ async function sendInteractiveButtons(to,body,buttons,options={}) {
   if (senderBlocked) return senderBlocked;
   return whatsappZeroCostGuard.perform(to,
     ()=>sendInteractiveButtonsUnchecked(to,body,buttons), {
-      contactId:options.contactId,
+      ...(options.contactId != null ? { contactId:options.contactId } : {}),
       currentMessageId:options.currentMessageId,
       messageKind:"interactive_consent",
     });
@@ -1073,13 +1073,13 @@ function parseStatusUpdates(body) {
   const senderBlocked = blockUnverifiedOutgoingSender(null, options);
   if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
-    contactId: options.contactId,
+    ...(options.contactId != null ? { contactId: options.contactId } : {}),
     currentMessageId: options.currentMessageId,
     messageKind: options.autoFollowUp === true ? "auto_followup_text" : "first_reply_text",
   });
  }
  function mediaGuardContext(options={}) {
-   return { contactId: options.contactId, currentMessageId: options.currentMessageId,
+   return { ...(options.contactId != null ? { contactId: options.contactId } : {}), currentMessageId: options.currentMessageId,
      messageKind: options.autoFollowUp === true ? "auto_followup_media" : options.staffMedia === true ? "staff_media" : "media" };
  }
  async function sendImage(to,url,caption,options={}) {
