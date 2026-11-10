@@ -14,6 +14,10 @@ test("loads the current Inbox lead with Meta hierarchy fallback", async (t) => {
     assert.match(sql, /FROM leads l/);
     assert.match(sql, /LEFT JOIN lead_attributions la/);
     assert.match(sql, /FROM meta_ad_insights_daily mi/);
+    assert.match(sql, /FROM whatsapp_free_entry_referrals r/);
+    assert.ok(sql.includes("r.contact_id = l.contact_id"));
+    assert.ok(sql.includes("ORDER BY r.recorded_at DESC, r.origin_message_id DESC"));
+    assert.ok(sql.includes("mi.ad_id = latest_ref.meta_ad_id"));
     assert.match(sql, /ORDER BY l\.is_closed ASC/);
     assert.deepEqual(params, [42]);
     return {
@@ -28,6 +32,9 @@ test("loads the current Inbox lead with Meta hierarchy fallback", async (t) => {
         adset_id: "200",
         adset_name: "Women KL",
         ad_name: "Pelvis Creative",
+        latest_meta_ad_id: "301",
+        latest_ad_name: "Pelvis Relaunch",
+        latest_campaign_name: "New Promo",
         temperature: "hot",
         stage_name: "Appointment",
       }],
@@ -39,4 +46,9 @@ test("loads the current Inbox lead with Meta hierarchy fallback", async (t) => {
   assert.equal(context.source, "meta_ads");
   assert.equal(context.ad_name, "Pelvis Creative");
   assert.equal(context.campaign_name, "Pelvis Campaign");
+  assert.equal(context.latest_meta_ad_id, "301");
+  assert.equal(context.latest_ad_name, "Pelvis Relaunch");
+  assert.equal(context.latest_campaign_name, "New Promo");
+  assert.notEqual(context.meta_ad_id, context.latest_meta_ad_id,
+    "the Inbox can show a newer ad without rewriting the original lead attribution");
 });
