@@ -27,6 +27,14 @@ test(
       await client.query(`CREATE SCHEMA ${schemaName}`);
       await client.query(`SET search_path TO ${schemaName}`);
       await client.query(`
+        CREATE TABLE whatsapp_sender_accounts (
+          id BIGSERIAL PRIMARY KEY,
+          sender_key TEXT NOT NULL,
+          meta_phone_number_id TEXT NOT NULL,
+          meta_account_id TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'active'
+        );
+
         CREATE TABLE contacts (
           id SERIAL PRIMARY KEY,
           whatsapp_number TEXT NOT NULL,
