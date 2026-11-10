@@ -56,6 +56,9 @@ function normalizeStatusRecipient(value) {
       value !== value.trim() ||
       !/^[A-Za-z0-9._+*-]+$/.test(value)) return null;
   const raw=value;
+  // Preserve the old 64-byte cap for unknown/opaque values. Only a
+  // syntactically valid provider BSUID may exceed that limit.
+  if (raw.length > 64 && !isBsuid(raw)) return null;
   if (isBsuid(raw)) return { recipient: raw, verified: true };
   const e164=/^\+([0-9]{8,15})$/.exec(raw);
   if (e164) return { recipient: e164[1], verified: true };
@@ -69,7 +72,7 @@ function classifyInvalidStatusRecipient(value) {
   if (value === null) return "null";
   if (typeof value !== "string") return "non_string";
   if (!value.trim()) return "blank";
-  if (value.length > 131) return "oversize";
+  if (value.length > 64 && !isBsuid(value)) return "oversize";
   if (/[\x00-\x1f\x7f]/.test(value)) return "control";
   if (/[^\x20-\x7e]/.test(value)) return "non_ascii";
   return "unrecognized_format";
