@@ -75,10 +75,10 @@ const FIRST_REPLY_SQL=`
      AND reply.sent_by_username IS NULL
      AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
      AND reply.created_at>=CASE WHEN $7::text='all_contacts'
-        AND NOT (${adsOnlyEligibleSql("c","$8")})
+        AND NOT recent_contact.legacy_ads_eligible
       THEN inbound.created_at ELSE c.created_at END
      AND reply.created_at<(CASE WHEN $7::text='all_contacts'
-        AND NOT (${adsOnlyEligibleSql("c","$8")})
+        AND NOT recent_contact.legacy_ads_eligible
       THEN inbound.created_at ELSE c.created_at END)+INTERVAL '24 hours'
    ORDER BY reply.created_at,reply.id LIMIT 1
  ) first_reply ON TRUE
@@ -95,6 +95,13 @@ const MARKETING_CUSTOMER_INTENT_SQL=String.raw`
   AND COALESCE(inbound.last_customer_text,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
  )
 `;
+// Legacy ads-only proof includes historical and cross-number safety checks.
+// Calculate that unchanged predicate once per recent contact instead of
+// repeatedly for each configured marketing language and follow-up slot.
+const LEGACY_AD_PROOF_SQL=adsOnlyEligibleSql("c","$8");
+const MARKETING_AUTOMATION_ELIGIBLE_SQL=
+ secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")
+ .replace(LEGACY_AD_PROOF_SQL,"recent_contact.legacy_ads_eligible");
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -116,18 +123,27 @@ const CANDIDATES_SQL=`
  -- Day4/Day6 deliberately restores nine days below. The original sender,
  -- consent, staff, booking, billing and one-shot checks still authorize sends.
  JOIN (
-   SELECT DISTINCT recent.contact_id
-   FROM messages recent
-   WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'
-     AND recent.role='user'
-     AND recent.whatsapp_message_id IS NOT NULL
-     -- The later latest-lead check requires an opted-in marketing lead.
-     -- This necessary-only prefilter cannot admit any new recipient.
-     AND EXISTS (
-       SELECT 1 FROM leads consent_seed
-       WHERE consent_seed.contact_id=recent.contact_id
-         AND consent_seed.marketing_consent='opted_in'
-     )
+   WITH recent_seed AS MATERIALIZED (
+     SELECT DISTINCT recent.contact_id
+     FROM messages recent
+     WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'
+       AND recent.role='user'
+       AND recent.whatsapp_message_id IS NOT NULL
+       -- This shortlist cannot authorize any recipient. All current
+       -- consent, sender, appointment and billing checks remain below.
+       AND EXISTS (
+         SELECT 1 FROM leads consent_seed
+         WHERE consent_seed.contact_id=recent.contact_id
+           AND consent_seed.marketing_consent='opted_in'
+       )
+   ), verified_seed AS MATERIALIZED (
+     SELECT recent_seed.contact_id,
+       CASE WHEN $7::text='all_contacts'
+         THEN ${LEGACY_AD_PROOF_SQL}
+         ELSE FALSE END AS legacy_ads_eligible
+     FROM recent_seed JOIN contacts c ON c.id=recent_seed.contact_id
+   )
+   SELECT contact_id,legacy_ads_eligible FROM verified_seed
  ) recent_contact ON TRUE
  JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
    AND sc.state='bound' AND sc.contact_id=recent_contact.contact_id
@@ -161,7 +177,7 @@ const CANDIDATES_SQL=`
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
-   AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
+   AND ${MARKETING_AUTOMATION_ELIGIBLE_SQL}
    -- The latest verified choice must agree with the lead's service AND
    -- its existing, treatment-scoped marketing consent. An unrelated consent
    -- for 3D cannot authorize a 9D template after the customer switches.

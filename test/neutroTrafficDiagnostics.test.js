@@ -11,6 +11,12 @@ const {
 const enabled = { DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED: "true" };
 
 test("48h/66h shortlist is narrower but preserves all due eligible inbound times", () => {
+ for(const sql of [marketing.CANDIDATES_SQL,marketing.POTENTIAL_DUE_SQL,
+   marketing.RECHECK_SQL,marketing.EXTENDED_CANDIDATES_SQL]){
+   assert.match(sql,/recent_seed AS MATERIALIZED/);
+   assert.match(sql,/verified_seed AS MATERIALIZED/);
+   assert.match(sql,/recent_contact\.legacy_ads_eligible/);
+ }
   // The first verified reply must follow the inbound within 24 hours.
   // With an 8-hour late grace period, the oldest inbound for 66h is
   // 66+24+8=98 hours ago, less than the five-day necessary-only filter.
