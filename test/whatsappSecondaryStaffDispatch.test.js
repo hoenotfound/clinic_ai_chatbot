@@ -507,3 +507,75 @@ test("unresolved previous secondary picture never bypasses billing gate or reach
   assert.equal(calls.reserved,5);
   assert.equal(calls.mark.length,0);
 });
+
+test("gated 131060 treatment menu reaches secondary interactive transport, not primary or generic AI",async()=>{
+ const {recoveryTreatmentButtons,build131060RecoveryReply}=
+   require("../src/services/whatsapp131060Recovery");
+ const menu=recoveryTreatmentButtons();
+ const text=build131060RecoveryReply({unsupportedType:"unsupported"});
+ const withRecovery={
+   ...aiOnlyEnv,
+   WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+   WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-10T09:00:00Z",
+   WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"true",
+   WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT:"2026-11-10T09:00:00Z",
+ };
+ function context(extra={}){
+   const {opts,calls}=setup();
+   const buttonCalls=[];
+   const deps={
+     ...opts,env:{...withRecovery,...extra},
+     replyAudienceEligible:async()=>true,
+     conversationRepo:{
+       ...opts.conversationRepo,
+       senderForContact:async()=>({
+         conversation_id:75,sender_key:"neutro_secondary",sender_state:"active",
+         meta_phone_number_id:withRecovery.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+         meta_account_id:withRecovery.WHATSAPP_SECONDARY_WABA_ID,
+         customer_wa_id:contact.whatsapp_number,
+       }),
+     },
+     createTransport:async()=>{
+       calls.verify++;
+       return{sendInteractiveButtons:async(body,buttons)=>{
+         buttonCalls.push({body,buttons});
+         return{success:true,wamid:"wamid.menu-accepted"};
+       }};
+     },
+   };
+   return{deps,calls,buttonCalls};
+ }
+ const user={...contact,whatsapp_sender_key:"neutro_secondary"};
+ const input={contact:user,messageId:120,text,origin:"system_fallback",
+   interactiveButtons:menu,preSendCheck:()=>true};
+ const ok=context();
+ const accepted=await sendSecondaryStaffText(input,ok.deps);
+ assert.equal(accepted.success,true);
+ assert.equal(ok.calls.reserved,1);
+ assert.equal(ok.buttonCalls.length,1);
+ assert.deepEqual(ok.buttonCalls[0],{body:text,buttons:menu});
+ assert.deepEqual(ok.calls.mark,[{
+   reservationId,acceptedWamid:"wamid.menu-accepted",definitivelyRejected:false,
+ }]);
+ for(const invalid of [
+   {...input,origin:"ai_reply"},
+   {...input,interactiveButtons:[...menu.slice(0,2),{id:"random",title:"脉冲波"}]},
+   {...input,text:"Unauthorized menu"},
+ ]) {
+   const c=context();
+   const result=await sendSecondaryStaffText(invalid,c.deps);
+   assert.equal(result.code,"secondary_131060_recovery_menu_invalid");
+   assert.equal(c.calls.reserved,0);
+   assert.equal(c.buttonCalls.length,0);
+ }
+ const off=context({WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"false"});
+ const noSend=await sendSecondaryStaffText(input,off.deps);
+ assert.equal(noSend.code,"secondary_131060_recovery_menu_invalid");
+ assert.equal(off.buttonCalls.length,0);
+ const staffEcho=context();
+ const stopped=await sendSecondaryStaffText({...input,preSendCheck:()=>false},staffEcho.deps);
+ assert.equal(stopped.cancelled,true);
+ assert.equal(staffEcho.buttonCalls.length,0);
+});
+
