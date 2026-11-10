@@ -27,7 +27,7 @@ const unavailable = {
   unsupportedErrors: [{ code: 131060, title: "This message is unavailable." }],
 };
 const services = {
-  services: [{name:"骨盆调理"},{name:"3D 小颜术"},{name:"9D 逆龄"}],
+  services: [{name:"骨盆调理"},{name:"3D 小颜术"},{name:"9D 逆龄抗衰"}],
   serviceAliases: [{alias:"盆骨",officialService:"骨盆调理"}],
 };
 
@@ -126,7 +126,7 @@ test("buttons are three fixed genuine treatments with a typed other-service esca
   assert.deepEqual(buttons,[
     {id:"neutro_131060_pelvic",title:"骨盆调理"},
     {id:"neutro_131060_3d",title:"3D 小颜术"},
-    {id:"neutro_131060_9d",title:"9D 逆龄"},
+    {id:"neutro_131060_9d",title:"9D 逆龄抗衰"},
   ]);
   assert.equal(validRecoveryTreatmentButtons(buttons),true);
   assert.equal(buttons.every(b=>b.title.length<=20&&b.id.length<=256),true);
