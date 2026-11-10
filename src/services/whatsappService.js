@@ -696,7 +696,9 @@ function parseIncomingMessages(body) {
         const contacts = value?.contacts || [];
 
         for (const message of value?.messages || []) {
-          if (!message?.id || !message?.from) continue;
+          // Some username-mode callbacks provide the scoped user_id without
+          // an exposed phone address. Never use a display username here.
+          if (!message?.id || (!message?.from && !message?.user_id)) continue;
 
           // WhatsApp reactions are message metadata, not conversational turns.
           // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
@@ -726,7 +728,7 @@ function parseIncomingMessages(body) {
           );
           const base = {
             id: message.id,
-            from: message.from,
+            from: message.from || message.user_id,
             profileName,
             ...(typeof customerUserId === "string" ? { customerUserId } : {}),
             ...(typeof customerUsername === "string" ? { customerUsername } : {}),
