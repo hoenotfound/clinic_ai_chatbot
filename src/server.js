@@ -1154,7 +1154,7 @@ async function processIncomingMessage(
     let verifiedFirstReadableAd = isVerifiedAdInbound &&
       preclaimed?.verifiedUnavailableFirstAd === true;
     if (!verifiedFirstReadableAd && isVerifiedAdInbound &&
-        preclaimed?.verifiedUnavailableFirstAd == null) {
+        preclaimed?.verifiedUnavailableFirstAd !== true) {
       try {
         verifiedFirstReadableAd = Boolean(await firstAdProofRepo.getVerifiedFirstAdMessage(
           contact.id,savedInbound.id
