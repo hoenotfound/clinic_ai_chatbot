@@ -84,8 +84,14 @@ test("primary Cloud API text uses recipient for BSUID and to for normal phone",a
   }
 });
 
-test("primary billing SQL binds BSUID to verified contact, without numeric truncation",()=>{
-  assert.match(guard.SCOPED_VERIFIED_WINDOW_SQL,/c\\.whatsapp_user_id=\\$3/);
-  assert.match(guard.SCOPED_CTWA_FIRST_REPLY_SQL,/c\\.whatsapp_user_id=\\$2/);
-  assert.match(guard.SCOPED_SESSION_WINDOW_SQL,/c\\.whatsapp_user_id=\\$3/);
+test("primary billing routes BSUID separately while retaining indexed phone SQL",()=>{
+  const id="MY.Ab12CD34";
+  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_VERIFIED_WINDOW_SQL,id),
+    /c\\.whatsapp_user_id=\\$3/);
+  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_CTWA_FIRST_REPLY_SQL,id),
+    /c\\.whatsapp_user_id=\\$2/);
+  assert.match(guard.sqlForCustomerAddress(guard.SCOPED_SESSION_WINDOW_SQL,id),
+    /c\\.whatsapp_user_id=\\$3/);
+  assert.doesNotMatch(guard.SCOPED_VERIFIED_WINDOW_SQL,/c\\.whatsapp_user_id/);
+  assert.match(guard.SCOPED_VERIFIED_WINDOW_SQL,/regexp_replace/);
 });
