@@ -293,10 +293,12 @@ export default function SalesFollowUp() {
                     {lead.nextAction && <div className="mt-2 rounded-lg bg-[var(--color-bg)] p-2 text-sm"><strong>Suggested next step:</strong> {lead.nextAction}</div>}
                     <p className="mt-2 text-xs text-[var(--color-text-muted)]">Last customer reply: {ageLabel(lead.lastCustomerReplyAt)} · Assigned to {lead.owner}</p>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <a href={lead.whatsappUrl} target="_blank" rel="noopener noreferrer"
+                      <a href={lead.whatsappUrl || lead.inboxUrl || ("/inbox?contact=" + encodeURIComponent(lead.contactId))}
+                        target={lead.whatsappUrl ? "_blank" : undefined}
+                        rel={lead.whatsappUrl ? "noopener noreferrer" : undefined}
                         onClick={() => { setOpenedLeadId(lead.leadId); rememberPendingReturn(username, lead.leadId); }}
                         className="flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-primary)] px-4 py-3 text-center text-sm font-semibold text-white">
-                        1. Open WhatsApp
+                        {lead.whatsappUrl ? "1. Open WhatsApp" : "1. Open Chatbot Inbox"}
                       </a>
                       {canUpdate && <button type="button" onClick={() => openResult(lead)}
                         className="min-h-11 rounded-lg border border-[var(--color-border)] px-4 py-3 text-sm font-semibold">
@@ -305,7 +307,7 @@ export default function SalesFollowUp() {
                     </div>
                     {openedLeadId === lead.leadId && (
                       <p role="status" className="mt-2 text-xs text-[var(--color-text-muted)]">
-                        After messaging from your personal WhatsApp, return here to record the result.
+                        {lead.whatsappUrl ? "After messaging from your personal WhatsApp, return here to record the result." : "Review the conversation in the Chatbot Inbox, then return here to record any contact."}
                         Opening WhatsApp does not send a message automatically.
                       </p>
                     )}
