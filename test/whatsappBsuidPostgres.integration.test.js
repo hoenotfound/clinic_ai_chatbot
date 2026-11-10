@@ -24,6 +24,12 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
     };
     const migrated=await runMigrations(pool,{quiet:true,migrations:loadMigrations()});
     assert.ok(migrated.currentVersion>=120);
+    const snapshotColumn=await setup.query(
+      "SELECT column_name FROM information_schema.columns " +
+      "WHERE table_schema=current_schema() " +
+      "AND table_name='whatsapp_sender_billing_attempts' " +
+      "AND column_name='recipient_address'");
+    assert.equal(snapshotColumn.rowCount,1);
     await setup.query(
       "INSERT INTO whatsapp_sender_accounts "+
       "(sender_key,meta_phone_number_id,meta_account_id,display_name,state,coexistence_enabled) "+
@@ -49,6 +55,13 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
       "stable phone key keeps saved history and lead ownership");
     assert.equal(hidden.whatsapp_last_customer_address,bsuid);
     assert.equal(hidden.whatsapp_username,"@peggyteoh");
+    const businessEcho=await senderContacts.claimSenderContact({
+      ...sender,customerPhone:"60123456789",customerUserId:bsuid,
+      preserveLastCustomerAddress:true,
+    },pool,env);
+    assert.equal(businessEcho.id,first.id);
+    assert.equal(businessEcho.whatsapp_last_customer_address,bsuid,
+      "staff echo must never rewrite a customer's last inbound address");
     const owner=await senderContacts.findBoundContactForSender({
       ...sender,customerPhone:bsuid},setup);
     assert.equal(owner.id,first.id);
