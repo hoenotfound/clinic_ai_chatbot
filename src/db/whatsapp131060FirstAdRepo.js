@@ -1,5 +1,6 @@
 "use strict";
 const {pool} = require("./db");
+const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
 
 /**
  * Store only durable IDs, after checking BOTH Meta inbound webhook payloads,
@@ -58,6 +59,7 @@ async function recordVerifiedFirstAd({contactId,inboundMessageId,adId},database=
          WHERE prior.contact_id=c.id
            AND (prior.created_at,prior.id)<(ad_message.created_at,ad_message.id)
            AND prior.id<>initial.id
+           AND NOT ${is131060RecoveryAssistantSql("prior","initial")}
        )
      LIMIT 1
      ON CONFLICT (contact_id) DO UPDATE SET
@@ -96,6 +98,8 @@ async function getVerifiedFirstAdMessage(contactId,messageId,database=pool){
        AND real_ctx.conversation_id=sc.id
      JOIN whatsapp_sender_message_context prior_ctx ON prior_ctx.message_id=proof.unavailable_message_id
        AND prior_ctx.conversation_id=sc.id
+     JOIN messages initial ON initial.id=proof.unavailable_message_id
+       AND initial.contact_id=c.id
      WHERE proof.contact_id=$1 AND proof.first_ad_message_id=$2
        AND NOT EXISTS(
          SELECT 1 FROM messages previous
@@ -103,6 +107,7 @@ async function getVerifiedFirstAdMessage(contactId,messageId,database=pool){
          WHERE previous.contact_id=c.id
            AND (previous.created_at,previous.id)<(ad_msg.created_at,ad_msg.id)
            AND previous.id<>proof.unavailable_message_id
+           AND NOT ${is131060RecoveryAssistantSql("previous","initial")}
        )`,
     [contact,id]
   );

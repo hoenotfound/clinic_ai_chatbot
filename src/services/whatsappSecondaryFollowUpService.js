@@ -115,6 +115,9 @@ const SEQUENCE_DUE_SQL=`GREATEST(
 // branch, or pitching a business partnership. Apply the same fail-closed SQL
 // at discovery and immediately before dispatch.
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
+ -- An unreadable Meta 131060 first message is not a genuine service enquiry.
+ -- An automatic request to resend must never start the 2h/6h/20h sequence.
+ AND COALESCE(inbound.content,'') NOT LIKE '📎 [%sent a WhatsApp message that could not be displayed]'
  AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
  AND COALESCE(inbound.content,'') !~* '${DISTANCE_OBJECTION_SQL}'
  AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'

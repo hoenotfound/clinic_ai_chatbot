@@ -95,6 +95,12 @@ const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsapp
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
+  RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
+  build131060RecoveryReply, canSend131060Recovery,
+  recoveryTreatmentButtons, readableHistoryForRecoverySelection,
+  getVerifiedRecoveryHistoryProof,
+} = require("./services/whatsapp131060Recovery");
+const {
   deliveryErrorForSend,
   publicDeliveryError,
 } = require("./utils/socialDeliveryError");
@@ -203,7 +209,8 @@ async function sendTrackedText(
   contact,
   text,
   origin = "ai_reply",
-  { canSend = null, processingJobId = null } = {}
+  { canSend = null, processingJobId = null, latePreSendCheck = null,
+    interactiveButtons = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -303,7 +310,11 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
-          preSendCheck: guarded ? canSend : null,
+          interactiveButtons,
+          preSendCheck: guarded ? async () =>
+            canSend() === true &&
+            (typeof latePreSendCheck !== "function" ||
+              await latePreSendCheck(saved.id)) : null,
         })
       : await channelMessaging.sendText(
           contact,
@@ -706,6 +717,43 @@ async function processIncomingMessage(
           "information"
         );
       }
+      // Meta 131060 on the Coexistence number contains no customer text.
+      // Only an explicit post-activation option may send ONE natural treatment
+      // selection menu. Never manufacture advertising referral, service intent,
+      // pricing response, image or follow-up from the unavailable message.
+      // The delay allows a readable first message or staff Business App echo
+      // to arrive, and both checks fail closed if another turn has appeared.
+      if (secondaryAiConversation && is131060Message(incoming) &&
+          recoveryActivation(process.env)) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, RECOVERY_DELAY_MS));
+          const recoveryAllowed = await canSend131060Recovery({
+            contactId: contact.id, inboundMessageId: savedInbound.id,
+          });
+          if (recoveryAllowed && (!canSendAutomatedReply ||
+              canSendAutomatedReply() === true)) {
+            await sendTrackedText(
+              contact, build131060RecoveryReply(incoming, clinicConfig),
+              "system_fallback",
+              {
+                canSend: canSendAutomatedReply,
+                processingJobId,
+                interactiveButtons: recoveryTreatmentButtons(),
+                latePreSendCheck: (reservedMessageId) =>
+                  canSend131060Recovery({
+                    contactId: contact.id,
+                    inboundMessageId: savedInbound.id,
+                    ignoreOutboundMessageId: reservedMessageId,
+                  }),
+              }
+            );
+          }
+        } catch (recoveryErr) {
+          // Preserve the original Meta 131060 staff review. If Meta rejects
+          // the reply, the existing tracked-send delivery alert is retained.
+          console.error("[Meta 131060 recovery] Treatment menu failed:", recoveryErr);
+        }
+      }
       return { wasFirstMessage, keywordReason };
     }
 
@@ -1091,16 +1139,22 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
-    // Only the single, provider-verified 131060 placeholder is neutral for
-    // first-contact presentation. Do not change the stored conversation or
-    // disregard any ordinary earlier customer/staff message.
-    let verifiedFirstReadableAd = secondaryAiConversation &&
-      history.length === 2 &&
+    // A genuine 131060 first inbound can be followed by an accepted menu
+    // before Meta delivers a readable, verified CTWA referral. Do not use
+    // history.length === 2 as the proof boundary: the durable ad proof
+    // verifies both provider payloads and excludes unrelated intervening
+    // staff/customer messages. A button tap is not ad attribution.
+    const hasFirstUnreadablePlaceholder = secondaryAiConversation &&
+      history.length >= 2 && history[0]?.role === "user" &&
+      /^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u
+        .test(String(history[0]?.content || ""));
+    const isVerifiedAdInbound = hasFirstUnreadablePlaceholder &&
+      incoming?.attribution?.source === "meta_ads" &&
+      String(incoming.attribution?.sourceType || "").toLowerCase() === "ad";
+    let verifiedFirstReadableAd = isVerifiedAdInbound &&
       preclaimed?.verifiedUnavailableFirstAd === true;
-    if (!verifiedFirstReadableAd && secondaryAiConversation &&
-        history.length === 2 &&
-        preclaimed?.verifiedUnavailableFirstAd == null &&
-        incoming?.attribution?.source === "meta_ads") {
+    if (!verifiedFirstReadableAd && isVerifiedAdInbound &&
+        preclaimed?.verifiedUnavailableFirstAd !== true) {
       try {
         verifiedFirstReadableAd = Boolean(await firstAdProofRepo.getVerifiedFirstAdMessage(
           contact.id,savedInbound.id
@@ -1110,8 +1164,20 @@ async function processIncomingMessage(
           err?.message);
       }
     }
+    // An accepted, sender-bound recovery menu permits ONLY removing the
+    // original unreadable placeholder from the model's prompt. The customer
+    // may choose a button or type a treatment, and later turns still work.
+    // Never change staff-visible history or infer a missing advertisement.
+    const recoveryPromptProof = hasFirstUnreadablePlaceholder &&
+      history.length >= 3
+      ? await getVerifiedRecoveryHistoryProof({
+          contactId: contact.id, inboundMessageId: savedInbound.id,
+        }) : null;
+    const readableRecoveryHistory = readableHistoryForRecoverySelection(
+      history, recoveryPromptProof
+    );
     const mediaLanguage = detectReplyConversationLanguage(
-      history
+      readableRecoveryHistory
         .slice()
         .reverse()
         .filter((message) => message?.role === "user")
@@ -1122,12 +1188,13 @@ async function processIncomingMessage(
     // current-turn context is narrowed to the separately asked service question
     // so it cannot interpret the marketing refusal as a request for a deal.
     const replyHistory = marketingStopQuestion
-      ? history.map((entry, index) => index === history.length - 1 && entry?.role === "user"
-          ? { ...entry, content: marketingStopQuestion } : entry)
-      : history;
+      ? readableRecoveryHistory.map((entry, index) =>
+          index === readableRecoveryHistory.length - 1 && entry?.role === "user"
+            ? { ...entry, content: marketingStopQuestion } : entry)
+      : readableRecoveryHistory;
     const isFirstMessage = forceFirstMessage || history.length === 1 ||
       verifiedFirstReadableAd;
-    const customerMessages = history.filter((message) => message?.role === "user");
+    const customerMessages = readableRecoveryHistory.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
       newestCustomerText,

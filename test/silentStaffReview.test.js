@@ -57,9 +57,17 @@ test("unknown unsupported event remains staff-visible when Meta omitted errors",
   assert.equal(incoming.unsupportedType, "unsupported");
 });
 
-test("unreadable WhatsApp, voice and photo turns do not send scripted apologies", () => {
+test("unreadable WhatsApp stays staff-visible; only opt-in Meta 131060 may request a resend", () => {
+  const unsupported = section("if (unsupportedType) {", 'let text = incoming.text || "";');
+  assert.match(unsupported, /contactsRepo\.setAiReviewAttention/);
+  assert.match(unsupported, /is131060Message\(incoming\)/);
+  assert.match(unsupported, /recoveryActivation\(process\.env\)/);
+  assert.match(unsupported, /await canSend131060Recovery\(/);
+  assert.match(unsupported, /latePreSendCheck:/);
+  assert.match(unsupported, /return \{ wasFirstMessage, keywordReason \};/);
+  assert.doesNotMatch(unsupported, /pauseAiForHumanHandoff/);
+
   for (const [start, end] of [
-    ["if (unsupportedType) {", 'let text = incoming.text || "";'],
     ["if (!transcript) {", "text = `🎤 ${transcript}`;"],
     ['if (mediaType === "image") {', 'if (mediaType === "video") {'],
   ]) {

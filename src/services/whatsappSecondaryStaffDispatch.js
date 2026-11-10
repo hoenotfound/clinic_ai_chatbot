@@ -16,6 +16,7 @@ const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
   isSecondaryAutomationEligible} =
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
+const {validRecoveryTreatmentButtons, recoveryActivation} = require("./whatsapp131060Recovery");
 
 function block(code) {
   return {
@@ -44,6 +45,7 @@ async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
   origin = "staff", preSendCheck = null, dispatchTransport = null,
   templateRequest = null, anchorMessageId = null,
+  interactiveButtons = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -55,6 +57,16 @@ async function sendSecondaryStaffText({
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
+  // Non-text automation is never opened generally: only the exact three
+  // recovery buttons for a post-activation Coexistence 131060 may use this
+  // sender-scoped, billed, receipt-guarded interactive dispatch.
+  const recoveryMenu = interactiveButtons !== null;
+  if (recoveryMenu && (origin !== "system_fallback" ||
+      typeof dispatchTransport === "function" || templateRequest != null ||
+      !recoveryActivation(env) ||
+      !validRecoveryTreatmentButtons(interactiveButtons) ||
+      typeof text !== "string" || !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") ||
+      text.length > 1024)) return block("secondary_131060_recovery_menu_invalid");
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
   const parity = aiTextOnly && parityRequested &&
@@ -324,9 +336,11 @@ async function sendSecondaryStaffText({
 
     }
 
-    const send = typeof dispatchTransport === "function"
-      ? await dispatchTransport(transport)
-      : await transport.sendText(text.trim(), { replyToProviderMessageId });
+    const send = recoveryMenu
+      ? await transport.sendInteractiveButtons(text.trim(), interactiveButtons)
+      : typeof dispatchTransport === "function"
+        ? await dispatchTransport(transport)
+        : await transport.sendText(text.trim(), { replyToProviderMessageId });
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
     if (!accepted) {
       // Only allowlisted scalar diagnostics. The transport's original body,

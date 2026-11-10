@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 
 const DEFAULT_ENRICHMENT_LEASE_MS = 5 * 60 * 1000;
@@ -306,6 +307,7 @@ async function recoverUnavailableFirstTouchAd({
                  >(initial.created_at,initial.id)
              AND (between_messages.created_at,between_messages.id)
                  <(verified.created_at,verified.id)
+             AND NOT ${is131060RecoveryAssistantSql("between_messages","initial")}
          )
        RETURNING la.*, l.started_message_id AS unavailable_original_message_id`,
       [

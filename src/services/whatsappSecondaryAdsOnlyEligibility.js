@@ -6,6 +6,7 @@
 // Staff ownership, opt-outs, provider-bound sender and billing checks remain.
 // Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
+const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
 
 function originalAdsOnlyCutoff(env = process.env) {
   const raw = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
@@ -133,6 +134,7 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
                 AND (other_prior.created_at,other_prior.id)
                     < (ads_first.created_at,ads_first.id)
                 AND other_prior.id<>unavailable_first.id
+                AND NOT ${is131060RecoveryAssistantSql("other_prior","unavailable_first")}
             )
         )
       )

@@ -108,6 +108,10 @@ function harness({ failDelivery = false } = {}) {
     },
     detectConversationLanguage: () => "en",
     detectReplyConversationLanguage: () => "en",
+    // The primary TCM runtime has no secondary 131060 recovery proof.
+    // Its real handler still invokes the prompt-only helper on every turn.
+    readableHistoryForRecoverySelection: (history) => history,
+    getVerifiedRecoveryHistoryProof: async () => null,
     whatsappPolicy: { extractQuestionAfterMarketingOptOut: () => null },
     shouldGenerateLocalizedIntro: () => false,
     loadMetaAdReplyContext: async () => null,
