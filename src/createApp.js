@@ -371,8 +371,12 @@ function createApp({
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => {
+            // A phone-visible turn and a later BSUID-only turn from the same
+            // signed user must share a queue, not start competing AI replies.
+            const stableCustomerId = inboundIdentityKind(incoming.customerUserId) === "bsuid"
+              ? incoming.customerUserId : incoming.from;
             const queueKey = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
-              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from;
+              ? `whatsapp:${incoming.businessPhoneNumberId}:${stableCustomerId}` : incoming.from;
             try {
               const secondary = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
                 incoming.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
