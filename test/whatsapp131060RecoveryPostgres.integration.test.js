@@ -142,6 +142,34 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
     await db.query("INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','Human staff response')",[contact]);
     assert.equal(await getVerifiedFirstAdMessage(contact,ad,db).then(Boolean),true,
       "later staff responses cannot invalidate the already-verified first ad");
+
+    // The normal inbound worker eventually prunes the original 131060 job
+    // and its outbound-attempt marker. Independent accepted-send evidence
+    // must still support prompt-only cleanup, never inferred ad attribution.
+    await db.query(
+      "INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) " +
+      "VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-out',NOW())",
+      [recoveryMessage,contact]
+    );
+    await db.query(
+      "DELETE FROM inbound_processing_jobs WHERE message_id IN ($1,$2)",[initial,ad]
+    );
+    const retainedProof=await getVerifiedRecoveryHistoryProof({
+      contactId:contact,inboundMessageId:ad,database:db,
+    });
+    assert.equal(Number(retainedProof?.unavailable_message_id),Number(initial),
+      "accepted send evidence survives normal inbound job pruning");
+    assert.deepEqual(readableHistoryForRecoverySelection(savedHistory,retainedProof),
+      savedHistory.slice(1));
+    assert.equal(await getVerifiedFirstAdMessage(contact,ad,db).then(Boolean),true,
+      "durable verified first-ad proof must also survive pruning");
+    await db.query(
+      "UPDATE outbound_message_evidence SET accepted=FALSE,accepted_at=NULL WHERE message_id=$1",
+      [recoveryMessage]
+    );
+    assert.equal(await getVerifiedRecoveryHistoryProof({
+      contactId:contact,inboundMessageId:ad,database:db,
+    }),null,"expired job without independently verified send must fail closed");
   } finally {
     await db.query("SET search_path TO public").catch(()=>{});
     await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
