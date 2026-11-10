@@ -11,12 +11,15 @@ async function applyStagedSecondaryReceipts({
   client, senderId, contactId, messageId, reservationId, acceptedWamid, env,
 }) {
   const owner = await client.query(
-    "SELECT whatsapp_number,whatsapp_user_id,whatsapp_last_customer_address " +
-    "FROM contacts WHERE id=$1 AND whatsapp_sender_id=$2 AND channel='whatsapp'",
-    [contactId, senderId]
+    "SELECT c.whatsapp_number,c.whatsapp_user_id,a.recipient_address " +
+    "FROM contacts c JOIN whatsapp_sender_billing_attempts a " +
+    "ON a.contact_id=c.id AND a.sender_id=c.whatsapp_sender_id " +
+    "WHERE c.id=$1 AND c.whatsapp_sender_id=$2 AND c.channel='whatsapp' " +
+    "AND a.reservation_id=$3::uuid AND a.message_id=$4",
+    [contactId, senderId, reservationId, messageId]
   );
   const found=owner.rows?.[0];
-  const address=found?.whatsapp_last_customer_address || found?.whatsapp_number;
+  const address=found?.recipient_address || found?.whatsapp_number;
   if (owner.rowCount !== 1 || normalizeCustomerAddress(address) !== address ||
       (isBsuid(address) && found.whatsapp_user_id !== address)) {
     throw new Error("Early receipt owner cannot be verified");
