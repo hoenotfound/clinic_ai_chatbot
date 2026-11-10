@@ -616,13 +616,12 @@ test("Meta direct Cloud API recipient_user_id is parsed, including paired recipi
   assert.equal(parsed.length,1);
   assert.equal(parsed[0].recipient,userId);
   assert.deepEqual(parsed[0].recipientCandidates,[userId]);
-
   const paired=receipt.normalizedSignedEvents(signed(body([status({
     recipient_id:"60125550000",recipient_user_id:userId,
   })])).rawBody,env);
   assert.deepEqual(paired[0].recipientCandidates,["60125550000",userId]);
-  assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/a\\.recipient_address=\\$2/);
-  assert.doesNotMatch(receipt.MATCH_SECONDARY_ATTEMPT_SQL,
-    /whatsapp_last_customer_address=\\$2/,
+  assert.ok(receipt.MATCH_SECONDARY_ATTEMPT_SQL.includes("a.recipient_address=$2"));
+  assert.equal(receipt.MATCH_SECONDARY_ATTEMPT_SQL.includes(
+    "whatsapp_last_customer_address=$2"),false,
     "changing a contact's last inbound must not retarget an earlier receipt");
 });
