@@ -401,6 +401,17 @@ test("location and treatment-method questions preserve media, while price and cl
   ]){
     assert.equal(worker.isHarmlessContinuationQuestion(text),true,text);
   }
+  for(const text of ["四方脸","方脸","大小脸","下颌线","双下巴",
+    "square face","jawline","muka petak"]){
+    assert.equal(worker.isHarmlessContinuationQuestion(text,{
+      mediaKind:"result",inboundText:"想了解 Neutro Sense TCM 3D 小颜术",
+    }),true,text);
+    assert.equal(worker.isHarmlessContinuationQuestion(text,{
+      mediaKind:"result",inboundText:"我对骨盆调理有兴趣",
+    }),false,"pelvic media must not survive face-shape switch");
+    assert.equal(worker.isHarmlessContinuationQuestion(text),false,
+      "facial reply cannot preserve arbitrary old media");
+  }
   for(const text of [
     "How much", "how much for 1 session", "想要了解价钱", "按一次多少钱",
     "9D", "How much for 9D", "我是腹直肌分离", "体太不平衡",
@@ -418,6 +429,9 @@ test("location and treatment-method questions preserve media, while price and cl
     assert.match(sql,/successor\.contact_id=job\.contact_id/);
   }
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_url IS NULL/);
+  assert.match(worker.HARMLESS_CONTINUATION_SQL,/job\.media_kind='result'/);
+  assert.match(worker.HARMLESS_CONTINUATION_SQL,/inbound\.content ~\*/);
+  assert.match(worker.HARMLESS_CONTINUATION_SQL,/四方脸/);
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/newer\.media_mime_type IS NULL/);
   assert.match(worker.HARMLESS_CONTINUATION_SQL,/CHAR_LENGTH\(BTRIM/);
   const calls=[];

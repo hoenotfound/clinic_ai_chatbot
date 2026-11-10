@@ -31,12 +31,25 @@ const HARMLESS_QUESTION_EN =
   "^(location|location please|address|address please|where is (your )?(clinic|shop)|is it manual|is this manual|is it hifu|does it use hifu|alamat|lokasi)[ ?.!]*$";
 const HARMLESS_QUESTION_ZH =
   "^(请问)?(是徒手吗|是徒手嗎|是手法吗|是手法嗎|是hifu吗|是hifu嗎)[ ?？。!！]*$";
-function isHarmlessContinuationQuestion(value) {
+// Only very short, non-clinical facial-shape replies may preserve an
+// already-selected 3D result. A pelvic plan must never survive a switch
+// to facial interest; price requests and new media plans still supersede it.
+const FACE_SHAPE_ZH=
+  "^(四方脸|四方臉|方脸|方臉|大小脸|大小臉|脸大|臉大|双下巴|雙下巴|下颌线|下顎線|下頜線)[。.!！\\s]*$";
+const FACE_SHAPE_EN=
+  "^(square face|wide face|uneven face|asymmetric face|jawline|double chin)[.!\\s]*$";
+const FACE_SHAPE_MS=
+  "^(muka petak|muka lebar|dagu berlapis|rahang)[.!\\s]*$";
+const FACE_SHAPE_3D_ANCHOR="(3[[:space:]]*d|小颜|小顏)";
+function isHarmlessContinuationQuestion(value,{mediaKind=null,inboundText=""}={}) {
   if (typeof value !== "string") return false;
   const message=value.trim();
-  return message.length>=2 && message.length<=80 &&
-    (new RegExp(HARMLESS_QUESTION_EN,"i").test(message) ||
-      new RegExp(HARMLESS_QUESTION_ZH,"i").test(message));
+  if(message.length<2 || message.length>80)return false;
+  if(new RegExp(HARMLESS_QUESTION_EN,"i").test(message) ||
+     new RegExp(HARMLESS_QUESTION_ZH,"i").test(message))return true;
+  if(mediaKind!=="result" || !/(3\s*d|小颜|小顏)/iu.test(inboundText))return false;
+  return [FACE_SHAPE_ZH,FACE_SHAPE_EN,FACE_SHAPE_MS]
+    .some(pattern=>new RegExp(pattern,"i").test(message));
 }
 const HARMLESS_CONTINUATION_SQL=`(
   newer.media_url IS NULL AND newer.media_mime_type IS NULL
@@ -44,6 +57,13 @@ const HARMLESS_CONTINUATION_SQL=`(
   AND (
     BTRIM(newer.content) ~* '${HARMLESS_QUESTION_EN}'
     OR BTRIM(newer.content) ~* '${HARMLESS_QUESTION_ZH}'
+    OR (job.media_kind='result'
+      AND inbound.content ~* '${FACE_SHAPE_3D_ANCHOR}'
+      AND (
+        BTRIM(newer.content) ~* '${FACE_SHAPE_ZH}'
+        OR BTRIM(newer.content) ~* '${FACE_SHAPE_EN}'
+        OR BTRIM(newer.content) ~* '${FACE_SHAPE_MS}'
+      ))
   )
 )`;
 
