@@ -97,11 +97,15 @@ function releasePendingAiForEcho(echo) {
 }
 
 function confirmPendingAiForEcho(echo, contact = null) {
-  for (const key of cancellationKeysForEcho(echo)) {
+  const keys = cancellationKeysForEcho(echo);
+  for (const key of keys) {
     aiReplyCancellation.cancel(key);
     aiReplyCancellation.endPendingEcho(key, echo?.id);
   }
-  if (contact) aiReplyCancellation.cancelForContact(contact);
+  if (contact) {
+    const boundKey = aiReplyCancellation.keyForContact(contact);
+    if (boundKey && !keys.includes(boundKey)) aiReplyCancellation.cancel(boundKey);
+  }
 }
 
 function cancelPendingAiForEcho(echo) {
