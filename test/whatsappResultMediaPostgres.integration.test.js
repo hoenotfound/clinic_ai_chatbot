@@ -117,3 +117,77 @@ test("Postgres: original result audit constraint, migration, receipt states and 
     await client.end();
   }
 });
+
+test("Postgres: primary result eligibility preserves questions but blocks real supersession",{
+  skip:!connectionString,
+},async()=>{
+  const client=new Client({connectionString});
+  const schema="result_continuation_"+process.pid+"_"+Date.now();
+  await client.connect();
+  try{
+    await client.query("CREATE SCHEMA "+schema);
+    await client.query("SET search_path TO "+schema);
+    await client.query(
+      "CREATE TABLE contacts (id INTEGER PRIMARY KEY);"+
+      "CREATE TABLE messages ("+
+        "id INTEGER PRIMARY KEY,contact_id INTEGER NOT NULL REFERENCES contacts(id),"+
+        "role TEXT,content TEXT,created_at TIMESTAMPTZ NOT NULL,"+
+        "sent_by_username TEXT,whatsapp_message_id TEXT,delivery_status TEXT"+
+      ");"
+    );
+    for(const name of [
+      "065_result_media_decisions.sql",
+      "068_whatsapp_result_media_queue.sql",
+      "069_whatsapp_result_media_delivery.sql",
+    ]) {
+      await client.query(fs.readFileSync(
+        path.join(__dirname,"../src/db/migrations",name),"utf8"));
+    }
+    let nextContact=100,nextMessage=1000;
+    async function superseded(original,reply,{
+      newPlan=null,staff=false,kind="result",
+    }={}){
+      const contactId=nextContact++,oldId=nextMessage++,newId=nextMessage++;
+      await client.query("INSERT INTO contacts(id) VALUES($1)",[contactId]);
+      await client.query(
+        "INSERT INTO messages(id,contact_id,role,content,created_at)"+
+        "VALUES($1,$2,'user',$3,NOW()-INTERVAL '2 minutes')",
+        [oldId,contactId,original]);
+      await client.query(
+        "INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username)"+
+        "VALUES($1,$2,$3,$4,NOW()-INTERVAL '1 minute',$5)",
+        [newId,contactId,staff?"assistant":"user",reply,staff?"nurse":null]);
+      if(newPlan){
+        await client.query(
+          "INSERT INTO whatsapp_result_media_queue"+
+          "(contact_id,inbound_message_id,sequence_no,media_kind,image_url,caption)"+
+          "VALUES($1,$2,0,$3,'https://example.test/new.jpg','New image')",
+          [contactId,newId,newPlan]);
+      }
+      const result=await client.query(
+        imageQueue.RESULT_CONVERSATION_CHANGED_SQL,[contactId,oldId,kind]);
+      return result.rows[0]?.changed;
+    }
+    assert.equal(await superseded(
+      "你好！想了解你们家的【黄金脉冲技术】","地址在哪"),false);
+    assert.equal(await superseded("想了解骨盆调理","多少钱"),false);
+    assert.equal(await superseded("想了解3D小颜术","四方脸"),false);
+    assert.equal(await superseded("想了解骨盆调理","四方脸"),true);
+    assert.equal(await superseded("想了解3D小颜术","想了解9D逆龄"),true);
+    assert.equal(await superseded("想了解骨盆调理","想了解脉冲波"),true);
+    assert.equal(await superseded("想了解骨盆调理","我是腹直肌分离"),true);
+    assert.equal(await superseded("想了解黄金脉冲技术","Stop promotions"),true);
+    assert.equal(await superseded("想了解黄金脉冲技术","地址在哪",{
+      newPlan:"promotion"}),false,"pricing graphic must not erase an old result");
+    assert.equal(await superseded("想了解黄金脉冲技术","地址在哪",{
+      newPlan:"result"}),true,"fresh result replaces an old result");
+    assert.equal(await superseded("想了解骨盆调理","We can take over",{
+      staff:true}),true,"staff takeover blocks a queued result");
+    assert.equal(await superseded("想了解骨盆调理","地址在哪",{
+      kind:"promotion"}),true,"promotional media keeps its previous cancellation rule");
+  }finally{
+    await client.query("SET search_path TO public").catch(()=>{});
+    await client.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+    await client.end();
+  }
+});

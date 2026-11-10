@@ -477,3 +477,28 @@ test("accepted image wakes after its state transition when the verified receipt 
   assert.deepEqual(wake.args.slice(-1),[[job.contact_id]]);
   assert.equal(args.calls.filter(c=>c.send).length,1,"Meta is never retried");
 });
+
+test("Before & After results stay queued after ordinary customer questions",async()=>{
+  // Promotion media is still superseded by most new messages. Result images
+  // instead survive new location, price, and treatment-detail messages.
+  for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+    assert.match(sql,/job\.media_kind='result' AND/);
+    assert.match(sql,/job\.media_kind<>'result' AND NOT/);
+    assert.match(sql,/successor\.media_kind='result'/);
+    assert.match(sql,/stop\|unsubscribe\|opt/);
+    assert.match(sql,/c\.whatsapp_opt_out_at IS NULL/);
+    assert.match(sql,/c\.whatsapp_marketing_opt_out_at IS NULL/);
+    assert.match(sql,/sent_by_username IS NOT NULL/);
+  }
+  const statements=[];
+  const db={query:async(sql)=>{
+    statements.push(sql);
+    return{rows:[{retired:0,messages_cancelled:0,inbound_ids:[],changed_messages:[]}]};
+  }};
+  await worker.cancelObsoletePending({database:db,env:approved});
+  assert.equal(statements.length,1);
+  assert.match(statements[0],/job\.media_kind='result' AND/);
+  assert.match(statements[0],/job\.media_kind<>'result' AND NOT/);
+  assert.match(statements[0],/successor\.media_kind='result'/);
+  assert.match(statements[0],/job\.expires_at<=NOW\(\)/);
+});

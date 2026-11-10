@@ -231,8 +231,8 @@ test("ordinary 24h freeform window closing never passes a deferred photo",async 
     x.params?.includes("outside_customer_service_window")));
 });
 
-test("absolute two-minute TTL stops a delayed image before provider call",async()=>{
-  const row={...sample(),created_at:new Date(Date.now()-121000).toISOString()};
+test("absolute fifteen-minute TTL stops a delayed image before provider call",async()=>{
+  const row={...sample(),created_at:new Date(Date.now()-queue.MAX_BILLING_WAIT_MS-1000).toISOString()};
   const db=fakeDb(row);let sends=0;
   await queue.runOne({
     db,strictEnabled:()=>true,
@@ -256,7 +256,7 @@ test("expiry during image upload cancels before Meta send",async t=>{
   await queue.runOne({db,strictEnabled:()=>true,
     eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
     sender:async(_contact,_url,_caption,options)=>{
-      row.created_at=new Date(Date.now()-121000).toISOString();
+      row.created_at=new Date(Date.now()-queue.MAX_BILLING_WAIT_MS-1000).toISOString();
       assert.equal(await options.preSendCheck(),false);
       return {success:false,cancelled:true};
     },
@@ -313,4 +313,54 @@ test("priority query yields only for unaccepted recent inbound text jobs",async 
     sender:async()=>{sends++;return {success:true,wamid:"wamid.speed"};},
   });
   assert.equal(sends,1,"a finished reply does not hold the image queue");
+});
+
+test("queued Before & After results do not become obsolete solely due to a new question",()=>{
+  const source=fs.readFileSync(
+    path.join(__dirname,"../src/services/whatsappResultMediaQueue.js"),"utf8");
+  assert.match(source,/\$3::text<>'result'/);
+  assert.match(source,/successor\.media_kind='result'/);
+  assert.match(source,/newer\.sent_by_username IS NOT NULL/);
+  assert.match(source,/resultSupersessionSql/);
+  assert.match(source,/RESULT_CONVERSATION_CHANGED_SQL/);
+  assert.match(source,/aiReplyCancellation\.hasPendingEcho\(aiReplyCancellation\.keyForContact\(contact\)\)/);
+  assert.match(source,/aiReplyCancellation\.safeToSend\(cancellationKey,cancellationEpoch\)/);
+  assert.match(source,/whatsappPolicy\.checkFreeformAllowed/);
+});
+
+test("fifteen-minute queue tolerates billing delays with bounded backoff",()=>{
+  const threeMinutesAgo={...sample(),created_at:new Date(Date.now()-3*60*1000).toISOString()};
+  assert.equal(queue.queueExpired(threeMinutesAgo),false);
+  assert.equal(queue.MAX_BILLING_WAIT_MS,15*60*1000);
+  assert.equal(queue.backoffMs({attempts:0}),2000);
+  assert.equal(queue.backoffMs({attempts:1}),4000);
+  assert.equal(queue.backoffMs({attempts:2}),8000);
+  assert.equal(queue.backoffMs({attempts:4}),30000);
+  assert.equal(queue.backoffMs({attempts:50}),30000);
+});
+
+test("staff cancellation during primary image upload still blocks provider send",async t=>{
+  const aiReplyCancellation=require("../src/services/aiReplyCancellationService");
+  const row=sample(),db=fakeDb(row);
+  const contact={id:443,channel:"whatsapp",mode:"ai",whatsapp_number:"60129999222"};
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  mock(t,zeroCost,"preflightFreeform",async()=>({allowed:true}));
+  mock(t,conversationStore,"appendMessageForContact",async()=>({id:991}));
+  mock(t,messagesRepo,"deleteUnsentAssistantMessage",async()=>({id:991}));
+  let providerCalls=0;
+  await queue.runOne({
+    db,strictEnabled:()=>true,eligibility:async()=>contact,
+    sender:async(_contact,_url,_caption,options)=>{
+      aiReplyCancellation.cancelForContact(contact);
+      const allowed=await options.preSendCheck();
+      if(allowed)providerCalls++;
+      assert.equal(allowed,false,
+        "staff cancellation epoch must block result media just before Meta");
+      return{success:false,cancelled:true};
+    },
+  });
+  assert.equal(providerCalls,0,"there must be no provider attempt after staff cancellation");
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3")&&x.params?.includes("skipped")));
 });
