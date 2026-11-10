@@ -185,7 +185,7 @@ test("transport carries three native treatment buttons using only secondary cred
   const buttons=[
     {id:"neutro_131060_pelvic",title:"骨盆调理"},
     {id:"neutro_131060_3d",title:"3D 小颜术"},
-    {id:"neutro_131060_9d",title:"9D 逆龄"},
+    {id:"neutro_131060_9d",title:"9D 逆龄抗衰"},
   ];
   const send=await client.sendInteractiveButtons("请选择护理项目～",buttons);
   assert.equal(send.success,true);
