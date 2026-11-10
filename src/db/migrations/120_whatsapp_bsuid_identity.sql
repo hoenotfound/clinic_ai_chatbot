@@ -26,3 +26,14 @@ ALTER TABLE whatsapp_sender_conversations
   ADD CONSTRAINT whatsapp_sender_conversation_customer_wa_id_check CHECK (
     customer_wa_id ~ '^([0-9]{8,15}|[A-Z]{2}[.][A-Za-z0-9]{1,128})$'
   );
+
+-- The transport recipient must be frozen on each billing reservation. A
+-- later inbound can change a contact's last address while an earlier Meta
+-- delivery receipt is still in flight.
+ALTER TABLE whatsapp_sender_billing_attempts
+  ADD COLUMN IF NOT EXISTS recipient_address TEXT;
+ALTER TABLE whatsapp_sender_billing_attempts
+  ADD CONSTRAINT whatsapp_sender_billing_recipient_address_check CHECK (
+    recipient_address IS NULL OR
+    recipient_address ~ '^([0-9]{8,15}|[A-Z]{2}[.][A-Za-z0-9]{1,128})$'
+  );
