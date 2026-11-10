@@ -6,13 +6,16 @@ WhatsApp Cloud API webhook may instead identify the customer by a portfolio-
 scoped `user_id` (BSUID) such as `MY.Abc123`. A display username (such as
 `@Peggyteoh`) is **not** a sendable identifier.
 
-This patch supports signed phone-visible and BSUID-only incoming text for
-the **secondary sender-scoped** integration, retaining the original canonical
-contact key while recording a verified user_id and the last observed provider
-address. It sends to a phone with `to` or a BSUID with `recipient`, and
-validates status receipts against the exact sender, bound conversation,
-reservation and WAMID. The primary and social channels retain existing
-behavior. No user lookup based on username, similarity, or ad prefill is allowed.
+This patch supports signed phone-visible and BSUID-only inbound on both
+WhatsApp senders. Direct Meta Cloud API input uses `from_user_id` on
+messages, `contacts[].user_id`, and `contacts[].profile.username`
+(display-only); delivery statuses use `recipient_user_id`, and Business
+App Coexistence echoes can use `to_user_id` without a phone.
+The canonical contact key remains stable while sender-scoped BSUID and
+last signed customer address are recorded. Outbound Cloud API sends use
+`to` for phones or `recipient` for BSUIDs. Sender, recipient, reservation,
+WAMID, current service window, billing and cancellation are all checked;
+social channels are unchanged. No lookup uses a display username or ad text.
 
 ## Operational limitations
 - The photographed Peggy enquiry at 4:01/4:02 PM was not in the Neutro DB.
@@ -30,18 +33,34 @@ behavior. No user lookup based on username, similarity, or ad prefill is allowed
   alone, release a billing gate, or resend uncertain messages.
 - No historical backfill; no explicit automatic app configuration change.
 
+## Five review findings addressed
+- Direct Cloud API field names: `from_user_id` and contact
+  `profile.username`, including no-phone payloads.
+- Status field names: `recipient_user_id` plus `recipient_id`.
+  Each secondary reservation saves the exact intended recipient. Early
+  dual-ID receipts retain both recipients as SHA256 digests until verified.
+- Staff echoes: `to_user_id` is recognized even without `to`,
+  inbound recipient evidence is not overwritten by a staff message,
+  and cancellation is applied to both verified phone and BSUID keys.
+- Primary number: text, media and template requests use the correct
+  destination form; strict billing selects BSUID-specific contact policy
+  only when the recipient is a BSUID. Existing phone SQL stays unchanged.
+- Receipt race: latest inbound address can change, but receipt matching
+  requires the destination saved on that specific outbound attempt,
+  sender identity, conversation and WAMID.
+
 ## Safe verification
-1. Apply migration 120 on an isolated Neon branch. It only adds nullable
-   contact fields, a unique sender-scoped user_id index, and expands the
-   conversation address check to strict BSUIDs.
+1. Apply migration 120 on an isolated Neon branch. It adds nullable contact
+   identity fields, per-attempt recipient evidence, one additional SHA256
+   receipt field, small lookup indexes, and BSUID-compatible checks.
 2. Run backend tests and PostgreSQL integration; confirm ordinary phone
    messages, main sender, social messages, staff echoes, and 131060 recovery.
 3. Confirm signed BSUID-only inbound creates one secondary contact/job.
    A later incoming text and a phone-visible message with the same user_id
    must reuse that contact and preserve the original conversation and lead.
-4. Confirm a BSUID reply uses Graph API `recipient` (no `to`), ordinary
-   phone sends use `to` (no `recipient`), and all existing billing/opt-out/
-   service-window checks still run before dispatch.
+4. Confirm primary and secondary BSUID replies use Graph API `recipient`
+   (not `to`), while ordinary phone sends use `to`. Exercise text,
+   media, templates, strict billing, opt-outs and service-window checks.
 5. Confirm status receipts reconcile only with exact authorized sender,
    recipient, WAMID and reservation. Unknown recipients remain unmatched.
 6. Test a customer who arrives from a Meta ad and then asks `Location?`,
