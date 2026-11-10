@@ -16,10 +16,13 @@ const aiReplyCancellation = require("./aiReplyCancellationService");
 const { getAiOwnedContact } = require("./automaticReplyGuard");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { resultSupersessionSql } = require("../utils/resultMediaSupersessionSql");
 
 const RETRY_MS = 2000;
 const SPACING_MS = 1000;
-const MAX_BILLING_WAIT_MS = 2 * 60 * 1000;
+// Bound queued images while allowing time for verified Meta billing callbacks.
+const MAX_BILLING_WAIT_MS = 15 * 60 * 1000;
+const MAX_RETRY_MS = 30 * 1000;
 const UNKNOWN_AFTER_MS = 3 * 60 * 1000;
 // This runs only with no pending/processing queue rows. Real enqueue and
 // verified billing events wake the worker immediately; due rows use exact times.
@@ -29,10 +32,28 @@ const TEMPORARY_BILLING_CODES = new Set([
   "zero_cost_unverified_free_entry",
   "zero_cost_database_unavailable",
 ]);
-// Explicit opt-outs must block queued result images even before the opt-out
-// flag from the latest customer message has been committed.
-const RESULT_STOP_PATTERN =
-  "(^|[[:space:]])(stop|unsubscribe|opt[ -]?out)([[:space:][:punct:]]|$)|不要再发|停止发送|停止推送|别再发|不要再联系|jangan hantar|jangan mesej";
+// A new result plan supersedes the old one. Ordinary customer questions don't.
+// An explicit stop, clinical safety concern or a different treatment does.
+const RESULT_CONVERSATION_CHANGED_SQL = `SELECT EXISTS(
+  SELECT 1 FROM messages newer
+  JOIN messages original ON original.id=$2 AND original.contact_id=$1
+  WHERE newer.contact_id=$1
+    AND (newer.created_at,newer.id)>(original.created_at,original.id)
+    AND (
+      newer.sent_by_username IS NOT NULL
+      OR (newer.role='user' AND (
+        $3::text<>'result'
+        OR ${resultSupersessionSql("original","newer")}
+      ))
+    )
+) OR EXISTS(
+  SELECT 1 FROM whatsapp_result_media_queue successor
+  JOIN messages successor_inbound ON successor_inbound.id=successor.inbound_message_id
+  JOIN messages original ON original.id=$2 AND original.contact_id=$1
+  WHERE $3::text='result' AND successor.contact_id=$1
+    AND successor.media_kind='result'
+    AND (successor_inbound.created_at,successor_inbound.id)>(original.created_at,original.id)
+) AS changed`;
 let worker = null;
 
 function isTemporaryBillingBlock(result) {
@@ -177,6 +198,11 @@ async function isQueuedMessage(messageId, db = pool) {
   return response.rowCount > 0;
 }
 
+function backoffMs(row) {
+  const attempts = Math.max(0,Number(row?.attempts)||0);
+  return Math.min(MAX_RETRY_MS,RETRY_MS*Math.pow(2,Math.min(attempts,4)));
+}
+
 function queueExpired(row, now = Date.now()) {
   const started = new Date(row?.created_at).getTime();
   return !Number.isFinite(started) || now - started >= MAX_BILLING_WAIT_MS;
@@ -215,7 +241,7 @@ async function postpone(row, code, db = pool) {
            next_attempt_at=now()+($4::integer*interval '1 millisecond'),
            claimed_at=NULL,lease_token=NULL,updated_at=now()
        WHERE id=$1 AND lease_token=$2 AND status='processing'`,
-    [row.id,row.lease_token,code,RETRY_MS]
+    [row.id,row.lease_token,code,backoffMs(row)]
   );
 }
 
@@ -228,30 +254,8 @@ async function eligibleForOptionalImage(row, db = pool) {
     return null;
   }
   if (aiReplyCancellation.hasPendingEcho(aiReplyCancellation.keyForContact(contact))) return null;
-  // Ordinary customer follow-ups do not supersede selected results. Staff
-  // messages, stop requests and newer result plans do. Promotions keep the
-  // original new-message cancellation policy.
   const changed = await db.query(
-    `SELECT EXISTS(
-       SELECT 1 FROM messages newer
-       JOIN messages original ON original.id=$2 AND original.contact_id=$1
-       WHERE newer.contact_id=$1
-         AND (newer.created_at,newer.id)>(original.created_at,original.id)
-         AND (
-           newer.sent_by_username IS NOT NULL
-           OR (newer.role='user' AND (
-             $3::text<>'result'
-             OR BTRIM(COALESCE(newer.content,'')) ~* '${RESULT_STOP_PATTERN}'
-           ))
-         )
-     ) OR EXISTS(
-       SELECT 1 FROM whatsapp_result_media_queue successor
-       JOIN messages successor_inbound ON successor_inbound.id=successor.inbound_message_id
-       JOIN messages original ON original.id=$2 AND original.contact_id=$1
-       WHERE $3::text='result' AND successor.contact_id=$1
-         AND successor.media_kind='result'
-         AND (successor_inbound.created_at,successor_inbound.id)>(original.created_at,original.id)
-     ) AS changed`,
+    RESULT_CONVERSATION_CHANGED_SQL,
     [row.contact_id,row.inbound_message_id,
       row.media_kind==="result"?"result":"promotion"]
   );
@@ -416,13 +420,9 @@ async function runOne({
       currentMessageId:message.id,
       preSendCheck:async()=>{
         if (queueExpired(row)) { finalExpiry=true; return false; }
-        // A new customer reply advances the AI cancellation epoch, but must
-        // not cancel a valid result image. Staff echoes are still a hard stop.
-        if (row.media_kind==="result") {
-          if (aiReplyCancellation.hasPendingEcho(cancellationKey)) return false;
-        } else if (!aiReplyCancellation.safeToSend(cancellationKey,cancellationEpoch)) {
-          return false;
-        }
+        // Only staff takeover and staff echoes advance this cancellation
+        // epoch. Keep that protection for result images, too.
+        if (!aiReplyCancellation.safeToSend(cancellationKey,cancellationEpoch)) return false;
         if (!(await eligibleForOptionalImage(row,db))) return false;
         const livePolicy=await whatsappPolicy.checkFreeformAllowed(contact,new Date(),{
           purpose:"service",
@@ -512,5 +512,5 @@ function start() {
 module.exports={
   enqueue,runOne,start,wake,isTemporaryBillingBlock,
   reconcileAudit,reconcileProviderDelivery,isQueuedMessage,queueExpired,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
-  nextDelay,IDLE_MS,
+  nextDelay,IDLE_MS,RESULT_CONVERSATION_CHANGED_SQL,backoffMs,
 };
