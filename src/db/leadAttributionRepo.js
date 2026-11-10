@@ -393,7 +393,11 @@ async function getForContactCurrentLead(contactId) {
        la.media_url,
        la.enrichment_status,
        la.enriched_at,
-       la.attributed_at
+       la.attributed_at,
+       latest_ref.meta_ad_id AS latest_meta_ad_id,
+       COALESCE(NULLIF(BTRIM(latest_insights.ad_name), ''),
+                NULLIF(BTRIM(latest_ref.ad_name), '')) AS latest_ad_name,
+       latest_insights.campaign_name AS latest_campaign_name
      FROM leads l
      JOIN pipeline_stages s ON s.id = l.stage_id
      LEFT JOIN lead_attributions la ON la.lead_id = l.id
@@ -410,6 +414,24 @@ async function getForContactCurrentLead(contactId) {
        ORDER BY mi.insight_date DESC, mi.updated_at DESC
        LIMIT 1
      ) ah ON true
+     -- Chat-only latest ad. Do not change immutable CRM first-touch attribution.
+     -- The contact id is already scoped to its WhatsApp sender number.
+     LEFT JOIN LATERAL (
+       SELECT r.meta_ad_id, r.ad_name, r.recorded_at
+       FROM whatsapp_free_entry_referrals r
+       WHERE r.contact_id = l.contact_id
+         AND r.source_type = 'ad'
+         AND r.meta_ad_id IS NOT NULL
+       ORDER BY r.recorded_at DESC, r.origin_message_id DESC
+       LIMIT 1
+     ) latest_ref ON true
+     LEFT JOIN LATERAL (
+       SELECT mi.ad_name, mi.campaign_name
+       FROM meta_ad_insights_daily mi
+       WHERE mi.ad_id = latest_ref.meta_ad_id
+       ORDER BY mi.insight_date DESC, mi.updated_at DESC
+       LIMIT 1
+     ) latest_insights ON true
      WHERE l.contact_id = $1
      ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
      LIMIT 1`,
