@@ -707,6 +707,32 @@ function parseIncomingMessages(body) {
             continue;
           }
 
+          // Meta delivers BSUID rotations as signed system messages on the
+          // ordinary messages webhook. They are not customer enquiries:
+          // preserve only provider identity evidence and never trigger AI,
+          // a 24-hour reply window, a marketing follow-up or a new lead.
+          if (message.type === "system") {
+            const system = message.system || {};
+            if (["user_changed_number", "user_changed_user_id"].includes(system.type) &&
+                message.id && typeof system.previous_user_id === "string" &&
+                typeof system.user_id === "string") {
+              parsed.push({
+                id: message.id,
+                channel: "whatsapp",
+                from: system.previous_user_id,
+                identityRotationOnly: true,
+                previousUserId: system.previous_user_id,
+                newUserId: system.user_id,
+                // Only user_changed_number may reveal the new telephone.
+                ...(system.type === "user_changed_number" &&
+                    typeof system.wa_id === "string"
+                    ? { newPhone: system.wa_id } : {}),
+                ...senderMetadataForChange(entry, change),
+              });
+            }
+            continue;
+          }
+
           // WhatsApp reactions are message metadata, not conversational turns.
           // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
           // becomes an unsupported inbound message, triggers AI, or affects
