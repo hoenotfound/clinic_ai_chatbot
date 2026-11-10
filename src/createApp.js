@@ -350,6 +350,8 @@ function createApp({
 
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
+    const identityRotations=incomingMessages.filter(item=>item.identityRotationOnly===true);
+    const customerMessages=incomingMessages.filter(item=>item.identityRotationOnly!==true);
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
       event.businessPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -363,6 +365,31 @@ function createApp({
       whatsappCoexistence.beginPendingAiForEcho(echo);
     }
     let durabilityFailures = 0;
+    // Process provider-authenticated BSUID changes before any normal message
+    // in the same webhook. Without this ordering, Promise.all could create a
+    // second contact for a new BSUID before Meta's linking event commits.
+    for (const rotation of identityRotations) {
+      try {
+        const secondary = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+          rotation.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
+        if (secondary && secondaryLifecycle.length) {
+          const lifecycle=await lifecycleWork;
+          if (!lifecycle.accepted || secondaryLifecycle.some(item =>
+            item.eventType === "PARTNER_REMOVED" || item.eventType === "ACCOUNT_OFFBOARDED")) {
+            throw new Error("Secondary BSUID rotation sender is no longer active.");
+          }
+        }
+        const identityQueueKey = secondary
+          ? `whatsapp:${rotation.businessPhoneNumberId}:${rotation.previousUserId}`
+          : rotation.previousUserId;
+        if (secondary) await boundedSecondaryWork(
+          () => durablyClaimIncoming(identityQueueKey, rotation), "Secondary BSUID identity rotation");
+        else await durablyClaimIncoming(identityQueueKey, rotation);
+      } catch (error) {
+        console.error("[WhatsApp identity rotation] could_not_verify_or_persist");
+        return res.sendStatus(503);
+      }
+    }
     let durableClaims;
     let durableStatusJobs;
     let durableBusinessAppEchoes;
@@ -370,7 +397,7 @@ function createApp({
     try {
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
-          incomingMessages.map(async (incoming) => {
+          customerMessages.map(async (incoming) => {
             // A phone-visible turn and a later BSUID-only turn from the same
             // signed user must share a queue, not start competing AI replies.
             const stableCustomerId = inboundIdentityKind(incoming.customerUserId) === "bsuid"
