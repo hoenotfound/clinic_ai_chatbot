@@ -79,6 +79,27 @@ test("unrestricted realtime clients preserve full payloads without synthetic Inb
   }
 });
 
+test("chat-only ad notifications reveal no contact ids to restricted SSE users", () => {
+  const restricted = fakeResponse({ contactIds: [10], leadIds: [20] }, 7);
+  const unrestricted = fakeResponse(undefined, 8);
+  const cleanupRestricted = realtimeEvents.addClient(restricted.res);
+  const cleanupUnrestricted = realtimeEvents.addClient(unrestricted.res);
+  try {
+    realtimeEvents.publish("inbox_latest_ad_changed", { contactId: 999 });
+    assert.equal(restricted.writes.length, 1);
+    assert.match(restricted.writes[0], /event: inbox_latest_ad_changed/);
+    assert.match(restricted.writes[0], /data: \\{\\}/);
+    assert.doesNotMatch(restricted.writes[0], /999/);
+    assert.equal(unrestricted.writes.length, 1);
+    assert.match(unrestricted.writes[0], /event: inbox_latest_ad_changed/);
+    assert.match(unrestricted.writes[0], /"contactId":999/);
+    assert.doesNotMatch(unrestricted.writes[0], /pipeline_changed|conversation_changed/);
+  } finally {
+    cleanupRestricted();
+    cleanupUnrestricted();
+  }
+});
+
 test("disconnectUser closes only realtime connections for the changed account", () => {
   const first = fakeResponse({ contactIds: [10], leadIds: [20] }, 7);
   const second = fakeResponse({ contactIds: [11], leadIds: [21] }, 8);
