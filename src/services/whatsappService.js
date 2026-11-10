@@ -699,7 +699,7 @@ function parseIncomingMessages(body) {
           // Some username-mode callbacks provide the scoped user_id without
           // an exposed phone address. Never use a display username here.
           if (!message?.id) continue;
-          if (!message.from && !message.user_id) {
+          if (!message.from && !message.from_user_id && !message.user_id) {
             // The signed Meta payload is visible to this receiver, but there
             // is no safe way to address the customer. Make this diagnosable.
             console.warn("[WhatsApp inbound parser] missing_customer_identity");
@@ -712,14 +712,18 @@ function parseIncomingMessages(body) {
           // follow-up/unread/attention state.
           if (message.type === "reaction") continue;
 
+          // Meta's direct Cloud API supplies from_user_id on messages, and
+          // user_id / profile.username on the matching contacts[] item.
+          // Preserve the sender's phone if one is present; never use a
+          // display username as a routable identifier.
+          const fromUserId = message.from_user_id || message.user_id || null;
           const whatsappContact = contacts.find((contact) =>
-            contact.wa_id === message.from ||
-            (typeof message.user_id === "string" && contact.user_id === message.user_id));
+            (message.from && contact.wa_id === message.from) ||
+            (fromUserId && contact.user_id === fromUserId));
           const profileName = whatsappContact?.profile?.name?.trim() || null;
-          // Meta's user_id is a business-scoped identity, not a display
-          // username or phone. A phone may disappear on the NEXT webhook.
-          const customerUserId = message.user_id || whatsappContact?.user_id || null;
-          const customerUsername = message.username || whatsappContact?.username || null;
+          const customerUserId = fromUserId || whatsappContact?.user_id || null;
+          const customerUsername = whatsappContact?.profile?.username ||
+            whatsappContact?.username || message.username || null;
           const attribution = message.referral
             ? normalizeWhatsAppReferral(message.referral)
             : null;
@@ -734,7 +738,7 @@ function parseIncomingMessages(body) {
           );
           const base = {
             id: message.id,
-            from: message.from || message.user_id,
+            from: message.from || customerUserId,
             profileName,
             ...(typeof customerUserId === "string" ? { customerUserId } : {}),
             ...(typeof customerUsername === "string" ? { customerUsername } : {}),
@@ -856,11 +860,16 @@ function parseBusinessAppEchoes(body) {
         if (change?.field !== "smb_message_echoes") continue;
 
         for (const message of change?.value?.message_echoes || []) {
-          if (!message?.id || !message?.to) continue;
+          // Meta emits to_user_id for username-only Business App echoes.
+          // An echo can have no phone-number "to" at all.
+          const toUserId = message.to_user_id || null;
+          const recipient = message.to || toUserId;
+          if (!message?.id || !recipient) continue;
           const base = {
             id: message.id,
             from: message.from || null,
-            to: message.to,
+            to: recipient,
+            ...(typeof toUserId === "string" ? { toUserId } : {}),
             ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
             type: message.type || "unknown",
