@@ -314,3 +314,16 @@ test("priority query yields only for unaccepted recent inbound text jobs",async 
   });
   assert.equal(sends,1,"a finished reply does not hold the image queue");
 });
+
+test("queued Before & After results do not become obsolete solely due to a new question",()=>{
+  const source=fs.readFileSync(
+    path.join(__dirname,"../src/services/whatsappResultMediaQueue.js"),"utf8");
+  assert.match(source,/\$3::text<>'result'/);
+  assert.match(source,/successor\.media_kind='result'/);
+  assert.match(source,/newer\.sent_by_username IS NOT NULL/);
+  assert.match(source,/RESULT_STOP_PATTERN/);
+  assert.match(source,/row\.media_kind==="result"/);
+  assert.match(source,/aiReplyCancellation\.hasPendingEcho\(cancellationKey\)/);
+  assert.match(source,/aiReplyCancellation\.safeToSend\(cancellationKey,cancellationEpoch\)/);
+  assert.match(source,/whatsappPolicy\.checkFreeformAllowed/);
+});
