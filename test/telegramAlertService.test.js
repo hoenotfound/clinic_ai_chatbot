@@ -561,3 +561,21 @@ test("Telegram send failure is recorded for retry without aborting the flush", a
     nextRetryAt: "2026-10-07T00:01:00.000Z",
   });
 });
+
+test("BSUID never becomes a fabricated WhatsApp telephone or wa.me link",()=>{
+  assert.equal(formatWhatsappNumber("MY.Ab1234"),"Phone hidden (WhatsApp user ID)");
+  assert.equal(buildWhatsappChatUrl({
+    channel:"whatsapp",whatsapp_number:"MY.Ab1234",
+  }),null);
+  assert.equal(buildWhatsappChatUrl({
+    channel:"whatsapp",whatsapp_number:"60123456789",
+    whatsapp_last_customer_address:"MY.Ab1234",
+  }),null);
+  const summary=buildConversationSummaryMessage({
+    lead:{...lead,whatsapp_number:"MY.Ab1234",
+      whatsapp_last_customer_address:"MY.Ab1234"},
+    score,env:{PUBLIC_BASE_URL:"https://neutrosense.dasmarketingsolution.com"},
+  });
+  assert.doesNotMatch(summary,/wa\\.me\\/1234/);
+  assert.match(summary,/inbox\\?contact=12/);
+});
