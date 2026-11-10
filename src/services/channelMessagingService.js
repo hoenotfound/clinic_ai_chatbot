@@ -3,6 +3,7 @@ const contactsRepo = require("../db/contactsRepo");
 const messagingRuntimeHealthRepo = require("../db/messagingRuntimeHealthRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const whatsapp = require("./whatsappService");
+const { verifiedRecipientForContact } = require("../utils/whatsappCustomerIdentity");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
 const mediaStorage = require("./mediaStorageService");
@@ -26,7 +27,7 @@ function labelForChannel(channel) {
 function recipientFor(contact) {
   const channel = channelOf(contact);
   return channel === "whatsapp"
-    ? contact.whatsapp_number
+    ? verifiedRecipientForContact(contact)
     : contact.channel_user_id;
 }
 
@@ -339,7 +340,7 @@ async function sendText(contact, text, options = {}) {
   if (cancelled) return cancelled;
 
   if (channel === "whatsapp") {
-    return whatsapp.sendMessage(contact.whatsapp_number, text, {
+    return whatsapp.sendMessage(verifiedRecipientForContact(contact), text, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
@@ -363,7 +364,7 @@ async function sendConsentButtons(contact, body, buttons, options = {}) {
   if (guard.blocked) return guard.blocked;
   const cancelled = await preSendCancelled(options);
   if (cancelled) return cancelled;
-  return whatsapp.sendInteractiveButtons(contact.whatsapp_number,body,buttons,{
+  return whatsapp.sendInteractiveButtons(verifiedRecipientForContact(contact),body,buttons,{
     currentMessageId:options.currentMessageId,
   });
 }
@@ -408,7 +409,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (channel === "whatsapp") {
     const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
-    return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption, {
+    return whatsapp.sendImage(verifiedRecipientForContact(contact), imageUrl, caption, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
@@ -455,7 +456,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
     return whatsapp.sendImageById(
-      contact.whatsapp_number,
+      verifiedRecipientForContact(contact),
       mediaId,
       caption || undefined,
       { replyToProviderMessageId: sendOptions.replyToProviderMessageId,
@@ -586,7 +587,7 @@ async function sendStickerBuffer(
 
   const cancelled = await preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
-  return whatsapp.sendStickerById(contact.whatsapp_number, mediaId, {
+  return whatsapp.sendStickerById(verifiedRecipientForContact(contact), mediaId, {
     replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
@@ -634,7 +635,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
 
-    return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId, {
+    return whatsapp.sendVoiceById(verifiedRecipientForContact(contact), mediaId, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
@@ -775,7 +776,7 @@ async function sendDocumentBuffer(
   if (cancelled) return cancelled;
 
   return whatsapp.sendDocumentById(
-    contact.whatsapp_number,
+    verifiedRecipientForContact(contact),
     mediaId,
     filename,
     caption || undefined,
@@ -896,7 +897,7 @@ async function sendVideoByStoredKey(
     }
     if (cancelled) return cancelled;
     const result = await whatsapp.sendVideoById(
-      contact.whatsapp_number,
+      verifiedRecipientForContact(contact),
       mediaId,
       caption,
       {
@@ -951,7 +952,7 @@ async function sendVideoByStoredKey(
     cancelled = await preSendCancelled(optionsForPolicy(options, finalPolicy.policy));
     if (cancelled) return cancelled;
     const recoveryResult = await whatsapp.sendVideoById(
-      contact.whatsapp_number, replacementId, caption, {
+      verifiedRecipientForContact(contact), replacementId, caption, {
         replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}),
         ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
