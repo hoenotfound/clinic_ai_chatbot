@@ -1178,6 +1178,12 @@ router.get("/:contactId/attribution", async (req, res) => {
         enriched_at: context.enriched_at || null,
         attributed_at: context.attributed_at || null,
       } : null,
+      latestAd: context.latest_meta_ad_id ? {
+        source: "meta_ads",
+        meta_ad_id: context.latest_meta_ad_id,
+        ad_name: context.latest_ad_name || null,
+        campaign_name: context.latest_campaign_name || null,
+      } : null,
     });
   } catch (err) {
     console.error("Failed to load conversation attribution:", err);
