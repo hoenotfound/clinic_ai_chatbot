@@ -550,7 +550,7 @@ async function logBlock(account, check, database = pool) {
 async function preflightTemplate(to, { database = pool, now = new Date(), kind = 'template', contactId = null } = {}) {
   if (!enabled()) return { allowed: true };
   const account=configuredAccount();
-  const recipient=String(to || "").replace(/\D/g,"");
+  const recipient=normalizeCustomerAddress(to);
   const cfg=settings();
   const activation=typeof cfg.activatedAt === "string" ? Date.parse(cfg.activatedAt) : NaN;
   const stamp=new Date(now);
