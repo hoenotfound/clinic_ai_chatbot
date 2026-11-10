@@ -571,6 +571,11 @@ test("BSUID never becomes a fabricated WhatsApp telephone or wa.me link",()=>{
     channel:"whatsapp",whatsapp_number:"60123456789",
     whatsapp_last_customer_address:"MY.Ab1234",
   }),null);
+  assert.equal(buildWhatsappChatUrl({
+    channel:"whatsapp",whatsapp_number:"60123456789",
+    whatsapp_last_customer_address:"60129876543",
+  }),"https://wa.me/60129876543",
+    "a verified new phone must replace the outdated wa.me link");
   const summary=buildConversationSummaryMessage({
     lead:{...lead,whatsapp_number:"MY.Ab1234",
       whatsapp_last_customer_address:"MY.Ab1234"},
