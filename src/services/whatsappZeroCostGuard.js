@@ -714,7 +714,7 @@ async function inspectFreeTemplateWindow(to, {
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
   let scopedId=null;
-  if(senderAwareBillingReads()) {
+  if(senderAwareBillingReads() || isBsuid(normalizeCustomerAddress(to))) {
     try {
       scopedId=await primaryBillingContactId(to,{
         database, expectedContactId:context.contactId,
@@ -746,7 +746,7 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
   const activation = typeof config.activatedAt === "string" && config.activatedAt.trim()
     ? Date.parse(config.activatedAt) : NaN;
   const clock = new Date(now);
-  if (!account || !recipient || !recipient ||
+  if (!account || !recipient ||
       !Number.isFinite(activation) || !Number.isFinite(clock.getTime())) {
     const rejected = deny("zero_cost_configuration_invalid",
       "WhatsApp free-only blocked: account, recipient or activation was not verifiable.");
@@ -754,6 +754,9 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     return rejected;
   }
 
+  const exactOwnerPredicate = isBsuid(recipient)
+    ? "c.whatsapp_user_id=$2"
+    : "regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2";
   let client;
   let transaction = false;
   let rejected = null;
@@ -838,13 +841,14 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
         const owned=await client.query(
           `SELECT m.id FROM messages m JOIN contacts c ON c.id=m.contact_id
            WHERE m.id=$1 AND m.role='assistant'
-             AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
+             AND ${exactOwnerPredicate}
+             AND ($4::bigint IS NULL OR c.id=$4)
              AND m.whatsapp_message_id IS NULL
              AND ($3::bigint IS NULL OR EXISTS (
                SELECT 1 FROM whatsapp_free_entry_followup_attempts a
                WHERE a.id=$3 AND a.message_id=m.id
                  AND a.contact_id=m.contact_id AND a.status='sending'))`,
-          [messageId,recipient,attemptId]);
+          [messageId,recipient,attemptId,scopedId]);
         if (owned.rows.length !== 1) {
           rejected=deny("zero_cost_invalid_send_context",
             "WhatsApp free-only blocked: the current message or attempt does not match the recipient.");
