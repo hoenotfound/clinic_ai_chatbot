@@ -37,3 +37,14 @@ ALTER TABLE whatsapp_sender_billing_attempts
     recipient_address IS NULL OR
     recipient_address ~ '^([0-9]{8,15}|[A-Z]{2}[.][A-Za-z0-9]{1,128})$'
   );
+
+-- A signed delivery may contain both recipient_id and recipient_user_id
+-- before local HTTP acceptance is saved. Keep the second SHA256-only address
+-- for exact reservation matching; do not infer a customer from WAMID alone.
+ALTER TABLE whatsapp_sender_status_receipts
+  ADD COLUMN IF NOT EXISTS alternate_recipient_hash TEXT;
+ALTER TABLE whatsapp_sender_status_receipts
+  ADD CONSTRAINT whatsapp_sender_receipt_alternate_hash_check CHECK (
+    alternate_recipient_hash IS NULL OR
+    alternate_recipient_hash ~ '^[a-f0-9]{64}$'
+  );
