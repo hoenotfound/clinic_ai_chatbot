@@ -76,6 +76,30 @@ function build131060RecoveryReply(incoming, config = {}) {
     "\n\n可以点下面的选项，其他护理（例如脉冲波）也可以直接告诉我们～";
 }
 
+// Only when a genuine Meta button_reply exactly matches our recorded
+// three-message first-contact sequence, omit the unavailable placeholder from
+// the model's CURRENT reply context. Persisted conversation and staff review
+// remain intact. Unrelated button callbacks and earlier customer history are
+// never filtered.
+function readableHistoryForRecoverySelection(history, incoming) {
+  if (!Array.isArray(history) || history.length !== 3 ||
+      !incoming?.interactiveReplyId) return history;
+  const choice = RECOVERY_TREATMENTS.find(button =>
+    button.id === incoming.interactiveReplyId &&
+    button.title === String(incoming.text || "").trim());
+  if (!choice) return history;
+  const [placeholder, greeting, selection] = history;
+  if (placeholder?.role !== "user" ||
+      !/^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u.test(
+        String(placeholder?.content || "")) ||
+      greeting?.role !== "assistant" ||
+      !String(greeting?.content || "").startsWith("Hi～欢迎来到 Neutro Sense 😊") ||
+      !String(greeting?.content || "").includes("可以点下面的选项") ||
+      selection?.role !== "user" ||
+      String(selection.content || "").trim() !== choice.title) return history;
+  return history.slice(1);
+}
+
 async function canSend131060Recovery({
   contactId, inboundMessageId, ignoreOutboundMessageId = null,
   database = pool, env = process.env,
@@ -140,4 +164,5 @@ module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
+  readableHistoryForRecoverySelection,
 };
