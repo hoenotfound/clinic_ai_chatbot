@@ -82,9 +82,11 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
     assert.deepEqual(rows.rows.map(x=>x.customer_wa_id),
       ["60123456789","MY.OtherBsuid"]);
 
-    await assert.rejects(senderContacts.rotateSenderUserId({
+    const conflictingRotation=await senderContacts.rotateSenderUserId({
       ...sender,previousUserId:bsuid,newUserId:"MY.OtherBsuid",
-    },pool),/merge two contacts/);
+    },pool);
+    assert.deepEqual(conflictingRotation,
+      {updated:false,reason:"replacement_identity_already_bound"});
     const rotated=await senderContacts.rotateSenderUserId({
       ...sender,previousUserId:bsuid,newUserId:"MY.RotatedABC",
     },pool);
@@ -113,6 +115,45 @@ test("Postgres: signed phone and BSUID inbound reuse one sender-bound contact",
     assert.equal(updated.rows[0].whatsapp_user_id,"MY.RotatedAgain");
     assert.equal(updated.rows[0].whatsapp_last_customer_address,"60129876543",
       "new phone number may be used only when provided by signed Meta system event");
+    const delayedOld=await senderContacts.claimSenderContact({
+      ...sender,customerPhone:bsuid,customerUserId:bsuid,
+    },pool,env);
+    assert.equal(delayedOld.id,first.id,
+      "late signed messages from previous IDs retain the original contact");
+    assert.equal(delayedOld.whatsapp_user_id,"MY.RotatedAgain");
+    assert.equal(delayedOld.whatsapp_last_customer_address,"60129876543",
+      "old user-ID messages must not roll the recipient backward");
+    const aliases=await setup.query(
+      "SELECT previous_user_id,replacement_user_id FROM whatsapp_sender_user_id_aliases " +
+      "ORDER BY previous_user_id");
+    assert.deepEqual(aliases.rows,[
+      {previous_user_id:bsuid,replacement_user_id:"MY.RotatedABC"},
+      {previous_user_id:"MY.RotatedABC",replacement_user_id:"MY.RotatedAgain"},
+    ]);
+    const beforeConcurrent=(await setup.query(
+      "SELECT count(*)::integer n FROM contacts")).rows[0].n;
+    // Both operations require the same sender-scoped advisory locks. Either
+    // ordering must keep a single contact, without losing a delayed old turn.
+    const [concurrentRotation, concurrentOld]=await Promise.all([
+      senderContacts.rotateSenderUserId({
+        ...sender,previousUserId:"MY.RotatedAgain",
+        newUserId:"MY.ConcurrentFinal",
+      },pool),
+      senderContacts.claimSenderContact({
+        ...sender,customerPhone:"MY.RotatedAgain",
+        customerUserId:"MY.RotatedAgain",
+      },pool,env),
+    ]);
+    assert.equal(concurrentRotation.updated,true);
+    assert.equal(concurrentOld.id,first.id);
+    assert.equal((await setup.query(
+      "SELECT count(*)::integer n FROM contacts")).rows[0].n,
+      beforeConcurrent);
+    const latest=await setup.query(
+      "SELECT whatsapp_user_id,whatsapp_last_customer_address FROM contacts WHERE id=$1",
+      [first.id]);
+    assert.equal(latest.rows[0].whatsapp_user_id,"MY.ConcurrentFinal");
+    assert.equal(latest.rows[0].whatsapp_last_customer_address,"MY.ConcurrentFinal");
     const finalCount=await setup.query("SELECT count(*)::integer n FROM contacts");
     assert.equal(finalCount.rows[0].n,2);
   }finally{
