@@ -126,7 +126,7 @@ function makeService({
   };
   const events = {
     publish(event, payload) {
-      calls.push(["event", event, payload.messageId]);
+      calls.push(["event", event, payload.messageId ?? payload.contactId]);
     },
   };
   const reengagementService = reengagement || {
@@ -219,8 +219,11 @@ test("verified new ad refreshes the open Inbox banner only after the referral is
   });
   await claim.prepareIncomingClaim(durable);
   assert.deepEqual(stored, [[42, 777, "120246874060840540"]]);
-  assert.deepEqual(calls.filter((entry) => entry[0] === "event" && entry[1] === "pipeline_changed"),
-    [["event", "pipeline_changed", undefined]]);
+  assert.deepEqual(calls.filter((entry) => entry[0] === "event" && entry[1] === "inbox_latest_ad_changed"),
+    [["event", "inbox_latest_ad_changed", 42]],
+    "only the verified contact triggers a chat-banner refresh");
+  assert.equal(calls.some((entry) => entry[1] === "pipeline_changed"), false,
+    "a new click must not refresh the pipeline or full Inbox list");
 });
 
 test("duplicate ad referral does not trigger another Inbox attribution refresh", async () => {
@@ -233,7 +236,7 @@ test("duplicate ad referral does not trigger another Inbox attribution refresh",
     attribution: { source: "meta_ads", sourceType: "ad", adId: "120246874060840540" },
   });
   await claim.prepareIncomingClaim(durable);
-  assert.equal(calls.some((entry) => entry[0] === "event" && entry[1] === "pipeline_changed"), false);
+  assert.equal(calls.some((entry) => entry[0] === "event" && entry[1] === "inbox_latest_ad_changed"), false);
 });
 
 test("live preparation evaluates lead re-engagement after the lead is resolved", async () => {
