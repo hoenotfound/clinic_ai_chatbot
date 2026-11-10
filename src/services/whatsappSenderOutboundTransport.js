@@ -195,7 +195,7 @@ function createSecondaryOutboundTransport(binding, {
     },
     async sendInteractiveButtons(body, buttons) {
       if (!clean(body) || body.length > 1024 || !Array.isArray(buttons) ||
-          buttons.length !== 2 || buttons.some(b => !clean(b?.id) || !clean(b?.title) ||
+          buttons.length < 1 || buttons.length > 3 || buttons.some(b => !clean(b?.id) || !clean(b?.title) ||
             b.id.length > 256 || b.title.length > 20)) {
         return { success: false, error: "Invalid interactive button payload." };
       }
