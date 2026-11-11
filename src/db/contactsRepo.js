@@ -8,6 +8,7 @@ const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
+const { createInboxTreatmentResolver } = require("../utils/inboxTreatmentInterest");
 const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
@@ -698,7 +699,11 @@ async function searchConversationDirectory({ term, accessibleContactIds = null, 
     [`%${escaped}%`, accessibleContactIds, boundLimit,
      normalizedPhone.length >= 2 ? `%${normalizedPhone}%` : ""]
   );
-  return result.rows.map(row => presentPortalContact(row));
+  const resolveTreatment = createInboxTreatmentResolver();
+  return result.rows.map(row => ({
+    ...presentPortalContact(row),
+    treatment_filter_key: resolveTreatment(row.treatment_interest).key,
+  }));
 }
 
 async function listConversations({
@@ -905,7 +910,11 @@ ${senderAwareInboxReadsEnabled() ? `
     scopedParams
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
-  return hydrated.map((row) => presentPortalContact(row));
+  const resolveTreatment = createInboxTreatmentResolver();
+  return hydrated.map(row => ({
+    ...presentPortalContact(row),
+    treatment_filter_key: resolveTreatment(row.treatment_interest).key,
+  }));
 }
 
 async function takeOver(id, staffUsername) {
