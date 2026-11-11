@@ -165,9 +165,21 @@ async function purgeContactData({
       ),
     ]);
 
-    const mediaKeys = normalizeJsonArray(
-      mediaResult.rows.map((row) => row.media_key)
-    );
+    // A revoked attachment has already lost its messages.media_key.
+    // Transfer its still-pending cleanup key into the durable full-contact
+    // purge job before cascading away the per-message cleanup rows.
+    const revokedCleanupInstalled = contact.channel === "whatsapp" &&
+      (await client.query(
+        "SELECT to_regclass(current_schema() || '.whatsapp_customer_revoked_media_cleanup') IS NOT NULL AS installed"
+      )).rows[0]?.installed === true;
+    const revokedKeys = revokedCleanupInstalled ? (await client.query(
+      `SELECT DISTINCT media_key FROM whatsapp_customer_revoked_media_cleanup
+       WHERE contact_id=$1 AND media_key IS NOT NULL
+         AND status IN ('pending','processing','failed')`,[id]
+    )).rows.map(row=>row.media_key) : [];
+    const mediaKeys = normalizeJsonArray([
+      ...mediaResult.rows.map((row) => row.media_key), ...revokedKeys
+    ]);
     let pendingAttributions = 0;
     let referralTombstones = 0;
     let commentJobs = 0;
