@@ -94,7 +94,7 @@ async function listInboxConversationsPage({
     status:filters.status||"all",channel:filters.channel||"all",
     sender:filters.sender||"all",control:filters.control||"all",
     assignment:filters.assignment||"all",replyWindow:filters.replyWindow||"all",
-    query:filters.query||"",
+    treatment:filters.treatment||"all",query:filters.query||"",
   });
   const result=await request("/conversations?"+params.toString(),{
     cache:"no-store",
@@ -103,7 +103,8 @@ async function listInboxConversationsPage({
   if(Array.isArray(result)) {
     return {items:result,total:result.length,allCount:result.length,
       nextOffset:result.length,hasMore:false,statusCounts:null,
-      replyWindowCounts:null,senderOptions:null,assignmentOptions:null};
+      replyWindowCounts:null,senderOptions:null,assignmentOptions:null,
+      treatmentOptions:null};
   }
   if(!result || !Array.isArray(result.items) ||
       !Number.isSafeInteger(Number(result.total)) ||
