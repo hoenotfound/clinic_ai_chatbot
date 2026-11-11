@@ -249,6 +249,8 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
      SET content = $3, media_key = $4, media_mime_type = $5
      FROM conversation_lock
      WHERE id = $1 AND contact_id = $2 AND role = 'user'
+       -- An in-flight original media download must not undo a later edit/delete.
+       AND whatsapp_customer_mutation IS NULL
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, contactId, content, mediaKey, mediaMimeType]
   );
