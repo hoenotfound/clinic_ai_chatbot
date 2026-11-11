@@ -85,8 +85,8 @@ test("secondary 48h/66h and Day 4/Day 6 template controls require per-language a
  assert.match(ui,/approved treatment video is chosen automatically/);
  assert.match(route,/if\(!MARKETING_SLOTS\.has\(slot\)\)/);
  assert.match(route,/secondary_extended_template_mismatch/);
- assert.match(ui,/ns_day4_checkin/);
- assert.match(ui,/ns_day6_invitation/);
+ assert.match(ui,/ns_day4_assessment_guide_v2/);
+ assert.match(ui,/ns_day6_final_invite_v2/);
  assert.match(route,/extendedWorkerEnabled/);
  assert.doesNotMatch(route,/Only 48h and 72h/);
 });
