@@ -120,7 +120,7 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     const allowed = message.whatsapp_customer_mutation !== "revoke" &&
       (event.action === "revoke" || providerMs >= previousMs);
     if (allowed) {
-      const replaceMedia = event.action !== "edit";
+      const replaceMedia = event.action === "revoke";
       const newContent = event.action === "revoke" ? DELETED_TEXT :
         event.action === "edit_unavailable" ? UNAVAILABLE_TEXT : event.replacement_text;
       const update = await client.query(
@@ -196,8 +196,12 @@ async function applyUnavailableNotice(event, {database = pool, env = process.env
   if (!contactId) return null; // No new contact may be created by a mutation.
   const created = await database.query(
     `INSERT INTO messages(contact_id,role,content,whatsapp_message_id,
-                          whatsapp_customer_mutation,whatsapp_customer_mutated_at)
-      VALUES($1,'user',$2,$3,'unavailable_edit',to_timestamp($4))
+                          whatsapp_customer_mutation,whatsapp_customer_mutated_at,
+                          delivery_status)
+      -- An edit notice is not a customer message, and must not open a 24-hour
+      -- window or qualify for follow-ups. Present on the customer side in Inbox
+      -- using a read-only role override in the portal query.
+      VALUES($1,'assistant',$2,$3,'unavailable_edit',to_timestamp($4),'cancelled')
       ON CONFLICT(whatsapp_message_id) DO NOTHING RETURNING id,contact_id`,
     [contactId, NOTICE_TEXT, event.id, event.timestamp]
   );
