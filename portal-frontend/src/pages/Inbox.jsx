@@ -2427,16 +2427,14 @@ function ConversationList({
                 </div>
               )}
               {canViewAllLeads && (
-                <div className="col-span-2">
-                  <FilterSelect
-                    label="Lead owner"
-                    value={filters.assignment}
-                    onChange={(value) => updateFilter("assignment", value)}
-                    options={assignmentOptions}
-                  />
-                </div>
+                <FilterSelect
+                  label="Lead owner"
+                  value={filters.assignment}
+                  onChange={(value) => updateFilter("assignment", value)}
+                  options={assignmentOptions}
+                />
               )}
-              <div className="col-span-2">
+              <div className={canViewAllLeads ? "min-w-0" : "col-span-2"}>
                 <FilterSelect
                   label="Treatment"
                   value={filters.treatment}
