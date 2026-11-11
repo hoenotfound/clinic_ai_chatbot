@@ -40,7 +40,8 @@ test("Postgres groups repeat urinary reviews until they are resolved, but keeps 
       "(1,9006,'user','漏尿问题')," +
       "(2,9006,'user','尿失禁问题')," +
       "(3,9006,'user','怀孕是否适合治疗？')," +
-      "(4,9006,'user','还是有漏尿');"
+      "(4,9006,'user','还是有漏尿')," +
+      "(5,9006,'user','怀孕是否适合治疗？');"
     );
     pool.query = (...args) => client.query(...args);
     let alertsSent=0, pushesSent=0;
@@ -59,10 +60,13 @@ test("Postgres groups repeat urinary reviews until they are resolved, but keeps 
     await contactsRepo.setAiReviewAttention(9006,3,"怀孕是否适合治疗？","clinical");
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(alertsSent,2,"a separate medical issue still alerts");
+    await contactsRepo.setAiReviewAttention(9006,5,"怀孕是否适合治疗？","clinical");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(alertsSent,2,"repeat identical clinical question stays quiet");
 
     const persisted = await client.query(
       "SELECT inbound_message_id,category,status FROM ai_review_items ORDER BY inbound_message_id");
-    assert.deepEqual(persisted.rows.map(r=>r.inbound_message_id),[1,2,3]);
+    assert.deepEqual(persisted.rows.map(r=>r.inbound_message_id),[1,2,3,5]);
     assert.ok(persisted.rows.every(r=>r.category==="clinical"&&r.status==="pending"));
 
     await client.query(
@@ -75,7 +79,7 @@ test("Postgres groups repeat urinary reviews until they are resolved, but keeps 
     assert.equal(pushesSent,3);
     const reviews=await client.query(
       "SELECT count(*)::int AS n FROM ai_review_items WHERE contact_id=9006");
-    assert.equal(reviews.rows[0].n,4,"all messages remain individually reviewable");
+    assert.equal(reviews.rows[0].n,5,"all messages remain individually reviewable");
   } finally {
     pool.query=oldQuery;
     alerts.sendAiReviewAlert=oldAlert;
