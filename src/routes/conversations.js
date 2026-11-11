@@ -80,6 +80,7 @@ const whatsappTemplate = require("../services/whatsappTemplateService");
 const secondaryTemplate = require("../services/whatsappSecondaryTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
+const promotionalBlast = require("../services/promotionalBlastService");
 
 const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
@@ -1784,6 +1785,34 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
     }
 
+    let blastBeforeProviderDispatch=null;
+    let blastCampaignKeyForMessage=null;
+    if(req.body?.blastCampaignKey!=null) {
+      const campaign=await promotionalBlast.getCampaign(req.body.blastCampaignKey);
+      const key=String(req.body?.blastCampaignKey||"");
+      const token=String(req.body?.blastReservationToken||"");
+      const language=String(req.body?.languageCode||"");
+      if(req.user?.role!=="admin" ||
+         !["manage_tools","view_all_leads","reply_to_assigned_leads"]
+           .every(cap=>req.user?.permissions?.[cap]===true) ||
+         !campaign || campaign.enabled!==true ||
+         new Date(campaign.valid_until).getTime()<=Date.now() ||
+         req.body?.templateName!==campaign.template_name ||
+         !promotionalBlast.LANGUAGES.has(language) ||
+         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) {
+        return res.status(403).json({
+          code:"blast_send_not_authorized",
+          error:"This promotional campaign, reservation or approved template is no longer valid.",
+        });
+      }
+      // The claim is deliberately NOT consumed here. Media and template
+      // preparation can fail or take time before any Meta message is attempted.
+      blastCampaignKeyForMessage=key;
+      blastBeforeProviderDispatch=messageId=>promotionalBlast.consumeClaim(
+        contact.id,key,language,req.session?.username,token,messageId
+      );
+    }
+
     // Secondary templates must never fall through to Neutro's catalog,
     // pricing, media-upload credentials or primary Meta send endpoint.
     if (contact.whatsapp_sender_id != null &&
@@ -1873,6 +1902,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
               whatsappTemplate:{
                 name:prepared.template.name,language:prepared.template.language,
                 category:prepared.template.category,
+                ...(blastCampaignKeyForMessage
+                  ? {blastCampaignKey:blastCampaignKeyForMessage}
+                  : {}),
                 components:prepared.components,values,
                 ...(mediaAttachment ? {mediaFormat:prepared.template.header?.format,
                   mediaFilename:mediaAttachment.filename} : {}),
@@ -1889,14 +1921,23 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         }
       );
       const send=await secondaryTemplate.deliverSecondaryStaffTemplate(
-        current.ready,current.saved.id,prepared
+        current.ready,current.saved.id,prepared,{
+          ...(blastBeforeProviderDispatch
+            ? {beforeProviderDispatch:()=>blastBeforeProviderDispatch(current.saved.id)}
+            : {}),
+        }
       );
       const errorText=send.error||"secondary WhatsApp template acceptance could not be confirmed.";
       const result=await persistSendOutcome(current.saved,send,errorText,"whatsapp");
       if(send.success){
         await reconcileAcceptedStaffReplyAttention(current.ready.id);
         await markLeadContacted(current.ready.id,req.session.username,send);
-      }else{
+      }else if(!(blastBeforeProviderDispatch &&
+          send.providerNotAttempted===true &&
+          !send.wamid && send.unknown!==true)) {
+        // A known pre-provider rejection is already recorded as failed.
+        // Do not create an unrelated staff-attention hold that would prevent
+        // the unused blast claim from being safely reserved again.
         await contactsRepo.setDeliveryAttention(current.ready.id,
           "secondary WhatsApp template delivery unconfirmed: "+publicDeliveryError(errorText),
           current.saved.id);
@@ -2255,6 +2296,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       ...(mediaMimeType ? { mediaFormat, mediaFilename } : {}),
       ...(mediaSelectionId ? { mediaSelectionId } : {}),
       templateSignature: whatsappTemplate.templateSignature(resolved.template),
+      ...(blastCampaignKeyForMessage
+        ? {blastCampaignKey:blastCampaignKeyForMessage}
+        : {}),
       billingAcknowledged: true,
       billingEvidenceAtSend: billingReview.evidence,
       billingReviewedAt: billingReview.reviewedAt,
@@ -2310,6 +2354,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       templateCategory: metadata.category,
       treatmentInterest: templateTreatmentInterest,
       currentMessageId: saved.id,
+      ...(blastBeforeProviderDispatch
+        ? {beforeProviderDispatch:()=>blastBeforeProviderDispatch(saved.id)}
+        : {}),
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
@@ -2323,7 +2370,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (sendResult.success) {
       await reconcileAcceptedStaffReplyAttention(preparedContact.id);
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
-    } else {
+    } else if (!(blastBeforeProviderDispatch &&
+        sendResult.providerNotAttempted===true &&
+        !sendResult.wamid && sendResult.unknown!==true)) {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,

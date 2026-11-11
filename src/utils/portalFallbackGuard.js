@@ -8,7 +8,7 @@ const { createHmac, randomBytes } = require("node:crypto");
 
 const PORTAL_ROUTES = new Set([
   "/login", "/inbox", "/contacts", "/pipeline", "/sales-follow-up",
-  "/analytics", "/tools", "/notifications", "/tools/lead-distribution",
+  "/analytics", "/tools", "/promotional-blast", "/notifications", "/tools/lead-distribution",
   "/conversation-flow", "/settings", "/settings/client-setup",
   "/settings/team", "/settings/go-live", "/settings/setup",
   "/settings/advanced-config", "/setup", "/no-access",

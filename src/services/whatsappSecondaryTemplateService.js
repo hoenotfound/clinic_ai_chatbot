@@ -151,6 +151,7 @@ async function prepareSecondaryStaffTemplate(contact,{
 async function deliverSecondaryStaffTemplate(contact,messageId,prepared,{
   env=process.env,database=pool,
   sendText=sendSecondaryStaffText,fetchImpl=global.fetch,
+  beforeProviderDispatch=null,
 }={}) {
   if(!prepared?.success || !prepared.template || !prepared.signature ||
       !Array.isArray(prepared.components)) return denied("secondary_template_unverified");
@@ -189,6 +190,21 @@ async function deliverSecondaryStaffTemplate(contact,messageId,prepared,{
         });
         if(!built.valid)return {success:false,unknown:true,ambiguous:true,retryable:false};
         components=built.components;
+      }
+      // Media is uploaded and signed sender/approval/marketing policies were
+      // checked. Consume the one-shot blast authorization only NOW, directly
+      // before the Graph API message call. This callback is never invoked for
+      // ordinary staff templates.
+      if (typeof beforeProviderDispatch === "function") {
+        let allowed=false;
+        try { allowed=(await beforeProviderDispatch())===true; } catch(error) {
+          console.warn("[Promotional blast] Secondary final authorization failed:",error?.message);
+        }
+        if(!allowed) return {
+          success:false,definitivelyRejected:true,providerNotAttempted:true,
+          providerFailureKind:"http_rejection",retryable:false,
+          error:"Promotion was not sent: sender, consent, quiet hours or eligibility changed.",
+        };
       }
       return transport.sendTemplatePayload(template.name,template.language,components);
     },
