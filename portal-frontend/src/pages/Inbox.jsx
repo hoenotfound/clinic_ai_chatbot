@@ -2609,14 +2609,6 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
-                    {conversation.channel === "whatsapp" && inboxSenderDisplayName(conversation) && (
-                      <span
-                        title="Receiving WhatsApp business number"
-                        className="max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
-                      >
-                        {inboxSenderDisplayName(conversation)}
-                      </span>
-                    )}
                     {conversation.whatsapp_is_secondary === true &&
                       conversation.whatsapp_secondary_connection_state !== "connected" && (
                       <span role="status" title="Secondary number disconnected; outgoing messages paused"
@@ -2676,7 +2668,7 @@ function ConversationList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{displayName(contact)}</span>
                   <span className="block truncate text-xs text-[var(--color-text-muted)]">
-                    {inboxSenderDisplayName(contact) || contactMeta(contact)}
+                    {contactMeta(contact)}
                   </span>
                 </span>
               </button>
