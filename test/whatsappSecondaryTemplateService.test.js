@@ -231,3 +231,37 @@ test("wrong Ariel template media type or upload ID never reaches Graph message s
  assert.equal(result.success,false);
  assert.equal(sends,0);
 });
+
+test("blast final approval happens after image upload and before secondary Meta send",async()=>{
+ const image={...example,components:[
+  {type:"HEADER",format:"IMAGE"},{type:"BODY",text:"Hi {{1}}"},
+ ]};
+ const mediaEnv={...env,WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true"};
+ const {opts}=fake({env:mediaEnv,fetchImpl:async()=>({
+  ok:true,json:async()=>({data:[image]}),
+ })});
+ const prepared=await svc.prepareSecondaryStaffTemplate(contact,{
+  name:"ariel_reply",languageCode:"en_US",values:{body:["Customer"]},
+  billingAcknowledged:true,
+  mediaAttachment:{buffer:Buffer.from("image"),mimeType:"image/jpeg",filename:"template-image.jpg"},
+ },opts);
+ assert.equal(prepared.success,true);
+ for(const approved of [false,true]){
+  const sequence=[];
+  const delivered=await svc.deliverSecondaryStaffTemplate(contact,998,prepared,{
+   ...opts,
+   beforeProviderDispatch:async()=>{sequence.push("finalCheck");return approved;},
+   sendText:async args=>args.dispatchTransport({
+     uploadMedia:async()=>{sequence.push("mediaUpload");return{success:true,mediaId:"557901"};},
+     sendTemplatePayload:async()=>{sequence.push("metaSend");return{success:true,wamid:"wamid.secure"};},
+   }),
+  });
+  assert.equal(sequence[0],"mediaUpload");
+  assert.equal(sequence[1],"finalCheck");
+  assert.deepEqual(sequence,approved?
+   ["mediaUpload","finalCheck","metaSend"]:
+   ["mediaUpload","finalCheck"]);
+  assert.equal(delivered.success,approved);
+  if(!approved)assert.equal(delivered.definitivelyRejected,true);
+ }
+});
