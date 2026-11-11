@@ -985,8 +985,9 @@ function parseCustomerMessageMutations(body) {
           msg.unsupported?.type === "edit";
         if (!["edit", "revoke"].includes(msg?.type) && !unsupportedEdit) continue;
         if (!msg.id || !(msg.from || msg.from_user_id || msg.user_id)) continue;
-        const originalMessageId = msg[msg.type]?.original_message_id ||
-          msg.context?.id || null;
+        // Never use context.id here: it may point to a quoted/replied-to
+        // message, not the message the customer actually edited or deleted.
+        const originalMessageId = msg[msg.type]?.original_message_id || null;
         const nested = msg.edit?.message;
         let replacementText = null;
         if (msg.type === "edit") {
