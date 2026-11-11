@@ -232,6 +232,13 @@ SELECT contact_id,sender_id,recipient_key,contact_name,treatment_interest,relate
 FROM candidates`;
 function validKey(value) { return /^[a-z0-9_]{3,100}$/.test(String(value||"")) ? String(value) : null; }
 
+async function getCampaign(key=CAMPAIGN_KEY,database=pool) {
+  if(!validKey(key))return null;
+  const r=await database.query(
+    "SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1",
+    [key]);
+  return r.rows?.[0]||null;
+}
 async function listCampaigns(database=pool) {
   const r=await database.query("SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled FROM whatsapp_promotional_blast_campaigns ORDER BY created_at DESC LIMIT 40");
   return r.rows||[];
@@ -286,10 +293,19 @@ async function claimRecipient(contactId,languageCode,staffUsername,{
     [campaign,contactId,languageCode,staffUsername,token,relatedOfferReviewed===true]);
   return r.rows?.[0]||null;
 }
+// During dispatch a message has been staged as "unknown" but not sent.
+// Ignore ONLY that exact DB row; all other outgoing, staff, and promo messages
+// continue to block, including ones that appeared after the initial preview.
+const DISPATCH_SQL=CANDIDATE_SQL
+  .replace("WHERE outgoing.contact_id=c.id", "WHERE outgoing.id<>$6::integer AND outgoing.contact_id=c.id")
+  .replace("WHERE staff.contact_id=c.id", "WHERE staff.id<>$6::integer AND staff.contact_id=c.id")
+  .replace("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id");
+
 // Irreversible. Call ONLY immediately before provider contact, after the media is ready.
-async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,database=pool) {
+async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,currentMessageId,database=pool) {
   if(!validKey(campaign)||!Number.isSafeInteger(contactId)||contactId<1||
     !LANGUAGES.has(languageCode)||!String(staffUsername||"").trim()||
+    !Number.isSafeInteger(currentMessageId)||currentMessageId<1||
     !/^[0-9a-f-]{36}$/i.test(String(token||"")))return false;
   const r=await database.query(`UPDATE whatsapp_promotional_blast_claims claim
     SET state='attempted',attempted_at=now()
@@ -302,8 +318,8 @@ async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,
       AND qualified.recipient_key=claim.recipient_key AND qualified.blocked_reason IS NULL
       AND (qualified.related_offer_review_required IS FALSE OR claim.related_offer_reviewed IS TRUE)
     RETURNING claim.id`,
-    [campaign,contactId,staffUsername,languageCode,token]);
+    [campaign,contactId,staffUsername,languageCode,token,currentMessageId]);
   return r.rows?.length===1;
 }
 module.exports={CAMPAIGN_KEY,CAMPAIGN_LABEL,LANGUAGES,CANDIDATE_SQL,
-  validKey,listCampaigns,createCampaign,candidates,claimRecipient,consumeClaim};
+  validKey,getCampaign,listCampaigns,createCampaign,candidates,claimRecipient,consumeClaim,DISPATCH_SQL};
