@@ -54,7 +54,7 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
       );
       CREATE TABLE leads (
         id integer PRIMARY KEY, contact_id integer, owner_username text,
-        temperature text, is_closed boolean DEFAULT false,
+        treatment_interest text, temperature text, is_closed boolean DEFAULT false,
         created_at timestamptz DEFAULT now()
       );
       CREATE TABLE users (username text PRIMARY KEY, display_name text);
