@@ -1,6 +1,6 @@
 "use strict";
 
-const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { hasClinicalMediaRisk, isUrinaryLeakageConcern } = require("./aiReviewPolicy");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { resolveVerifiedPriceFollowUpService } = require("./priceFollowUpContext");
@@ -13,7 +13,6 @@ const AFFIRMATIVE = /^(?:是的|对|對|对的|對的|嗯|嗯对|嗯對|是啊|�
 const PRICE_FIRST = /^(?:(?:我)?想(?:先)?(?:了解|知道|问问|問問|看)(?:一下)?(?:价格|價錢|价钱|收費|收费)(?:先)?|(?:请问|請問)?(?:价格|價錢|价钱|收费|收費)(?:先)?|(?:can i (?:know|ask) (?:the )?price(?: first)?|price first|how much first|berapa harga(?: dulu)?))[\s.,!?？。！～~]*$/iu;
 const OFFICE_QUESTION = /(?:久坐|坐办公室|坐辦公室|长时间.{0,8}坐|長時間.{0,8}坐|sit(?:ting)? (?:at (?:the )?office|for long)|duduk lama)/iu;
 const SMALL_BELLY = /(?:久坐|小腹|office|sitting|duduk lama)/iu;
-const URINARY = /(?:漏尿|尿失禁|urinary\s+(?:leak(?:age)?|incontinence)|leaking urine|kencing\s+(?:bocor|tak tahan))/iu;
 
 function lastAssistant(history) {
   if (!Array.isArray(history)) return "";
@@ -97,7 +96,7 @@ function planNeutroReviewContinuation({
     if (!OFFICE_QUESTION.test(previousQuestion) ||
         !/[吗嗎?？]/u.test(previousQuestion) ||
         !recentCustomers.some(value => SMALL_BELLY.test(value))) return null;
-    const priorLeakage = recentCustomers.some(value => URINARY.test(value));
+    const priorLeakage = recentCustomers.some(value => isUrinaryLeakageConcern(value));
     const leakageNote = malay
       ? " Untuk masalah kebocoran air kencing yang disebut tadi, sebaiknya dapatkan pemeriksaan doktor."
       : english
@@ -150,7 +149,7 @@ function planNeutroReviewContinuation({
 }
 
 function nonUrgentUrinaryAcknowledgement(customerText, language) {
-  if (!URINARY.test(String(customerText || ""))) return null;
+  if (!isUrinaryLeakageConcern(customerText)) return null;
   const locale = String(language || "").toLowerCase();
   if (locale.startsWith("ms")) {
     return "Terima kasih kerana berkongsi 😊 Masalah kebocoran air kencing boleh mempunyai pelbagai punca. Sebaiknya dapatkan pemeriksaan doktor untuk mengetahui puncanya. Kami boleh bantu terangkan penilaian postur secara berasingan, tanpa menganggap rawatan postur boleh menyelesaikan masalah ini.";
