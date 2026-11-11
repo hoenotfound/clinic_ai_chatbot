@@ -56,7 +56,8 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   // Settings is kept in a dedicated utility navigation landmark.
   assert.match(sidebarSource, /const SETTINGS_ITEM = \{/);
   assert.match(sidebarSource, /<nav aria-label="Utility navigation">/);
-  assert.match(sidebarSource, /item=\{SETTINGS_ITEM\}/);
+  assert.match(sidebarSource, /item=\{settingsNavItem\}/);
+  assert.doesNotMatch(sidebarSource, /aria-label="Notification navigation"/);
 
   // Short landscape screens retain compact row heights and scrollable primary navigation.
   assert.match(cssSource, /@media \(max-height:\s*640px\)/);

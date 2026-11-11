@@ -32,14 +32,17 @@ export default function SettingsSectionLayout({ children }) {
   const configItems = getSettingsTabs(config || {});
   const location = useLocation();
   const navigate = useNavigate();
+  const isNotifications = location.pathname === "/settings/notifications";
   const isTeam = location.pathname === "/settings/team";
   const isClientSetup = location.pathname === "/settings/client-setup";
   const isGoLive = location.pathname === "/settings/go-live";
   const isSetup = location.pathname === "/settings/setup";
   const isAdvancedConfig = location.pathname === "/settings/advanced-config";
-  const mobileValue = isTeam
-    ? "team"
-    : isClientSetup
+  const mobileValue = isNotifications
+    ? "notifications"
+    : isTeam
+      ? "team"
+      : isClientSetup
       ? "clientSetup"
       : isGoLive
         ? "goLive"
@@ -49,6 +52,7 @@ export default function SettingsSectionLayout({ children }) {
             ? "advancedConfig"
             : "general";
 
+  const notificationsItem = { id: "notifications", to: "/settings/notifications", label: "Notifications" };
   const teamItem = permissions.manage_users
     ? { id: "team", to: "/settings/team", label: "Team & Access" }
     : null;
@@ -64,7 +68,7 @@ export default function SettingsSectionLayout({ children }) {
   const advancedConfigItem = user?.role === "admin"
     ? { id: "advancedConfig", to: "/settings/advanced-config", label: "Advanced Config" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
+  const destinationItems = [notificationsItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = configItems.find((item) => item.id === value);
@@ -82,7 +86,7 @@ export default function SettingsSectionLayout({ children }) {
         <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
-            Bot & {ui.businessNoun} configuration
+            {permissions.manage_settings ? <>Bot & {ui.businessNoun} configuration</> : "Personal preferences"}
           </p>
         </div>
 
@@ -101,8 +105,15 @@ export default function SettingsSectionLayout({ children }) {
             </div>
           )}
 
+          <div className={permissions.manage_settings ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}>
+            <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              Preferences
+            </p>
+            <SettingsNavLink item={notificationsItem} />
+          </div>
+
           {teamItem && (
-            <div className={permissions.manage_settings ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}>
+            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 Administration
               </p>
@@ -141,6 +152,7 @@ export default function SettingsSectionLayout({ children }) {
               {permissions.manage_settings && configItems.map((item) => (
                 <option key={item.id} value={item.id}>{item.label}</option>
               ))}
+              <option value={notificationsItem.id}>{notificationsItem.label}</option>
               {teamItem && <option value={teamItem.id}>{teamItem.label}</option>}
               {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
               {goLiveItem && <option value={goLiveItem.id}>{goLiveItem.label}</option>}
