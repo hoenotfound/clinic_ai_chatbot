@@ -207,6 +207,51 @@ async function reconcileForOriginal(wamid, {database = pool, env = process.env} 
   return applied;
 }
 
+// Retry targetless edit notices when a verified customer first appears after
+// an earlier unsupported(edit). Never create a contact, AI turn or reply.
+async function reconcileNoticesForInbound(incoming, {database=pool,env=process.env}={}) {
+  if(!supportedSender(incoming,env)) return 0;
+  const addresses=[String(incoming.from||"").trim(),
+    String(incoming.customerUserId||"").trim()].filter(Boolean);
+  if(!addresses.length) return 0;
+  let applied=0;
+  // Applied rows leave this query, so small batches eventually drain all
+  // matching notices without rechecking unrelated senders.
+  for(let batch=0;batch<50;batch++) {
+    const {rows}=await database.query(
+      `SELECT event_wamid, customer_address,customer_user_id,provider_timestamp
+         FROM whatsapp_customer_message_mutations
+        WHERE action='unavailable_edit' AND status='pending'
+          AND business_phone_number_id=$1 AND business_account_id=$2
+          AND (customer_address=ANY($3::text[])
+            OR customer_user_id=ANY($3::text[]))
+        ORDER BY created_at,event_wamid LIMIT 40`,
+      [incoming.businessPhoneNumberId,incoming.businessAccountId,addresses]
+    );
+    if(!rows.length)break;
+    let progressed=false;
+    for(const row of rows) {
+      const result=await applyUnavailableNotice({
+        id:row.event_wamid,phone:incoming.businessPhoneNumberId,
+        account:incoming.businessAccountId,
+        from:row.customer_address,customerUserId:row.customer_user_id,
+        timestamp:Number(row.provider_timestamp)
+      },{database,env});
+      if(result?.notice){applied++;progressed=true;}
+    }
+    if(!progressed || rows.length<40)break;
+  }
+  return applied;
+}
+async function reconcileAfterInbound(incoming,{database=pool,env=process.env}={}) {
+  if(!incoming?.id) return 0;
+  const [applied,notices]=await Promise.all([
+    reconcileForOriginal(incoming.id,{database,env}),
+    reconcileNoticesForInbound(incoming,{database,env})
+  ]);
+  return applied+notices;
+}
+
 // Informational notices live only in the mutation ledger. They must never
 // be inserted as customer/assistant messages: those rows affect unread state,
 // conversation previews, follow-up selection and WhatsApp reply windows.
@@ -260,27 +305,71 @@ async function listNoticesForContact(contactId, {database=pool}={}) {
 // A one-shot startup recovery for a crash between message commit and mutation
 // reconciliation. Only records whose originals already exist are selected,
 // never an unbounded poll across all unresolved provider events.
+// Continue across pages using a stable keyset: unmatched/wrong-sender rows
+// cannot repeatedly consume the first 40 slots, and no fixed 40-event ceiling
+// leaves other eligible events unprocessed after a restart.
 async function reconcilePendingOnStartup({database=pool,env=process.env,limit=40}={}) {
-  const safeLimit=Math.max(1,Math.min(100,Number(limit)||40));
-  const {rows}=await database.query(
-    `SELECT v.event_wamid
-       FROM whatsapp_customer_message_mutations v
-      WHERE v.status='pending' AND v.target_wamid IS NOT NULL
-        AND EXISTS(SELECT 1 FROM messages m
-                    WHERE m.whatsapp_message_id=v.target_wamid AND m.role='user')
-      ORDER BY v.created_at ASC LIMIT $1`,
-    [safeLimit]
-  );
-  let repaired=0;
-  for(const row of rows) {
-    if(await applyOne(row.event_wamid,{database,env})) repaired++;
+  const pageSize=Math.max(1,Math.min(100,Number(limit)||40));
+  let cursorTime=null,cursorId=null,repaired=0,scanned=0;
+  for (;;) {
+    const {rows}=await database.query(
+      `SELECT v.event_wamid,v.target_wamid,v.action,v.customer_address,
+              v.customer_user_id,v.provider_timestamp,
+              v.business_phone_number_id,v.business_account_id,v.created_at
+         FROM whatsapp_customer_message_mutations v
+        WHERE v.status='pending'
+          AND (v.action='unavailable_edit'
+            OR EXISTS(SELECT 1 FROM messages m
+               WHERE m.whatsapp_message_id=v.target_wamid AND m.role='user'))
+          AND ($2::timestamptz IS NULL OR
+               (v.created_at,v.event_wamid)>($2::timestamptz,$3::text))
+        ORDER BY v.created_at,v.event_wamid LIMIT $1`,
+      [pageSize,cursorTime,cursorId]
+    );
+    if(!rows.length)break;
+    for(const row of rows) {
+      if(row.action==='unavailable_edit') {
+        const result=await applyUnavailableNotice({
+          id:row.event_wamid,phone:row.business_phone_number_id,
+          account:row.business_account_id,from:row.customer_address,
+          customerUserId:row.customer_user_id,
+          timestamp:Number(row.provider_timestamp)
+        },{database,env});
+        if(result?.notice) repaired++;
+      } else if(await applyOne(row.event_wamid,{database,env})) repaired++;
+    }
+    scanned+=rows.length;
+    const last=rows[rows.length-1];
+    cursorTime=last.created_at;
+    cursorId=last.event_wamid;
+    if(rows.length<pageSize)break;
   }
-  return repaired;
+  return {repaired,scanned};
+}
+
+// Keep unmatched personal identifiers for at most seven days, and only
+// minimal resolved metadata for 30 days. Reuse existing six-hour maintenance.
+async function pruneExpired({database=pool}={}) {
+  const result=await database.query(
+    `DELETE FROM whatsapp_customer_message_mutations
+      WHERE (status='pending' AND created_at<NOW()-INTERVAL '7 days')
+         OR (status='applied' AND updated_at<NOW()-INTERVAL '30 days')`
+  );
+  return result.rowCount||0;
 }
 
 async function record(rawEvent, {database = pool, env = process.env} = {}) {
   const event = normalize(rawEvent, env);
   if (!event) return null; // Provider anomalies cannot become customer text.
+  // A deleted customer must never be recreated through an old provider event.
+  if(event.target) {
+    const deleted=await database.query(
+      `SELECT 1 FROM customer_data_deleted_message_ids
+        WHERE provider_message_id=$1 AND expires_at>NOW() LIMIT 1`,
+      [event.target]
+    );
+    if(deleted.rows.length) return null;
+  }
   await database.query(
     `INSERT INTO whatsapp_customer_message_mutations(
        event_wamid,target_wamid,business_phone_number_id,business_account_id,
@@ -297,7 +386,8 @@ async function record(rawEvent, {database = pool, env = process.env} = {}) {
 }
 
 module.exports = {
-  normalize, record, reconcileForOriginal, reconcilePendingOnStartup,
+  normalize, record, reconcileForOriginal, reconcileAfterInbound,
+  reconcileNoticesForInbound, reconcilePendingOnStartup, pruneExpired,
   listNoticesForContact, applyOne, applyUnavailableNotice,
   DELETED_TEXT, UNAVAILABLE_TEXT, NOTICE_TEXT,
 };
