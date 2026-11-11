@@ -1798,7 +1798,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
          new Date(campaign.valid_until).getTime()<=Date.now() ||
          req.body?.templateName!==campaign.template_name ||
          !promotionalBlast.LANGUAGES.has(language) ||
-         !/^[0-9a-f-]{36}$/i.test(token)) {
+         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) {
         return res.status(403).json({
           code:"blast_send_not_authorized",
           error:"This promotional campaign, reservation or approved template is no longer valid.",
