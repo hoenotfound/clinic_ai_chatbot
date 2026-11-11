@@ -57,7 +57,7 @@ export default function PromotionalBlast() {
       const payload={
         ...newCampaign,
         targetTreatments:newCampaign.targetTreatments.split(",").map(v=>v.trim()).filter(Boolean),
-        validUntil:new Date(newCampaign.validUntil).toISOString(),
+        validUntil:new Date(`${newCampaign.validUntil}:00+08:00`).toISOString(),
       };
       const created=await api.createPromotionalBlastCampaign(payload);
       await reloadCampaigns();
@@ -259,7 +259,7 @@ export default function PromotionalBlast() {
                     onChange={e=>setNewCampaign(v=>({...v,[field]:e.target.value}))}
                     className="mt-1 block w-full rounded-lg border border-[var(--color-border)] p-2"/>
                 </label>)}
-              <label className="text-sm">Offer valid until (local date/time)
+              <label className="text-sm">Offer valid until (Malaysia time)
                 <input required type="datetime-local" value={newCampaign.validUntil}
                   disabled={creating||sending}
                   onChange={e=>setNewCampaign(v=>({...v,validUntil:e.target.value}))}
