@@ -139,7 +139,15 @@ export default function App() {
             <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
             <Route path="/promotional-blast" element={<ProtectedRoute adminOnly><PromotionalBlast /></ProtectedRoute>} />
-            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+            <Route path="/notifications" element={<Navigate to="/settings/notifications" replace />} />
+            <Route
+              path="/settings/notifications"
+              element={(
+                <ProtectedRoute>
+                  <SettingsSectionLayout><Notifications /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
             <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
             <Route path="/conversation-flow" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><ConversationFlow /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
