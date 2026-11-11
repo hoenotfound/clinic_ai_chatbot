@@ -186,6 +186,7 @@ function fakeSecondaryImageTemplateSend(t,h,{
     if(storeError)throw storeError;
     return r2key;
   });
+  patch(t,contactsRepo,"setDeliveryAttention",async()=>{});
   patch(t,billingAdvisory,"verifyReviewToken",()=>({evidence:"unknown"}));
   patch(t,billingAdvisory,"claimBillingReviewOnce",async()=>{
     return claimAllowed
