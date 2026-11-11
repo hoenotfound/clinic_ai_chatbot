@@ -10,6 +10,7 @@ const {secondaryReplyAttentionAllowedSql,isSecondaryAiReplyEligible} =
 const source = pathName => fs.readFileSync(path.join(__dirname,"..",pathName),"utf8");
 
 const prior = [
+  {role:"user",content:"单身没结过婚，漏尿问题"},
   {role:"assistant",content:"请问平时身体主要是腰酸、久坐小腹，还是产后调理？"},
   {role:"user",content:"久坐小腹"},
   {role:"assistant",content:"你平时是长时间坐办公室的吗？"},
@@ -34,6 +35,32 @@ test("yes without a verified lifestyle question cannot override a medical review
   assert.equal(planNeutroReviewContinuation({
     customerText:"是的",conversationHistory:[],language:"zh",
   }),null);
+});
+
+test("ordinary sitting enquiry does not invent a prior urinary problem", () => {
+  const response = planNeutroReviewContinuation({
+    customerText:"是的",
+    conversationHistory:[
+      {role:"user",content:"久坐小腹"},
+      {role:"assistant",content:"你平时是长时间坐办公室的吗？"},
+      {role:"user",content:"是的"},
+    ],language:"zh",
+  });
+  assert.equal(response.kind,"lifestyle_confirmation");
+  assert.doesNotMatch(response.reply,/漏尿/);
+});
+
+test("price clarification does not push body care during a facial enquiry", () => {
+  const response = planNeutroReviewContinuation({
+    customerText:"想了解价格先",
+    conversationHistory:[
+      {role:"user",content:"我想了解3D 小颜术"},
+      {role:"assistant",content:"你希望改善脸型哪一个部位呢？"},
+    ],language:"zh",
+  });
+  assert.equal(response.kind,"unscoped_price_clarification");
+  assert.match(response.reply,/哪一项护理/);
+  assert.doesNotMatch(response.reply,/骨盆|脉冲波|RM\d/);
 });
 
 test("unscoped price-first request clarifies treatment without guessing a price", () => {
