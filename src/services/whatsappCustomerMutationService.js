@@ -122,17 +122,6 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     const allowed = message.whatsapp_customer_mutation !== "revoke" &&
       (event.action === "revoke" || providerMs >= previousMs);
     if (allowed) {
-      // Cancel a reply currently using the old content before committing the
-      // mutation. Existing canSend guards fail closed if a generation is active.
-      // A rollback may cancel an old reply, which is safer than sending stale
-      // clinical or pricing advice for retracted text.
-      const senderKey = message.whatsapp_sender_key || null;
-      const keys = [
-        aiReplyCancellation.keyForContact({...message,channel:"whatsapp"}),
-        aiReplyCancellation.keyForWhatsAppNumber(event.customer_address,senderKey),
-        aiReplyCancellation.keyForWhatsAppNumber(event.customer_user_id,senderKey),
-      ];
-      for(const key of new Set(keys.filter(Boolean))) aiReplyCancellation.cancel(key);
       const replaceMedia = event.action === "revoke";
       const newContent = event.action === "revoke" ? DELETED_TEXT :
         event.action === "edit_unavailable" ? UNAVAILABLE_TEXT : event.replacement_text;
@@ -153,14 +142,27 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
       if (update.rows.length === 1) {
         // A mutation is not a customer turn, and the original turn must never
         // be recovered/retried after its contents have changed or vanished.
-        await client.query(
+        const stopped = await client.query(
           `UPDATE inbound_processing_jobs
               SET status='completed',completed_at=NOW(),terminal_at=NULL,
                   lease_owner=NULL,last_error=NULL,updated_at=NOW()
             WHERE message_id=$1 AND contact_id=$2
-              AND status IN ('pending','processing','failed')`,
+              AND status IN ('pending','processing','failed')
+            RETURNING id`,
           [message.id,message.contact_id]
         );
+        // Only cancel a current AI generation when this particular original
+        // still had a live job. Editing an old, completed message must not
+        // cancel a new unrelated customer enquiry.
+        if(stopped.rows.length) {
+          const senderKey=message.whatsapp_sender_key||null;
+          const keys=[
+            aiReplyCancellation.keyForContact({...message,channel:"whatsapp"}),
+            aiReplyCancellation.keyForWhatsAppNumber(event.customer_address,senderKey),
+            aiReplyCancellation.keyForWhatsAppNumber(event.customer_user_id,senderKey),
+          ];
+          for(const key of new Set(keys.filter(Boolean))) aiReplyCancellation.cancel(key);
+        }
         changed = {
           contactId: message.contact_id, messageId: message.id,
           phone: event.business_phone_number_id,
