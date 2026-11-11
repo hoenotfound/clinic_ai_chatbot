@@ -79,7 +79,7 @@ test("rejected sender and malformed message IDs cannot mutate existing messages"
   assert.equal(mutations.normalize({...raw,businessAccountId:env.WHATSAPP_WABA_ID},env),null);
 });
 
-function stubDatabase(action, target = true) {
+function stubDatabase(action, target = true, activeReply = false) {
   const calls = [];
   const event = {
     event_wamid:"wamid.change05", target_wamid:"wamid.original01",
@@ -96,6 +96,9 @@ function stubDatabase(action, target = true) {
     if(sql.includes("SELECT * FROM whatsapp_customer_message_mutations")) return {rows:[event]};
     if(sql.includes("SELECT m.id, m.contact_id")) return {rows:target?[message]:[]};
     if(sql.includes("UPDATE messages")) return {rows:[{id:71}]};
+    if(sql.includes("UPDATE inbound_processing_jobs")) {
+      return {rows:activeReply?[{id:99}]:[]};
+    }
     return {rows:[]};
   };
   return {calls,db:{connect:async()=>({query,release(){}}),query}};
@@ -309,4 +312,18 @@ test("new verified inbound can recover a targetless edit notice from before cont
   },{database,env});
   assert.equal(applied,1);
   assert.equal(updated,1);
+});
+
+test("edit cancels an active original AI generation, not a different later enquiry",async()=>{
+  const cancel=require("../src/services/aiReplyCancellationService");
+  const key=cancel.keyForWhatsAppNumber("60123456789");
+  const before=cancel.snapshot(key);
+  const old=stubDatabase("edit",true,false);
+  await mutations.applyOne("wamid.change05",{database:old.db,env});
+  assert.equal(cancel.snapshot(key),before,
+    "an edit to a completed old turn must not interrupt an unrelated new reply");
+  const active=stubDatabase("edit",true,true);
+  await mutations.applyOne("wamid.change05",{database:active.db,env});
+  assert.ok(cancel.snapshot(key)>before,
+    "editing an inbound with an active job must invalidate its AI generation");
 });
