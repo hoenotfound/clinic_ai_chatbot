@@ -999,9 +999,10 @@ function parseCustomerMessageMutations(body) {
             replacementText = msg.edit.text.body;
           }
         }
-        const action = msg.type === "revoke" ? "revoke" :
-          replacementText !== null ? "edit" :
-          originalMessageId ? "edit_unavailable" : "unavailable_edit";
+        if (msg.type === "revoke" && !originalMessageId) continue;
+        const action = !originalMessageId ? "unavailable_edit" :
+          msg.type === "revoke" ? "revoke" :
+          replacementText !== null ? "edit" : "edit_unavailable";
         result.push({
           id: msg.id, originalMessageId, action,
           replacementText: replacementText?.slice(0, 4096) ?? null,
