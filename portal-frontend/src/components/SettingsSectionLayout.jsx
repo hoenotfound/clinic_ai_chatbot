@@ -42,7 +42,7 @@ export default function SettingsSectionLayout({ children }) {
     ? "notifications"
     : isTeam
       ? "team"
-    : isClientSetup
+      : isClientSetup
       ? "clientSetup"
       : isGoLive
         ? "goLive"
