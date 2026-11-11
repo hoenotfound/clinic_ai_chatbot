@@ -562,6 +562,7 @@ export default function Inbox() {
   const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
@@ -776,24 +777,40 @@ export default function Inbox() {
   async function refreshMessagesForContact(contactId, { refreshCurrent = false } = {}) {
     if (contactId == null) return;
     const requestVersion = ++threadRequestVersionRef.current;
-    const afterId = refreshCurrent ? null : latestMessageIdRef.current;
+    const afterId = latestMessageIdRef.current;
+    const loadedIds = refreshCurrent
+      ? messagesRef.current.map((row) => row.id)
+          .filter((id) => Number.isSafeInteger(id) && id > 0)
+      : [];
+    // Refresh only actual on-screen message IDs, regardless of age. The
+    // ordinary afterId cursor still fetches new messages missed during SSE.
+    const updateBatches = [];
+    for (let index = 0; index < loadedIds.length; index += 250) {
+      updateBatches.push(loadedIds.slice(index, index + 250));
+    }
 
     try {
-      const data = await api.getMessages(contactId, {
-        includeMedia: false,
-        limit: refreshCurrent ? 100 : afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
-        afterId,
-      });
-      if (
-        selectedIdRef.current !== contactId ||
-        threadRequestVersionRef.current !== requestVersion
-      ) {
-        return;
-      }
+      const [data, ...updates] = await Promise.all([
+        api.getMessages(contactId, {
+          includeMedia: false,
+          limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
+          afterId,
+          includeMutationNotices: refreshCurrent,
+        }),
+        ...updateBatches.map((ids) => api.getMessageUpdates(contactId, ids)),
+      ]);
+      if (selectedIdRef.current !== contactId ||
+          threadRequestVersionRef.current !== requestVersion) return;
 
+      if (refreshCurrent && Array.isArray(data.mutationNotices)) {
+        setCustomerEditNotices(data.mutationNotices);
+      }
+      const changedRows = updates.flatMap((item) => item.messages || []);
       if (afterId || refreshCurrent) {
-        if (data.messages?.length) {
-          setMessages((prev) => mergeMessages(prev, data.messages));
+        if (data.messages?.length || changedRows.length) {
+          setMessages((prev) => mergeMessages(prev, [
+            ...(data.messages || []), ...changedRows,
+          ]));
         }
       } else {
         setMessages(data.messages || []);
@@ -918,6 +935,7 @@ export default function Inbox() {
     const nextConversation = conversations[0] || null;
     setSelectedId(nextConversation?.contact_id ?? null);
     setMessages([]);
+    setCustomerEditNotices([]);
     setHasMoreOlderMessages(false);
     setContactDetailsOpen(false);
     setWhatsAppTemplateOpen(false);
@@ -936,6 +954,7 @@ export default function Inbox() {
         const data = await api.getMessages(selectedId, {
           includeMedia: false,
           limit: MESSAGE_PAGE_SIZE,
+          includeMutationNotices: true,
         });
         if (
           !cancelled &&
@@ -943,6 +962,7 @@ export default function Inbox() {
           threadRequestVersionRef.current === requestVersion
         ) {
           setMessages(data.messages || []);
+          setCustomerEditNotices(data.mutationNotices || []);
           setHasMoreOlderMessages(!!data.hasMore);
         }
       } catch (err) {
@@ -957,6 +977,7 @@ export default function Inbox() {
     setOlderMessagesLoading(false);
     setActionPending(false);
     setMessages([]);
+    setCustomerEditNotices([]);
     setHasMoreOlderMessages(false);
     initialLoad();
 
@@ -1867,6 +1888,7 @@ export default function Inbox() {
         canManageLeads={canManageLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
+        mutationNotices={customerEditNotices}
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
         hasMoreOlderMessages={hasMoreOlderMessages}
@@ -2803,6 +2825,7 @@ function ThreadView({
   canManageLeads,
   showUnassignedAssignment,
   messages,
+  mutationNotices = [],
   loading,
   olderMessagesLoading,
   hasMoreOlderMessages,
@@ -4159,6 +4182,18 @@ function ThreadView({
               />
             </div>
           ))}
+          {mutationNotices.length > 0 && (
+            <div className="mx-auto my-3 max-w-lg space-y-1.5 rounded-lg border border-[var(--color-border)] bg-white/70 px-3 py-2 text-[11px] text-[var(--color-text-muted)]"
+                 role="status" aria-label="WhatsApp edit notices">
+              <p className="font-semibold">WhatsApp edit notifications</p>
+              {mutationNotices.map((notice) => (
+                <p key={notice.id}>
+                  {formatMessageTime(notice.created_at)} · Customer edited a message.
+                  WhatsApp did not provide the updated text.
+                </p>
+              ))}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
