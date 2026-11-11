@@ -4991,7 +4991,8 @@ function MessageBubble({
     quoteDeliveryConfirmed
   );
   const canCopy = !isCustomerDeleted && Boolean(String(message.content || "").trim());
-  const showActions = canQuote || canForward || canCopy || offerReply || offerForward;
+  const showActions = !isCustomerDeleted &&
+    (canQuote || canForward || canCopy || offerReply || offerForward);
   const replyPreview = message.reply_preview || null;
 
   useEffect(() => () => {
