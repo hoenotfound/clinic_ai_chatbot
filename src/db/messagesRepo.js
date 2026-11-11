@@ -256,6 +256,23 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, contactId, content, mediaKey, mediaMimeType]
   );
+  if (!result.rows[0] && mediaKey) {
+    // The image/audio may finish uploading after its WhatsApp original has
+    // already been revoked. Do not leave the new R2 object orphaned.
+    const cleanup = await pool.query(
+      `INSERT INTO whatsapp_customer_revoked_media_cleanup
+         (message_id,contact_id,media_key)
+       SELECT m.id,m.contact_id,$3
+         FROM messages m
+        WHERE m.id=$1 AND m.contact_id=$2 AND m.role='user'
+          AND m.whatsapp_customer_mutation='revoke'
+       ON CONFLICT(message_id,media_key) DO NOTHING RETURNING id`,
+      [messageId, contactId, mediaKey]
+    );
+    if (cleanup.rows.length) {
+      require("../services/customerDataLifecycleService").wakeCustomerMediaCleanup(0);
+    }
+  }
   return result.rows[0] || null;
 }
 
