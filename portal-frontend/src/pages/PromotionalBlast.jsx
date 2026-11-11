@@ -23,6 +23,14 @@ function sendable(person) {
 }
 
 export default function PromotionalBlast() {
+  const [campaigns,setCampaigns]=useState([]);
+  const [campaignKey,setCampaignKey]=useState(CAMPAIGN);
+  const [newCampaign,setNewCampaign]=useState({
+    campaignKey:"",title:"",templateName:"",promotedTreatment:"3D 小颜术",
+    targetTreatments:"3D 小颜术",validUntil:"",
+  });
+  const [creating,setCreating]=useState(false);
+  const [relatedReview,setRelatedReview]=useState({});
   const [recipients, setRecipients] = useState([]);
   const [selected, setSelected] = useState({});
   const [languages, setLanguages] = useState({});
@@ -34,15 +42,45 @@ export default function PromotionalBlast() {
   const [error, setError] = useState("");
   const [results, setResults] = useState([]);
   const stopRef = useRef(false);
+  const currentCampaign=campaigns.find(item=>item.campaignKey===campaignKey) || null;
 
-  const refresh = useCallback(async () => {
+  const reloadCampaigns=useCallback(async()=>{
+    const data=await api.getPromotionalBlastCampaigns();
+    setCampaigns(data.campaigns||[]);
+  },[]);
+
+  async function createNewCampaign(event){
+    event.preventDefault();
+    if(creating||sending)return;
+    setCreating(true);setError("");
+    try{
+      const payload={
+        ...newCampaign,
+        targetTreatments:newCampaign.targetTreatments.split(",").map(v=>v.trim()).filter(Boolean),
+        validUntil:new Date(newCampaign.validUntil).toISOString(),
+      };
+      const created=await api.createPromotionalBlastCampaign(payload);
+      await reloadCampaigns();
+      setCampaignKey(created.campaignKey);
+      setFile(null);setRecipients([]);setSelected({});setRelatedReview({});
+      setBillingApproved(false);setConsentReviewed(false);
+      setNewCampaign({
+        campaignKey:"",title:"",templateName:"",promotedTreatment:"3D 小颜术",
+        targetTreatments:"3D 小颜术",validUntil:"",
+      });
+    }catch(err){setError(err.message||"Could not create this campaign.")}
+    finally{setCreating(false);}
+  }
+
+  const refresh = useCallback(async (key=campaignKey) => {
     setLoading(true);
     setError("");
     try {
-      const data = await api.getPromotionalBlastPreview();
-      if (data.campaignKey !== CAMPAIGN) throw new Error("Campaign configuration changed.");
+      const data = await api.getPromotionalBlastPreview(key);
+      if (data.campaignKey !== key) throw new Error("Campaign configuration changed.");
       setRecipients(data.recipients || []);
       setSelected({});
+      setRelatedReview({});
       setLanguages(previous => Object.fromEntries(
         (data.recipients || []).map(person => [
           person.contactId, previous[person.contactId] || person.suggestedLanguage || "zh_CN",
@@ -53,13 +91,16 @@ export default function PromotionalBlast() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [campaignKey]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(()=>{void reloadCampaigns().catch(err=>setError(err.message));},[reloadCampaigns]);
+  useEffect(() => { void refresh(campaignKey); }, [campaignKey,refresh]);
 
   const allowed = useMemo(() => recipients.filter(sendable), [recipients]);
   const targets = useMemo(() =>
-    allowed.filter(person => selected[person.contactId]), [allowed, selected]);
+    allowed.filter(person => selected[person.contactId] &&
+      (!person.relatedOfferReviewRequired || relatedReview[person.contactId])),
+    [allowed,selected,relatedReview]);
   const held = recipients.filter(person => !sendable(person));
 
   const chooseFile = event => {
@@ -70,7 +111,7 @@ export default function PromotionalBlast() {
       chosen.size <= 0 || chosen.size > 5 * 1024 * 1024
     )) {
       setFile(null);
-      setError("Choose the latest RM388 JPG/PNG graphic (maximum 5 MB).");
+      setError("Choose a JPG/PNG promotional graphic (maximum 5 MB).");
       event.target.value = "";
       return;
     }
@@ -78,10 +119,10 @@ export default function PromotionalBlast() {
   };
 
   async function start() {
-    if (sending || targets.length === 0 || !file ||
+    if (sending || targets.length === 0 || !file || !currentCampaign ||
         !billingApproved || !consentReviewed) return;
     if (!window.confirm(
-      `Send the 11.11 RM388 MARKETING template to ${targets.length} selected customers?\n\nMeta may charge for these sends. Each contact will be checked again. No automatic retries will occur.`
+      `Send "${currentCampaign.title}" to ${targets.length} selected customers?\n\nMeta may charge for these sends. Each contact will be checked again. No automatic retries will occur.`
     )) return;
 
     setSending(true);
@@ -90,11 +131,13 @@ export default function PromotionalBlast() {
     stopRef.current = false;
     try {
       // A stale browser tab cannot turn an earlier preview into authority.
-      const checked = await api.getPromotionalBlastPreview();
+      const checked = await api.getPromotionalBlastPreview(campaignKey);
       const fresh = new Map((checked.recipients || []).map(p => [p.contactId, p]));
       if (targets.some(person => !fresh.has(person.contactId) ||
           !sendable(fresh.get(person.contactId)) ||
-          fresh.get(person.contactId).senderId !== person.senderId)) {
+          fresh.get(person.contactId).senderId !== person.senderId ||
+          (fresh.get(person.contactId).relatedOfferReviewRequired &&
+           !relatedReview[person.contactId]))) {
         throw new Error("Recipient eligibility changed. Refresh the list and review again. No sends were started.");
       }
 
@@ -107,31 +150,35 @@ export default function PromotionalBlast() {
           // correct sending number before claiming the recipient.
           const catalog = await api.listWhatsAppTemplates(person.contactId, { force: true });
           const version = (catalog.templates || []).find(template =>
-            template.name === CAMPAIGN && template.language === languageCode &&
+            template.name === currentCampaign.templateName && template.language === languageCode &&
             template.category === "MARKETING" && template.sendable === true &&
             template.header?.format === "IMAGE"
           );
-          const token = catalog.billingAdvisory?.reviewTokens?.[`${CAMPAIGN}::${languageCode}`];
+          const token = catalog.billingAdvisory?.reviewTokens?.[`${currentCampaign.templateName}::${languageCode}`];
           if (!version || !token || catalog.eligibility?.allowed !== true) {
             throw new Error("Template, sender or billing review unavailable. No message sent.");
           }
 
-          await api.claimPromotionalBlastRecipient({
-            campaignKey: CAMPAIGN,
+          const claim=await api.claimPromotionalBlastRecipient({
+            campaignKey,
             contactId: person.contactId,
             languageCode,
             billingAcknowledged: true,
             marketingConsentReviewed: true,
+            relatedOfferReviewed:person.relatedOfferReviewRequired===true &&
+              relatedReview[person.contactId]===true,
           });
+          if(!claim.reservationToken)throw new Error("No reservation token returned. No message was started.");
 
           const response = await api.sendWhatsAppTemplate(person.contactId, {
-            templateName: CAMPAIGN,
+            templateName: currentCampaign.templateName,
             languageCode,
             values: {},
             marketingConsentConfirmed: true,
             billingAcknowledged: true,
             billingReviewToken: token,
-            blastCampaignKey: CAMPAIGN,
+            blastCampaignKey: campaignKey,
+            blastReservationToken: claim.reservationToken,
           }, file);
           const accepted = Boolean(response.whatsapp_message_id) &&
             !["unknown", "failed", "cancelled"].includes(response.delivery_status);
@@ -170,18 +217,66 @@ export default function PromotionalBlast() {
           <h1 className="font-display text-2xl font-bold">Promotional Blast</h1>
           <p className="max-w-3xl text-sm text-[var(--color-text-muted)]">
             Preview opted-in Click-to-WhatsApp ad leads, choose their language and send one approved
-            image template per customer. The 11.11 offer is valid until 30 November 2026.
-            Even a verified ad window does not guarantee free Meta messaging.
+            image template per customer. Existing free-entry and marketing-consent rules apply.
+            Verified ad history does not guarantee free Meta messaging.
           </p>
         </header>
 
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5 space-y-3">
-          <h2 className="font-bold">11.11 · 3D 小颜术 RM388</h2>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Template: <code>{CAMPAIGN}</code> · Both WhatsApp numbers · Chinese / English / Malay
-          </p>
+          <h2 className="font-bold">Campaign</h2>
           <label className="block text-sm font-semibold">
-            Upload the latest RM388 promotional graphic once
+            Select an existing campaign
+            <select value={campaignKey} disabled={sending}
+              onChange={event=>{
+                setCampaignKey(event.target.value);
+                setFile(null);setSelected({});setRelatedReview({});
+                setBillingApproved(false);setConsentReviewed(false);
+              }}
+              className="mt-2 block w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+              {!campaigns.some(item=>item.campaignKey===campaignKey)&&<option value={campaignKey}>{campaignKey}</option>}
+              {campaigns.map(item=><option key={item.campaignKey} value={item.campaignKey}>
+                {item.title} · {item.templateName}
+              </option>)}
+            </select>
+          </label>
+          {currentCampaign&&<p className="text-xs text-[var(--color-text-muted)]">
+            Template: <code>{currentCampaign.templateName}</code> · Promoted treatment: {currentCampaign.promotedTreatment}
+            · Ends: {fmtTime(currentCampaign.validUntil)}
+          </p>}
+          <details className="rounded-lg border border-[var(--color-border)] p-3">
+            <summary className="cursor-pointer font-semibold text-sm">Create a future campaign</summary>
+            <form onSubmit={createNewCampaign} className="mt-3 grid gap-3 sm:grid-cols-2">
+              {[
+                ["campaignKey","Unique campaign key (lowercase)", "ns_next_promo_2026"],
+                ["title","Campaign title","Example: December Facial Special"],
+                ["templateName","Approved MARKETING template name","ns_new_facial_offer"],
+                ["promotedTreatment","Promoted treatment","3D 小颜术"],
+                ["targetTreatments","Eligible treatment interests (comma separated)","3D 小颜术, 9D 逆龄抗衰"],
+              ].map(([field,label,placeholder])=>
+                <label key={field} className="text-sm">{label}
+                  <input required value={newCampaign[field]} placeholder={placeholder}
+                    disabled={creating||sending}
+                    onChange={e=>setNewCampaign(v=>({...v,[field]:e.target.value}))}
+                    className="mt-1 block w-full rounded-lg border border-[var(--color-border)] p-2"/>
+                </label>)}
+              <label className="text-sm">Offer valid until (local date/time)
+                <input required type="datetime-local" value={newCampaign.validUntil}
+                  disabled={creating||sending}
+                  onChange={e=>setNewCampaign(v=>({...v,validUntil:e.target.value}))}
+                  className="mt-1 block w-full rounded-lg border border-[var(--color-border)] p-2"/>
+              </label>
+              <button className="rounded-lg border border-[var(--color-border)] px-4 py-2 font-semibold text-sm"
+                type="submit" disabled={creating||sending}>
+                {creating?"Creating…":"Save campaign (does not send)"}
+              </button>
+            </form>
+            <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+              Enter the exact Meta-approved template name. Each contact's sender-specific approval
+              is checked before sending. Campaign definitions are not editable after creation.
+            </p>
+          </details>
+          <label className="block text-sm font-semibold">
+            Upload this campaign's promotional graphic once
             <input
               className="mt-2 block w-full rounded-lg border border-[var(--color-border)] p-2 text-sm"
               type="file" accept="image/jpeg,image/png" onChange={chooseFile} disabled={sending}
@@ -204,7 +299,9 @@ export default function PromotionalBlast() {
             </div>
             <div className="flex gap-2">
               <button type="button" disabled={loading || sending} onClick={() => {
-                setSelected(Object.fromEntries(allowed.map(p => [p.contactId, true])));
+                setSelected(Object.fromEntries(allowed
+                  .filter(p=>!p.relatedOfferReviewRequired||relatedReview[p.contactId]===true)
+                  .map(p => [p.contactId, true])));
               }} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-semibold">
                 Select eligible
               </button>
@@ -229,8 +326,10 @@ export default function PromotionalBlast() {
                   <tr key={person.contactId} className="border-t border-[var(--color-border)]">
                     <td className="p-3">
                       <input type="checkbox" aria-label={`Send to ${person.name}`}
-                        disabled={sending || !sendable(person)}
-                        checked={Boolean(selected[person.contactId]) && sendable(person)}
+                        disabled={sending || !sendable(person) ||
+                          (person.relatedOfferReviewRequired && !relatedReview[person.contactId])}
+                        checked={Boolean(selected[person.contactId]) && sendable(person) &&
+                          (!person.relatedOfferReviewRequired || relatedReview[person.contactId])}
                         onChange={event => setSelected(s => ({ ...s, [person.contactId]: event.target.checked }))}/>
                     </td>
                     <td className="p-3">
@@ -241,7 +340,18 @@ export default function PromotionalBlast() {
                         {person.blockedReason === "secondary_billing_unresolved"
                           ? "Secondary billing review needed" : "Billing alarm, hold"}
                       </p>}
-                      {person.alreadyClaimed && <p className="text-xs text-[var(--color-text-muted)]">Already claimed</p>}
+                      {person.alreadyClaimed && <p className="text-xs text-[var(--color-text-muted)]">Reserved or already sent</p>}
+                      {person.relatedOfferReviewRequired && <label className="mt-1 flex items-center gap-1 text-xs">
+                        <input type="checkbox"
+                          aria-label={`Confirm related facial offer consent for ${person.name}`}
+                          disabled={sending||!sendable(person)}
+                          checked={relatedReview[person.contactId]===true}
+                          onChange={e=>{
+                            setRelatedReview(v=>({...v,[person.contactId]:e.target.checked}));
+                            if(!e.target.checked)setSelected(v=>({...v,[person.contactId]:false}));
+                          }}/>
+                        Reviewed consent: a different treatment offer
+                      </label>}
                     </td>
                     <td className="p-3">{person.senderId === 2 ? "Secondary" : "Primary"}</td>
                     <td className="p-3">{person.treatmentInterest}</td>
@@ -266,7 +376,8 @@ export default function PromotionalBlast() {
           <p className="text-xs text-[var(--color-text-muted)]">
             Eligibility is rechecked at claim time and immediately before sending.
             Staff-owned, booked, opted-out, inactive or recently messaged chats are excluded.
-            A billing issue on the secondary number puts its recipients on hold.
+            Secondary billing holds are checked per customer. Sender-wide billing alarms
+            still stop the number. Quiet hours from Tools are respected.
           </p>
         </section>
 
@@ -295,9 +406,10 @@ export default function PromotionalBlast() {
             </button>}
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            A claim is one-time and cannot be replayed. If a send fails or its status is uncertain,
-            the batch stops and you should inspect that customer's Inbox before doing anything else.
-            Closing this tab also stops sending further recipients.
+            An unused claim expires after five minutes and may be reserved again, but
+            once a provider attempt starts it cannot be replayed. If delivery is uncertain,
+            the batch stops and you should inspect the conversation in Inbox.
+            Closing this tab stops further recipients.
           </p>
         </section>
 
