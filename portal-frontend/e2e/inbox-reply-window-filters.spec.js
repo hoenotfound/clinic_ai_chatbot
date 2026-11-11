@@ -211,19 +211,24 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   const status = inbox.getByRole("combobox", { name: "Status" });
   const channel = inbox.getByRole("combobox", { name: "Channel" });
   const owner = inbox.getByRole("combobox", { name: "Lead owner" });
+  const treatment = inbox.getByRole("combobox", { name: "Treatment" });
   const handled = inbox.getByRole("combobox", { name: "Handled by" });
 
-  for (const control of [status, channel, owner, handled, reply]) {
+  for (const control of [status, channel, owner, treatment, handled, reply]) {
     await expect(control).toBeVisible();
     const rect = await control.boundingBox();
     expect(rect?.height).toBeGreaterThanOrEqual(44);
   }
-  const bounds = await Promise.all([status, channel, owner, handled, reply].map((item) => item.boundingBox()));
-  const [statusRect, channelRect, ownerRect, handledRect, replyRect] = bounds;
+  const bounds = await Promise.all(
+    [status, channel, owner, treatment, handled, reply].map((item) => item.boundingBox())
+  );
+  const [statusRect, channelRect, ownerRect, treatmentRect, handledRect, replyRect] = bounds;
   expect(Math.abs(statusRect.y - channelRect.y)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.y - treatmentRect.y)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.width - treatmentRect.width)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.width - statusRect.width)).toBeLessThan(3);
   expect(Math.abs(handledRect.y - replyRect.y)).toBeLessThan(3);
   expect(Math.abs(handledRect.width - replyRect.width)).toBeLessThan(3);
-  expect(ownerRect.width).toBeGreaterThan(statusRect.width);
 
   await channel.selectOption("whatsapp");
   await reply.selectOption("expired");
