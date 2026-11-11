@@ -624,7 +624,8 @@ async function getMessagePageForContact(
 
   if (afterId != null) {
     const result = await pool.query(
-      `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
+      `SELECT id, CASE WHEN whatsapp_customer_mutation = 'unavailable_edit' THEN 'user' ELSE role END AS role,
+              content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
               delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
               reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
               ${PORTAL_REACTIONS_COLUMN},
@@ -646,7 +647,8 @@ async function getMessagePageForContact(
   params.push(safeLimit + 1);
 
   const result = await pool.query(
-    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
+    `SELECT id, CASE WHEN whatsapp_customer_mutation = 'unavailable_edit' THEN 'user' ELSE role END AS role,
+              content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
             delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
             reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
             ${PORTAL_REACTIONS_COLUMN},
