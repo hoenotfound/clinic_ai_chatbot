@@ -149,4 +149,5 @@ test("Inbox pagination groups mixed-width and spacing variants of the same treat
   ]);
   assert.deepEqual(inboxPageModel(rows,{treatment:"3D 小颜术"},{now}).ids,[1,2,3]);
   assert.deepEqual(inboxPageModel(rows,{treatment:"3d小颜术"},{now}).ids,[1,2,3]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"３Ｄ 小颜术"},{now}).ids,[1,2,3]);
 });
