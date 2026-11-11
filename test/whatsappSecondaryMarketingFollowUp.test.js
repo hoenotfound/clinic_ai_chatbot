@@ -288,3 +288,30 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\.first_reply_at\+rule\.slot_hours/);
  assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
 });
+
+test("Day 4/6 never backfill ad sessions from before the rule was saved",()=>{
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
+ assert.match(svc.EXTENDED_RECHECK_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
+ assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
+ assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_free_entry_referrals referral/);
+ assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_marketing_consent_events consent/);
+});
+test("extended Day 4/6 due-time hint checks both workers without an extra poll when disabled",async()=>{
+ const time=new Date("2026-11-11T04:00:00Z");
+ const calls=[];
+ const database={query:async(sql,params)=>{
+   calls.push({sql,params});
+   if(sql===svc.POTENTIAL_DUE_SQL)return {rows:[{next_due_at:new Date("2026-11-12T04:00:00Z"),has_overdue:false}]};
+   if(sql===svc.EXTENDED_POTENTIAL_DUE_SQL)return {rows:[{next_due_at:new Date("2026-11-11T15:00:00Z"),has_overdue:true}]};
+   throw Error("Unexpected SQL hint");
+ }};
+ const ordinary=await svc.nextPotentialDueAt({database,env,now:time});
+ assert.equal(calls.length,1);
+ assert.equal(new Date(ordinary.next_due_at).toISOString(),"2026-11-12T04:00:00.000Z");
+ const hint=await svc.nextPotentialDueAt({database,env:{
+   ...env,WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true",
+ },now:time});
+ assert.equal(calls.length,3);
+ assert.equal(new Date(hint.next_due_at).toISOString(),"2026-11-11T15:00:00.000Z");
+ assert.equal(hint.has_overdue,true);
+});
