@@ -237,3 +237,37 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   expect(geometry.sameRow).toBe(true);
   expect(geometry.withinViewport).toBe(true);
 });
+
+test("Inbox Treatment filter combines with channel and can be cleared", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(101, "3D WhatsApp", { treatment_interest: "3D 小颜术" }),
+    conversation(102, "9D Facebook", { channel: "facebook", treatment_interest: "9D 逆龄抗衰" }),
+    conversation(103, "3D Instagram", { channel: "instagram", treatment_interest: " 3d 小颜术 " }),
+    conversation(104, "No treatment", { treatment_interest: null }),
+  ]);
+  await page.goto("/inbox");
+  const { inbox } = await openFilters(page);
+  const treatment = inbox.getByRole("combobox", { name: "Treatment" });
+  const channel = inbox.getByRole("combobox", { name: "Channel" });
+  await expect(treatment).toBeVisible();
+  await expect(treatment.locator("option")).toHaveCount(4);
+  await treatment.selectOption("3D 小颜术");
+  await expect(inbox.getByText("3D WhatsApp", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("9D Facebook", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("No treatment", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByLabel("Active Inbox filters").getByRole("button", { name: /Treatment/ })).toBeVisible();
+
+  await channel.selectOption("instagram");
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D WhatsApp", { exact: true })).toHaveCount(0);
+  await channel.selectOption("all");
+  await treatment.selectOption("__unspecified__");
+  await expect(inbox.getByText("No treatment", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toHaveCount(0);
+
+  await inbox.getByRole("button", { name: "Clear filters" }).click();
+  await expect(treatment).toHaveValue("all");
+  await expect(channel).toHaveValue("all");
+  await expect(inbox.getByText("9D Facebook", { exact: true })).toBeVisible();
+});
