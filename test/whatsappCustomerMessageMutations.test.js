@@ -129,3 +129,82 @@ test("unmatched edits remain pending for an out-of-order original", async () => 
   assert.equal(calls.some(call=>call.sql.includes("status='applied'")),false);
   assert.ok(calls.some(call=>call.sql === "COMMIT"));
 });
+
+test("a quoted reply context can never identify the edited target", () => {
+  const body=payload({
+    id:"wamid.change06",from:"60123456789",type:"edit",
+    context:{id:"wamid.someoneElsesQuotedMessage"},
+    edit:{message:{type:"text",text:{body:"Corrected"}}}
+  });
+  assert.deepEqual(whatsapp.parseIncomingMessages(body),[]);
+  const [event]=whatsapp.parseCustomerMessageMutations(body);
+  assert.equal(event.action,"unavailable_edit");
+  assert.equal(event.originalMessageId,null);
+  assert.equal(event.replacementText,"Corrected");
+});
+
+test("a revoke without a verified original ID is never aimed at a quoted message", () => {
+  const body=payload({
+    id:"wamid.change07",from:"60123456789",type:"revoke",
+    context:{id:"wamid.quotedMessage"},
+    revoke:{}
+  });
+  assert.deepEqual(whatsapp.parseCustomerMessageMutations(body),[]);
+});
+
+test("unsupported edit notice only updates the event ledger, never messages or AI turns",async()=>{
+  const calls=[];
+  const database={
+    async query(sql,args=[]) {
+      calls.push({sql,args});
+      if(sql.includes("SELECT c.id")) return {rows:[{id:50}]};
+      if(sql.includes("UPDATE whatsapp_customer_message_mutations")) {
+        return {rows:[{event_wamid:"wamid.unknown1"}]};
+      }
+      return {rows:[]};
+    }
+  };
+  const result=await mutations.applyUnavailableNotice({
+    id:"wamid.unknown1",target:null,action:"unavailable_edit",
+    account:env.WHATSAPP_WABA_ID,phone:env.WHATSAPP_PHONE_NUMBER_ID,
+    from:"60123456789",customerUserId:null,timestamp:1794355000
+  },{database,env});
+  assert.equal(result.contactId,50);
+  assert.equal(result.notice,true);
+  assert.ok(calls.some(call=>call.sql.includes("notice_contact_id=$2")));
+  assert.ok(calls.every(call=>!call.sql.includes("INSERT INTO messages")));
+});
+
+test("separate notices read only that contact's ledger rows, newest 30",async()=>{
+  const calls=[];
+  const notices=await mutations.listNoticesForContact(50,{database:{
+    async query(sql,args) {
+      calls.push({sql,args});
+      return {rows:[{id:"wamid.note1",created_at:new Date("2026-11-11T08:15:00Z")}]};
+    }
+  }});
+  assert.equal(calls[0].args[0],50);
+  assert.match(calls[0].sql,/notice_contact_id=\$1/);
+  assert.match(calls[0].sql,/LIMIT 30/);
+  assert.equal(notices[0].kind,"unavailable_edit");
+});
+
+test("startup reconciliation only scans committed original WhatsApp messages",async()=>{
+  const calls=[];
+  const n=await mutations.reconcilePendingOnStartup({database:{
+    async query(sql,args) {calls.push({sql,args});return {rows:[]};},
+    async connect(){throw Error("should not open a transaction for an empty sweep")}
+  },env});
+  assert.equal(n,0);
+  assert.match(calls[0].sql,/EXISTS\(SELECT 1 FROM messages/);
+  assert.deepEqual(calls[0].args,[40]);
+});
+
+test("caption edits retain original media when final download is processed",()=>{
+  const fs=require("node:fs");
+  const sql=fs.readFileSync(require.resolve("../src/db/messagesRepo"),"utf8");
+  assert.match(sql,/SET content = CASE WHEN whatsapp_customer_mutation IS NULL/);
+  assert.match(sql,/media_key = \$4, media_mime_type = \$5/);
+  assert.match(sql,/whatsapp_customer_mutation IS DISTINCT FROM 'revoke'/);
+  assert.match(sql,/async function getMessageUpdatesForContact/);
+});
