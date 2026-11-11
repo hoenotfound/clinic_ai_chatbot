@@ -176,15 +176,18 @@ export const api = {
     request(`/conversations/${contactId}/attribution`),
   getMessages: (
     contactId,
-    { includeMedia = false, limit = 50, beforeId = null, afterId = null } = {}
+    { includeMedia = false, limit = 50, beforeId = null, afterId = null, includeMutationNotices = false } = {}
   ) => {
     const params = new URLSearchParams();
     params.set("includeMedia", includeMedia ? "true" : "false");
     params.set("limit", String(limit));
     if (beforeId != null) params.set("beforeId", String(beforeId));
     if (afterId != null) params.set("afterId", String(afterId));
+    if (includeMutationNotices) params.set("includeMutationNotices", "true");
     return request(`/conversations/${contactId}/messages?${params.toString()}`);
   },
+  getMessageUpdates: (contactId, messageIds) =>
+    request(`/conversations/${contactId}/messages/updates?ids=${messageIds.join(",")}`),
   messageMediaUrl: (contactId, messageId) =>
     `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text, replyToMessageId = null) =>
