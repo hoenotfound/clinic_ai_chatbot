@@ -67,6 +67,8 @@ const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, a
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
+const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
+  require("./utils/neutroReviewContinuation");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -210,7 +212,7 @@ async function sendTrackedText(
   text,
   origin = "ai_reply",
   { canSend = null, processingJobId = null, latePreSendCheck = null,
-    interactiveButtons = null } = {}
+    interactiveButtons = null, reviewReplyToInboundMessageId = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -228,8 +230,21 @@ async function sendTrackedText(
     contact.whatsapp_sender_id != null &&
     contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY &&
     ["ai_reply", "system_fallback"].includes(origin);
+  // Only a fresh, verified inbound AI text reply may continue while a
+  // specific non-urgent AI review is pending. Marketing and fallback messages
+  // never inherit this narrow exception.
+  const reviewContinuationAnchor = origin === "ai_reply" &&
+    contact.needs_attention === true &&
+    String(contact.attention_reason || "").startsWith("AI review requested:") &&
+    Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
+    Number(reviewReplyToInboundMessageId) > 0
+      ? Number(reviewReplyToInboundMessageId) : null;
   if (secondaryAutomatedText) {
-    const audienceEligible = await isSecondaryAiReplyEligible(contact.id) ||
+    const audienceEligible = await isSecondaryAiReplyEligible(contact.id,
+      reviewContinuationAnchor == null ? undefined : {
+        inboundMessageId: reviewContinuationAnchor,
+        allowReviewContinuation: true,
+      }) ||
       (origin === "ai_reply" &&
        await isSecondarySupervisedAiTextTestEligible(contact.id));
     if (!audienceEligible) {
@@ -310,7 +325,7 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
-          interactiveButtons,
+          interactiveButtons, anchorMessageId: reviewContinuationAnchor,
           preSendCheck: guarded ? async () =>
             canSend() === true &&
             (typeof latePreSendCheck !== "function" ||
@@ -1215,6 +1230,7 @@ async function processIncomingMessage(
     let reviewRequired = false;
     let reviewType = null;
     let clinicalAcknowledgement = null;
+    let reviewContinuationTextOnly = false;
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
@@ -2137,6 +2153,49 @@ async function processIncomingMessage(
       if(locationCorrection.changed)reply=locationCorrection.reply;
     }
 
+    // Recover only narrow, non-clinical continuations wrongly escalated by
+    // the model. The previous question and fresh Neon clinical-review evidence
+    // are verified; no medical decision, pricing or optional media is inferred.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const continuity = planNeutroReviewContinuation({
+        customerText: text, conversationHistory: history, language: mediaLanguage,
+      });
+      if (continuity) {
+        const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+        if (verified && typeof verified.pendingClinicalReview === "boolean") {
+          reply = continuity.reply;
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          priceQuery = false;
+          packageQuery = false;
+          details = null;
+          clinicalAcknowledgement = null;
+          reviewContinuationTextOnly = true;
+          console.info("[Neutro review continuity] contact=" + contact.id +
+            " inbound=" + savedInbound.id + " kind=" + continuity.kind);
+        }
+      }
+    }
+
+    // A non-urgent urinary symptom merits one staff review, not complete
+    // silence. Use fixed non-diagnostic copy; never trust generated medical
+    // reassurance or mark the clinical review as resolved.
+    if (flagged && reviewRequired && reviewType === "clinical" &&
+        !clinicalAcknowledgement && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      clinicalAcknowledgement = nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+    }
+
     // Coexistence staff can reply from the phone while generation is in flight.
     // Give the echo webhook a brief chance to arrive, then abort this AI turn
     // if that staff action changed the cancellation epoch.
@@ -2188,7 +2247,8 @@ async function processIncomingMessage(
         responseAttempted = true;
         await sendTrackedText(
           reviewOwner, clinicalAcknowledgement, "ai_reply",
-          { canSend: canSendAutomatedReply, processingJobId }
+          { canSend: canSendAutomatedReply, processingJobId,
+            reviewReplyToInboundMessageId: savedInbound.id }
         );
       }
       return { wasFirstMessage, keywordReason };
@@ -2261,7 +2321,8 @@ async function processIncomingMessage(
       contact,
       reply,
       "ai_reply",
-      { canSend: canSendAutomatedReply, processingJobId }
+      { canSend: canSendAutomatedReply, processingJobId,
+        reviewReplyToInboundMessageId: savedInbound.id }
     );
     if (sendOutcome.sendResult.cancelled) {
       console.log(
@@ -2350,6 +2411,10 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
+    if (reviewContinuationTextOnly) {
+      await auditResultMediaEarlyExit("review_continuation_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (pelvicPackageComparison) {
       // Comparison answers are text-only, even if the model set packageQuery.
       // Never resend recently delivered Package A/B graphics or Before/After.
