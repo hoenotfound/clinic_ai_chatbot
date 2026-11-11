@@ -309,7 +309,7 @@ async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,
     !/^[0-9a-f-]{36}$/i.test(String(token||"")))return false;
   const r=await database.query(`UPDATE whatsapp_promotional_blast_claims claim
     SET state='attempted',attempted_at=now()
-    FROM (${CANDIDATE_SQL}) qualified
+    FROM (${DISPATCH_SQL}) qualified
     WHERE claim.campaign_key=$1 AND claim.contact_id=$2
       AND claim.staff_username=$3 AND claim.language_code=$4
       AND claim.reservation_token=$5::uuid AND claim.state='reserved'
