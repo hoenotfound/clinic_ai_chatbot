@@ -1145,7 +1145,8 @@ export default function Inbox() {
             )
           );
         }
-        scheduleRefresh(payload.contactId ?? null, payload.reason);
+        if (payload.reason === "message_mutation") pendingMessageMutation = true;
+        scheduleRefresh(payload.contactId ?? null);
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
         scheduleRefresh();
