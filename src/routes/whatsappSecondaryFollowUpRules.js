@@ -3,7 +3,7 @@ const express=require("express");
 const {pool}=require("../db/db");
 const configRepo=require("../db/configRepo");
 const {listApprovedSecondaryMarketingTemplates}=require("../services/whatsappSecondaryMarketingTemplateCatalog");
-const {enabled:marketingWorkerEnabled}=require("../services/whatsappSecondaryMarketingFollowUpService");
+const {enabled:marketingWorkerEnabled,extendedEnabled:extendedMarketingWorkerEnabled}=require("../services/whatsappSecondaryMarketingFollowUpService");
 const {enabled:serviceWorkerEnabled}=require("../services/whatsappSecondaryFollowUpService");
 const {secondaryAdsOnlyFullAiMode}=require("../services/whatsappSenderActivationGate");
 const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
@@ -11,6 +11,8 @@ const {hasCapability}=require("../utils/permissions");
 const {publishInternal}=require("../utils/realtimeEvents");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
+const MARKETING_SLOTS=new Set([48,66,96,144]);
+const EXTENDED_TEMPLATES={96:"ns_day4_checkin",144:"ns_day6_invitation"};
 // A secondary rule controls its own enabled state and optional approved
 // sender-owned media. Its visible message comes from the live primary clinic
 // settings; never let a saved secondary text override those shared messages.
@@ -78,6 +80,7 @@ router.get("/",async(req,res)=>{
       primaryFollowUpMessages:primaryFollowUpMessages(configRepo.getConfig()),
       marketingRules:marketing.rows,
       marketingWorkerEnabled:marketingWorkerEnabled(process.env),
+      extendedWorkerEnabled:extendedMarketingWorkerEnabled(process.env),
       marketingTemplates:templates||[],marketingCatalogAvailable:templates!==null,
     });
   }catch(err){
@@ -166,8 +169,8 @@ router.put("/:slot",async(req,res)=>{
 router.put("/marketing/:slot",async(req,res)=>{
  try {
   const slot=Number(req.params.slot);
-  if(![48,66].includes(slot))
-   return res.status(400).json({error:"Only 48h and 66h marketing templates are supported."});
+  if(!MARKETING_SLOTS.has(slot))
+   return res.status(400).json({error:"Only 48h, 66h, Day 4 and Day 6 marketing templates are supported."});
   const enabled=req.body?.enabled;
   if(typeof enabled!=="boolean")
    return res.status(400).json({error:"A valid enabled setting is required."});
@@ -208,6 +211,11 @@ router.put("/marketing/:slot",async(req,res)=>{
     return false;
   }))return res.status(400).json({
    error:"Choose one valid secondary-account template for each intended language."});
+
+  const requiredExtendedTemplate=EXTENDED_TEMPLATES[slot];
+  if(requiredExtendedTemplate && requested.some(t=>t.name!==requiredExtendedTemplate))
+   return res.status(400).json({code:"secondary_extended_template_mismatch",
+    error:"Day 4 and Day 6 require their own separately approved clinic reminder templates."});
 
   const available=await listApprovedSecondaryMarketingTemplates({env:process.env});
   const verified=requested.map(t=>available.find(a=>
