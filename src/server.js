@@ -2167,7 +2167,7 @@ async function processIncomingMessage(
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const continuity = planNeutroReviewContinuation({
         customerText: text, conversationHistory: history, language: mediaLanguage,
       });
@@ -2199,7 +2199,7 @@ async function processIncomingMessage(
         !clinicalAcknowledgement && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       clinicalAcknowledgement = nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
     }
 
