@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const receiver = require("../src/services/whatsappPaidProductionHistoryReceiver");
 const {
   assertSenderIngressSafety,
@@ -137,6 +138,110 @@ test("marketing full AI needs complete approved templates and explicit billing p
     "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED"]){
     assert.throws(()=>receiver.assertLiveConfig({...marketing,[key]:"false"}),
       /Unverified/,key);
+  }
+});
+
+// Regression for RM388 3D blast: Meta accepted secondary image templates,
+// but the app-default LIVE webhook rejected every signed delivery status
+// because it maintained two old media-template prohibitions.
+const imageMarketing = Object.freeze({
+  ...valid,
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+  WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true",
+  WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true",
+  WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED:"true",
+  WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
+});
+
+test("full AI paid live receiver permits separately verified image templates without generic staff media",()=>{
+  assert.equal(secondaryAdsOnlyFullAiMode(imageMarketing),true);
+  assert.equal(imageMarketing.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED,"false");
+  assert.doesNotThrow(()=>assertSenderIngressSafety(imageMarketing));
+  assert.doesNotThrow(()=>receiver.assertLiveConfig(imageMarketing));
+  const allContacts={
+    ...imageMarketing,
+    WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+    WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+    WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+    WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-02T01:00:00Z",
+  };
+  assert.doesNotThrow(()=>assertSenderIngressSafety(allContacts));
+  assert.doesNotThrow(()=>receiver.assertLiveConfig(allContacts));
+});
+
+test("signed secondary status webhook reaches existing receipt handler with image-header template enabled",async()=>{
+  const packet={
+    object:"whatsapp_business_account",
+    entry:[{
+      id:valid.WHATSAPP_SECONDARY_WABA_ID,
+      changes:[{field:"messages",value:{
+        metadata:{phone_number_id:valid.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+        statuses:[{id:"wamid.synthetic-rm388",status:"delivered",
+          recipient_id:"60120000001",timestamp:"1794380000"}],
+      }}],
+    }],
+  };
+  const raw=Buffer.from(JSON.stringify(packet));
+  const signature="sha256="+crypto.createHmac("sha256",secret).update(raw).digest("hex");
+  const request={body:packet,whatsappSignedRawBody:raw,
+    headers:{"x-hub-signature-256":signature}};
+  const createResponse=()=>({
+    statusCode:0,headersSent:false,
+    sendStatus(status){this.statusCode=status;this.headersSent=true;return this;},
+  });
+  let received=0;
+  const handle=(r,res)=>{
+    received++;
+    assert.deepEqual(r.body,packet);
+    assert.strictEqual(r.whatsappSignedRawBody,raw);
+    assert.equal(r.headers["x-hub-signature-256"],signature);
+    return res.sendStatus(200);
+  };
+  for(let i=0;i<2;i++){
+    const result=createResponse();
+    await receiver.dispatch(request,result,handle,{
+      env:imageMarketing,
+      dispatchPrimary:()=>{throw Error("Wrong primary router");},
+    });
+    assert.equal(result.statusCode,200);
+  }
+  assert.equal(received,2); // Provider replays remain the downstream handler's responsibility.
+
+  let rejectedToHandler=0;
+  const wrongPhone=structuredClone(packet);
+  wrongPhone.entry[0].changes[0].value.metadata.phone_number_id=valid.WHATSAPP_PHONE_NUMBER_ID;
+  const wrongRaw=Buffer.from(JSON.stringify(wrongPhone));
+  const wrongRequest={body:wrongPhone,whatsappSignedRawBody:wrongRaw,headers:{
+    "x-hub-signature-256":"sha256="+crypto.createHmac("sha256",secret).update(wrongRaw).digest("hex"),
+  }};
+  await assert.rejects(receiver.dispatch(wrongRequest,createResponse(),()=>{
+    rejectedToHandler++;}, {env:imageMarketing}),/Signed live sender identity mismatch/);
+  await assert.rejects(receiver.dispatch({...request,headers:{
+    "x-hub-signature-256":"sha256"+"0".repeat(64)}},createResponse(),()=>{
+    rejectedToHandler++;},{env:imageMarketing}),/Invalid signed Meta raw-body proof/);
+  assert.equal(rejectedToHandler,0);
+});
+
+test("image templates do not bypass staff, marketing billing, receipt or identity gates",()=>{
+  for(const [key,value] of [
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED","false"],
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED","false"],
+    ["WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_TOKEN",""],
+    ["WHATSAPP_SECONDARY_EXPECTED_WABA_ID","0"],
+    ["WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID","0"],
+    ["META_APP_SECRET","invalid-secret"],
+    ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
+  ]){
+    const env={...imageMarketing,[key]:value};
+    assert.throws(()=>receiver.assertLiveConfig(env),/Unverified/,key);
   }
 });
 
