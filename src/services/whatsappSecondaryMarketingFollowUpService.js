@@ -334,10 +334,11 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  .replace("ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
   `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
-      WHERE gate.sender_id=sa.id AND gate.state<>'idle')
+      WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
+        AND gate.state<>'idle')
    -- Each verified seven-day ad session may receive up to four template
    -- reminders, even if the contact had prior successful ad sessions.
-   -- Preserve the global unknown-send hold above: never replay ambiguity.
+   -- Preserve same-contact unknown-send holds above: never replay ambiguity.
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts other
       WHERE other.sender_id=sa.id AND other.contact_id=c.id
         AND other.slot_hours=rule.slot_hours
