@@ -4,6 +4,7 @@
 // lead scoring or marketing consent. An event can precede its original message.
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const aiReplyCancellation = require("./aiReplyCancellationService");
 
 const WAMID = /^wamid\.[A-Za-z0-9._:+/=-]{1,512}$/;
 const MIN_TIMESTAMP = 946684800; // 2000-01-01
@@ -99,7 +100,8 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     }, env);
     const match = await client.query(
       `SELECT m.id, m.contact_id, m.whatsapp_customer_mutation,
-              m.whatsapp_customer_mutated_at
+              m.whatsapp_customer_mutated_at, c.whatsapp_number,
+              c.whatsapp_user_id, sa.sender_key AS whatsapp_sender_key
          FROM messages m
          JOIN contacts c ON c.id = m.contact_id AND c.channel = 'whatsapp'
          LEFT JOIN whatsapp_sender_accounts sa ON sa.id = c.whatsapp_sender_id
@@ -120,6 +122,17 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     const allowed = message.whatsapp_customer_mutation !== "revoke" &&
       (event.action === "revoke" || providerMs >= previousMs);
     if (allowed) {
+      // Cancel a reply currently using the old content before committing the
+      // mutation. Existing canSend guards fail closed if a generation is active.
+      // A rollback may cancel an old reply, which is safer than sending stale
+      // clinical or pricing advice for retracted text.
+      const senderKey = message.whatsapp_sender_key || null;
+      const keys = [
+        aiReplyCancellation.keyForContact({...message,channel:"whatsapp"}),
+        aiReplyCancellation.keyForWhatsAppNumber(event.customer_address,senderKey),
+        aiReplyCancellation.keyForWhatsAppNumber(event.customer_user_id,senderKey),
+      ];
+      for(const key of new Set(keys.filter(Boolean))) aiReplyCancellation.cancel(key);
       const replaceMedia = event.action === "revoke";
       const newContent = event.action === "revoke" ? DELETED_TEXT :
         event.action === "edit_unavailable" ? UNAVAILABLE_TEXT : event.replacement_text;
@@ -138,6 +151,16 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
          Number(event.provider_timestamp), replaceMedia]
       );
       if (update.rows.length === 1) {
+        // A mutation is not a customer turn, and the original turn must never
+        // be recovered/retried after its contents have changed or vanished.
+        await client.query(
+          `UPDATE inbound_processing_jobs
+              SET status='completed',completed_at=NOW(),terminal_at=NULL,
+                  lease_owner=NULL,last_error=NULL,updated_at=NOW()
+            WHERE message_id=$1 AND contact_id=$2
+              AND status IN ('pending','processing','failed')`,
+          [message.id,message.contact_id]
+        );
         changed = {
           contactId: message.contact_id, messageId: message.id,
           phone: event.business_phone_number_id,
@@ -153,9 +176,10 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     await client.query(
       `UPDATE whatsapp_customer_message_mutations
           SET status='applied', replacement_text=NULL, target_message_id=$2,
+              contact_id=$3,customer_address=NULL,customer_user_id=NULL,
               updated_at=NOW()
         WHERE event_wamid=$1`,
-      [eventId, message.id]
+      [eventId, message.id,message.contact_id]
     );
     await client.query("COMMIT");
   } catch (err) {
@@ -199,7 +223,9 @@ async function applyUnavailableNotice(event, {database = pool, env = process.env
   if (!contactId) return null; // Retain pending for a later verified contact.
   const claimed = await database.query(
     `UPDATE whatsapp_customer_message_mutations
-       SET status='applied', notice_contact_id=$2, updated_at=NOW()
+       SET status='applied', notice_contact_id=$2,contact_id=$2,
+           customer_address=NULL,customer_user_id=NULL,
+           replacement_text=NULL,updated_at=NOW()
      WHERE event_wamid=$1 AND action='unavailable_edit'
        AND status='pending' RETURNING event_wamid`,
     [event.id,contactId]
