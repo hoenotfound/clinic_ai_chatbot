@@ -183,6 +183,9 @@ async function reconcileForOriginal(wamid, {database = pool, env = process.env} 
   return applied;
 }
 
+// Informational notices live only in the mutation ledger. They must never
+// be inserted as customer/assistant messages: those rows affect unread state,
+// conversation previews, follow-up selection and WhatsApp reply windows.
 async function applyUnavailableNotice(event, {database = pool, env = process.env} = {}) {
   const qp = params(event, env);
   const existing = await database.query(
@@ -193,33 +196,60 @@ async function applyUnavailableNotice(event, {database = pool, env = process.env
       ORDER BY c.id DESC LIMIT 1`, qp
   );
   const contactId = existing.rows[0]?.id;
-  if (!contactId) return null; // No new contact may be created by a mutation.
-  const created = await database.query(
-    `INSERT INTO messages(contact_id,role,content,whatsapp_message_id,
-                          whatsapp_customer_mutation,whatsapp_customer_mutated_at,
-                          delivery_status)
-      -- An edit notice is not a customer message, and must not open a 24-hour
-      -- window or qualify for follow-ups. Present on the customer side in Inbox
-      -- using a read-only role override in the portal query.
-      VALUES($1,'assistant',$2,$3,'unavailable_edit',to_timestamp($4),'cancelled')
-      ON CONFLICT(whatsapp_message_id) DO NOTHING RETURNING id,contact_id`,
-    [contactId, NOTICE_TEXT, event.id, event.timestamp]
-  );
-  // A retry is harmless. Do not overwrite an existing customer turn.
-  const messageId = created.rows[0]?.id ||
-    (await database.query(
-      `SELECT id FROM messages WHERE whatsapp_message_id=$1
-        AND contact_id=$2 AND whatsapp_customer_mutation='unavailable_edit'`,
-      [event.id, contactId])).rows[0]?.id;
-  if (!messageId) throw Error("Mutation notice conflicts with a customer message");
-  await database.query(
+  if (!contactId) return null; // Retain pending for a later verified contact.
+  const claimed = await database.query(
     `UPDATE whatsapp_customer_message_mutations
-      SET status='applied',target_message_id=$2,replacement_text=NULL,updated_at=NOW()
-      WHERE event_wamid=$1 AND status='pending'`,
-    [event.id,messageId]
+       SET status='applied', notice_contact_id=$2, updated_at=NOW()
+     WHERE event_wamid=$1 AND action='unavailable_edit'
+       AND status='pending' RETURNING event_wamid`,
+    [event.id,contactId]
   );
-  if (created.rows.length) publish(contactId, messageId, event.phone);
-  return {contactId,messageId};
+  if (claimed.rows.length) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId, reason:"message_mutation", businessPhoneNumberId:event.phone,
+      followUpStateUnchanged:true,
+    });
+  }
+  return {contactId,notice:claimed.rows.length>0};
+}
+
+// Return only attached, provider-authenticated notices to the permission-checked
+// per-contact Inbox endpoint. The raw ledger cannot be queried by the browser.
+async function listNoticesForContact(contactId, {database=pool}={}) {
+  const result = await database.query(
+    `SELECT event_wamid AS id,
+            to_timestamp(provider_timestamp) AS created_at
+       FROM whatsapp_customer_message_mutations
+      WHERE notice_contact_id=$1 AND action='unavailable_edit'
+        AND status='applied'
+      ORDER BY provider_timestamp DESC,event_wamid DESC LIMIT 30`,
+    [contactId]
+  );
+  return result.rows.reverse().map(row=>({
+    id:row.id,created_at:row.created_at,
+    content:NOTICE_TEXT,kind:"unavailable_edit",
+  }));
+}
+
+// A one-shot startup recovery for a crash between message commit and mutation
+// reconciliation. Only records whose originals already exist are selected,
+// never an unbounded poll across all unresolved provider events.
+async function reconcilePendingOnStartup({database=pool,env=process.env,limit=40}={}) {
+  const safeLimit=Math.max(1,Math.min(100,Number(limit)||40));
+  const {rows}=await database.query(
+    `SELECT v.event_wamid
+       FROM whatsapp_customer_message_mutations v
+      WHERE v.status='pending' AND v.target_wamid IS NOT NULL
+        AND EXISTS(SELECT 1 FROM messages m
+                    WHERE m.whatsapp_message_id=v.target_wamid AND m.role='user')
+      ORDER BY v.created_at ASC LIMIT $1`,
+    [safeLimit]
+  );
+  let repaired=0;
+  for(const row of rows) {
+    if(await applyOne(row.event_wamid,{database,env})) repaired++;
+  }
+  return repaired;
 }
 
 async function record(rawEvent, {database = pool, env = process.env} = {}) {
@@ -241,6 +271,7 @@ async function record(rawEvent, {database = pool, env = process.env} = {}) {
 }
 
 module.exports = {
-  normalize, record, reconcileForOriginal, applyOne, applyUnavailableNotice,
+  normalize, record, reconcileForOriginal, reconcilePendingOnStartup,
+  listNoticesForContact, applyOne, applyUnavailableNotice,
   DELETED_TEXT, UNAVAILABLE_TEXT, NOTICE_TEXT,
 };
