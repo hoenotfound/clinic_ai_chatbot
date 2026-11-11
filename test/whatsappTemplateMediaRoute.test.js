@@ -8,6 +8,7 @@ const mediaStorage = require("../src/services/mediaStorageService");
 const whatsapp = require("../src/services/whatsappService");
 const templateService = require("../src/services/whatsappTemplateService");
 const templateMedia = require("../src/services/whatsappTemplateMediaService");
+const secondaryTemplate = require("../src/services/whatsappSecondaryTemplateService");
 const clinicConfig = require("../src/config/clinicConfig");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const billingAdvisory = require("../src/services/whatsappTemplateBillingAdvisory");
@@ -28,11 +29,12 @@ function patch(t, object, name, replacement) {
   t.after(() => { object[name] = previous; });
 }
 
-async function harness(t, { format = "IMAGE", marketingAllowed = true, templateName = "clinic_test" } = {}) {
+async function harness(t, { format = "IMAGE", marketingAllowed = true, templateName = "clinic_test", secondary = false } = {}) {
   const events = { r2Uploads: 0, metaUploads: 0, metaSends: 0, saved: [], deleted: 0 };
   const contact = {
     id: 7, contact_id: 7, channel: "whatsapp", whatsapp_number: "60111234567",
     mode: "human", needs_attention: false, is_unread: false, takeover_by: null,
+    ...(secondary ? {whatsapp_sender_id:2,whatsapp_sender_key:"neutro_secondary"} : {}),
   };
   const optInAt = "2026-10-09T00:00:00.000Z";
   const rawTemplate = {
@@ -62,7 +64,9 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
       const row = {
         id: 42, role, content: preview, media_url: mediaUrl,
         media_mime_type: mediaAttachment?.mimeType || null,
-        media_key: options.mediaKey, whatsapp_template: options.whatsappTemplate,
+        media_filename: options.mediaFilename || null,
+        media_key: options.mediaKey, has_media_attachment:Boolean(options.mediaKey),
+        whatsapp_template: options.whatsappTemplate,
         delivery_status: "unknown",
       };
       events.saved.push(row);
@@ -165,6 +169,126 @@ test("Template multipart field limit rejects surplus fields with an accurate err
   assert.equal(h.events.metaUploads,0);
   assert.equal(h.events.metaSends,0);
   assert.equal(h.events.saved.length,0);
+});
+
+
+function fakeSecondaryImageTemplateSend(t,h,{
+  storeError=null,claimAllowed=true,sendResult={success:true,wamid:"wamid.secondary.media",secondarySender:true},
+}={}) {
+  const events={stores:0,storedMime:null,storedBytes:0,storedContact:null,
+    prepare:0,sends:0,metaImageBytes:0};
+  const r2key="clients/neutro/messages/7/staff-template-image.jpg";
+  patch(t,mediaStorage,"uploadMedia",async(buffer,mime,{contactId})=>{
+    events.stores++;
+    events.storedMime=mime;
+    events.storedBytes=buffer.length;
+    events.storedContact=contactId;
+    if(storeError)throw storeError;
+    return r2key;
+  });
+  patch(t,contactsRepo,"setDeliveryAttention",async()=>{});
+  patch(t,messagesRepo,"setDeliveryStatusById",async(id,status,error)=>({
+    id,contact_id:7,delivery_status:status,delivery_error:error,
+  }));
+  patch(t,billingAdvisory,"verifyReviewToken",()=>({evidence:"unknown"}));
+  patch(t,billingAdvisory,"claimBillingReviewOnce",async()=>{
+    return claimAllowed
+      ? {claimed:true,tokenHash:"c".repeat(64)}
+      : {claimed:false,code:"secondary_billing_review_already_used"};
+  });
+  patch(t,secondaryTemplate,"prepareSecondaryStaffTemplate",async(_contact,options)=>{
+    events.prepare++;
+    assert.equal(options.mediaAttachment.mimeType,"image/jpeg");
+    assert.equal(options.mediaAttachment.filename,"template-image.jpg");
+    assert.ok(Buffer.isBuffer(options.mediaAttachment.buffer));
+    assert.equal(options.billingAcknowledged,true);
+    assert.equal(options.marketingConsentConfirmed,true);
+    return {
+      success:true,preview:"📷 [Template image]\\nRM388 3D offer",
+      template:{name:"clinic_test",language:"en_US",category:"MARKETING",
+        header:{format:"IMAGE"}},
+      components:[],values:{},signature:"signed-secondary-image",
+      mediaAttachment:options.mediaAttachment,
+    };
+  });
+  patch(t,secondaryTemplate,"deliverSecondaryStaffTemplate",async(_contact,_id,prepared)=>{
+    events.sends++;
+    events.metaImageBytes=prepared.mediaAttachment.buffer.length;
+    return sendResult;
+  });
+  const form=new FormData();
+  form.append("templateName","clinic_test");
+  form.append("languageCode","en_US");
+  form.append("values","{}");
+  form.append("marketingConsentConfirmed","true");
+  form.append("billingAcknowledged","true");
+  form.append("billingReviewToken","billing-review");
+  const jpeg=Buffer.from([0xff,0xd8,0xff,0xe0,0,0,0xff,0xd9]);
+  form.append("media",new Blob([jpeg],{type:"image/jpeg"}),"RM388 offer.jpeg");
+  return {form,jpeg,r2key,events};
+}
+
+test("Secondary template retains the exact uploaded JPEG in per-contact R2 for Inbox",async t=>{
+  const h=await harness(t,{secondary:true});
+  const input=fakeSecondaryImageTemplateSend(t,h);
+  const result=await h.post(input.form);
+  assert.equal(result.status,201,JSON.stringify(result.body));
+  assert.equal(input.events.stores,1);
+  assert.equal(input.events.storedContact,7);
+  assert.equal(input.events.storedMime,"image/jpeg");
+  assert.equal(input.events.storedBytes,input.jpeg.length);
+  assert.equal(input.events.metaImageBytes,input.jpeg.length);
+  assert.equal(input.events.sends,1);
+  assert.equal(h.events.saved.length,1);
+  const saved=h.events.saved[0];
+  assert.equal(saved.media_key,input.r2key);
+  assert.equal(saved.media_mime_type,"image/jpeg");
+  assert.equal(saved.media_filename,"template-image.jpg");
+  assert.equal(saved.has_media_attachment,true);
+  assert.equal(saved.whatsapp_template.mediaFormat,"IMAGE");
+  assert.equal(h.events.deleted,0);
+});
+
+test("Secondary template blocks Meta and billing claim when private Inbox image storage fails",async t=>{
+  const h=await harness(t,{secondary:true});
+  const input=fakeSecondaryImageTemplateSend(t,h,{storeError:new Error("storage unavailable")});
+  const result=await h.post(input.form);
+  assert.equal(result.status,503);
+  assert.equal(result.body.code,"secondary_template_media_storage_unavailable");
+  assert.equal(input.events.stores,1);
+  assert.equal(input.events.sends,0);
+  assert.equal(h.events.saved.length,0);
+  assert.equal(h.events.deleted,0);
+});
+
+test("Secondary template cleans unsubmitted R2 media if billing review was already claimed",async t=>{
+  const h=await harness(t,{secondary:true});
+  const input=fakeSecondaryImageTemplateSend(t,h,{claimAllowed:false});
+  const result=await h.post(input.form);
+  assert.equal(result.status,409);
+  assert.equal(result.body.code,"secondary_billing_review_already_used");
+  assert.equal(input.events.stores,1);
+  assert.equal(input.events.sends,0);
+  assert.equal(h.events.saved.length,0);
+  // Express may flush the HTTP rejection while the route's finally block is
+  // still completing its asynchronous R2 deletion.
+  for(let i=0;i<50 && h.events.deleted===0;i++){
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.equal(h.events.deleted,1);
+});
+
+test("Secondary uncertain template result retains Inbox JPEG without retrying Meta",async t=>{
+  const h=await harness(t,{secondary:true});
+  const input=fakeSecondaryImageTemplateSend(t,h,{
+    sendResult:{success:false,unknown:true,ambiguous:true,
+      error:"Meta outcome is uncertain",retryable:false},
+  });
+  const result=await h.post(input.form);
+  assert.equal(result.status,201);
+  assert.equal(input.events.sends,1);
+  assert.equal(h.events.saved[0].media_key,input.r2key);
+  assert.equal(h.events.deleted,0);
 });
 
 test("Inbox rejects manual template sends lacking server-side billing acknowledgment before Meta upload", async (t) => {
