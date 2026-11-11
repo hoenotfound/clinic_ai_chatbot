@@ -77,7 +77,8 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   delivery_error,
   is_automated_follow_up,
   reply_to_provider_message_id,
-  is_forwarded
+  is_forwarded,
+  whatsapp_customer_mutation
 `;
 const PORTAL_REACTIONS_COLUMN = `
   COALESCE(
@@ -327,6 +328,9 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   const result = await pool.query(
     `SELECT id, role, content, created_at, sent_by_username, is_automated_follow_up, media_url, ${mediaColumn}, media_mime_type, media_filename FROM messages
      WHERE contact_id = $1
+       AND whatsapp_customer_mutation IS DISTINCT FROM 'revoke'
+       AND whatsapp_customer_mutation IS DISTINCT FROM 'edit_unavailable'
+       AND whatsapp_customer_mutation IS DISTINCT FROM 'unavailable_edit'
        AND (
          role <> 'assistant'
          OR delivery_status IS NULL
@@ -621,7 +625,7 @@ async function getMessagePageForContact(
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
               delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
-              reply_to_provider_message_id, is_forwarded,
+              reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
               ${PORTAL_REACTIONS_COLUMN},
               ${PORTAL_REPLY_PREVIEW_COLUMN}
        FROM messages
@@ -643,7 +647,7 @@ async function getMessagePageForContact(
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
             delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
-            reply_to_provider_message_id, is_forwarded,
+            reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
             ${PORTAL_REACTIONS_COLUMN},
             ${PORTAL_REPLY_PREVIEW_COLUMN}
      FROM messages
