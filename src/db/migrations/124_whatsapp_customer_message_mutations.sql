@@ -36,3 +36,27 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_customer_mutations_pending
   WHERE status = 'pending' AND target_wamid IS NOT NULL;
 COMMENT ON TABLE whatsapp_customer_message_mutations IS
   'Customer edit/delete event ledger. Does not create inbound AI turns or grant marketing consent.';
+
+
+-- A revoke clears the Inbox attachment reference in the SAME transaction
+-- that schedules R2 deletion. The existing customer cleanup worker retries
+-- these jobs after restarts and transient R2 errors.
+CREATE TABLE IF NOT EXISTS whatsapp_customer_revoked_media_cleanup (
+  id BIGSERIAL PRIMARY KEY,
+  message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  media_key TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','processing','failed','completed','skipped')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at TIMESTAMPTZ,
+  lease_token TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_revoked_media_cleanup_due
+  ON whatsapp_customer_revoked_media_cleanup
+  (next_attempt_at, id)
+  WHERE status IN ('pending','failed','processing');
