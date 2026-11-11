@@ -738,8 +738,8 @@ function parseIncomingMessages(body) {
           // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
           // becomes an unsupported inbound message, triggers AI, or affects
           // follow-up/unread/attention state.
-          if (message.type === "reaction" || message.type === "edit" ||
-              message.type === "revoke" ||
+          if (message.type === "reaction") continue;
+          if (message.type === "edit" || message.type === "revoke" ||
               (message.type === "unsupported" &&
                message.unsupported?.type === "edit")) continue;
 
