@@ -9,22 +9,15 @@ const PRIMARY_NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, capabilities: LEAD_VIEW },
   { to: "/contacts", label: "Contacts", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, capabilities: LEAD_VIEW },
-  { to: "/sales-follow-up", label: "Sales Follow-up", icon: ContactsIcon, capabilities: LEAD_VIEW },
+  { to: "/sales-follow-up", label: "Sales Follow-up", icon: FollowUpIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
-  { to: "/promotional-blast", label: "Promo Blast", icon: ToolsIcon, capabilities: [], adminAlso: true },
+  { to: "/promotional-blast", label: "Promo Blast", icon: PromoBlastIcon, capabilities: [], adminAlso: true },
 ];
-const NOTIFICATIONS_ITEM = {
-  to: "/notifications",
-  label: "Notifications",
-  icon: BellIcon,
-};
 const SETTINGS_ITEM = {
   to: "/settings",
   label: "Settings",
   icon: SettingsIcon,
-  capabilities: ["manage_settings", "manage_users"],
-  adminAlso: true,
 };
 
 function getInitialSidebarPreference() {
@@ -72,6 +65,7 @@ function SidebarNavLink({
   onHideTooltip,
   onNavigate,
 }) {
+  const location = useLocation();
   return (
     <NavLink
       to={item.to}
@@ -85,7 +79,7 @@ function SidebarNavLink({
         onNavigate?.();
       }}
       className={({ isActive }) =>
-        `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive ? "is-active" : ""}`
+        `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive || (item.label === "Settings" && location.pathname.startsWith("/settings")) ? "is-active" : ""}`
       }
     >
       <item.icon className="h-[19px] w-[19px] shrink-0" />
@@ -106,7 +100,11 @@ export default function Sidebar() {
   const sidebarExpanded = sidebarPreference.expanded;
   const sidebarOpen = isPhone ? mobileOpen : sidebarExpanded;
   const visiblePrimaryItems = PRIMARY_NAV_ITEMS.filter((item) => canShowItem(item, user, permissions));
-  const settingsVisible = canShowItem(SETTINGS_ITEM, user, permissions);
+  // Every authenticated staff member can manage their own notification preferences.
+  // Staff without configuration access go straight to the permitted Settings section.
+  const settingsNavItem = permissions.manage_settings
+    ? SETTINGS_ITEM
+    : { ...SETTINGS_ITEM, to: "/settings/notifications" };
   const userDisplayName = user?.displayName || username || "User";
   const inboxContactParam = new URLSearchParams(location.search).get("contact");
   const inboxThreadOpen =
@@ -271,25 +269,14 @@ export default function Sidebar() {
         </nav>
 
         <div className="app-sidebar-utility border-t border-white/10">
-          <nav aria-label="Notification navigation">
+          <nav aria-label="Utility navigation">
             <SidebarNavLink
-              item={NOTIFICATIONS_ITEM}
+              item={settingsNavItem}
               onShowTooltip={showTooltip}
               onHideTooltip={hideTooltip}
               onNavigate={closeMobileSidebar}
             />
           </nav>
-
-          {settingsVisible && (
-            <nav aria-label="Utility navigation">
-              <SidebarNavLink
-                item={SETTINGS_ITEM}
-                onShowTooltip={showTooltip}
-                onHideTooltip={hideTooltip}
-                onNavigate={closeMobileSidebar}
-              />
-            </nav>
-          )}
 
           <div
             className="app-sidebar-user-row flex items-center"
@@ -377,6 +364,16 @@ function PipelineIcon(props) {
   );
 }
 
+function FollowUpIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 4v7h7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3.5 11A8.5 8.5 0 1 1 6 18" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function AnalyticsIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -394,11 +391,11 @@ function ToolsIcon(props) {
   );
 }
 
-function BellIcon(props) {
+function PromoBlastIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 21h4" strokeLinecap="round" />
+      <path d="M8 8H5a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h3l12 4V4L8 8Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 8v8M7 16l2 5h3l-2-4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
