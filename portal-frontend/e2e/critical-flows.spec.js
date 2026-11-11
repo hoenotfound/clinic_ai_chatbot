@@ -715,6 +715,41 @@ async function openInboxConversation(page, name = "Alex Customer") {
   ).toBeVisible();
 }
 
+test("recovery button choices render as read-only WhatsApp options on all screen sizes", async ({page}) => {
+  const buttons = [
+    {id: "neutro_131060_pelvic", title: "骨盆调理"},
+    {id: "neutro_131060_3d", title: "3D 小颜术"},
+    {id: "neutro_131060_9d", title: "9D 逆龄抗衰"},
+  ];
+  const apiState = await installApi(page, {
+    initialMessages: [
+      ...inboundMessages(),
+      {
+        id: 2, role: "assistant",
+        created_at: recentIso(),
+        content: "Hi～欢迎来到 Neutro Sense 😊\n\n想了解哪方面的护理呢？",
+        whatsapp_message_id: "wamid.interactive-menu",
+        delivery_status: "delivered",
+        whatsapp_interactive: {type: "button", buttons},
+      },
+      {
+        id: 3, role: "assistant",
+        created_at: recentIso(),
+        content: "普通文字回复", whatsapp_message_id: "wamid.plain-text",
+        delivery_status: "delivered",
+      },
+    ],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const options = page.getByRole("group", {name: "WhatsApp reply options sent"});
+  await expect(options).toHaveCount(1);
+  for (const button of buttons) await expect(options.getByText(button.title, {exact:true})).toBeVisible();
+  await expect(options.locator("button, a")).toHaveCount(0);
+  await expect(page.getByText("普通文字回复")).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
 test("WhatsApp sender selection stays inside Filters on mobile and filters the list", async ({ page }, testInfo) => {
   const primary = conversation({
     contact_id: 101,
