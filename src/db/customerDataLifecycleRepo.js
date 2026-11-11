@@ -319,6 +319,45 @@ async function purgeContactData({
       }
     }
 
+    // Remove customer mutation evidence BEFORE deleting messages or the
+    // contact. FK cascade alone misses out-of-order events whose target was
+    // never stored. Require the same verified sender account and an exact
+    // customer identity, including provider-verified historical BSUID aliases.
+    if(contact.channel === "whatsapp") {
+      await client.query(
+        `DELETE FROM whatsapp_customer_message_mutations event
+          WHERE event.contact_id=$1 OR event.notice_contact_id=$1
+             OR EXISTS (
+               SELECT 1 FROM messages m WHERE m.contact_id=$1
+                 AND m.whatsapp_message_id=event.target_wamid
+             )
+             OR EXISTS (
+               SELECT 1 FROM contacts c
+               JOIN whatsapp_sender_accounts sender
+                 ON (sender.id=c.whatsapp_sender_id OR
+                    (c.whatsapp_sender_id IS NULL AND
+                     sender.meta_phone_number_id=$2 AND sender.meta_account_id=$3))
+               WHERE c.id=$1
+                 AND sender.meta_phone_number_id=event.business_phone_number_id
+                 AND sender.meta_account_id=event.business_account_id
+                 AND (
+                   event.customer_address IN (
+                     c.whatsapp_number,c.whatsapp_user_id,c.whatsapp_last_customer_address)
+                   OR event.customer_user_id IN (
+                     c.whatsapp_number,c.whatsapp_user_id,c.whatsapp_last_customer_address)
+                   OR EXISTS (
+                     SELECT 1 FROM whatsapp_sender_user_id_aliases alias
+                     WHERE alias.contact_id=c.id AND alias.sender_id=sender.id
+                       AND alias.previous_user_id IN (
+                         event.customer_address,event.customer_user_id)
+                   )
+                 )
+             )`,
+        [id, String(process.env.WHATSAPP_PHONE_NUMBER_ID || ""),
+          String(process.env.WHATSAPP_WABA_ID || "")]
+      );
+    }
+
     const tombstoneResult = await client.query(
       `INSERT INTO customer_data_deleted_message_ids (
          provider_message_id,
