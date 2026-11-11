@@ -103,7 +103,8 @@ test("processing failure is private and does not disable a subsequent AI turn", 
 });
 
 test("prompt requests silent review but permits normal replies and truthful identity answers", () => {
-  assert.match(prompt, /sends NO customer-facing reply for this turn/);
+  assert.match(prompt, /all other unresolved professional questions stay silent/);
+  assert.match(prompt, /non-diagnostic acknowledgement/);
   assert.match(prompt, /Continue to answer future unrelated questions/);
   assert.match(prompt, /If explicitly asked whether you're automated, answer truthfully/);
   assert.match(prompt, /Do not proactively call yourself an AI/);
