@@ -739,6 +739,9 @@ function parseIncomingMessages(body) {
           // becomes an unsupported inbound message, triggers AI, or affects
           // follow-up/unread/attention state.
           if (message.type === "reaction") continue;
+          if (message.type === "edit" || message.type === "revoke" ||
+              (message.type === "unsupported" &&
+               message.unsupported?.type === "edit")) continue;
 
           // Meta's direct Cloud API supplies from_user_id on messages, and
           // user_id / profile.username on the matching contacts[] item.
@@ -968,6 +971,54 @@ function parseBusinessAppEchoes(body) {
 }
 
 /**
+ * Customer edits/deletions are mutations, never new customer enquiries.
+ * A Meta unsupported(edit) has no corrected content and usually no target ID.
+ * Such events are saved as informational Inbox notices, not AI turns.
+ */
+function parseCustomerMessageMutations(body) {
+  const result = [];
+  for (const entry of body?.entry || []) {
+    for (const change of entry?.changes || []) {
+      if (change?.field !== undefined && change.field !== "messages") continue;
+      for (const msg of change?.value?.messages || []) {
+        const unsupportedEdit = msg?.type === "unsupported" &&
+          msg.unsupported?.type === "edit";
+        if (!["edit", "revoke"].includes(msg?.type) && !unsupportedEdit) continue;
+        if (!msg.id || !(msg.from || msg.from_user_id || msg.user_id)) continue;
+        // Never use context.id here: it may point to a quoted/replied-to
+        // message, not the message the customer actually edited or deleted.
+        const originalMessageId = msg[msg.type]?.original_message_id || null;
+        const nested = msg.edit?.message;
+        let replacementText = null;
+        if (msg.type === "edit") {
+          if (nested?.type === "text" && typeof nested.text?.body === "string") {
+            replacementText = nested.text.body;
+          } else if (["image", "video", "document"].includes(nested?.type) &&
+                     typeof nested[nested.type]?.caption === "string") {
+            replacementText = nested[nested.type].caption;
+          } else if (typeof msg.edit?.text?.body === "string") {
+            replacementText = msg.edit.text.body;
+          }
+        }
+        if (msg.type === "revoke" && !originalMessageId) continue;
+        const action = !originalMessageId ? "unavailable_edit" :
+          msg.type === "revoke" ? "revoke" :
+          replacementText !== null ? "edit" : "edit_unavailable";
+        result.push({
+          id: msg.id, originalMessageId, action,
+          replacementText: replacementText?.slice(0, 4096) ?? null,
+          from: msg.from || msg.from_user_id || msg.user_id,
+          customerUserId: msg.from_user_id || msg.user_id || null,
+          timestamp: msg.timestamp || null,
+          ...senderMetadataForChange(entry, change),
+        });
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * Pulls out customer reactions to WhatsApp messages. A reaction is an update to
  * an existing message, not a new customer turn. Meta removes the emoji field
  * when a customer removes a reaction, so normalize a missing emoji to "".
@@ -1135,6 +1186,7 @@ module.exports = {
   downloadMedia,
   tokenForInboundMedia,
   parseIncomingMessages,
+  parseCustomerMessageMutations,
   parseReactionEvents,
   parseBusinessAppEchoes,
   parseStatusUpdates,

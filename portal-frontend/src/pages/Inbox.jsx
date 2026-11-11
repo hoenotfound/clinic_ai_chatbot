@@ -562,6 +562,7 @@ export default function Inbox() {
   const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
@@ -773,27 +774,43 @@ export default function Inbox() {
       if (selectedIdRef.current === contactId) setAcquisitionContext(null);
     }
   }
-  async function refreshMessagesForContact(contactId) {
+  async function refreshMessagesForContact(contactId, { refreshCurrent = false } = {}) {
     if (contactId == null) return;
     const requestVersion = ++threadRequestVersionRef.current;
     const afterId = latestMessageIdRef.current;
+    const loadedIds = refreshCurrent
+      ? messagesRef.current.map((row) => row.id)
+          .filter((id) => Number.isSafeInteger(id) && id > 0)
+      : [];
+    // Refresh only actual on-screen message IDs, regardless of age. The
+    // ordinary afterId cursor still fetches new messages missed during SSE.
+    const updateBatches = [];
+    for (let index = 0; index < loadedIds.length; index += 250) {
+      updateBatches.push(loadedIds.slice(index, index + 250));
+    }
 
     try {
-      const data = await api.getMessages(contactId, {
-        includeMedia: false,
-        limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
-        afterId,
-      });
-      if (
-        selectedIdRef.current !== contactId ||
-        threadRequestVersionRef.current !== requestVersion
-      ) {
-        return;
-      }
+      const [data, ...updates] = await Promise.all([
+        api.getMessages(contactId, {
+          includeMedia: false,
+          limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
+          afterId,
+          includeMutationNotices: refreshCurrent,
+        }),
+        ...updateBatches.map((ids) => api.getMessageUpdates(contactId, ids)),
+      ]);
+      if (selectedIdRef.current !== contactId ||
+          threadRequestVersionRef.current !== requestVersion) return;
 
-      if (afterId) {
-        if (data.messages?.length) {
-          setMessages((prev) => mergeMessages(prev, data.messages));
+      if (refreshCurrent && Array.isArray(data.mutationNotices)) {
+        setCustomerEditNotices(data.mutationNotices);
+      }
+      const changedRows = updates.flatMap((item) => item.messages || []);
+      if (afterId || refreshCurrent) {
+        if (data.messages?.length || changedRows.length) {
+          setMessages((prev) => mergeMessages(prev, [
+            ...(data.messages || []), ...changedRows,
+          ]));
         }
       } else {
         setMessages(data.messages || []);
@@ -918,6 +935,7 @@ export default function Inbox() {
     const nextConversation = conversations[0] || null;
     setSelectedId(nextConversation?.contact_id ?? null);
     setMessages([]);
+    setCustomerEditNotices([]);
     setHasMoreOlderMessages(false);
     setContactDetailsOpen(false);
     setWhatsAppTemplateOpen(false);
@@ -936,6 +954,7 @@ export default function Inbox() {
         const data = await api.getMessages(selectedId, {
           includeMedia: false,
           limit: MESSAGE_PAGE_SIZE,
+          includeMutationNotices: true,
         });
         if (
           !cancelled &&
@@ -943,6 +962,7 @@ export default function Inbox() {
           threadRequestVersionRef.current === requestVersion
         ) {
           setMessages(data.messages || []);
+          setCustomerEditNotices(data.mutationNotices || []);
           setHasMoreOlderMessages(!!data.hasMore);
         }
       } catch (err) {
@@ -957,6 +977,7 @@ export default function Inbox() {
     setOlderMessagesLoading(false);
     setActionPending(false);
     setMessages([]);
+    setCustomerEditNotices([]);
     setHasMoreOlderMessages(false);
     initialLoad();
 
@@ -1003,12 +1024,14 @@ export default function Inbox() {
     const pendingContactIds = new Set();
     let pendingUnknownConversationChange = false;
     let pendingUnknownConversationReason = "unknown_conversation_event";
+    let pendingMessageMutation = false;
     let debounceTimer = null;
     let pipelineListTimer = null;
     const pipelineContactIds = new Set();
     let pipelineNeedsFullRefresh = false;
 
     function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event") {
+      if (sourceReason === "message_mutation") pendingMessageMutation = true;
       const id = Number(contactId);
       if (contactId != null && Number.isSafeInteger(id) && id > 0) {
         pendingContactIds.add(id);
@@ -1024,6 +1047,8 @@ export default function Inbox() {
         const changedContacts = new Set(pendingContactIds);
         const unknownOrRedacted = pendingUnknownConversationChange;
         const unknownReason = pendingUnknownConversationReason;
+        const refreshMutation = pendingMessageMutation;
+        pendingMessageMutation = false;
         pendingContactIds.clear();
         pendingUnknownConversationChange = false;
         pendingUnknownConversationReason = "unknown_conversation_event";
@@ -1053,7 +1078,7 @@ export default function Inbox() {
           currentId != null &&
           (unknownOrRedacted || changedContacts.has(Number(currentId)))
         ) {
-          await refreshMessagesForContact(currentId);
+          await refreshMessagesForContact(currentId, {refreshCurrent: refreshMutation});
           if (unknownOrRedacted) {
             await reconcileLoadedDeliveryStatuses(currentId);
           }
@@ -1141,6 +1166,7 @@ export default function Inbox() {
             )
           );
         }
+        if (payload.reason === "message_mutation") pendingMessageMutation = true;
         scheduleRefresh(payload.contactId ?? null);
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
@@ -1862,6 +1888,7 @@ export default function Inbox() {
         canManageLeads={canManageLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
+        mutationNotices={customerEditNotices}
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
         hasMoreOlderMessages={hasMoreOlderMessages}
@@ -2798,6 +2825,7 @@ function ThreadView({
   canManageLeads,
   showUnassignedAssignment,
   messages,
+  mutationNotices = [],
   loading,
   olderMessagesLoading,
   hasMoreOlderMessages,
@@ -4154,6 +4182,18 @@ function ThreadView({
               />
             </div>
           ))}
+          {mutationNotices.length > 0 && (
+            <div className="mx-auto my-3 max-w-lg space-y-1.5 rounded-lg border border-[var(--color-border)] bg-white/70 px-3 py-2 text-[11px] text-[var(--color-text-muted)]"
+                 role="status" aria-label="WhatsApp edit notices">
+              <p className="font-semibold">WhatsApp edit notifications</p>
+              {mutationNotices.map((notice) => (
+                <p key={notice.id}>
+                  {formatMessageTime(notice.created_at)} · Customer edited a message.
+                  WhatsApp did not provide the updated text.
+                </p>
+              ))}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -4901,6 +4941,11 @@ function MessageBubble({
   const longPressStartRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
   const isPatient = message.role === "user";
+  const customerMutation = String(message.whatsapp_customer_mutation || "");
+  const isCustomerDeleted = isPatient && customerMutation === "revoke";
+  const isCustomerEditNotice = isPatient &&
+    (customerMutation === "unavailable_edit" || customerMutation === "edit_unavailable");
+  const isNonActionableMutation = isCustomerDeleted || isCustomerEditNotice;
   const readOnlyReplyButtons = !isPatient &&
     message.whatsapp_interactive?.type === "button" &&
     Array.isArray(message.whatsapp_interactive?.buttons) &&
@@ -4928,7 +4973,7 @@ function MessageBubble({
     ? String(message.content || "").match(/^🎤 \[Automated voice note, (?:zh|en|ms); transcript\]\s*([\s\S]*)$/u)?.[1] || ""
     : "";
   const isVideo = mediaMimeType.startsWith("video/");
-  const isImage = mediaMimeType.startsWith("image/") || (!mediaMimeType && !!message.media_url);
+  const isImage = !isCustomerDeleted && (mediaMimeType.startsWith("image/") || (!mediaMimeType && !!message.media_url));
   const isDocument = Boolean(
     (message.has_media_attachment ||
       message.media_base64 ||
@@ -4979,13 +5024,14 @@ function MessageBubble({
       String(message.delivery_status || "").toLowerCase()
     );
   const canQuote = Boolean(
-    canReply &&
+    !isNonActionableMutation && canReply &&
     message.whatsapp_message_id &&
     !message._optimistic &&
     quoteDeliveryConfirmed
   );
-  const canCopy = Boolean(String(message.content || "").trim());
-  const showActions = canQuote || canForward || canCopy || offerReply || offerForward;
+  const canCopy = !isNonActionableMutation && Boolean(String(message.content || "").trim());
+  const showActions = !isNonActionableMutation &&
+    (canQuote || canForward || canCopy || offerReply || offerForward);
   const replyPreview = message.reply_preview || null;
 
   useEffect(() => () => {
@@ -5405,6 +5451,9 @@ function MessageBubble({
         <div className={`mt-1.5 flex items-center gap-1.5 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
           <span>{formatMessageTime(message.created_at)}</span>
+          {isPatient && customerMutation === "edit" && <span aria-label="Edited message">· Edited</span>}
+          {isPatient && customerMutation === "edit_unavailable" && <span>· Edited, text unavailable</span>}
+          {isPatient && customerMutation === "unavailable_edit" && <span>· Edit notice</span>}
           {!isPatient && !message._optimistic && !deliveryNeedsAction && (
             <DeliveryIndicator status={message.delivery_status} />
           )}

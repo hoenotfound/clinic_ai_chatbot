@@ -720,7 +720,8 @@ async function processIncomingMessage(
         : null;
     aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
     canSendAutomatedReply = aiCancellationKey
-      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken) &&
+        aiReplyCancellation.inboundMessageCanSend(savedInbound.id)
       : null;
 
     // Skip ordinary excluded text before lead scoring, model generation,
@@ -2338,7 +2339,8 @@ async function processIncomingMessage(
     // the AI instead of allowing a competing reply.
     if (
       aiCancellationKey &&
-      !aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+      (!aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken) ||
+       !aiReplyCancellation.inboundMessageCanSend(savedInbound.id))
     ) {
       console.log(
         `Skipping AI reply for ${channel}:${from} — staff activity is pending or confirmed.`

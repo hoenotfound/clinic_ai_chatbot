@@ -35,6 +35,7 @@ const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
 const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
 const coexistenceMutations = require("./whatsappCoexistenceMutationService");
+const customerMutations = require("./whatsappCustomerMutationService");
 const staffReminderRecovery = require("./staffAppointmentReminderRecoveryService");
 const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
 const legacyLifecycleAlerts = require("./pr395LegacyLifecycleAlertService");
@@ -107,6 +108,13 @@ async function pruneStaleTemporaryMediaSafely() {
       "Failed to prune stale follow-up videos:",
       followUpVideoResult.reason
     );
+  }
+  // Use this existing six-hour callback for mutation retention too; startup
+  // still runs no immediate media sweep, and no extra Neon timer is added.
+  try {
+    await customerMutations.pruneExpired();
+  } catch(error) {
+    console.error("Customer mutation expiry failed:",error);
   }
 }
 
@@ -208,6 +216,10 @@ async function startApplication({
     );
     tempMediaPruneTimer?.unref?.();
 
+    // Repair rare crash windows only once per process, without another
+    // periodic Neon poll or any customer outbound activity.
+    void customerMutations.reconcilePendingOnStartup()
+      .catch((error) => console.error("Customer mutation startup recovery failed:", error));
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
