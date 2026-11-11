@@ -679,11 +679,13 @@ function createApp({
       // Out-of-order edits are replayed after the original inbound is durably
       // claimed. This repair is advisory and must never return 503 or stall an
       // otherwise accepted normal customer message if a test/client DB differs.
-      for (const incoming of customerMessages) {
-        void customerMutations.reconcileForOriginal(incoming.id)
-          .catch((error) => console.error(
-            "Customer WhatsApp message mutation reconciliation failed:", error
-          ));
+      if (typeof customerMutations !== "undefined") {
+        for (const incoming of customerMessages) {
+          void customerMutations.reconcileForOriginal(incoming.id)
+            .catch((error) => console.error(
+              "Customer WhatsApp message mutation reconciliation failed:", error
+            ));
+        }
       }
       setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
         console.error("Failed to record WhatsApp webhook activity:", err);
