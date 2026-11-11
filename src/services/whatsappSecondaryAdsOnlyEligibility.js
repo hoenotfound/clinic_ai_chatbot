@@ -273,7 +273,7 @@ function secondaryAutomationAttentionAllowedSql(alias = "c") {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)})`;
 }
-function secondaryReplyAttentionAllowedSql(alias = "c") {
+function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
     ${alias}.needs_attention IS NOT TRUE
@@ -287,6 +287,16 @@ function secondaryReplyAttentionAllowedSql(alias = "c") {
       )
     )
     OR ${verified131060InformationReviewSql(alias)}
+    ${allowReviewContinuation ? `OR (
+      ${alias}.mode='ai'
+      AND ${alias}.needs_attention IS TRUE
+      AND ${alias}.attention_reason LIKE 'AI review requested:%'
+      AND EXISTS (
+        SELECT 1 FROM ai_review_items live_review
+        WHERE live_review.contact_id=${alias}.id
+          AND live_review.status='pending'
+      )
+    )` : ""}
   )`;
 }
 
@@ -294,6 +304,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c") {
 // does NOT replace the ads-only SQL for follow-ups, marketing, or media jobs.
 async function isSecondaryAiReplyEligible(contactId, {
   database = pool, env = process.env, inboundMessageId = null,
+  allowReviewContinuation = false,
 } = {}) {
   if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts")
     return isSecondaryAdsOnlyEligible(contactId, { database, env });
@@ -328,7 +339,9 @@ async function isSecondaryAiReplyEligible(contactId, {
          WHERE c.id=$1 AND c.channel='whatsapp'
            AND sa.sender_key='neutro_secondary' AND sa.state='active'
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-           AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c")}
+           AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c", {
+             allowReviewContinuation: allowReviewContinuation === true && mid != null,
+           })}
            AND c.whatsapp_opt_out_at IS NULL
            ${proof}
        ) AS eligible`,

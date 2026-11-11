@@ -100,7 +100,7 @@ test("review-only question is persisted and notified exactly once without takeov
     assert.match(sql, /INSERT INTO ai_review_items/);
     assert.match(sql, /ON CONFLICT \(contact_id, inbound_message_id\) DO NOTHING/);
     assert.match(sql, /AND c.mode = 'ai'/);
-    assert.deepEqual(params, [37, 88, "Can I pay with card?", "information"]);
+    assert.deepEqual(params, [37, 88, "Can I pay with card?", "information", null]);
     return { rows: [{
       id: 37, mode: "ai", needs_attention: true, ai_review_id: 8,
       attention_reason: "AI review requested: [#88] Can I pay with card?",
@@ -157,6 +157,44 @@ test("duplicate inbound review does not alert again or overwrite existing attent
   assert.match(result.attention_reason, /Existing question/);
   assert.equal(alertsSent, 0);
   assert.equal(count, 2);
+});
+
+test("same unresolved urinary concern creates review but suppresses duplicate staff alerts", async (t) => {
+  const { pool } = require("../src/db/db");
+  const contacts = require("../src/db/contactsRepo");
+  const alerts = require("../src/services/telegramImmediateAlertService");
+  const pushes = require("../src/services/webPushNotificationService");
+  const previousQuery = pool.query;
+  const previousAlert = alerts.sendAiReviewAlert;
+  const previousPush = pushes.sendContactAlertBestEffort;
+  t.after(() => {
+    pool.query = previousQuery;
+    alerts.sendAiReviewAlert = previousAlert;
+    pushes.sendContactAlertBestEffort = previousPush;
+  });
+  let alerted = 0;
+  let pushed = 0;
+  pool.query = async (sql, params) => {
+    assert.match(sql, /previous_same_concern AS MATERIALIZED/);
+    assert.match(sql, /earlier\.status = 'pending'/);
+    assert.match(sql, /NOT previous_same_concern\.already_pending AS notify_ai_review/);
+    assert.equal(params[2], "漏尿问题");
+    assert.equal(params[3], "clinical");
+    assert.match(params[4], /漏尿/);
+    return { rows: [{
+      id: 81, mode: "ai", needs_attention: true, attention_reason:
+        "AI review requested: [#91] 漏尿问题", attention_message_id: 91,
+      ai_review_id: 12, notify_ai_review: false,
+    }] };
+  };
+  alerts.sendAiReviewAlert = async () => { alerted++; };
+  pushes.sendContactAlertBestEffort = () => { pushed++; };
+  const result = await contacts.setAiReviewAttention(81, 91, "漏尿问题", "clinical");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(result.mode, "ai");
+  assert.equal(result.needs_attention, true);
+  assert.equal(alerted, 0);
+  assert.equal(pushed, 0);
 });
 
 test("multiple reviews remain individually durable until explicit Inbox dismissal", () => {

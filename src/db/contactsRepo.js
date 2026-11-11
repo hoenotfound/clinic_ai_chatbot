@@ -1249,11 +1249,32 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
   }
   const safeSummary = String(summary || "Unanswered customer question").trim().slice(0, 350);
   const safeCategory = category === "information" ? "information" : "clinical";
+  // Group same-worded pending clinical questions, plus recognised variations
+  // of one high-confidence symptom. Other/new concerns and informational
+  // reviews still generate independent alerts.
+  // No schema change: compare the existing pending message summaries.
+  const urinaryReviewTopic = safeCategory === "clinical" &&
+    /(?:漏尿|尿失禁|尿漏|漏小便|憋不住尿|urinary\s+(?:leakage|incontinence)|urine\s+leak|leak(?:ing|age)?\s+urine|kencing\s+(?:bocor|tak\s+tahan)|tak\s+tahan\s+kencing)/iu.test(safeSummary);
+  const existingConcernPattern = urinaryReviewTopic
+    ? "(漏尿|尿失禁|尿漏|漏小便|憋不住尿|urinary[[:space:]]+(leakage|incontinence)|urine[[:space:]]+leak|leak(ing|age)?[[:space:]]+urine|kencing[[:space:]]+(bocor|tak[[:space:]]+tahan)|tak[[:space:]]+tahan[[:space:]]+kencing)"
+    : null;
   const result = await pool.query(
     `WITH eligible AS MATERIALIZED (
        SELECT c.id FROM contacts c
        WHERE c.id = $1 AND c.mode = 'ai'
        FOR UPDATE
+     ), previous_same_concern AS MATERIALIZED (
+       SELECT EXISTS (
+         SELECT 1 FROM eligible e
+         JOIN ai_review_items earlier ON earlier.contact_id = e.id
+         WHERE earlier.status = 'pending'
+           AND earlier.category = 'clinical'
+           AND (
+             ($5::text IS NOT NULL AND earlier.summary ~* $5::text)
+             OR ($5::text IS NULL AND
+               lower(btrim(earlier.summary)) = lower(btrim($3::text)))
+           )
+       ) AS already_pending
      ), inserted AS (
        INSERT INTO ai_review_items (contact_id, inbound_message_id, summary, category)
        SELECT eligible.id, m.id, $3, $4
@@ -1282,15 +1303,22 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
        RETURNING c.*
      )
      SELECT updated.*, inserted.id AS ai_review_id,
-            inserted.inbound_message_id AS attention_message_id
-     FROM updated JOIN inserted ON inserted.contact_id = updated.id`,
-    [id, Number(inboundMessageId), safeSummary, safeCategory]
+            inserted.inbound_message_id AS attention_message_id,
+            NOT previous_same_concern.already_pending AS notify_ai_review
+     FROM updated JOIN inserted ON inserted.contact_id = updated.id
+     CROSS JOIN previous_same_concern`,
+    [id, Number(inboundMessageId), safeSummary, safeCategory, existingConcernPattern]
   );
   const updated = result.rows[0] || null;
   if (!updated) return getContactById(id);
+  const notifyStaff = updated.notify_ai_review !== false;
+  delete updated.notify_ai_review;
   publishContactChange(updated.id, { contact: updated });
-  notifyTelegram(
-    telegramImmediateAlerts.sendAiReviewAlert({
+  // A new message always creates its own Inbox review row, but a repeated
+  // urinary-leakage concern already pending does not create another alert.
+  if (notifyStaff) {
+    notifyTelegram(
+      telegramImmediateAlerts.sendAiReviewAlert({
       contactId: updated.id,
       messageId: updated.attention_message_id,
       reason: `AI review requested: [#${inboundMessageId}] ${safeSummary}`,
@@ -1298,7 +1326,8 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
     "AI review",
     updated.id
   );
-  notifyWebPush(updated.id, "ai_review");
+    notifyWebPush(updated.id, "ai_review");
+  }
   return updated;
 }
 
