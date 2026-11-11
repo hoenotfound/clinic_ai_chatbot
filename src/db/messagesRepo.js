@@ -627,7 +627,7 @@ async function getMessagePageForContact(
 
   if (afterId != null) {
     const result = await pool.query(
-      `SELECT id, CASE WHEN whatsapp_customer_mutation = 'unavailable_edit' THEN 'user' ELSE role END AS role,
+      `SELECT id, role,
               content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
               delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
               reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
@@ -650,7 +650,7 @@ async function getMessagePageForContact(
   params.push(safeLimit + 1);
 
   const result = await pool.query(
-    `SELECT id, CASE WHEN whatsapp_customer_mutation = 'unavailable_edit' THEN 'user' ELSE role END AS role,
+    `SELECT id, role,
               content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
             delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
             reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
@@ -671,6 +671,32 @@ async function getMessagePageForContact(
 // Returns only the R2 reference and MIME metadata for one authenticated
 // message lookup. The browser streaming route uses this instead of loading
 // the whole object through Postgres/base64 before it can start responding.
+/**
+ * Exact contact-authorized updates for already loaded Inbox messages.
+ * Mutated messages can be hundreds of rows old, so the recent-page cursor
+ * cannot be used to refresh them reliably.
+ */
+async function getMessageUpdatesForContact(contactId, messageIds) {
+  const ids=[...new Set((messageIds||[]).map(Number))]
+    .filter(id=>Number.isSafeInteger(id)&&id>0);
+  if(!ids.length || ids.length>300) return [];
+  const result=await pool.query(
+    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username,
+            media_url, (media_key IS NOT NULL) AS has_media_attachment,
+            media_mime_type, media_filename,
+            delivery_status, delivery_error, is_automated_follow_up,
+            pricing_reminder_anchor_id, whatsapp_template, whatsapp_interactive,
+            reply_to_provider_message_id, is_forwarded, whatsapp_customer_mutation,
+            ${PORTAL_REACTIONS_COLUMN},
+            ${PORTAL_REPLY_PREVIEW_COLUMN}
+       FROM messages
+      WHERE contact_id=$1 AND id=ANY($2::integer[])
+      ORDER BY id ASC`,
+    [contactId,ids]
+  );
+  return result.rows;
+}
+
 async function getMessageMediaReferenceForContact(contactId, messageId) {
   const result = await pool.query(
     `SELECT media_key, media_mime_type, media_filename,
@@ -708,6 +734,7 @@ async function setMessageMediaKeyById(
      SET media_key = $3, media_mime_type = $4
      FROM conversation_lock
      WHERE id = $1 AND contact_id = $2
+       AND whatsapp_customer_mutation IS DISTINCT FROM 'revoke'
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, contactId, normalizedKey, mediaMimeType || null]
   );
@@ -1880,6 +1907,7 @@ module.exports = {
   getMostRecentlySentMediaUrl,
   getMostRecentlySentMediaUrlWithExecutor,
   getMessagePageForContact,
+  getMessageUpdatesForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
   setMessageMediaKeyById,
