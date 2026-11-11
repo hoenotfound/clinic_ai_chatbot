@@ -109,6 +109,13 @@ async function pruneStaleTemporaryMediaSafely() {
       followUpVideoResult.reason
     );
   }
+  // Use this existing six-hour callback for mutation retention too; startup
+  // still runs no immediate media sweep, and no extra Neon timer is added.
+  try {
+    await customerMutations.pruneExpired();
+  } catch(error) {
+    console.error("Customer mutation expiry failed:",error);
+  }
 }
 
 async function startApplication({
@@ -204,12 +211,7 @@ async function startApplication({
     // happens after the interval, keeping the startup/hot-deploy window free
     // for live customer media traffic.
     const tempMediaPruneTimer = setIntervalFn(
-      () => {
-        void pruneStaleTemporaryMediaSafely();
-        // Reuse the existing 6-hour maintenance interval: no new Neon poll.
-        void customerMutations.pruneExpired()
-          .catch(error=>console.error("Customer mutation expiry failed:",error));
-      },
+      pruneStaleTemporaryMediaSafely,
       TEMP_MEDIA_PRUNE_INTERVAL_MS
     );
     tempMediaPruneTimer?.unref?.();
