@@ -271,6 +271,7 @@ async function sendTrackedText(
       contactId: contact.id,
       content: text,
       origin,
+      interactiveButtons,
     });
     if (reservation.alreadyStarted) {
       const err = new Error(

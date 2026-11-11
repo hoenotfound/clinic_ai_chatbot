@@ -42,6 +42,7 @@ test(
           contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
           role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
           content TEXT NOT NULL,
+          whatsapp_interactive JSONB,
           whatsapp_message_id TEXT UNIQUE,
           sent_by_username TEXT,
           media_url TEXT,

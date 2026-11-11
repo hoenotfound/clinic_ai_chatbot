@@ -4901,6 +4901,15 @@ function MessageBubble({
   const longPressStartRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
   const isPatient = message.role === "user";
+  const readOnlyReplyButtons = !isPatient &&
+    message.whatsapp_interactive?.type === "button" &&
+    Array.isArray(message.whatsapp_interactive?.buttons) &&
+    message.whatsapp_interactive.buttons.length >= 1 &&
+    message.whatsapp_interactive.buttons.length <= 3 &&
+    message.whatsapp_interactive.buttons.every((option) =>
+      typeof option?.id === "string" && option.id.length > 0 && option.id.length <= 256 &&
+      typeof option?.title === "string" && option.title.length > 0 && option.title.length <= 20)
+      ? message.whatsapp_interactive.buttons : [];
   const sentByStaff = !isPatient && !!message.sent_by_username;
   // Secondary AI images store delivery bookkeeping in whatsapp_template,
   // but they are regular WhatsApp image sends, not approved Meta templates.
@@ -5376,6 +5385,22 @@ function MessageBubble({
           </details>
         ) : message.content && (!isSticker || !hasImage) && (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        )}
+        {readOnlyReplyButtons.length > 0 && (
+          <div className="mt-2" role="group" aria-label="WhatsApp reply options sent">
+            <p className="mb-1 text-[10px] font-medium text-white/70">Reply options sent</p>
+            <div className="flex flex-col gap-1.5">
+              {readOnlyReplyButtons.map((option) => (
+                <div
+                  key={option.id}
+                  className="select-none rounded-lg border border-white/35 bg-white/10 px-3 py-2 text-center text-xs font-semibold text-white"
+                  title="Shown on the customer's WhatsApp. Read-only in Inbox."
+                >
+                  {option.title}
+                </div>
+              ))}
+            </div>
+          </div>
         )}
         <div className={`mt-1.5 flex items-center gap-1.5 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
