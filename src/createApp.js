@@ -429,7 +429,7 @@ function createApp({
                   (lateClaim) => {
                     // The delayed original can now be matched with an earlier
                     // edit/delete. Repair only after its durable claim commits.
-                    void customerMutations.reconcileForOriginal(incoming.id)
+                    void customerMutations.reconcileAfterInbound(incoming)
                       .catch((error) => console.error("Late customer mutation repair failed:", error));
                     if (lateClaim) {
                       scheduleDurableClaim(queueKey, lateClaim).catch((error) => {
@@ -441,7 +441,7 @@ function createApp({
               // A successful durable claim is the earliest safe point to
               // match a mutation to its original message. A parallel mutation
               // insert also calls applyOne, so either arrival order is covered.
-              void customerMutations.reconcileForOriginal(incoming.id)
+              void customerMutations.reconcileAfterInbound(incoming)
                 .catch((error) => console.error("Customer mutation repair failed:", error));
               // The event is HMAC-verified and durably saved before this log.
               // Record only an identity TYPE, never a phone, BSUID, username,
