@@ -130,12 +130,18 @@ const STATUS_FILTERS = [
 
 const UNSPECIFIED_TREATMENT = "__unspecified__";
 
+function normalizeInboxTreatment(value) {
+  return String(value ?? "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
+}
+
 function matchesInboxTreatment(conversation, treatment) {
   if (!treatment || treatment === "all") return true;
-  const current = String(conversation.treatment_interest ?? "").trim().toLowerCase();
+  // The server resolves configured service aliases on hydrated rows.
+  const current = conversation.treatment_filter_key ||
+    normalizeInboxTreatment(conversation.treatment_interest);
   return treatment === UNSPECIFIED_TREATMENT
     ? !current
-    : current === String(treatment).trim().toLowerCase();
+    : current === normalizeInboxTreatment(treatment);
 }
 
 // Use one matching rule for the Inbox list and all contextual filter counts.
@@ -2150,7 +2156,7 @@ function ConversationList({
     let unspecified = false;
     for (const item of conversationList) {
       const name = String(item.treatment_interest ?? "").trim();
-      const normalized = name.toLowerCase();
+      const normalized = normalizeInboxTreatment(name);
       if (!name) unspecified = true;
       else if (name.length <= 160 && normalized !== "all" &&
         normalized !== UNSPECIFIED_TREATMENT && !treatments.has(normalized)) {
