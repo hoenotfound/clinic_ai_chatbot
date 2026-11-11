@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_customer_message_mutations (
   provider_timestamp BIGINT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','applied')),
   target_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+  notice_contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT customer_mutation_target_required CHECK (
