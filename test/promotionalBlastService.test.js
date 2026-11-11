@@ -78,8 +78,8 @@ test("reservation has a one-time token and unused reservations may rotate after 
  const database={async query(sql,params){
    times++;
    assert.match(sql,/ON CONFLICT \(campaign_key,recipient_key\) DO UPDATE/);
-   assert.match(sql,/claim\.state='reserved'/);
-   assert.match(sql,/claim\.claimed_at<now\(\)-interval '5 minutes'/);
+   assert.match(sql,/whatsapp_promotional_blast_claims\.state='reserved'/);
+   assert.match(sql,/whatsapp_promotional_blast_claims\.claimed_at<now\(\)-interval '5 minutes'/);
    assert.equal(params[0],blast.CAMPAIGN_KEY);
    assert.equal(params[1],42);
    assert.equal(params[2],"zh_CN");
