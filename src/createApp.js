@@ -403,7 +403,7 @@ function createApp({
     let durableBusinessAppEchoes;
     let durableReactionUpdates;
     try {
-      [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
+      [durableClaims, durableStatusJobs, durableBusinessAppEchoes, , durableReactionUpdates] = await Promise.all([
         Promise.all(
           customerMessages.map(async (incoming) => {
             // A phone-visible turn and a later BSUID-only turn from the same
