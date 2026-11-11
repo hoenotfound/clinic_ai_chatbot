@@ -278,7 +278,10 @@ const templateMediaUpload = multer({
     destination: (req, file, cb) => cb(null, os.tmpdir()),
     filename: (req, file, cb) => cb(null, `whatsapp-template-${process.pid}-${randomUUID()}.upload`),
   }),
-  limits: { fileSize: 16 * 1024 * 1024, files: 1, fields: 6 },
+  // Normal template sends use six fields; a reviewed promotional blast adds
+  // both the campaign key and one-shot reservation token (eight total).
+  // Leave room for two optional fields without lifting the single-file limit.
+  limits: { fileSize: 16 * 1024 * 1024, files: 1, fields: 10 },
 }).single("media");
 
 function handleTemplateMediaUpload(req, res, next) {
@@ -289,7 +292,9 @@ function handleTemplateMediaUpload(req, res, next) {
       code: "invalid_template_media_upload",
       error: err.code === "LIMIT_FILE_SIZE"
         ? "WhatsApp template video must be at most 16MB (images at most 5MB)."
-        : "Could not upload template media. Choose one JPEG, PNG or H.264 MP4 file.",
+        : err.code === "LIMIT_FIELD_COUNT"
+          ? "The template form has too many fields. Refresh the page and try again."
+          : "Could not upload template media. Choose one JPEG, PNG or H.264 MP4 file.",
     });
   });
 }
