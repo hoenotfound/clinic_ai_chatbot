@@ -195,6 +195,10 @@ export const api = {
         ...(replyToMessageId != null ? { replyToMessageId } : {}),
       }),
     }),
+  getPromotionalBlastPreview: () =>
+    request("/promotional-blast/preview", { cache: "no-store" }),
+  claimPromotionalBlastRecipient: (payload) =>
+    request("/promotional-blast/claim", { method: "POST", body: JSON.stringify(payload) }),
   getWhatsAppTemplateFreeWindowStatus: (contactId) =>
     request(`/conversations/${contactId}/whatsapp-template-free-window`),
   listWhatsAppTemplates: (contactId, { force = false } = {}) =>
@@ -220,6 +224,7 @@ export const api = {
     form.append("marketingConsentConfirmed", String(payload.marketingConsentConfirmed === true));
     form.append("billingAcknowledged", String(payload.billingAcknowledged === true));
     form.append("billingReviewToken", payload.billingReviewToken || "");
+    if (payload.blastCampaignKey) form.append("blastCampaignKey", payload.blastCampaignKey);
     form.append("media", mediaFile);
     const res = await fetch(`${BASE}/conversations/${contactId}/whatsapp-templates/send`, {
       method: "POST",
