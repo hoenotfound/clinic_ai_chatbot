@@ -69,6 +69,7 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState(initialTab);
   const { toasts, showToast, dismissToast } = useToasts();
 
+  const notificationsItem = { id: "notifications", label: "Notifications", to: "/settings/notifications" };
   const teamItem = permissions.manage_users
     ? { id: "team", label: "Team & Access", to: "/settings/team" }
     : null;
@@ -84,7 +85,7 @@ export default function Settings() {
   const advancedConfigItem = user?.role === "admin"
     ? { id: "advanced-config", label: "Advanced Config", to: "/settings/advanced-config" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
+  const destinationItems = [notificationsItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,6 +200,19 @@ export default function Settings() {
             ))}
           </div>
 
+          <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+            <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              Preferences
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate(notificationsItem.to)}
+              className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+            >
+              {notificationsItem.label}
+            </button>
+          </div>
+
           {teamItem && (
             <div className="mt-3 border-t border-[var(--color-border)] pt-3">
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
@@ -248,6 +262,9 @@ export default function Settings() {
             >
               <optgroup label={ui.businessAndAiLabel}>
                 {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+              </optgroup>
+              <optgroup label="Preferences">
+                <option value={notificationsItem.id}>{notificationsItem.label}</option>
               </optgroup>
               {teamItem && (
                 <optgroup label="Administration">
