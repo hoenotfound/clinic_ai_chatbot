@@ -134,3 +134,19 @@ test("treatment choices use current lead interest without leaking malformed filt
   assert.equal(normalizeInboxPageFilters({treatment:"bad\ninput"}).treatment,"all");
   assert.equal(normalizeInboxPageFilters({treatment:"3D 小颜术"}).treatment,"3D 小颜术");
 });
+
+test("Inbox pagination groups mixed-width and spacing variants of the same treatment",()=>{
+  const rows=[
+    record(1,{treatment_interest:"3D 小颜术"}),
+    record(2,{treatment_interest:"3D小颜术"}),
+    record(3,{treatment_interest:"３Ｄ 小颜术"}),
+    record(4,{treatment_interest:"9D 逆龄抗衰"}),
+  ];
+  const all=inboxPageModel(rows,{}, {now});
+  assert.deepEqual(all.treatmentOptions,[
+    ["all","All treatments"],["3D 小颜术","3D 小颜术"],
+    ["9D 逆龄抗衰","9D 逆龄抗衰"],
+  ]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"3D 小颜术"},{now}).ids,[1,2,3]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"3d小颜术"},{now}).ids,[1,2,3]);
+});
