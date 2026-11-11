@@ -5,6 +5,7 @@
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
+const {wakeCustomerMediaCleanup} = require("./customerDataLifecycleService");
 
 const WAMID = /^wamid\.[A-Za-z0-9._:+/=-]{1,512}$/;
 const MIN_TIMESTAMP = 946684800; // 2000-01-01
@@ -59,7 +60,16 @@ const CUSTOMER_MATCH = `(
  c.whatsapp_number = $4 OR c.whatsapp_user_id = $4 OR
  c.whatsapp_last_customer_address = $4 OR
  ($5 IS NOT NULL AND (c.whatsapp_number = $5 OR
-   c.whatsapp_user_id = $5 OR c.whatsapp_last_customer_address = $5))
+   c.whatsapp_user_id = $5 OR c.whatsapp_last_customer_address = $5)) OR
+ -- A signed older BSUID is valid only when it belongs to this exact
+ -- contact AND verified sender. Never match a user ID across accounts.
+ (c.whatsapp_sender_id IS NOT NULL AND EXISTS (
+   SELECT 1 FROM whatsapp_sender_user_id_aliases alias
+   WHERE alias.sender_id = c.whatsapp_sender_id
+     AND alias.contact_id = c.id
+     AND (alias.previous_user_id = $4 OR
+          ($5 IS NOT NULL AND alias.previous_user_id = $5))
+ ))
 )`;
 
 function params(event, env = process.env) {
@@ -82,6 +92,7 @@ function publish(contactId, messageId, phone, message = null) {
 async function applyOne(eventId, {database = pool, env = process.env} = {}) {
   const client = await database.connect();
   let changed = null;
+  let queuedMediaCleanup = false;
   try {
     await client.query("BEGIN");
     const {rows} = await client.query(
@@ -100,7 +111,7 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     }, env);
     const match = await client.query(
       `SELECT m.id, m.contact_id, m.whatsapp_customer_mutation,
-              m.whatsapp_customer_mutated_at, c.whatsapp_number,
+              m.whatsapp_customer_mutated_at, m.media_key, c.whatsapp_number,
               c.whatsapp_user_id, sa.sender_key AS whatsapp_sender_key
          FROM messages m
          JOIN contacts c ON c.id = m.contact_id AND c.channel = 'whatsapp'
@@ -140,6 +151,18 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
          Number(event.provider_timestamp), replaceMedia]
       );
       if (update.rows.length === 1) {
+        if(replaceMedia && message.media_key) {
+          // This insert is in the same transaction as the redaction. A worker
+          // can safely retry R2 removal after a process crash.
+          await client.query(
+            `INSERT INTO whatsapp_customer_revoked_media_cleanup
+               (message_id,contact_id,media_key)
+             VALUES($1,$2,$3)
+             ON CONFLICT(message_id) DO NOTHING`,
+            [message.id,message.contact_id,message.media_key]
+          );
+          queuedMediaCleanup=true;
+        }
         // A mutation is not a customer turn, and the original turn must never
         // be recovered/retried after its contents have changed or vanished.
         const stopped = await client.query(
@@ -151,17 +174,10 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
             RETURNING id`,
           [message.id,message.contact_id]
         );
-        // Only cancel a current AI generation when this particular original
-        // still had a live job. Editing an old, completed message must not
-        // cancel a new unrelated customer enquiry.
+        // Cancel exactly this original inbound, never the whole conversation:
+        // newer live customer enquiries must remain eligible to receive AI.
         if(stopped.rows.length) {
-          const senderKey=message.whatsapp_sender_key||null;
-          const keys=[
-            aiReplyCancellation.keyForContact({...message,channel:"whatsapp"}),
-            aiReplyCancellation.keyForWhatsAppNumber(event.customer_address,senderKey),
-            aiReplyCancellation.keyForWhatsAppNumber(event.customer_user_id,senderKey),
-          ];
-          for(const key of new Set(keys.filter(Boolean))) aiReplyCancellation.cancel(key);
+          aiReplyCancellation.cancelInboundMessage(message.id);
         }
         changed = {
           contactId: message.contact_id, messageId: message.id,
@@ -191,6 +207,7 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
     client.release();
   }
   if (changed) publish(changed.contactId, changed.messageId, changed.phone, changed.message);
+  if (queuedMediaCleanup) wakeCustomerMediaCleanup(0);
   return changed;
 }
 
