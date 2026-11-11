@@ -158,7 +158,7 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
             `INSERT INTO whatsapp_customer_revoked_media_cleanup
                (message_id,contact_id,media_key)
              VALUES($1,$2,$3)
-             ON CONFLICT(message_id) DO NOTHING`,
+             ON CONFLICT(message_id,media_key) DO NOTHING`,
             [message.id,message.contact_id,message.media_key]
           );
           queuedMediaCleanup=true;
