@@ -7,7 +7,10 @@ const vm = require("node:vm");
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } =
   require("../src/utils/tcmServiceReviewReply");
 const triggers = require("../src/utils/attentionTriggers");
-const { categorizeAiReview, hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
+  require("../src/utils/aiReviewPolicy");
+const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
+  require("../src/utils/neutroReviewContinuation");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { correctReplyLanguage } = require("../src/utils/replyLanguageGuard");
@@ -131,6 +134,9 @@ function harness({ failDelivery = false } = {}) {
     getAiOwnedContact: async (contact) => state.mode === "ai" ? contact : null,
     categorizeAiReview,
     hasClinicalMediaRisk,
+    isUrinaryLeakageConcern,
+    planNeutroReviewContinuation,
+    nonUrgentUrinaryAcknowledgement,
     isComplimentaryAssessmentFeeQuestion,
     complimentaryAssessmentFeeReply,
     inboundProcessingRepo: incomingRepo,
