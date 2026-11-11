@@ -1,5 +1,11 @@
 "use strict";
 
+const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { resolveVerifiedPriceFollowUpService } = require("./priceFollowUpContext");
+const { verifiedPricesForService } = require("./verifiedPriceReply");
+
 // Conservative, text-only continuity for Neutro's clinical-review workflow.
 // These replies clarify the patient's intent; none diagnose a symptom,
 // establish suitability, quote an unverified price, or approve marketing.
@@ -17,7 +23,67 @@ function lastAssistant(history) {
   return "";
 }
 
-function planNeutroReviewContinuation({ customerText, conversationHistory, language } = {}) {
+function verifiedReviewPriceQuote({
+  message, conversationHistory, language, services, serviceAliases, promotions,
+} = {}) {
+  if (!PRICE_FIRST.test(String(message || "")) ||
+      !hasExplicitPriceRequest(message) || hasClinicalMediaRisk(message)) return null;
+  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const activeServices = Array.isArray(services) ? services : [];
+  const activePromotions = Array.isArray(promotions) ? promotions : [];
+  // First try the same verified customer-led pricing context used by the
+  // ordinary sales path. Do not borrow treatment names from ads or AI guesses.
+  let selected = resolveVerifiedPriceFollowUpService({
+    customerText: message, conversationHistory: turns, services: activeServices,
+    serviceAliases, promotions: activePromotions, allowContinuedPriceContext: true,
+  });
+  if (!selected) {
+    const earlier = turns.at(-1)?.role === "user" &&
+      String(turns.at(-1).content || "").trim() === String(message).trim()
+      ? turns.slice(0, -1) : turns;
+    const lastCustomerIndex = earlier.findLastIndex(x => x?.role === "user");
+    const lastCustomer = earlier[lastCustomerIndex];
+    const choice = String(lastCustomer?.content || "").trim();
+    // The exact previous customer selection is sufficient only when no
+    // different topic/staff turn intervened. "3D or 9D?" is not a selection.
+    if (!choice || hasClinicalMediaRisk(choice) ||
+        !/(?:想了解|想知道|有兴趣|有興趣|感兴趣|感興趣|想问|想問|interested|berminat|nak\s+tahu)/iu.test(choice)) {
+      return null;
+    }
+    if (earlier.slice(lastCustomerIndex + 1).some(x =>
+      x?.role === "assistant" &&
+      (x.pricingStaffAuthored === true || x.sent_by_username ||
+        /^\[Verified STAFF message\]/u.test(String(x.content || ""))))) return null;
+    selected = safeServiceFromCustomer(choice, activeServices, serviceAliases);
+  }
+  if (!selected?.name || !activeServices.some(s => s?.name === selected.name)) return null;
+  const prices = verifiedPricesForService(
+    selected.name, activePromotions, message, turns, { allowTextOnlyOffers: true }
+  );
+  if (!Array.isArray(prices) || !prices.length ||
+      prices.some(p => !/^RM[1-9]\d{1,4}$/u.test(String(p.price || "")))) return null;
+  const locale = String(language || "").toLowerCase();
+  const labels = prices.map(p => [p.name === "Main offer" ? "" : p.name, p.price]
+    .filter(Boolean).join(": ")).join(locale.startsWith("zh") ? "；" : "; ");
+  const voucher = prices.some(p => p.afterVoucher)
+    ? (locale.startsWith("ms")
+      ? " Harga selepas baucar tertakluk pada syarat kelayakan."
+      : locale.startsWith("en")
+        ? " After-voucher prices are subject to eligibility."
+        : " 若为优惠券后价格，需符合优惠券使用条件。") : "";
+  return {
+    treatment: selected.name,
+    reply: locale.startsWith("ms")
+      ? "Boleh 😊 Harga promosi semasa untuk " + selected.name + ": " + labels + "." + voucher
+      : locale.startsWith("en")
+        ? "Of course 😊 The current verified offer for " + selected.name + ": " + labels + "." + voucher
+        : "可以的～😊 " + selected.name + " 目前的优惠价：" + labels + "。" + voucher,
+  };
+}
+
+function planNeutroReviewContinuation({
+  customerText, conversationHistory, language, services, serviceAliases, promotions,
+} = {}) {
   const message = String(customerText || "").trim();
   if (message.length > 100) return null;
   const locale = String(language || "").toLowerCase();
@@ -53,6 +119,11 @@ function planNeutroReviewContinuation({ customerText, conversationHistory, langu
     };
   }
   if (PRICE_FIRST.test(message)) {
+    const verified = verifiedReviewPriceQuote({
+      message, conversationHistory, language, services, serviceAliases, promotions,
+    });
+    if (verified) return { kind: "verified_price", reply: verified.reply,
+      treatment: verified.treatment };
     // The patient's latest stated concern, not an older ad or an unrelated
     // service in the history, determines which clarification choices to show.
     const latestConcern = recentCustomers.slice(-4).reverse()
