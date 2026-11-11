@@ -245,11 +245,14 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
      )
      UPDATE messages
-     SET content = $3, media_key = $4, media_mime_type = $5
+     SET content = CASE WHEN whatsapp_customer_mutation IS NULL
+         THEN $3 ELSE content END,
+         -- Preserve genuine original media for caption-only edits, without
+         -- restoring deleted messages or overwriting the corrected caption.
+         media_key = $4, media_mime_type = $5
      FROM conversation_lock
      WHERE id = $1 AND contact_id = $2 AND role = 'user'
-       -- An in-flight original media download must not undo a later edit/delete.
-       AND whatsapp_customer_mutation IS NULL
+       AND whatsapp_customer_mutation IS DISTINCT FROM 'revoke'
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, contactId, content, mediaKey, mediaMimeType]
   );
