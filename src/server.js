@@ -694,7 +694,14 @@ async function processIncomingMessage(
     // A separate activation timestamp restricts all-contact AI to NEW inbound
     // messages. Old received messages and unfinished jobs are not replayed.
     const secondaryAudienceEligible = secondaryAiReady
-      ? (await isSecondaryAiReplyEligible(contact.id, { inboundMessageId: savedInbound.id }) ||
+      ? (await isSecondaryAiReplyEligible(contact.id, {
+          inboundMessageId: savedInbound.id,
+          // Unrelated new text may continue while a clinical question awaits
+          // staff. The same permission never applies to unsupported/media
+          // messages, history replay, follow-ups or marketing automation.
+          allowReviewContinuation: !mediaType && !unsupportedType &&
+            typeof incoming.text === "string" && incoming.text.trim().length > 0,
+        }) ||
         (!mediaType && !unsupportedType &&
          typeof incoming.text === "string" && incoming.text.trim().length > 0 &&
          await isSecondarySupervisedAiTextTestEligible(contact.id))) : false;
