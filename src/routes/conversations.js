@@ -1281,7 +1281,7 @@ router.get("/:contactId/messages/updates", async (req,res) => {
     const contactId=parsePositiveInt(req.params.contactId);
     if(!contactId) return res.status(400).json({error:"Invalid contact id."});
     const idText=String(req.query.ids || "");
-    if(idText.length>3400 || !/^\\d+(?:,\\d+)*$/.test(idText)) {
+    if(idText.length>5000 || !/^\d+(?:,\d+)*$/.test(idText)) {
       return res.status(400).json({error:"Invalid message id list."});
     }
     const ids=[...new Set(idText.split(",").map(Number))];
