@@ -1891,6 +1891,24 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
           error:"Review the possible Meta charge before sending this secondary WhatsApp template.",
         });
       }
+      // Retain the exact secondary template attachment in the existing private
+      // per-contact R2 storage. Meta's uploaded media ID cannot be used as an
+      // Inbox preview, and the sender-specific template transport must still
+      // independently upload the bytes to Meta before its message request.
+      // Persist BEFORE consuming the one-shot billing token so an R2 outage
+      // cannot create an unviewable send or burn the operator's review.
+      if(mediaAttachment) {
+        try {
+          mediaKey=await mediaStorage.uploadMedia(
+            mediaAttachment.buffer,mediaAttachment.mimeType,{contactId:contact.id}
+          );
+        } catch {
+          return res.status(503).json({
+            code:"secondary_template_media_storage_unavailable",
+            error:"Could not save the template attachment for Inbox. No WhatsApp message was sent.",
+          });
+        }
+      }
       const claimed=await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
         contact.id,req.session?.username,req.body
       );
@@ -1901,9 +1919,13 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       const current=await telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,async()=>{
           const ready=await prepareStaffSend(contact,req.session.username);
+          // Once the INSERT begins its outcome may be uncertain. Never delete
+          // its R2 object on a possible committed row, even if later steps fail.
+          cleanupUnsubmittedMedia=false;
           const saved=await conversationStore.appendMessageForContact(
             ready.id,"assistant",prepared.preview,null,
-            req.session.username,null,null,{
+            req.session.username,null,
+            mediaAttachment ? {mimeType:mediaAttachment.mimeType} : null,{
               whatsappTemplate:{
                 name:prepared.template.name,language:prepared.template.language,
                 category:prepared.template.category,
@@ -1916,6 +1938,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
                 billingAcknowledged:true,billingReviewClaimHash:claimed.tokenHash,
                 templateSignature:prepared.signature,
               },
+              ...(mediaAttachment ? {
+                mediaKey,mediaFilename:mediaAttachment.filename,
+              } : {}),
               initialDeliveryStatus:"unknown",
               initialDeliveryError:"secondary WhatsApp template attempted; delivery is not yet verified.",
               publish:false,
