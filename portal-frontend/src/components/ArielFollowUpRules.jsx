@@ -3,7 +3,7 @@ import { api } from "../api";
 
 const SLOTS=[2,6,20];
 const MARKETING_SLOTS=[48,66,96,144];
-const EXTENDED_TEMPLATES={96:"ns_day4_checkin",144:"ns_day6_invitation"};
+const EXTENDED_TEMPLATES={96:"ns_day4_assessment_guide_v2",144:"ns_day6_final_invite_v2"};
 const marketingSlotLabel=slot=>slot===96?"Day 4 (96 hours)":slot===144?"Day 6 (144 hours)":`After ${slot} hours`;
 const newMarketingState=()=>Object.fromEntries(MARKETING_SLOTS.map(slot=>[slot,{
   templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false,
@@ -172,7 +172,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               Submit and get them approved in Meta first.
             </p>}
           {!config.extendedWorkerEnabled&&<p className="mt-2 text-xs text-[var(--color-text-muted)]">
-            Day 4 and Day 6 sending is separately disabled on the server. Saving a template never enables that server switch.
+            Day 4 and Day 6 need independently approved updated templates. Sending remains off until the separate server switch and billing checks permit it.
           </p>}
           {MARKETING_SLOTS.map(slot=>{
             const row=marketing[slot];
