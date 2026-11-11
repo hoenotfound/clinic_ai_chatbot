@@ -80,6 +80,13 @@ test("approved secondary marketing billing requires one claimed attempt for each
    "ariel","100000000000002","200000000000002",
    new Date(),10,"2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
   ]);
+  // Compile the secondary Day 4/Day 6 scheduler hint against PostgreSQL.
+  // This is EXPLAIN only; it cannot authorize or send a message.
+  await db.query("EXPLAIN "+marketing.EXTENDED_POTENTIAL_DUE_SQL,[
+   "ariel","100000000000002","200000000000002",
+   new Date(),"2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
+  ]);
+
   const later=(await db.query(
    "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
    "WHERE sender_id=$1 ORDER BY slot_hours",[sender])).rows;

@@ -24,7 +24,7 @@ const HOUR_MS = 60 * 60 * 1000;
 // A mismatch fails closed at module initialization, preventing a future
 // eligibility refactor from silently desynchronizing scheduled sends.
 function deriveSecondaryPotentialDueSql(candidateSql, {
-  fromTable, dueExpression, quietWindowEndMarker,
+  fromTable, dueExpression, quietWindowEndMarker, orderMarker,
 } = {}) {
   const prefix = " SELECT c.id AS contact_id";
   const fromMarker = "\n FROM " + fromTable + " rule";
@@ -32,7 +32,7 @@ function deriveSecondaryPotentialDueSql(candidateSql, {
   const fromIndex = candidateSql.indexOf(fromMarker);
   const startIndex = candidateSql.indexOf(windowStart);
   const endIndex = candidateSql.indexOf(quietWindowEndMarker, startIndex);
-  const orderIndex = candidateSql.lastIndexOf("\n ORDER BY inbound.created_at,c.id,rule.slot_hours");
+  const orderIndex = candidateSql.lastIndexOf(orderMarker || "\n ORDER BY inbound.created_at,c.id,rule.slot_hours");
   if (!candidateSql.startsWith("\n" + prefix) || fromIndex < 0 ||
       startIndex < fromIndex || endIndex <= startIndex ||
       orderIndex <= endIndex || !candidateSql.slice(orderIndex).includes("LIMIT $5")) {

@@ -291,6 +291,8 @@ const EXTENDED_SESSION_SQL=`
       ON reply_context.message_id=first.id AND reply_context.conversation_id=sc.id
     WHERE first.contact_id=c.id AND first.role='assistant'
       AND first.whatsapp_message_id IS NOT NULL
+      AND first.sent_by_username IS NULL
+      AND first.is_automated_follow_up IS DISTINCT FROM TRUE
       AND first.created_at>=origin.created_at
       AND first.created_at<origin.created_at+INTERVAL '24 hours'
     ORDER BY first.created_at,first.id LIMIT 1
@@ -319,10 +321,14 @@ const EXTENDED_SESSION_SQL=`
  ) qualified_session ON TRUE
 `;
 const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
+ // The verified ad session below is its own complete first-reply proof.
+ // The 48/66h first-reply join anchors to contact creation for legacy leads
+ // and would incorrectly exclude returning contacts who clicked a new ad.
+ .replace(FIRST_REPLY_SQL,"")
  .replace("inbound.id AS inbound_id,inbound.created_at AS inbound_at,",
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
- .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)")
+ .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)\n   AND qualified_session.first_reply_at>=rule.updated_at")
  .replace("recent.created_at > $4::timestamptz - INTERVAL '5 days'",
    "recent.created_at > $4::timestamptz - INTERVAL '9 days'")
  .replaceAll("first_reply.at","qualified_session.first_reply_at")
@@ -334,14 +340,32 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  .replace("ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
   `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
-      WHERE gate.sender_id=sa.id AND gate.state<>'idle')
+      WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
+        AND gate.state<>'idle')
+   -- Each verified seven-day ad session may receive up to four template
+   -- reminders, even if the contact had prior successful ad sessions.
+   -- Preserve same-contact unknown-send holds above: never replay ambiguity.
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts other
       WHERE other.sender_id=sa.id AND other.contact_id=c.id
         AND other.slot_hours=rule.slot_hours
+        AND other.claimed_at>=qualified_session.first_reply_at
+        AND other.claimed_at<qualified_session.first_reply_at+INTERVAL '167 hours'
         AND other.status IN('accepted','unknown','blocked'))
    AND (SELECT COUNT(*) FROM whatsapp_sender_marketing_followup_attempts sent
-      WHERE sent.sender_id=sa.id AND sent.contact_id=c.id AND sent.status='accepted')<4
+      WHERE sent.sender_id=sa.id AND sent.contact_id=c.id
+        AND sent.claimed_at>=qualified_session.first_reply_at
+        AND sent.claimed_at<qualified_session.first_reply_at+INTERVAL '167 hours'
+        AND sent.status='accepted')<4
   ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5`);
+
+// Only freshly configured Day 4/6 rules may follow new ad sessions.
+// An enabled rule never backfills earlier ad conversations.
+const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{
+  fromTable:"whatsapp_sender_marketing_followup_rules",
+  dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",
+  quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",
+  orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
+});
 
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
@@ -514,14 +538,23 @@ async function runOnce({
 async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
- const result=await database.query(POTENTIAL_DUE_SQL,[
+ const params=[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
- ]);
- return result.rows?.[0]||null;
+ ];
+ const ordinary=(await database.query(POTENTIAL_DUE_SQL,params)).rows?.[0]||null;
+ if(!extendedEnabled(env))return ordinary;
+ const extended=(await database.query(EXTENDED_POTENTIAL_DUE_SQL,params)).rows?.[0]||null;
+ const dueTimes=[ordinary?.next_due_at,extended?.next_due_at]
+   .filter(Boolean).map(value=>new Date(value).getTime())
+   .filter(Number.isFinite);
+ return {
+   next_due_at:dueTimes.length?new Date(Math.min(...dueTimes)):null,
+   has_overdue:ordinary?.has_overdue===true||extended?.has_overdue===true,
+ };
 }
 
 let scheduler=null;
@@ -538,6 +571,6 @@ function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
- POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
+ POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
  approvedStaticMarketingTemplate,runOnce,nextPotentialDueAt,start,stop,
 };
