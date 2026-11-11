@@ -69,9 +69,10 @@ function params(event, env = process.env) {
   ];
 }
 
-function publish(contactId, messageId, phone) {
+function publish(contactId, messageId, phone, message = null) {
   realtimeEvents.publish("conversation_changed", {
-    contactId, messageId, reason: "message",
+    contactId, messageId, reason: message ? "message_mutation" : "message",
+    ...(message ? {message} : {}),
     channel: "whatsapp", businessPhoneNumberId: phone,
     followUpStateUnchanged: true,
   });
@@ -139,7 +140,13 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
       if (update.rows.length === 1) {
         changed = {
           contactId: message.contact_id, messageId: message.id,
-          phone: event.business_phone_number_id
+          phone: event.business_phone_number_id,
+          message: {
+            id: message.id, content: newContent,
+            whatsapp_customer_mutation: event.action,
+            ...(replaceMedia ? {media_url:null,media_mime_type:null,
+              media_filename:null,has_media_attachment:false} : {}),
+          }
         };
       }
     }
@@ -157,7 +164,7 @@ async function applyOne(eventId, {database = pool, env = process.env} = {}) {
   } finally {
     client.release();
   }
-  if (changed) publish(changed.contactId, changed.messageId, changed.phone);
+  if (changed) publish(changed.contactId, changed.messageId, changed.phone, changed.message);
   return changed;
 }
 
