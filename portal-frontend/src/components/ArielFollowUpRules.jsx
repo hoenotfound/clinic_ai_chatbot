@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 
 const SLOTS=[2,6,20];
+const MARKETING_SLOTS=[48,66,96,144];
+const EXTENDED_TEMPLATES={96:"ns_day4_checkin",144:"ns_day6_invitation"};
+const marketingSlotLabel=slot=>slot===96?"Day 4 (96 hours)":slot===144?"Day 6 (144 hours)":`After ${slot} hours`;
+const newMarketingState=()=>Object.fromEntries(MARKETING_SLOTS.map(slot=>[slot,{
+  templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false,
+}]));
 
 export default function ArielFollowUpRules({ active = true, section = "service" }){
   const [enabled,setEnabled]=useState({2:false,6:false,20:false});
   const [config,setConfig]=useState(null);
-  const [marketing,setMarketing]=useState({
-    48:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
-    66:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
-  });
+  const [marketing,setMarketing]=useState(newMarketingState);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(null);
   const [saved,setSaved]=useState(null);
@@ -23,7 +26,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       setEnabled(Object.fromEntries(SLOTS.map(slot=>[
         slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.enabled===true,
       ])));
-      setMarketing(Object.fromEntries([48,66].map(slot=>{
+      setMarketing(Object.fromEntries(MARKETING_SLOTS.map(slot=>{
         const saved=(data.marketingRules||[]).filter(r=>Number(r.slot_hours)===slot);
         return [slot,{
           templates:Object.fromEntries(["zh_CN","en_US","ms"].map(lang=>[
@@ -90,7 +93,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       </div>
       <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
         {section === "marketing"
-          ? "48-hour and 66-hour templates belong to this number only. Each language requires Meta approval, marketing consent and its own sending switch."
+          ? "48h, 66h, Day 4 and Day 6 templates belong to this number only. Each language requires Meta approval, treatment-specific marketing consent and its own sending switch."
           : "These messages use the primary clinic\u0027s approved translations and matching treatment videos when available. Only eligible secondary ad enquiries are followed up within the verified 24-hour reply window. Quiet hours: 00:00–07:00 Malaysia time."}
       </p>
       {error&&<p role="alert" className="mt-3 text-xs text-[var(--color-danger)]">{error}</p>}
@@ -168,9 +171,13 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               No approved text-only marketing templates on the second account yet.
               Submit and get them approved in Meta first.
             </p>}
-          {[48,66].map(slot=>{
+          {!config.extendedWorkerEnabled&&<p className="mt-2 text-xs text-[var(--color-text-muted)]">
+            Day 4 and Day 6 sending is separately disabled on the server. Saving a template never enables that server switch.
+          </p>}
+          {MARKETING_SLOTS.map(slot=>{
             const row=marketing[slot];
-            const choices=config.marketingTemplates||[];
+            const choices=(config.marketingTemplates||[]).filter(t=>
+              !EXTENDED_TEMPLATES[slot]||t.name===EXTENDED_TEMPLATES[slot]);
             const languages=[["zh_CN","Chinese"],["en_US","English"],["ms","Malay"]];
             const selected=languages.map(([locale])=>choices.find(t=>
               t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
@@ -183,12 +190,12 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
             const dirty=row.enabled!==savedEnabled||templateChanged;
             return <details key={slot} className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
               <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-xs font-semibold [&::-webkit-details-marker]:hidden">
-                <span>After {slot} hours</span>
+                <span>{marketingSlotLabel(slot)}</span>
                 <span className="text-[var(--color-text-muted)]">{dirty ? "Unsaved" : row.enabled ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
               </summary>
               <div className="border-t border-[var(--color-border)] p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold">After {slot} hours</span>
+                <span className="text-xs font-semibold">{marketingSlotLabel(slot)}</span>
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={row.enabled}
                     disabled={!row.enabled&&(!config.marketingCatalogAvailable||!validSelection)}
@@ -239,6 +246,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               <div className="mt-2 flex justify-between gap-2">
                 <span className="text-xs text-[var(--color-text-muted)]">
                   {dirty ? "Changes not saved" : saved===slot ? "Saved to second number" :
+                    slot>=96 ? (config.extendedWorkerEnabled ? "Day 4/6 worker enabled" : "Day 4/6 worker off") :
                     config.marketingWorkerEnabled ? "Worker enabled" : "Worker off"}
                 </span>
                 <button type="button" onClick={()=>saveMarketing(slot)}
