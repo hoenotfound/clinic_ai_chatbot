@@ -1,5 +1,7 @@
 "use strict";
 
+const { isKnownPortalRoute } = require("./portalFallbackGuard");
+
 // Approximate attempted application upload/request payloads, NOT actual Render
 // billed bytes. Fixed-category counters only; no file paths, phone numbers,
 // contact IDs, query strings, URLs, tokens, response bodies or prompts.
@@ -13,7 +15,9 @@ const HTTP_503 = ["startup", "health", "webhook", "whatsapp_ingress", "api", "ot
 // body, headers, signed R2 URL or customer data.
 const HTTP_ROUTES = [
   "inbox_list", "inbox_messages", "inbox_media", "inbox_other",
-  "api_other", "webhook", "whatsapp_ingress", "health", "static", "other",
+  "api_other", "webhook", "meta_webhook", "whatsapp_ingress",
+  "health", "unknown_health", "promo_images", "portal_page",
+  "static", "unknown_path",
 ];
 const R2_VIDEO_OUTCOMES = [
   "redirected", "disabled_or_proxy", "unowned", "invalid_object", "error",
@@ -27,23 +31,30 @@ function coarseHttpRoute(pathname) {
   if (/^\/api\/conversations\/[^/]+\/messages(?:\/|$)/.test(pathname)) return "inbox_messages";
   if (/^\/api\/conversations(?:\/|$)/.test(pathname)) return "inbox_other";
   if (pathname === "/webhook" || /^\/webhook\//.test(pathname)) return "webhook";
+  if (pathname === "/meta-webhook") return "meta_webhook";
   if (pathname === "/whatsapp" || /^\/whatsapp\//.test(pathname)) return "whatsapp_ingress";
-  if (pathname === "/" || /^\/health(?:\/|$)/.test(pathname)) return "health";
+  if (pathname === "/" || pathname === "/health/live" || pathname === "/health/ready") return "health";
+  if (/^\/health(?:\/|$)/.test(pathname)) return "unknown_health";
+  if (/^\/promo-images(?:\/|$)/.test(pathname)) return "promo_images";
   if (/^\/api(?:\/|$)/.test(pathname)) return "api_other";
-  if (/\.(?:js|css|png|jpe?g|webp|svg|ico|woff2?|ttf)$/.test(pathname)) return "static";
-  return "other";
+  if (isKnownPortalRoute(pathname)) return "portal_page";
+  if (/\.(?:html?|js|mjs|css|map|json|xml|txt|webmanifest|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|pdf)$/.test(pathname)) return "static";
+  return "unknown_path";
 }
 
 function recordHttpResponse({ statusCode, pathname, contentLength, env = process.env } = {}) {
   if (!enabled(env)) return false;
   const category = coarseHttpRoute(pathname);
   const current = responses.get(category) || {
-    requests: 0, knownResponseBytes: 0, unknownResponseSize: 0, status503: 0,
+    requests: 0, knownResponseBytes: 0, unknownResponseSize: 0,
+    status404: 0, status429: 0, status503: 0,
   };
   current.requests++;
   if (Number.isSafeInteger(contentLength) && contentLength >= 0) {
     current.knownResponseBytes += contentLength;
   } else current.unknownResponseSize++;
+  if (statusCode === 404) current.status404++;
+  if (statusCode === 429) current.status429++;
   if (statusCode === 503) current.status503++;
   responses.set(category, current);
   return true;
@@ -90,7 +101,7 @@ function recordHttp503({ statusCode, pathname, readyAtStart, env = process.env }
   if (readyAtStart === false) category = "startup";
   else if (pathname === "/" || pathname === "/health/ready" ||
            pathname === "/health/live") category = "health";
-  else if (pathname === "/webhook" ||
+  else if (pathname === "/meta-webhook" || pathname === "/webhook" ||
            pathname === "/webhook/facebook" ||
            pathname === "/webhook/instagram") category = "webhook";
   else if (pathname === "/whatsapp" ||
@@ -115,7 +126,8 @@ function takeOutboundPayloadSnapshot() {
       requests: 0, knownResponseBytes: 0, unknownResponseSize: 0, status503: 0,
     };
     return {
-      category, requests: v.requests, status503: v.status503,
+      category, requests: v.requests, status404: v.status404,
+      status429: v.status429, status503: v.status503,
       knownResponseMiB: Math.round(v.knownResponseBytes / 1048576 * 100) / 100,
       unknownResponseSize: v.unknownResponseSize,
     };
