@@ -43,7 +43,7 @@ COMMENT ON TABLE whatsapp_customer_message_mutations IS
 -- these jobs after restarts and transient R2 errors.
 CREATE TABLE IF NOT EXISTS whatsapp_customer_revoked_media_cleanup (
   id BIGSERIAL PRIMARY KEY,
-  message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   media_key TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_customer_revoked_media_cleanup (
   lease_token TEXT,
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (message_id,media_key)
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_revoked_media_cleanup_due
   ON whatsapp_customer_revoked_media_cleanup
