@@ -12,7 +12,7 @@ const {publishInternal}=require("../utils/realtimeEvents");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
 const MARKETING_SLOTS=new Set([48,66,96,144]);
-const EXTENDED_TEMPLATES={96:"ns_day4_checkin",144:"ns_day6_invitation"};
+const EXTENDED_TEMPLATES={96:"ns_day4_assessment_guide_v2",144:"ns_day6_final_invite_v2"};
 // A secondary rule controls its own enabled state and optional approved
 // sender-owned media. Its visible message comes from the live primary clinic
 // settings; never let a saved secondary text override those shared messages.
