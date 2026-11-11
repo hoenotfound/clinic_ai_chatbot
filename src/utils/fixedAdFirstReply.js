@@ -92,7 +92,7 @@ function isStandardAdPrefill(value, serviceContext = {}) {
   // Keep the grammar broad enough for genuine configured names and prefills,
   // but let Gemini handle any unrecognized wording or extra requirements.
   const chineseInterest = body.match(/^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*(.{2,90}?)(?:有兴趣|有興趣|感兴趣|感興趣)$/u);
-  const chineseKnow = body.match(/^(?:我)?(?:想|要|希望)(?:了解|知道|咨询|諮詢)(?:一下)?\s*(?:你们|你們|贵店|貴店)?\s*([^,，、?？\n\r]{2,110})$/u);
+  const chineseKnow = body.match(/^(?:我)?(?:想|要|希望)(?:了解|知道|咨询|諮詢)(?:一下)?\s*(?:(?:你们|你們)(?:家(?:的)?)?|(?:贵店|貴店)(?:的)?)?\s*([^,，、?？\n\r]{2,110})$/u);
   const english = body.match(/^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+(.{2,100})$/iu);
   const malay = body.match(/^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+(.{2,100})$/iu);
   const englishSubject = english?.[1] || "";
