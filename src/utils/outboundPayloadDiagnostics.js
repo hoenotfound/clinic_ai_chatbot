@@ -123,7 +123,8 @@ function takeOutboundPayloadSnapshot() {
   }));
   const httpResponses = HTTP_ROUTES.map(category => {
     const v = responses.get(category) || {
-      requests: 0, knownResponseBytes: 0, unknownResponseSize: 0, status503: 0,
+      requests: 0, knownResponseBytes: 0, unknownResponseSize: 0,
+      status404: 0, status429: 0, status503: 0,
     };
     return {
       category, requests: v.requests, status404: v.status404,
