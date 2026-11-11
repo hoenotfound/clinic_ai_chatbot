@@ -296,6 +296,16 @@ test("Day 4/6 never backfill ad sessions from before the rule was saved",()=>{
  assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_free_entry_referrals referral/);
  assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_marketing_consent_events consent/);
 });
+test("Day 4 and Day 6 count accepted reminders in this verified ad session, not over the contact lifetime",()=>{
+ const sql=svc.EXTENDED_CANDIDATES_SQL;
+ assert.match(sql,/other\.claimed_at>=qualified_session\.first_reply_at/);
+ assert.match(sql,/sent\.claimed_at>=qualified_session\.first_reply_at/);
+ assert.match(sql,/sent\.claimed_at<qualified_session\.first_reply_at\+INTERVAL '167 hours'/);
+ assert.match(sql,/other\.status IN\('accepted','unknown','blocked'\)/);
+ // Historic uncertain receipts remain a global safety hold until reviewed.
+ assert.match(sql,/bad\.anchor_message_id IS NOT NULL/);
+ assert.match(sql,/gate\.state<>'idle'/);
+});
 test("extended Day 4/6 due-time hint checks both workers without an extra poll when disabled",async()=>{
  const time=new Date("2026-11-11T04:00:00Z");
  const calls=[];
