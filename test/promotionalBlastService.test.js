@@ -112,3 +112,45 @@ test("final authorization is irreversible, checks recipient and staged row and n
  assert.equal(await blast.consumeClaim(42,blast.CAMPAIGN_KEY,"ms","admin",token,997,database),true);
  assert.equal(await blast.consumeClaim(42,blast.CAMPAIGN_KEY,"ms","admin",token,997,database),false);
 });
+
+test("failed staged blast messages are recoverable only while their claim was never attempted",()=>{
+ const sql=blast.CANDIDATE_SQL;
+ assert.match(sql,/recoverable_unsent AS \(/);
+ assert.match(sql,/message\.whatsapp_template->>'blastCampaignKey'=promo\.campaign_key/);
+ assert.match(sql,/message\.delivery_status='failed'/);
+ assert.match(sql,/message\.whatsapp_message_id IS NULL/);
+ assert.match(sql,/claim\.state='reserved'/);
+ assert.match(sql,/claim\.attempted_at IS NULL/);
+ assert.match(sql,/claim\.sender_id|recipient\.whatsapp_sender_id=claim\.sender_id/);
+ assert.match(sql,/regexp_replace\(recipient\.whatsapp_number/);
+ // All three filters previously treated a saved but unsent staff row as a
+ // completed campaign. Every filter must exclude only proven unsent rows.
+ for(const alias of ["outgoing","staff","sent_promo"]) {
+   assert.ok(sql.includes(`unsent.id=${alias}.id`),alias);
+ }
+ assert.match(sql,/claim\.attempted_at IS NULL/);
+ assert.doesNotMatch(sql,/message\.delivery_status IN \('failed','unknown'\)/);
+ // Dispatch must continue to exclude exactly its OWN staged message in
+ // addition to the proven unsent history rows.
+ assert.match(blast.DISPATCH_SQL,/sent_promo\.id<>\$6::integer/);
+ assert.match(blast.DISPATCH_SQL,/outgoing\.id<>\$6::integer/);
+ assert.match(blast.DISPATCH_SQL,/staff\.id<>\$6::integer/);
+});
+
+test("blast recovery only marks staged rows as no-provider on each sender route",()=>{
+ const fs=require("node:fs");
+ const path=require("node:path");
+ const source=fs.readFileSync(path.join(__dirname,"../src/routes/conversations.js"),"utf8");
+ const secondary=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryTemplateService.js"),"utf8");
+ const primary=fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
+ // Both send paths must persist their server-chosen campaign key rather than
+ // trusting the client or an unauthenticated message row.
+ assert.equal((source.match(/blastCampaignKey:blastCampaignKeyForMessage/g)||[]).length,2);
+ assert.match(source,/send\.providerNotAttempted===true/);
+ assert.match(source,/sendResult\.providerNotAttempted===true/);
+ assert.match(secondary,/providerNotAttempted:true/);
+ assert.match(primary,/providerNotAttempted:true/);
+ // Existing generic template retry remains blocked. The operator must create
+ // a new, one-shot reviewed send after recovery.
+ assert.match(source,/code: "template_retry_requires_billing_review"/);
+});
