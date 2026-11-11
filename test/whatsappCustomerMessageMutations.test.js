@@ -413,3 +413,29 @@ test("revoked-media R2 deletion failures are recorded for durable retry",async()
   assert.equal(failure.args[2],"failed");
   assert.ok(failure.args[3]>0);
 });
+
+test("late original media uploads are also scheduled for retryable cleanup",()=>{
+  const fs=require("node:fs");
+  const messages=fs.readFileSync(require.resolve("../src/db/messagesRepo"),"utf8");
+  const migration=fs.readFileSync(require.resolve("../src/db/migrations/../migrations/124_whatsapp_customer_message_mutations.sql"),"utf8");
+  assert.match(messages,/if \(!result\.rows\[0\] && mediaKey\)/);
+  assert.match(messages,/m\.whatsapp_customer_mutation='revoke'/);
+  assert.match(messages,/ON CONFLICT\(message_id,media_key\) DO NOTHING/);
+  assert.match(migration,/UNIQUE \(message_id,media_key\)/);
+});
+
+test("customer purge retains pending revoked R2 keys when removing the contact",()=>{
+  const fs=require("node:fs");
+  const lifecycle=fs.readFileSync(require.resolve("../src/db/customerDataLifecycleRepo"),"utf8");
+  assert.match(lifecycle,/SELECT DISTINCT media_key FROM whatsapp_customer_revoked_media_cleanup/);
+  assert.match(lifecycle,/\.\.\.revokedKeys/);
+  assert.match(lifecycle,/revokedCleanupInstalled/);
+});
+
+test("existing customer cleanup worker also drains due revoked-media jobs",()=>{
+  const fs=require("node:fs");
+  const service=fs.readFileSync(require.resolve("../src/services/customerDataLifecycleService"),"utf8");
+  assert.match(service,/revokedMediaCleanup\.runPending/);
+  assert.match(service,/revokedMediaCleanup\.getNextDueAt/);
+  assert.match(service,/mediaCleanupDelay\(dueAt\)/);
+});
