@@ -507,7 +507,7 @@ test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 
   // cannot be independently checked against structured promotion pricing.
   const observed = resolveAiPricingDecision({ ...inputs, priceQuery: true });
   assert.equal(observed?.treatment, "3D 小颜术");
-  assert.equal(observed?.source, "meta_ad");
+  assert.equal(observed?.source, "recent_customer");
   assert.equal(observed?.prices, null);
   assert.equal(resolveShadowPriceException(inputs), null);
 
