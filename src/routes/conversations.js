@@ -1785,26 +1785,30 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
     }
 
-    if (req.body?.blastCampaignKey != null) {
-      if (req.user?.role !== "admin" ||
-          !["manage_tools","view_all_leads","reply_to_assigned_leads"]
-            .every(cap=>req.user?.permissions?.[cap]===true) ||
-          req.body?.templateName!==promotionalBlast.CAMPAIGN_KEY) {
+    let blastBeforeProviderDispatch=null;
+    if(req.body?.blastCampaignKey!=null) {
+      const campaign=await promotionalBlast.getCampaign(req.body.blastCampaignKey);
+      const key=String(req.body?.blastCampaignKey||"");
+      const token=String(req.body?.blastReservationToken||"");
+      const language=String(req.body?.languageCode||"");
+      if(req.user?.role!=="admin" ||
+         !["manage_tools","view_all_leads","reply_to_assigned_leads"]
+           .every(cap=>req.user?.permissions?.[cap]===true) ||
+         !campaign || campaign.enabled!==true ||
+         new Date(campaign.valid_until).getTime()<=Date.now() ||
+         req.body?.templateName!==campaign.template_name ||
+         !promotionalBlast.LANGUAGES.has(language) ||
+         !/^[0-9a-f-]{36}$/i.test(token)) {
         return res.status(403).json({
           code:"blast_send_not_authorized",
-          error:"This promotional blast is not authorized for this operator or template.",
+          error:"This promotional campaign, reservation or approved template is no longer valid.",
         });
       }
-      // Consume the one-shot claim before any media upload or provider call.
-      // Failure, timeout or browser restart must never replay this blast.
-      const consumed=await promotionalBlast.consumeClaim(
-        contact.id,req.body.blastCampaignKey,
-        String(req.body?.languageCode||""),req.session?.username
+      // The claim is deliberately NOT consumed here. Media and template
+      // preparation can fail or take time before any Meta message is attempted.
+      blastBeforeProviderDispatch=messageId=>promotionalBlast.consumeClaim(
+        contact.id,key,language,req.session?.username,token,messageId
       );
-      if (!consumed) return res.status(409).json({
-        code:"blast_claim_invalid",
-        error:"This recipient's blast claim was used or the eligibility window changed. Check the conversation; do not resend automatically.",
-      });
     }
 
     // Secondary templates must never fall through to Neutro's catalog,
@@ -1912,7 +1916,11 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         }
       );
       const send=await secondaryTemplate.deliverSecondaryStaffTemplate(
-        current.ready,current.saved.id,prepared
+        current.ready,current.saved.id,prepared,{
+          ...(blastBeforeProviderDispatch
+            ? {beforeProviderDispatch:()=>blastBeforeProviderDispatch(current.saved.id)}
+            : {}),
+        }
       );
       const errorText=send.error||"secondary WhatsApp template acceptance could not be confirmed.";
       const result=await persistSendOutcome(current.saved,send,errorText,"whatsapp");
@@ -2333,6 +2341,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       templateCategory: metadata.category,
       treatmentInterest: templateTreatmentInterest,
       currentMessageId: saved.id,
+      ...(blastBeforeProviderDispatch
+        ? {beforeProviderDispatch:()=>blastBeforeProviderDispatch(saved.id)}
+        : {}),
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
