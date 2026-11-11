@@ -294,6 +294,8 @@ test("Day 4 and Day 6 rely on verified ad-session first reply, not unrelated leg
  assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/first_reply\.at/);
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/\) qualified_session ON TRUE/);
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/receipt\.pricing_type='free_entry_point'/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/first\.sent_by_username IS NULL/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/first\.is_automated_follow_up IS DISTINCT FROM TRUE/);
  assert.match(svc.EXTENDED_RECHECK_SQL,/\) qualified_session ON TRUE/);
  assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/\) qualified_session ON TRUE/);
 });
