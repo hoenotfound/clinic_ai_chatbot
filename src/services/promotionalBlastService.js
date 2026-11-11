@@ -297,6 +297,10 @@ async function claimRecipient(contactId,languageCode,staffUsername,{
 // Ignore ONLY that exact DB row; all other outgoing, staff, and promo messages
 // continue to block, including ones that appeared after the initial preview.
 const DISPATCH_SQL=CANDIDATE_SQL
+  // Secondary staff dispatch already reserved THIS message's billing gate.
+  // Ignore only its matching message_id, not any earlier contact gate.
+  .replace("gate.contact_id=c.id AND gate.state<>'idle'",
+           "gate.contact_id=c.id AND gate.message_id<>$6::integer AND gate.state<>'idle'")
   .replace("WHERE outgoing.contact_id=c.id", "WHERE outgoing.id<>$6::integer AND outgoing.contact_id=c.id")
   .replace("WHERE staff.contact_id=c.id", "WHERE staff.id<>$6::integer AND staff.contact_id=c.id")
   .replace("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id");
