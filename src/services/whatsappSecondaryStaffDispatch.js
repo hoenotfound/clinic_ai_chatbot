@@ -180,7 +180,11 @@ async function sendSecondaryStaffText({
     automatedOrigin && env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "all_contacts";
   const stillEligible=async()=>!automatedOrigin ||
     (allContactText
-      ? await replyAudienceEligible(cid,{database,env})
+      ? await replyAudienceEligible(cid,{
+          database,env,
+          ...(origin==="ai_reply" && anchorMessageId != null
+            ? {inboundMessageId:anchorMessageId,allowReviewContinuation:true} : {}),
+        })
       : allContactAutomation
         ? await automationAudienceEligible(cid,{
             database,env,inboundMessageId:anchorMessageId
