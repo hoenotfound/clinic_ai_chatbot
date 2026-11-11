@@ -232,6 +232,60 @@ const CANDIDATES_SQL=`
        AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
          WHERE h.sender_id=sa.id AND h.message_id=cm.id)
    )
+   -- The 20h invitation already asks for an assessment. Only send a
+   -- second booking invitation at 66h after a verified customer re-engages
+   -- following the first normal AI reply in this sender conversation.
+   AND (rule.slot_hours<>66 OR EXISTS (
+     SELECT 1 FROM messages engaged
+     JOIN whatsapp_sender_message_context engaged_context
+       ON engaged_context.message_id=engaged.id
+       AND engaged_context.conversation_id=sc.id
+     WHERE engaged.contact_id=c.id AND engaged.role='user'
+       AND engaged.whatsapp_message_id IS NOT NULL
+       AND engaged.created_at>first_reply.at
+       AND engaged.created_at<=$4::timestamptz
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported_engagement
+         WHERE imported_engagement.sender_id=sa.id
+           AND imported_engagement.message_id=engaged.id
+       )
+   ))
+   -- Five accepted follow-ups is the maximum across the 2/6/20h service
+   -- steps AND all marketing templates for a completely silent customer.
+   -- An actual later sender-owned customer reply resets the silence guard;
+   -- it does not bypass consent, opt-out, booking or billing checks.
+   AND (
+     EXISTS (
+       SELECT 1 FROM messages engagement
+       JOIN whatsapp_sender_message_context engagement_context
+         ON engagement_context.message_id=engagement.id
+         AND engagement_context.conversation_id=sc.id
+       WHERE engagement.contact_id=c.id AND engagement.role='user'
+         AND engagement.whatsapp_message_id IS NOT NULL
+         AND engagement.created_at>first_reply.at
+         AND engagement.created_at<=$4::timestamptz
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported_engagement
+           WHERE imported_engagement.sender_id=sa.id
+             AND imported_engagement.message_id=engagement.id
+         )
+     )
+     OR (
+       (SELECT COUNT(*) FROM whatsapp_sender_followup_attempts service_sent
+        WHERE service_sent.sender_id=sa.id
+          AND service_sent.contact_id=c.id
+          AND service_sent.status='accepted'
+          AND service_sent.claimed_at>=first_reply.at
+          AND service_sent.claimed_at<first_reply.at+INTERVAL '167 hours')
+       +
+       (SELECT COUNT(*) FROM whatsapp_sender_marketing_followup_attempts marketing_sent
+        WHERE marketing_sent.sender_id=sa.id
+          AND marketing_sent.contact_id=c.id
+          AND marketing_sent.status='accepted'
+          AND marketing_sent.claimed_at>=first_reply.at
+          AND marketing_sent.claimed_at<first_reply.at+INTERVAL '167 hours')
+     ) < 5
+   )
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
      BETWEEN 7 AND 23
    AND first_reply.at+rule.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
