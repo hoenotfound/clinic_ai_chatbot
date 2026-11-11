@@ -108,6 +108,7 @@ test("AI reply transport forwards narrow inbound anchor; followups and media do 
   assert.match(server,/anchorMessageId: reviewContinuationAnchor/);
   assert.match(server,/reviewContinuationTextOnly/);
   assert.match(server,/nonUrgentUrinaryAcknowledgement\(text, mediaLanguage\)/);
+  assert.ok(server.includes(String.raw`/^neutro\s+sense\b/iu.test`), "Neutro-only review guard must use proper regex whitespace operators");
   assert.match(dispatch,/origin==="ai_reply" && anchorMessageId != null/);
   assert.match(prompt,/simple affirmative to a prior question about sitting/);
 });
