@@ -313,7 +313,7 @@ async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,
   if(!validKey(campaign)||!Number.isSafeInteger(contactId)||contactId<1||
     !LANGUAGES.has(languageCode)||!String(staffUsername||"").trim()||
     !Number.isSafeInteger(currentMessageId)||currentMessageId<1||
-    !/^[0-9a-f-]{36}$/i.test(String(token||"")))return false;
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(token||"")))return false;
   const r=await database.query(`UPDATE whatsapp_promotional_blast_claims claim
     SET state='attempted',attempted_at=now()
     FROM (${DISPATCH_SQL}) qualified
