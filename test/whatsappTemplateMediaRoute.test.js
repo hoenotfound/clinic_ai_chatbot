@@ -187,6 +187,9 @@ function fakeSecondaryImageTemplateSend(t,h,{
     return r2key;
   });
   patch(t,contactsRepo,"setDeliveryAttention",async()=>{});
+  patch(t,messagesRepo,"setDeliveryStatusById",async(id,status,error)=>({
+    id,contact_id:7,delivery_status:status,delivery_error:error,
+  }));
   patch(t,billingAdvisory,"verifyReviewToken",()=>({evidence:"unknown"}));
   patch(t,billingAdvisory,"claimBillingReviewOnce",async()=>{
     return claimAllowed
@@ -267,6 +270,11 @@ test("Secondary template cleans unsubmitted R2 media if billing review was alrea
   assert.equal(input.events.stores,1);
   assert.equal(input.events.sends,0);
   assert.equal(h.events.saved.length,0);
+  // Express may flush the HTTP rejection while the route's finally block is
+  // still completing its asynchronous R2 deletion.
+  for(let i=0;i<50 && h.events.deleted===0;i++){
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
   assert.equal(h.events.deleted,1);
 });
 
