@@ -77,8 +77,7 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   delivery_error,
   is_automated_follow_up,
   reply_to_provider_message_id,
-  is_forwarded,
-  whatsapp_customer_mutation
+  is_forwarded
 `;
 const PORTAL_REACTIONS_COLUMN = `
   COALESCE(
