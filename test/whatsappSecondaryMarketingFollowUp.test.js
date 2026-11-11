@@ -289,6 +289,15 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
  assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
 });
 
+test("Day 4 and Day 6 rely on verified ad-session first reply, not unrelated legacy contact creation",()=>{
+ assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/\) first_reply ON TRUE/);
+ assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/first_reply\.at/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/\) qualified_session ON TRUE/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/receipt\.pricing_type='free_entry_point'/);
+ assert.match(svc.EXTENDED_RECHECK_SQL,/\) qualified_session ON TRUE/);
+ assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/\) qualified_session ON TRUE/);
+});
+
 test("Day 4/6 never backfill ad sessions from before the rule was saved",()=>{
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\.first_reply_at>=rule\.updated_at/);
  assert.match(svc.EXTENDED_RECHECK_SQL,/qualified_session\.first_reply_at>=rule\.updated_at/);
