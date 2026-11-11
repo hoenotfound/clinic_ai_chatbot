@@ -93,6 +93,10 @@ const ADS_ONLY_FULL_AI_OPERATIONS=new Set([
   "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  // Manual IMAGE/VIDEO template headers were approved in the full-AI
+  // sender activation gate, but the paid live callback still rejected
+  // all webhook receipts when this flag was enabled.
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
   "WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED",
   "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
@@ -150,9 +154,11 @@ function liveOperationsAllowed(env){
     // Reuse the exact startup safety policy, not a new weaker sender policy.
     if(!secondaryAdsOnlyFullAiMode(env))return false;
     try{assertSecondaryOperationalSafety(env);}catch{return false;}
+    // secondaryAdsOnlyFullAiMode and assertSecondaryOperationalSafety above
+    // already require staff template authorization and billing protection
+    // for media headers. Keep these checks; do not ban verified media again.
     return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED!=="true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
