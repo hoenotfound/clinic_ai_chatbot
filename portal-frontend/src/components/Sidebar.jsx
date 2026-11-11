@@ -12,6 +12,7 @@ const PRIMARY_NAV_ITEMS = [
   { to: "/sales-follow-up", label: "Sales Follow-up", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
+  { to: "/promotional-blast", label: "Promo Blast", icon: ToolsIcon, capabilities: [], adminAlso: true },
 ];
 const NOTIFICATIONS_ITEM = {
   to: "/notifications",
