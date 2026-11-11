@@ -26,7 +26,7 @@ test("dispatch SQL excludes only the staged current message",()=>{
  assert.match(sql,/outgoing\.id<>\$6::integer/);
  assert.match(sql,/staff\.id<>\$6::integer/);
  assert.match(sql,/sent_promo\.id<>\$6::integer/);
- assert.match(sql,/gate\.message_id<>\$6::integer/);
+ assert.match(sql,/gate\.message_id IS DISTINCT FROM \$6::integer/);
  assert.match(blast.CANDIDATE_SQL,/gate\.contact_id=c\.id AND gate\.state<>'idle'/);
  for(const match of ["outgoing.created_at>now()-interval '5 hours'","staff.role='assistant'","sent_promo.whatsapp_template"])
   assert.ok(sql.includes(match),match);
