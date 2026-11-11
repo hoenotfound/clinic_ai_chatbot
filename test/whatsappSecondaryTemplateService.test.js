@@ -262,6 +262,10 @@ test("blast final approval happens after image upload and before secondary Meta 
    ["mediaUpload","finalCheck","metaSend"]:
    ["mediaUpload","finalCheck"]);
   assert.equal(delivered.success,approved);
-  if(!approved)assert.equal(delivered.definitivelyRejected,true);
+  if(!approved){
+   assert.equal(delivered.definitivelyRejected,true);
+   assert.equal(delivered.providerNotAttempted,true);
+   assert.equal(delivered.unknown,false);
+  }
  }
 });
