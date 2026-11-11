@@ -5,6 +5,7 @@ const { createPortalFallback } = require("./utils/portalFallbackGuard");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const customerMutations = require("./services/whatsappCustomerMutationService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
@@ -351,6 +352,7 @@ function createApp({
 
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
+    const customerMutationEvents = whatsapp.parseCustomerMessageMutations(webhookBody);
     const identityRotations=incomingMessages.filter(item=>item.identityRotationOnly===true);
     const customerMessages=incomingMessages.filter(item=>item.identityRotationOnly!==true);
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
@@ -502,6 +504,15 @@ function createApp({
             return null;
           }
         })),
+        Promise.all(customerMutationEvents.map(async (mutation) => {
+          try {
+            return await customerMutations.record(mutation);
+          } catch (error) {
+            durabilityFailures += 1;
+            console.error("Could not durably store customer WhatsApp message mutation:", error);
+            return null;
+          }
+        })),
         Promise.all(reactionEvents.map(async (reaction) => {
           try {
             return await messagesRepo.applyWhatsappReaction(reaction);
@@ -522,6 +533,18 @@ function createApp({
       }
       console.error("Failed to durably accept WhatsApp webhook work:", err);
       return res.sendStatus(503);
+    }
+
+    // Meta may send an edit/delete before its original inbound. The provider
+    // mutation was already durably recorded above; reconcile after the original
+    // message claim has committed, without generating an AI turn or follow-up.
+    for (const incoming of customerMessages) {
+      try {
+        await customerMutations.reconcileForOriginal(incoming.id);
+      } catch (error) {
+        durabilityFailures += 1;
+        console.error("Could not reconcile an earlier customer WhatsApp mutation:", error);
+      }
     }
 
     for (let echoIndex = 0; echoIndex < durableBusinessAppEchoes.length; echoIndex++) {
