@@ -15,6 +15,7 @@ const conversationStore = require("../src/utils/conversationStore");
 const alertRepo = require("../src/db/telegramImmediateAlertRepo");
 const followUpVideo = require("../src/services/followUpVideoPreparationService");
 const router = require("../src/routes/conversations");
+const promotionalBlast = require("../src/services/promotionalBlastService");
 
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==",
@@ -120,6 +121,51 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
     },
   };
 }
+
+// The 3D blast sends eight multipart text fields plus one JPEG. The original
+// six-field Multer limit rejected it with a misleading image-format error
+// before any campaign authorization or provider call could execute.
+test("Promo Blast JPEG request accepts eight fields and reaches campaign authorization",async t=>{
+  const h=await harness(t);
+  patch(t,promotionalBlast,"getCampaign",async()=>({
+    campaign_key:"ns_3d_1111_rm388_2026",
+    template_name:"ns_3d_1111_rm388_2026",
+    enabled:true,valid_until:new Date(Date.now()+86400000).toISOString(),
+  }));
+  const form=new FormData();
+  for(const [key,value] of Object.entries({
+    templateName:"ns_3d_1111_rm388_2026",languageCode:"zh_CN",
+    values:"{}",marketingConsentConfirmed:"true",billingAcknowledged:"true",
+    billingReviewToken:"review-token",
+    blastCampaignKey:"ns_3d_1111_rm388_2026",
+    blastReservationToken:"123e4567-e89b-42d3-a456-426614174000",
+  }))form.append(key,value);
+  assert.equal(Array.from(form.keys()).length,8);
+  form.append("media",new Blob([Buffer.from([0xff,0xd8,0xff,0xe0,0xff,0xd9])],
+    {type:"image/jpeg"}),"WhatsApp promo.jpeg");
+  const result=await h.post(form);
+  // Harness intentionally supplies no admin identity, so a *parsed* blast
+  // must be blocked by server authorization, never by the upload parser.
+  assert.equal(result.status,403);
+  assert.equal(result.body.code,"blast_send_not_authorized");
+  assert.equal(h.events.metaUploads,0);
+  assert.equal(h.events.metaSends,0);
+  assert.equal(h.events.saved.length,0);
+});
+
+test("Template multipart field limit rejects surplus fields with an accurate error",async t=>{
+  const h=await harness(t);
+  const form=new FormData();
+  for(let i=0;i<11;i++)form.append("field"+i,String(i));
+  form.append("media",new Blob([png],{type:"image/png"}),"offer.png");
+  const result=await h.post(form);
+  assert.equal(result.status,400);
+  assert.equal(result.body.code,"invalid_template_media_upload");
+  assert.match(result.body.error,/too many fields/i);
+  assert.equal(h.events.metaUploads,0);
+  assert.equal(h.events.metaSends,0);
+  assert.equal(h.events.saved.length,0);
+});
 
 test("Inbox rejects manual template sends lacking server-side billing acknowledgment before Meta upload", async (t) => {
   const h = await harness(t);
