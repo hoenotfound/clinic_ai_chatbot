@@ -23,30 +23,56 @@ function planNeutroReviewContinuation({ customerText, conversationHistory, langu
   const locale = String(language || "").toLowerCase();
   const malay = locale.startsWith("ms");
   const english = locale.startsWith("en");
+  const recentCustomers = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(item => item?.role === "user").slice(-7)
+    .map(item => String(item.content || ""));
   if (AFFIRMATIVE.test(message)) {
     const previousQuestion = lastAssistant(conversationHistory);
-    const recentCustomers = (Array.isArray(conversationHistory) ? conversationHistory : [])
-      .filter(item => item?.role === "user").slice(-5);
     if (!OFFICE_QUESTION.test(previousQuestion) ||
         !/[吗嗎?？]/u.test(previousQuestion) ||
-        !recentCustomers.some(item => SMALL_BELLY.test(String(item.content || "")))) return null;
+        !recentCustomers.some(value => SMALL_BELLY.test(value))) return null;
+    const priorLeakage = recentCustomers.some(value => URINARY.test(value));
+    const leakageNote = malay
+      ? " Untuk masalah kebocoran air kencing yang disebut tadi, sebaiknya dapatkan pemeriksaan doktor."
+      : english
+        ? " Your earlier urine leakage concern needs a doctor's assessment, as its cause cannot be confirmed in chat."
+        : " 你之前提到的漏尿问题则建议让医生评估原因，不能单凭聊天判断。";
     return {
       kind: "lifestyle_confirmation",
       reply: malay
-        ? "Faham 😊 Duduk lama boleh berkait dengan ketidakselesaan postur, tetapi puncanya perlu dinilai dahulu. Untuk masalah kebocoran air kencing yang disebut tadi, sebaiknya dapatkan pemeriksaan doktor. Nak tahu tentang penilaian postur atau harga rawatan dahulu?"
+        ? "Faham 😊 Kita boleh bincangkan tabiat duduk dan postur terlebih dahulu." +
+          (priorLeakage ? leakageNote : "") +
+          " Nak tahu tentang penilaian postur atau harga rawatan dahulu?"
         : english
-          ? "Got it 😊 We can first discuss your posture and sitting habits. Your earlier urine leakage concern needs a doctor's assessment, as its cause cannot be confirmed in chat. Would you prefer to know about the posture assessment or treatment prices first?"
-          : "明白哦～长期久坐的话，可以先了解一下你的体态情况😊 你之前提到的漏尿问题则建议让医生评估原因，不能单凭聊天判断。你想先了解体态评估，还是项目收费呢？",
+          ? "Got it 😊 We can first discuss your posture and sitting habits." +
+            (priorLeakage ? leakageNote : "") +
+            " Would you prefer to know about the posture assessment or treatment prices first?"
+          : "明白哦～长期久坐的话，可以先了解一下你的体态情况😊" +
+            (priorLeakage ? leakageNote : "") +
+            " 你想先了解体态评估，还是项目收费呢？",
     };
   }
   if (PRICE_FIRST.test(message)) {
+    // The patient's latest stated concern, not an older ad or an unrelated
+    // service in the history, determines which clarification choices to show.
+    const latestConcern = recentCustomers.slice(-4).reverse()
+      .find(value => /(?:身体|身體|骨盆|盆骨|小腹|3\s*d|9\s*d|小颜|小顏|逆龄|逆齡|脉冲|脈衝|pelvic|facial|pulse wave)/iu.test(value)) || "";
+    const body = /(?:身体|身體|骨盆|盆骨|小腹|pelvic)/iu.test(latestConcern) &&
+      !/(?:3\s*d|9\s*d|小颜|小顏|逆龄|逆齡|facial)/iu.test(latestConcern);
+    const choices = body
+      ? (malay
+        ? "Awak nak tahu harga rawatan manual badan/pelvis atau Pulse Wave dahulu?"
+        : english
+          ? "Would you like the price for manual body/pelvic care or Pulse Wave first?"
+          : "你想先了解身体徒手／骨盆调理，还是脉冲波的收费呢？")
+      : (malay
+        ? "Rawatan yang mana awak nak tahu harganya dahulu?"
+        : english
+          ? "Which treatment would you like the price for first?"
+          : "你想先了解哪一项护理的收费呢？");
     return {
       kind: "unscoped_price_clarification",
-      reply: malay
-        ? "Boleh 😊 Awak nak tahu harga rawatan manual badan/pelvis atau Pulse Wave dahulu? Saya boleh semak rawatan yang betul untuk awak."
-        : english
-          ? "Of course 😊 Would you like the price for manual body/pelvic care or Pulse Wave first? I can help with the correct treatment details."
-          : "可以的～😊 你想先了解身体徒手／骨盆调理，还是脉冲波的收费呢？我可以按你想了解的项目介绍。",
+      reply: (malay ? "Boleh 😊 " : english ? "Of course 😊 " : "可以的～😊 ") + choices,
     };
   }
   return null;
