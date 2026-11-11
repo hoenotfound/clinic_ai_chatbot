@@ -1786,6 +1786,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     }
 
     let blastBeforeProviderDispatch=null;
+    let blastCampaignKeyForMessage=null;
     if(req.body?.blastCampaignKey!=null) {
       const campaign=await promotionalBlast.getCampaign(req.body.blastCampaignKey);
       const key=String(req.body?.blastCampaignKey||"");
@@ -1806,6 +1807,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       }
       // The claim is deliberately NOT consumed here. Media and template
       // preparation can fail or take time before any Meta message is attempted.
+      blastCampaignKeyForMessage=key;
       blastBeforeProviderDispatch=messageId=>promotionalBlast.consumeClaim(
         contact.id,key,language,req.session?.username,token,messageId
       );
@@ -1900,6 +1902,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
               whatsappTemplate:{
                 name:prepared.template.name,language:prepared.template.language,
                 category:prepared.template.category,
+                ...(blastCampaignKeyForMessage
+                  ? {blastCampaignKey:blastCampaignKeyForMessage}
+                  : {}),
                 components:prepared.components,values,
                 ...(mediaAttachment ? {mediaFormat:prepared.template.header?.format,
                   mediaFilename:mediaAttachment.filename} : {}),
@@ -1927,7 +1932,12 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       if(send.success){
         await reconcileAcceptedStaffReplyAttention(current.ready.id);
         await markLeadContacted(current.ready.id,req.session.username,send);
-      }else{
+      }else if(!(blastBeforeProviderDispatch &&
+          send.providerNotAttempted===true &&
+          !send.wamid && send.unknown!==true)) {
+        // A known pre-provider rejection is already recorded as failed.
+        // Do not create an unrelated staff-attention hold that would prevent
+        // the unused blast claim from being safely reserved again.
         await contactsRepo.setDeliveryAttention(current.ready.id,
           "secondary WhatsApp template delivery unconfirmed: "+publicDeliveryError(errorText),
           current.saved.id);
@@ -2286,6 +2296,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       ...(mediaMimeType ? { mediaFormat, mediaFilename } : {}),
       ...(mediaSelectionId ? { mediaSelectionId } : {}),
       templateSignature: whatsappTemplate.templateSignature(resolved.template),
+      ...(blastCampaignKeyForMessage
+        ? {blastCampaignKey:blastCampaignKeyForMessage}
+        : {}),
       billingAcknowledged: true,
       billingEvidenceAtSend: billingReview.evidence,
       billingReviewedAt: billingReview.reviewedAt,
@@ -2357,7 +2370,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (sendResult.success) {
       await reconcileAcceptedStaffReplyAttention(preparedContact.id);
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
-    } else {
+    } else if (!(blastBeforeProviderDispatch &&
+        sendResult.providerNotAttempted===true &&
+        !sendResult.wamid && sendResult.unknown!==true)) {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
