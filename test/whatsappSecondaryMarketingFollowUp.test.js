@@ -290,9 +290,9 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
 });
 
 test("Day 4/6 never backfill ad sessions from before the rule was saved",()=>{
- assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
- assert.match(svc.EXTENDED_RECHECK_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
- assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/qualified_session\\.first_reply_at>=rule\\.updated_at/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\.first_reply_at>=rule\.updated_at/);
+ assert.match(svc.EXTENDED_RECHECK_SQL,/qualified_session\.first_reply_at>=rule\.updated_at/);
+ assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/qualified_session\.first_reply_at>=rule\.updated_at/);
  assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_free_entry_referrals referral/);
  assert.match(svc.EXTENDED_POTENTIAL_DUE_SQL,/whatsapp_marketing_consent_events consent/);
 });
