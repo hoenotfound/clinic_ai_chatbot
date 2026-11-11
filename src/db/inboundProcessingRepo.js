@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
+const { validRecoveryTreatmentButtons } = require("../services/whatsapp131060Recovery");
 
 const MAX_INCOMING_PAYLOAD_BYTES = 128 * 1024;
 const PROCESSING_OWNER_ID = `${process.pid}-${crypto.randomBytes(12).toString("hex")}`;
@@ -249,6 +250,7 @@ async function reserveOutboundAttempt({
   contactId,
   content,
   origin,
+  interactiveButtons = null,
 }, database = pool) {
   const safeJobId = Number(processingJobId);
   const safeContactId = Number(contactId);
@@ -262,6 +264,18 @@ async function reserveOutboundAttempt({
   if (!["ai_reply", "system_fallback"].includes(safeOrigin)) {
     throw new TypeError("origin must be ai_reply or system_fallback.");
   }
+  // Only a predefined recovery menu may be saved as interactive. This
+  // metadata is for staff display, never an alternative permission to send.
+  if (interactiveButtons !== null &&
+      (safeOrigin !== "system_fallback" ||
+        !validRecoveryTreatmentButtons(interactiveButtons))) {
+    throw new TypeError("Only the approved 131060 recovery menu can be persisted.");
+  }
+  const whatsappInteractive = interactiveButtons === null ? null
+    : JSON.stringify({
+        type: "button",
+        buttons: interactiveButtons.map(({id, title}) => ({id, title})),
+      });
 
   // The production default is the shared Pool. Tests and transactional
   // callers may pass an already-connected queryable client, which must never
@@ -320,10 +334,10 @@ async function reserveOutboundAttempt({
       [safeContactId]
     );
     const messageResult = await client.query(
-      `INSERT INTO messages (contact_id, role, content)
-       VALUES ($1, 'assistant', $2)
+      `INSERT INTO messages (contact_id, role, content, whatsapp_interactive)
+       VALUES ($1, 'assistant', $2, $3::jsonb)
        RETURNING ${MESSAGE_COLUMNS}`,
-      [safeContactId, String(content || "")]
+      [safeContactId, String(content || ""), whatsappInteractive]
     );
     const message = messageResult.rows[0];
 
