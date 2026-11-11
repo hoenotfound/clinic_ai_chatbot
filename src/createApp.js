@@ -427,6 +427,10 @@ function createApp({
                   () => durablyClaimIncoming(queueKey, incoming),
                   "Secondary inbound claim",
                   (lateClaim) => {
+                    // The delayed original can now be matched with an earlier
+                    // edit/delete. Repair only after its durable claim commits.
+                    void customerMutations.reconcileForOriginal(incoming.id)
+                      .catch((error) => console.error("Late customer mutation repair failed:", error));
                     if (lateClaim) {
                       scheduleDurableClaim(queueKey, lateClaim).catch((error) => {
                         console.error("Failed to schedule late durable WhatsApp inbound:", error);
@@ -434,6 +438,11 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
+              // A successful durable claim is the earliest safe point to
+              // match a mutation to its original message. A parallel mutation
+              // insert also calls applyOne, so either arrival order is covered.
+              void customerMutations.reconcileForOriginal(incoming.id)
+                .catch((error) => console.error("Customer mutation repair failed:", error));
               // The event is HMAC-verified and durably saved before this log.
               // Record only an identity TYPE, never a phone, BSUID, username,
               // ad reference, original message or raw webhook.
@@ -676,17 +685,6 @@ function createApp({
     // response. Calling this on an HTTP 503 permits a durable Neutro
     // message to continue while Meta retries a failed secondary event.
     function scheduleAcceptedWhatsAppWork() {
-      // Out-of-order edits are replayed after the original inbound is durably
-      // claimed. This repair is advisory and must never return 503 or stall an
-      // otherwise accepted normal customer message if a test/client DB differs.
-      if (typeof customerMutations !== "undefined") {
-        for (const incoming of customerMessages) {
-          void customerMutations.reconcileForOriginal(incoming.id)
-            .catch((error) => console.error(
-              "Customer WhatsApp message mutation reconciliation failed:", error
-            ));
-        }
-      }
       setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
         console.error("Failed to record WhatsApp webhook activity:", err);
       });
