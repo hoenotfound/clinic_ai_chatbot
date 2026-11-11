@@ -50,6 +50,7 @@ const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
+const whatsappCustomerMutations = require("../services/whatsappCustomerMutationService");
 const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
 const {eligibleSecondaryAiReplyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
 const {secondaryUsesPrimaryClinicContent}=require("../services/whatsappSenderActivationGate");
@@ -1262,8 +1263,11 @@ router.get("/:contactId/messages", async (req, res) => {
       afterId,
       includeMedia,
     });
+    const mutationNotices = req.query.includeMutationNotices === "true"
+      ? await whatsappCustomerMutations.listNoticesForContact(contactId) : null;
 
     res.json({
+      ...(mutationNotices ? {mutationNotices} : {}),
       messages: page.rows,
       hasMore: page.hasMore,
       oldestId: page.rows[0]?.id || null,
@@ -1272,6 +1276,28 @@ router.get("/:contactId/messages", async (req, res) => {
   } catch (err) {
     console.error("Failed to load conversation thread:", err);
     res.status(500).json({ error: "Something went wrong loading the conversation." });
+  }
+});
+
+// Only return loaded message IDs for this authorized contact. This is used
+// on mutation notifications; fetching just the newest page misses old edits.
+router.get("/:contactId/messages/updates", async (req,res) => {
+  try {
+    const contactId=parsePositiveInt(req.params.contactId);
+    if(!contactId) return res.status(400).json({error:"Invalid contact id."});
+    const idText=String(req.query.ids || "");
+    if(idText.length>5000 || !/^\d+(?:,\d+)*$/.test(idText)) {
+      return res.status(400).json({error:"Invalid message id list."});
+    }
+    const ids=[...new Set(idText.split(",").map(Number))];
+    if(ids.length>300 || ids.some(id=>!Number.isSafeInteger(id)||id<=0)) {
+      return res.status(400).json({error:"Too many message IDs."});
+    }
+    const messages=await messagesRepo.getMessageUpdatesForContact(contactId,ids);
+    res.json({messages});
+  } catch(error) {
+    console.error("Failed to refresh mutated Inbox messages:",error);
+    res.status(500).json({error:"Something went wrong refreshing messages."});
   }
 });
 

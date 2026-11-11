@@ -80,7 +80,10 @@ function payloadForClient(client, event, payload) {
     // The selected thread re-fetches through its permission-checked API.
     // Never log the client, contact or staff identity.
     recordSseLifecycle("redacted_change");
-    return {};
+    // Preserve only the event kind for a mutation. Restricted clients must
+    // re-fetch changed message text through their authorized conversation API.
+    return payload?.reason === "message_mutation"
+      ? {reason: "message_mutation"} : {};
   }
 
   if (payload?.contactId != null && client.access.contactIds !== null) {

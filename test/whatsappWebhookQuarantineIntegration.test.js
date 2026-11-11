@@ -140,6 +140,13 @@ function webhookHarness({ failAudit = false, dualInbox = false,
       scheduled.push({ key, claim });
     },
     messagesRepo: { applyWhatsappReaction: async () => null },
+    // Route VM tests execute the real handler with mocked dependencies.
+    // Mutations must not hold normal signed customer message ACKs.
+    customerMutations: {
+      record: async () => null,
+      reconcileForOriginal: async () => 0,
+      reconcileAfterInbound: async () => 0,
+    },
     realtimeEvents: { publish() {} },
     setupStatusRepo: { recordWebhook: noop },
     processStoredDeliveryStatuses: noop,

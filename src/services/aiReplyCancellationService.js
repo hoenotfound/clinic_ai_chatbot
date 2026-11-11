@@ -4,6 +4,9 @@ const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomer
 const epochs = new Map();
 const epochTouchedAt = new Map();
 const pendingEchoes = new Map();
+// Message-specific invalidations do not advance the conversation epoch.
+// An earlier customer edit must not cancel a different, newer AI reply.
+const invalidatedInboundIds = new Map();
 
 const EPOCH_TTL_MS = 6 * 60 * 60 * 1000;
 const EPOCH_PRUNE_INTERVAL_MS = 60 * 1000;
@@ -72,6 +75,29 @@ function keyForContact(contact) {
         contact?.whatsapp_sender_key
       )
     : keyForChannelContact(channel, contact?.channel_user_id);
+}
+
+function cancelInboundMessage(messageId) {
+  const id=Number(messageId);
+  if (!Number.isSafeInteger(id) || id < 1) return false;
+  const now=Date.now();
+  invalidatedInboundIds.set(id,now);
+  // Bounded process-local evidence. Durable processing jobs remain completed
+  // after restart, so pruning does not make revoked work eligible for replay.
+  for (const [key,touched] of invalidatedInboundIds) {
+    if (now-touched > EPOCH_TTL_MS) invalidatedInboundIds.delete(key);
+  }
+  if (invalidatedInboundIds.size > MAX_EPOCH_KEYS) {
+    const overflow=invalidatedInboundIds.size-MAX_EPOCH_KEYS;
+    for (const key of [...invalidatedInboundIds.keys()].slice(0,overflow))
+      invalidatedInboundIds.delete(key);
+  }
+  return true;
+}
+
+function inboundMessageCanSend(messageId) {
+  const id=Number(messageId);
+  return !Number.isSafeInteger(id) || id<1 || !invalidatedInboundIds.has(id);
 }
 
 function cancelForContact(contact) {
@@ -169,6 +195,8 @@ module.exports = {
   keyForChannelContact,
   keyForContact,
   cancelForContact,
+  cancelInboundMessage,
+  inboundMessageCanSend,
   snapshot,
   cancel,
   cancelledSince,

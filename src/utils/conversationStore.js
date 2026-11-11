@@ -87,6 +87,9 @@ function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
       !isStickerRow(row) &&
+      !["revoke","edit_unavailable","unavailable_edit"].includes(
+        row.whatsapp_customer_mutation
+      ) &&
       (
         row.role !== "assistant" ||
         (
