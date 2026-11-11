@@ -4908,6 +4908,9 @@ function MessageBubble({
   const isPatient = message.role === "user";
   const customerMutation = String(message.whatsapp_customer_mutation || "");
   const isCustomerDeleted = isPatient && customerMutation === "revoke";
+  const isCustomerEditNotice = isPatient &&
+    (customerMutation === "unavailable_edit" || customerMutation === "edit_unavailable");
+  const isNonActionableMutation = isCustomerDeleted || isCustomerEditNotice;
   const readOnlyReplyButtons = !isPatient &&
     message.whatsapp_interactive?.type === "button" &&
     Array.isArray(message.whatsapp_interactive?.buttons) &&
@@ -4986,13 +4989,13 @@ function MessageBubble({
       String(message.delivery_status || "").toLowerCase()
     );
   const canQuote = Boolean(
-    !isCustomerDeleted && canReply &&
+    !isNonActionableMutation && canReply &&
     message.whatsapp_message_id &&
     !message._optimistic &&
     quoteDeliveryConfirmed
   );
-  const canCopy = !isCustomerDeleted && Boolean(String(message.content || "").trim());
-  const showActions = !isCustomerDeleted &&
+  const canCopy = !isNonActionableMutation && Boolean(String(message.content || "").trim());
+  const showActions = !isNonActionableMutation &&
     (canQuote || canForward || canCopy || offerReply || offerForward);
   const replyPreview = message.reply_preview || null;
 
