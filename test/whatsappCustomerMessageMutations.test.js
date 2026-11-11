@@ -314,16 +314,102 @@ test("new verified inbound can recover a targetless edit notice from before cont
   assert.equal(updated,1);
 });
 
-test("edit cancels an active original AI generation, not a different later enquiry",async()=>{
+test("editing an active original cancels only that inbound, never newer enquiries",async()=>{
   const cancel=require("../src/services/aiReplyCancellationService");
   const key=cancel.keyForWhatsAppNumber("60123456789");
   const before=cancel.snapshot(key);
   const old=stubDatabase("edit",true,false);
   await mutations.applyOne("wamid.change05",{database:old.db,env});
-  assert.equal(cancel.snapshot(key),before,
-    "an edit to a completed old turn must not interrupt an unrelated new reply");
+  assert.equal(cancel.snapshot(key),before);
+  assert.equal(cancel.inboundMessageCanSend(71),true);
   const active=stubDatabase("edit",true,true);
   await mutations.applyOne("wamid.change05",{database:active.db,env});
-  assert.ok(cancel.snapshot(key)>before,
-    "editing an inbound with an active job must invalidate its AI generation");
+  assert.equal(cancel.inboundMessageCanSend(71),false);
+  assert.equal(cancel.inboundMessageCanSend(72),true,
+    "an unrelated newer customer enquiry must remain sendable");
+  assert.equal(cancel.snapshot(key),before,
+    "customer mutations must not advance the conversation-wide AI epoch");
+});
+
+test("verified historical user IDs match only within the original sender and contact",()=>{
+  const fs=require("node:fs");
+  const sql=fs.readFileSync(require.resolve("../src/services/whatsappCustomerMutationService"),"utf8");
+  assert.match(sql,/FROM whatsapp_sender_user_id_aliases alias/);
+  assert.match(sql,/alias\.sender_id = c\.whatsapp_sender_id/);
+  assert.match(sql,/alias\.contact_id = c\.id/);
+  assert.match(sql,/alias\.previous_user_id = \$4/);
+  assert.match(sql,/alias\.previous_user_id = \$5/);
+});
+
+test("revoked photo queues durable R2 cleanup in the message-redaction transaction",async()=>{
+  const {db,calls}=stubDatabase("revoke",true,false);
+  const raw=db.connect;
+  db.connect=async()=>{
+    const client=await raw();
+    const previous=client.query;
+    client.query=async(sql,args)=>{
+      if(sql.includes("SELECT m.id, m.contact_id"))return {rows:[{
+        id:71,contact_id:14,media_key:"messages/14/photo.jpg",
+        whatsapp_customer_mutation:null,whatsapp_customer_mutated_at:null
+      }]};
+      return previous(sql,args);
+    };
+    return client;
+  };
+  await mutations.applyOne("wamid.change05",{database:db,env});
+  const redacted=calls.find(c=>c.sql.includes("UPDATE messages"));
+  const queued=calls.find(c=>c.sql.includes("INSERT INTO whatsapp_customer_revoked_media_cleanup"));
+  assert.ok(redacted);
+  assert.ok(queued,"attachment must be scheduled before commit");
+  assert.deepEqual(queued.args,[71,14,"messages/14/photo.jpg"]);
+  assert.ok(calls.indexOf(queued)<calls.findIndex(c=>c.sql==="COMMIT"));
+});
+
+test("editing a caption does not schedule any R2 media deletion",async()=>{
+  const {db,calls}=stubDatabase("edit",true,false);
+  await mutations.applyOne("wamid.change05",{database:db,env});
+  assert.equal(calls.filter(c=>c.sql.includes("INSERT INTO whatsapp_customer_revoked_media_cleanup")).length,0);
+});
+
+test("revoked-media R2 cleanup refuses other contacts and any still referenced media",async()=>{
+  const cleanup=require("../src/services/whatsappCustomerRevokedMediaCleanup");
+  const storage=require("../src/services/mediaStorageService");
+  const namespace={CLIENT_SLUG:"neutro"};
+  assert.equal(cleanup.safeContactKey("clients/neutro/messages/14/photo.jpg",14,namespace),true);
+  assert.equal(cleanup.safeContactKey("clients/neutro/messages/15/photo.jpg",14,namespace),false);
+  assert.equal(cleanup.safeContactKey("clients/other/messages/14/photo.jpg",14,namespace),false);
+  assert.equal(cleanup.safeContactKey("clients/neutro/messages/follow-up-config/shared.jpg",14,namespace),false);
+  let deleted=0;
+  const job={id:1,contact_id:14,message_id:71,
+    media_key:"clients/neutro/messages/14/photo.jpg",lease_token:"lease123",attempts:1};
+  const calls=[];
+  const database={async query(sql,args){calls.push({sql,args});
+    if(sql.includes("SELECT EXISTS(SELECT 1 FROM messages"))return {rows:[{still_used:true}]};
+    if(sql.includes("UPDATE whatsapp_customer_revoked_media_cleanup"))return {rows:[{id:1}]};
+    throw Error("Unexpected query");
+  }};
+  const result=await cleanup.processJob(job,{database,env:namespace,
+    media:{...storage,async deleteMedia(){deleted++;}}});
+  assert.equal(result,"skipped");
+  assert.equal(deleted,0);
+});
+
+test("revoked-media R2 deletion failures are recorded for durable retry",async()=>{
+  const cleanup=require("../src/services/whatsappCustomerRevokedMediaCleanup");
+  const storage=require("../src/services/mediaStorageService");
+  const namespace={CLIENT_SLUG:"neutro"};
+  const job={id:2,contact_id:14,message_id:71,
+    media_key:"clients/neutro/messages/14/photo.jpg",lease_token:"lease124",attempts:2};
+  const queries=[];
+  const database={async query(sql,args){queries.push({sql,args});
+    if(sql.includes("SELECT EXISTS(SELECT 1 FROM messages"))return {rows:[{still_used:false}]};
+    if(sql.includes("UPDATE whatsapp_customer_revoked_media_cleanup"))return {rows:[{id:2}]};
+    throw Error("Unexpected query");
+  }};
+  const result=await cleanup.processJob(job,{database,env:namespace,
+    media:{...storage,async deleteMedia(){throw Error("R2 temporarily unavailable");}}});
+  assert.equal(result,"failed");
+  const failure=queries.find(q=>q.sql.includes("UPDATE whatsapp_customer_revoked_media_cleanup"));
+  assert.equal(failure.args[2],"failed");
+  assert.ok(failure.args[3]>0);
 });
