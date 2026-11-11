@@ -289,6 +289,30 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
  assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
 });
 
+test("66h only follows a verified later customer response; silence is capped across both workers",()=>{
+ for(const sql of [
+   svc.CANDIDATES_SQL,svc.RECHECK_SQL,svc.POTENTIAL_DUE_SQL,
+ ]){
+   assert.match(sql,/rule\.slot_hours<>66 OR EXISTS/);
+   assert.match(sql,/engaged\.created_at>first_reply\.at/);
+   assert.match(sql,/engaged_context\.conversation_id=sc\.id/);
+   assert.match(sql,/service_sent\.status='accepted'/);
+   assert.match(sql,/marketing_sent\.status='accepted'/);
+   assert.match(sql,/\) < 5/);
+   assert.match(sql,/engagement\.created_at>first_reply\.at/);
+   assert.match(sql,/imported_engagement\.sender_id=sa\.id/);
+ }
+ for(const sql of [
+   svc.EXTENDED_CANDIDATES_SQL,svc.EXTENDED_RECHECK_SQL,svc.EXTENDED_POTENTIAL_DUE_SQL,
+ ]){
+   assert.match(sql,/engagement\.created_at>qualified_session\.first_reply_at/);
+   assert.match(sql,/service_sent\.claimed_at>=qualified_session\.first_reply_at/);
+   assert.match(sql,/marketing_sent\.claimed_at>=qualified_session\.first_reply_at/);
+   assert.match(sql,/\) < 5/);
+   assert.doesNotMatch(sql,/first_reply\.at/);
+ }
+});
+
 test("Day 4 and Day 6 rely on verified ad-session first reply, not unrelated legacy contact creation",()=>{
  assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/\) first_reply ON TRUE/);
  assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/first_reply\.at/);
