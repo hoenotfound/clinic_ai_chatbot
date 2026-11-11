@@ -319,6 +319,10 @@ const EXTENDED_SESSION_SQL=`
  ) qualified_session ON TRUE
 `;
 const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
+ // The verified ad session below is its own complete first-reply proof.
+ // The 48/66h first-reply join anchors to contact creation for legacy leads
+ // and would incorrectly exclude returning contacts who clicked a new ad.
+ .replace(FIRST_REPLY_SQL,"")
  .replace("inbound.id AS inbound_id,inbound.created_at AS inbound_at,",
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
