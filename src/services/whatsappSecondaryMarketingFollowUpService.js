@@ -343,7 +343,16 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
       WHERE sent.sender_id=sa.id AND sent.contact_id=c.id AND sent.status='accepted')<4
   ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5`);
 
-// Only freshly configured Day 4/6 rules may follow new ad sessions.\n// An enabled rule never backfills earlier ad conversations.\nconst EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{\n  fromTable:"whatsapp_sender_marketing_followup_rules",\n  dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",\n  quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",\n  orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",\n});\n\n// Recheck with the existing claim; sender, real inbound, consent and operator
+// Only freshly configured Day 4/6 rules may follow new ad sessions.
+// An enabled rule never backfills earlier ad conversations.
+const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{
+  fromTable:"whatsapp_sender_marketing_followup_rules",
+  dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",
+  quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",
+  orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
+});
+
+// Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
 const RECHECK_SQL=CANDIDATES_SQL.replace(
  `   AND NOT EXISTS (
