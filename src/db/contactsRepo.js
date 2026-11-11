@@ -1249,8 +1249,9 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
   }
   const safeSummary = String(summary || "Unanswered customer question").trim().slice(0, 350);
   const safeCategory = category === "information" ? "information" : "clinical";
-  // Only group repeated reports of the SAME high-confidence clinical topic.
-  // Unrelated/new clinical concerns and every information review still alert.
+  // Group same-worded pending clinical questions, plus recognised variations
+  // of one high-confidence symptom. Other/new concerns and informational
+  // reviews still generate independent alerts.
   // No schema change: compare the existing pending message summaries.
   const urinaryReviewTopic = safeCategory === "clinical" &&
     /(?:漏尿|尿失禁|尿漏|漏小便|憋不住尿|urinary\s+(?:leakage|incontinence)|urine\s+leak|leak(?:ing|age)?\s+urine|kencing\s+(?:bocor|tak\s+tahan)|tak\s+tahan\s+kencing)/iu.test(safeSummary);
@@ -1266,10 +1267,13 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
        SELECT EXISTS (
          SELECT 1 FROM eligible e
          JOIN ai_review_items earlier ON earlier.contact_id = e.id
-         WHERE $5::text IS NOT NULL
-           AND earlier.status = 'pending'
+         WHERE earlier.status = 'pending'
            AND earlier.category = 'clinical'
-           AND earlier.summary ~* $5::text
+           AND (
+             ($5::text IS NOT NULL AND earlier.summary ~* $5::text)
+             OR ($5::text IS NULL AND
+               lower(btrim(earlier.summary)) = lower(btrim($3::text)))
+           )
        ) AS already_pending
      ), inserted AS (
        INSERT INTO ai_review_items (contact_id, inbound_message_id, summary, category)
