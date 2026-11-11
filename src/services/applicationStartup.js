@@ -204,7 +204,12 @@ async function startApplication({
     // happens after the interval, keeping the startup/hot-deploy window free
     // for live customer media traffic.
     const tempMediaPruneTimer = setIntervalFn(
-      pruneStaleTemporaryMediaSafely,
+      () => {
+        void pruneStaleTemporaryMediaSafely();
+        // Reuse the existing 6-hour maintenance interval: no new Neon poll.
+        void customerMutations.pruneExpired()
+          .catch(error=>console.error("Customer mutation expiry failed:",error));
+      },
       TEMP_MEDIA_PRUNE_INTERVAL_MS
     );
     tempMediaPruneTimer?.unref?.();
