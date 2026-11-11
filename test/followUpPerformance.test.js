@@ -77,9 +77,9 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     await client.query("INSERT INTO contacts VALUES(6,'whatsapp'),(7,'whatsapp'); " +
       "INSERT INTO leads VALUES(7,6,now()-interval '15 days'); " +
       "INSERT INTO messages(id,contact_id,role,created_at,is_automated_follow_up,delivery_status,whatsapp_template) " +
-      "VALUES(80,6,'assistant',now()-interval '9 days',true,'read','{\\\"automatedSecondaryMarketingFollowup\\\":true,\\\"slotHours\\\":48}'::jsonb)," +
-      "(82,7,'assistant',now()-interval '8 days',true,'delivered','{\\\"automatedSecondaryFollowup\\\":true,\\\"slotHours\\\":2}'::jsonb)," +
-      "(84,7,'assistant',now()-interval '8 days'+interval '2 hours',true,'sent','{\\\"automatedSecondaryFollowup\\\":true,\\\"slotHours\\\":6}'::jsonb); " +
+      "VALUES(80,6,'assistant',now()-interval '9 days',true,'read',jsonb_build_object('automatedSecondaryMarketingFollowup',true,'slotHours',48))," +
+      "(82,7,'assistant',now()-interval '8 days',true,'delivered',jsonb_build_object('automatedSecondaryFollowup',true,'slotHours',2))," +
+      "(84,7,'assistant',now()-interval '8 days'+interval '2 hours',true,'sent',jsonb_build_object('automatedSecondaryFollowup',true,'slotHours',6)); " +
       "INSERT INTO whatsapp_sender_marketing_followup_attempts VALUES(80,6,'accepted'); " +
       "INSERT INTO whatsapp_sender_followup_attempts VALUES(82,7,'accepted'),(84,7,'unknown'); " +
       "INSERT INTO messages(id,contact_id,role,created_at) VALUES(81,6,'user',now()-interval '9 days'+interval '1 hour')," +
