@@ -276,3 +276,46 @@ test("Inbox Treatment filter combines with channel and can be cleared", async ({
   await expect(channel).toHaveValue("all");
   await expect(inbox.getByText("9D Facebook", { exact: true })).toBeVisible();
 });
+
+test("Inbox list hides WhatsApp sender badges while opened chat keeps its number label", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(101, "Main Number Customer", {
+      whatsapp_sender_key: "neutro",
+      whatsapp_sender_display_name: "DA",
+    }),
+    conversation(102, "Secondary Number Customer", {
+      whatsapp_sender_key: "neutro_secondary",
+      whatsapp_sender_display_name: "中医养生馆",
+      whatsapp_is_secondary: true,
+      whatsapp_secondary_connection_state: "connected",
+      whatsapp_sender_state: "active",
+      whatsapp_sender_coexistence_enabled: true,
+    }),
+  ]);
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByText("Main Number Customer", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Secondary Number Customer", { exact: true })).toBeVisible();
+  await expect(inbox.getByTitle("Receiving WhatsApp business number")).toHaveCount(0);
+  await expect(inbox.getByText("DA", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("中医养生馆", { exact: true })).toHaveCount(0);
+
+  await inbox.getByRole("button").filter({ hasText: "Main Number Customer" }).click();
+  const mainThread = page.locator('section[aria-label="Conversation with Main Number Customer"]');
+  await expect(mainThread).toBeVisible();
+  await expect(mainThread.getByText("via DA", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width || 0) < 1024) {
+    await mainThread.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await inbox.getByRole("button").filter({ hasText: "Secondary Number Customer" }).click();
+  const secondaryThread = page.locator('section[aria-label="Conversation with Secondary Number Customer"]');
+  await expect(secondaryThread).toBeVisible();
+  await expect(secondaryThread.getByText("via 中医养生馆", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width || 0) < 1024) {
+    await secondaryThread.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await inbox.getByRole("button", { name: /Filters/ }).click();
+  await expect(inbox.getByRole("combobox", { name: "WhatsApp business number" })).toBeVisible();
+});
