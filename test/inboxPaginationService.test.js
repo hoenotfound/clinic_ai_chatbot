@@ -88,3 +88,66 @@ test("search/filter values and page sizes are bounded before querying Neon",()=>
     {limit:99999}).ids.length,100);
   assert.equal(openReplyWindow(record(1,{channel:"whatsapp"}),now),true);
 });
+
+test("treatment options and filtering include older pages and respect staff access",()=>{
+  const rows=Array.from({length:135},(_,i)=>record(i+1,{
+    treatment_interest:i===125?"3D 小颜术":i===130?"9D 逆龄抗衰":null,
+  }));
+  rows[130].channel="facebook";
+  const all=inboxPageModel(rows,{}, {now,limit:100});
+  assert.equal(all.ids.length,100);
+  assert.deepEqual(all.treatmentOptions,[
+    ["all","All treatments"],["3D 小颜术","3D 小颜术"],
+    ["9D 逆龄抗衰","9D 逆龄抗衰"],["__unspecified__","Unspecified"],
+  ]);
+  const facial=inboxPageModel(rows,{treatment:"3D 小颜术"},{now});
+  assert.deepEqual(facial.ids,[126]);
+  assert.equal(facial.statusCounts.all,1);
+  const antiAging=inboxPageModel(rows,{
+    treatment:"9d 逆龄抗衰",channel:"facebook",
+  },{now});
+  assert.deepEqual(antiAging.ids,[131]);
+  assert.deepEqual(inboxPageModel(rows,{
+    treatment:"9D 逆龄抗衰",channel:"whatsapp",
+  },{now}).ids,[]);
+  assert.equal(inboxPageModel(rows,{treatment:"__unspecified__"},{now}).total,133);
+  const scoped=inboxPageModel([rows[125],rows[130]],{}, {now,canViewAll:false});
+  assert.deepEqual(scoped.treatmentOptions,[
+    ["all","All treatments"],["3D 小颜术","3D 小颜术"],
+    ["9D 逆龄抗衰","9D 逆龄抗衰"],
+  ]);
+});
+
+test("treatment choices use current lead interest without leaking malformed filters",()=>{
+  const rows=[
+    record(1,{treatment_interest:" 骨盆调理 ",is_unread:true}),
+    record(2,{treatment_interest:"骨盆调理",has_unreplied:true}),
+    record(3,{treatment_interest:""}),
+  ];
+  assert.deepEqual(inboxPageModel(rows,{treatment:"骨盆调理",status:"unread"},{now}).ids,[1]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"骨盆调理",status:"unreplied"},{now}).ids,[2]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"__unspecified__"},{now}).ids,[3]);
+  assert.deepEqual(inboxPageModel(rows,{}, {now}).treatmentOptions,[
+    ["all","All treatments"],["骨盆调理","骨盆调理"],["__unspecified__","Unspecified"],
+  ]);
+  assert.equal(normalizeInboxPageFilters({treatment:"x".repeat(200)}).treatment,"all");
+  assert.equal(normalizeInboxPageFilters({treatment:"bad\ninput"}).treatment,"all");
+  assert.equal(normalizeInboxPageFilters({treatment:"3D 小颜术"}).treatment,"3D 小颜术");
+});
+
+test("Inbox pagination groups mixed-width and spacing variants of the same treatment",()=>{
+  const rows=[
+    record(1,{treatment_interest:"3D 小颜术"}),
+    record(2,{treatment_interest:"3D小颜术"}),
+    record(3,{treatment_interest:"３Ｄ 小颜术"}),
+    record(4,{treatment_interest:"9D 逆龄抗衰"}),
+  ];
+  const all=inboxPageModel(rows,{}, {now});
+  assert.deepEqual(all.treatmentOptions,[
+    ["all","All treatments"],["3D 小颜术","3D 小颜术"],
+    ["9D 逆龄抗衰","9D 逆龄抗衰"],
+  ]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"3D 小颜术"},{now}).ids,[1,2,3]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"3d小颜术"},{now}).ids,[1,2,3]);
+  assert.deepEqual(inboxPageModel(rows,{treatment:"３Ｄ 小颜术"},{now}).ids,[1,2,3]);
+});

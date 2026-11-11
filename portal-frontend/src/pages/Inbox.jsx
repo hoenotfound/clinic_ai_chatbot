@@ -128,6 +128,22 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Needs attention" },
 ];
 
+const UNSPECIFIED_TREATMENT = "__unspecified__";
+
+function normalizeInboxTreatment(value) {
+  return String(value ?? "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
+}
+
+function matchesInboxTreatment(conversation, treatment) {
+  if (!treatment || treatment === "all") return true;
+  // The server resolves configured service aliases on hydrated rows.
+  const current = conversation.treatment_filter_key ||
+    normalizeInboxTreatment(conversation.treatment_interest);
+  return treatment === UNSPECIFIED_TREATMENT
+    ? !current
+    : current === normalizeInboxTreatment(treatment);
+}
+
 // Use one matching rule for the Inbox list and all contextual filter counts.
 function matchesInboxFilters(conversation, filters, { exclude = null, now, canViewAllLeads, currentUsername }) {
   // Archived is a separate Status choice. Other statuses exclude archived
@@ -154,6 +170,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
       !matchesLeadAssignment(conversation, filters.assignment, currentUsername)) return false;
   if (exclude !== "replyWindow" && filters.replyWindow !== "all" &&
       hasOpenReplyWindow(conversation, now) !== (filters.replyWindow === "open")) return false;
+  if (exclude !== "treatment" && !matchesInboxTreatment(conversation, filters.treatment)) return false;
   if (exclude === "query") return true;
   const query = filters.query.trim().toLowerCase();
   if (!query) return true;
@@ -551,12 +568,13 @@ export default function Inbox() {
   const [inboxPage, setInboxPage] = useState({
     hasMore:false,nextOffset:0,total:0,allCount:0,
     statusCounts:null,replyWindowCounts:null,senderOptions:null,assignmentOptions:null,
+    treatmentOptions:null,
   });
   const [inboxPageLoading, setInboxPageLoading] = useState(false);
   const [olderPageLoading, setOlderPageLoading] = useState(false);
   const inboxFiltersRef = useRef({
     status:"all",channel:"all",sender:"all",control:"all",
-    assignment:"all",replyWindow:"all",query:"",
+    assignment:"all",replyWindow:"all",treatment:"all",query:"",
   });
   const filterRefreshTimerRef = useRef(null);
   const pageLoadingRef = useRef(false);
@@ -650,7 +668,7 @@ export default function Inbox() {
           hasMore:page.hasMore,nextOffset:page.nextOffset,total:page.total,
           allCount:page.allCount,statusCounts:page.statusCounts,
           replyWindowCounts:page.replyWindowCounts,senderOptions:page.senderOptions,
-          assignmentOptions:page.assignmentOptions,
+          assignmentOptions:page.assignmentOptions,treatmentOptions:page.treatmentOptions,
         });
       } catch (err) {
         console.error("Failed to refresh conversations:", err);
@@ -2073,6 +2091,7 @@ function ConversationList({
     control: "all",
     assignment: "all",
     replyWindow: "all",
+    treatment: "all",
     query: "",
   });
   const filtersRef = useRef(filters);
@@ -2115,8 +2134,9 @@ function ConversationList({
     return directoryMatches.filter((item) =>
       !existing.has(Number(item.contact_id)) &&
       (filters.channel === "all" || (item.channel || "whatsapp") === filters.channel) &&
-      (filters.sender === "all" || item.whatsapp_sender_key === filters.sender));
-  }, [directoryMatches, conversationList, filters.channel, filters.sender]);
+      (filters.sender === "all" || item.whatsapp_sender_key === filters.sender) &&
+      matchesInboxTreatment(item, filters.treatment));
+  }, [directoryMatches, conversationList, filters.channel, filters.sender, filters.treatment]);
   // Only show business-number switching once the server has verified and
   // linked more than one sender. Legacy single-number clients stay simple.
   const localSenderOptions = useMemo(() => {
@@ -2131,6 +2151,26 @@ function ConversationList({
   }, [conversationList]);
   const senderOptions = paging?.senderOptions || localSenderOptions;
   const showSenderFilter = senderOptions.length > 1;
+  const localTreatmentOptions = useMemo(() => {
+    const treatments = new Map();
+    let unspecified = false;
+    for (const item of conversationList) {
+      const name = String(item.treatment_interest ?? "").trim();
+      const normalized = normalizeInboxTreatment(name);
+      if (!name) unspecified = true;
+      else if (name.length <= 160 && normalized !== "all" &&
+        normalized !== UNSPECIFIED_TREATMENT && !treatments.has(normalized)) {
+        treatments.set(normalized, name);
+      }
+    }
+    return [
+      ["all", "All treatments"],
+      ...[...treatments.values()].sort((a, b) => a.localeCompare(b))
+        .map((name) => [name, name]),
+      ...(unspecified ? [[UNSPECIFIED_TREATMENT, "Unspecified"]] : []),
+    ];
+  }, [conversationList]);
+  const treatmentOptions = paging?.treatmentOptions || localTreatmentOptions;
   const localAssignmentOptions = useMemo(
     () => buildLeadAssignmentFilterOptions(conversationList, currentUsername, {
       includeUnassigned: showUnassignedAssignment,
@@ -2192,7 +2232,7 @@ function ConversationList({
     setVisibleRowCount(60);
     setRevealedArchiveId(null);
   }, [filters.status, filters.channel, filters.sender, filters.control,
-      filters.assignment, filters.replyWindow, filters.query]);
+      filters.assignment, filters.replyWindow, filters.treatment, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
       filter.key,
@@ -2212,6 +2252,7 @@ function ConversationList({
     (filters.sender !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
     (filters.replyWindow !== "all" ? 1 : 0) +
+    (filters.treatment !== "all" ? 1 : 0) +
     (canViewAllLeads && filters.assignment !== "all" ? 1 : 0);
 
   const hasActiveFilters = activeFilterCount > 0 || !!filters.query.trim();
@@ -2238,6 +2279,10 @@ function ConversationList({
       };
       active.push({ key: "channel", label: channelLabels[filters.channel] || filters.channel });
     }
+    if (filters.treatment !== "all") {
+      const label = treatmentOptions.find(([value]) => value === filters.treatment)?.[1];
+      active.push({ key: "treatment", label: `Treatment · ${label || filters.treatment}` });
+    }
     if (filters.control !== "all") {
       active.push({
         key: "control",
@@ -2251,7 +2296,7 @@ function ConversationList({
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
+  }, [assignmentOptions, canViewAllLeads, senderOptions, treatmentOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.treatment, filters.status]);
 
   function applyFilters(next) {
     onExplicitFilterChange();
@@ -2265,13 +2310,13 @@ function ConversationList({
   function clearAppliedFilters() {
     applyFilters({
       ...filtersRef.current,status:"all",channel:"all",sender:"all",
-      control:"all",assignment:"all",replyWindow:"all",
+      control:"all",assignment:"all",replyWindow:"all",treatment:"all",
     });
   }
   function clearFilters() {
     applyFilters({
       status:"all",channel:"all",sender:"all",control:"all",
-      assignment:"all",replyWindow:"all",query:"",
+      assignment:"all",replyWindow:"all",treatment:"all",query:"",
     });
   }
 
@@ -2388,15 +2433,21 @@ function ConversationList({
                 </div>
               )}
               {canViewAllLeads && (
-                <div className="col-span-2">
-                  <FilterSelect
-                    label="Lead owner"
-                    value={filters.assignment}
-                    onChange={(value) => updateFilter("assignment", value)}
-                    options={assignmentOptions}
-                  />
-                </div>
+                <FilterSelect
+                  label="Lead owner"
+                  value={filters.assignment}
+                  onChange={(value) => updateFilter("assignment", value)}
+                  options={assignmentOptions}
+                />
               )}
+              <div className={canViewAllLeads ? "min-w-0" : "col-span-2"}>
+                <FilterSelect
+                  label="Treatment"
+                  value={filters.treatment}
+                  onChange={(value) => updateFilter("treatment", value)}
+                  options={treatmentOptions}
+                />
+              </div>
               <FilterSelect
                 label="Handled by"
                 value={filters.control}
@@ -2468,7 +2519,7 @@ function ConversationList({
         }}>
         {!conversations && <ConversationListSkeleton />}
 
-        {conversations && conversations.length === 0 &&
+        {conversations && conversations.length === 0 && !hasActiveFilters &&
           !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
@@ -2480,7 +2531,8 @@ function ConversationList({
           />
         )}
 
-        {conversations && conversations.length > 0 && filteredConversations.length === 0 &&
+        {conversations && (conversations.length > 0 || hasActiveFilters) &&
+          filteredConversations.length === 0 &&
           !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={filters.status === "archived" && statusCounts.archived === 0
@@ -2563,14 +2615,6 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
-                    {conversation.channel === "whatsapp" && inboxSenderDisplayName(conversation) && (
-                      <span
-                        title="Receiving WhatsApp business number"
-                        className="max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
-                      >
-                        {inboxSenderDisplayName(conversation)}
-                      </span>
-                    )}
                     {conversation.whatsapp_is_secondary === true &&
                       conversation.whatsapp_secondary_connection_state !== "connected" && (
                       <span role="status" title="Secondary number disconnected; outgoing messages paused"
@@ -2630,7 +2674,7 @@ function ConversationList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{displayName(contact)}</span>
                   <span className="block truncate text-xs text-[var(--color-text-muted)]">
-                    {inboxSenderDisplayName(contact) || contactMeta(contact)}
+                    {contactMeta(contact)}
                   </span>
                 </span>
               </button>

@@ -8,6 +8,7 @@ const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
+const { createInboxTreatmentResolver } = require("../utils/inboxTreatmentInterest");
 const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
@@ -677,11 +678,16 @@ async function searchConversationDirectory({ term, accessibleContactIds = null, 
            sa.state AS whatsapp_sender_state,
            sa.coexistence_enabled AS whatsapp_sender_coexistence_enabled,
            c.needs_attention, c.is_unread, c.needs_follow_up,
+           current_lead.treatment_interest AS treatment_interest,
            c.created_at
     FROM contacts c
     LEFT JOIN whatsapp_sender_conversations sc
       ON sc.contact_id = c.id AND sc.state = 'bound'
     LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
+    LEFT JOIN LATERAL (
+      SELECT l.treatment_interest FROM leads l WHERE l.contact_id = c.id
+      ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC LIMIT 1
+    ) current_lead ON TRUE
     WHERE ($2::integer[] IS NULL OR c.id = ANY($2::integer[]))
       AND (
         c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1
@@ -693,7 +699,11 @@ async function searchConversationDirectory({ term, accessibleContactIds = null, 
     [`%${escaped}%`, accessibleContactIds, boundLimit,
      normalizedPhone.length >= 2 ? `%${normalizedPhone}%` : ""]
   );
-  return result.rows.map(row => presentPortalContact(row));
+  const resolveTreatment = createInboxTreatmentResolver();
+  return result.rows.map(row => ({
+    ...presentPortalContact(row),
+    treatment_filter_key: resolveTreatment(row.treatment_interest).key,
+  }));
 }
 
 async function listConversations({
@@ -829,6 +839,7 @@ ${senderAwareInboxReadsEnabled() ? `
       current_lead.id AS lead_id,
       CASE WHEN current_lead.is_closed = false THEN current_lead.temperature ELSE NULL END AS lead_temperature,
       current_lead.owner_username AS lead_owner_username,
+      current_lead.treatment_interest AS treatment_interest,
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       m.content AS last_message,
       m.role AS last_message_role,
@@ -851,7 +862,7 @@ ${senderAwareInboxReadsEnabled() ? `
     LEFT JOIN pending_ai_reviews pending_reviews
       ON pending_reviews.contact_id = c.id
     LEFT JOIN LATERAL (
-      SELECT l.id, l.owner_username, l.temperature, l.is_closed
+      SELECT l.id, l.owner_username, l.treatment_interest, l.temperature, l.is_closed
       FROM leads l
       WHERE l.contact_id = c.id
       ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
@@ -899,7 +910,11 @@ ${senderAwareInboxReadsEnabled() ? `
     scopedParams
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
-  return hydrated.map((row) => presentPortalContact(row));
+  const resolveTreatment = createInboxTreatmentResolver();
+  return hydrated.map(row => ({
+    ...presentPortalContact(row),
+    treatment_filter_key: resolveTreatment(row.treatment_interest).key,
+  }));
 }
 
 async function takeOver(id, staffUsername) {

@@ -26,6 +26,8 @@ test("page index scopes SQL before reading contact/message metadata",async t=>{
     assert.doesNotMatch(sql,/media_base64|JSONB_AGG|STRING_AGG/);
     assert.match(sql,/ORDER BY c.needs_attention DESC,latest.created_at DESC NULLS LAST/);
     assert.match(sql,/POSITION\(\$1::text IN LOWER\(CONCAT_WS/);
+    assert.match(sql,/lead\.treatment_interest AS treatment_interest/);
+    assert.match(sql,/SELECT l\.owner_username,l\.treatment_interest FROM leads l/);
     return{rows:[{contact_id:11,search_match:true}]};
   };
   const rows=await listInboxPageIndex({accessibleContactIds:[11,12],query:"Customer"});

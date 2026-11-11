@@ -211,19 +211,24 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   const status = inbox.getByRole("combobox", { name: "Status" });
   const channel = inbox.getByRole("combobox", { name: "Channel" });
   const owner = inbox.getByRole("combobox", { name: "Lead owner" });
+  const treatment = inbox.getByRole("combobox", { name: "Treatment" });
   const handled = inbox.getByRole("combobox", { name: "Handled by" });
 
-  for (const control of [status, channel, owner, handled, reply]) {
+  for (const control of [status, channel, owner, treatment, handled, reply]) {
     await expect(control).toBeVisible();
     const rect = await control.boundingBox();
     expect(rect?.height).toBeGreaterThanOrEqual(44);
   }
-  const bounds = await Promise.all([status, channel, owner, handled, reply].map((item) => item.boundingBox()));
-  const [statusRect, channelRect, ownerRect, handledRect, replyRect] = bounds;
+  const bounds = await Promise.all(
+    [status, channel, owner, treatment, handled, reply].map((item) => item.boundingBox())
+  );
+  const [statusRect, channelRect, ownerRect, treatmentRect, handledRect, replyRect] = bounds;
   expect(Math.abs(statusRect.y - channelRect.y)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.y - treatmentRect.y)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.width - treatmentRect.width)).toBeLessThan(3);
+  expect(Math.abs(ownerRect.width - statusRect.width)).toBeLessThan(3);
   expect(Math.abs(handledRect.y - replyRect.y)).toBeLessThan(3);
   expect(Math.abs(handledRect.width - replyRect.width)).toBeLessThan(3);
-  expect(ownerRect.width).toBeGreaterThan(statusRect.width);
 
   await channel.selectOption("whatsapp");
   await reply.selectOption("expired");
@@ -236,4 +241,81 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   });
   expect(geometry.sameRow).toBe(true);
   expect(geometry.withinViewport).toBe(true);
+});
+
+test("Inbox Treatment filter combines with channel and can be cleared", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(101, "3D WhatsApp", { treatment_interest: "3D 小颜术" }),
+    conversation(102, "9D Facebook", { channel: "facebook", treatment_interest: "9D 逆龄抗衰" }),
+    conversation(103, "3D Instagram", { channel: "instagram", treatment_interest: " 3d 小颜术 " }),
+    conversation(104, "No treatment", { treatment_interest: null }),
+  ]);
+  await page.goto("/inbox");
+  const { inbox } = await openFilters(page);
+  const treatment = inbox.getByRole("combobox", { name: "Treatment" });
+  const channel = inbox.getByRole("combobox", { name: "Channel" });
+  await expect(treatment).toBeVisible();
+  await expect(treatment.locator("option")).toHaveCount(4);
+  await treatment.selectOption("3D 小颜术");
+  await expect(inbox.getByText("3D WhatsApp", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("9D Facebook", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("No treatment", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByLabel("Active Inbox filters").getByRole("button", { name: /Treatment/ })).toBeVisible();
+
+  await channel.selectOption("instagram");
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D WhatsApp", { exact: true })).toHaveCount(0);
+  await channel.selectOption("all");
+  await treatment.selectOption("__unspecified__");
+  await expect(inbox.getByText("No treatment", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("3D Instagram", { exact: true })).toHaveCount(0);
+
+  await inbox.getByRole("button", { name: "Clear filters" }).click();
+  await expect(treatment).toHaveValue("all");
+  await expect(channel).toHaveValue("all");
+  await expect(inbox.getByText("9D Facebook", { exact: true })).toBeVisible();
+});
+
+test("Inbox list hides WhatsApp sender badges while opened chat keeps its number label", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(101, "Main Number Customer", {
+      whatsapp_sender_key: "neutro",
+      whatsapp_sender_display_name: "DA",
+    }),
+    conversation(102, "Secondary Number Customer", {
+      whatsapp_sender_key: "neutro_secondary",
+      whatsapp_sender_display_name: "中医养生馆",
+      whatsapp_is_secondary: true,
+      whatsapp_secondary_connection_state: "connected",
+      whatsapp_sender_state: "active",
+      whatsapp_sender_coexistence_enabled: true,
+    }),
+  ]);
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByText("Main Number Customer", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Secondary Number Customer", { exact: true })).toBeVisible();
+  await expect(inbox.getByTitle("Receiving WhatsApp business number")).toHaveCount(0);
+  await expect(inbox.getByText("DA", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("中医养生馆", { exact: true })).toHaveCount(0);
+
+  await inbox.getByRole("button").filter({ hasText: "Main Number Customer" }).click();
+  const mainThread = page.locator('section[aria-label="Conversation with Main Number Customer"]');
+  await expect(mainThread).toBeVisible();
+  await expect(mainThread.getByText("via DA", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width || 0) < 1024) {
+    await mainThread.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await inbox.getByRole("button").filter({ hasText: "Secondary Number Customer" }).click();
+  const secondaryThread = page.locator('section[aria-label="Conversation with Secondary Number Customer"]');
+  await expect(secondaryThread).toBeVisible();
+  await expect(secondaryThread.getByText("via 中医养生馆", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width || 0) < 1024) {
+    await secondaryThread.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await inbox.getByRole("button", { name: /Filters/ }).click();
+  await expect(inbox.getByRole("combobox", { name: "WhatsApp business number" })).toBeVisible();
 });
