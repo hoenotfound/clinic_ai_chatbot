@@ -2515,7 +2515,7 @@ function ConversationList({
         }}>
         {!conversations && <ConversationListSkeleton />}
 
-        {conversations && conversations.length === 0 &&
+        {conversations && conversations.length === 0 && !hasActiveFilters &&
           !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
@@ -2527,7 +2527,8 @@ function ConversationList({
           />
         )}
 
-        {conversations && conversations.length > 0 && filteredConversations.length === 0 &&
+        {conversations && (conversations.length > 0 || hasActiveFilters) &&
+          filteredConversations.length === 0 &&
           !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={filters.status === "archived" && statusCounts.archived === 0
