@@ -11,6 +11,22 @@ const TECHNICAL_DEVICE_QUESTION =
 const CLINICAL_PROCEDURE_TIMING = /\b(after|before|recent|just had)\b.{0,40}\b(hifu|filler|botox|laser|thread|peel|injection|procedure)\b|\b(hifu|filler|botox|laser|thread|peel|injection)\b.{0,40}\b(after|before|recent|just had)\b/iu;
 const CLINICAL_QUESTION = /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?section\w*|surgery|surgical|procedure\w*|suitab\w*|safe to|pain\w*|hurt\w*|discomfort|uncomfortable|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|uterus|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|treatment suitability|treatment risk|after treatment|after surgery|just had|recent procedure|can i do|is it safe|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|產後|产后|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|藥|药|安全|適合|适合|疼痛|会不会很痛|會不會很痛|会不会痛|會不會痛|会痛吗|會痛嗎|流血|出血|尿失禁|子宮|子宫|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|醫生|医生|中醫師|中医师|整骨風險|整骨风险|坐月子)|\b(hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|doktor|kesan sampingan)\b/iu;
 
+
+// A fresh symptom disclosure must not depend only on Gemini's classification.
+// A clear denial such as "没有漏尿" is not an affirmative symptom report.
+const URINARY_LEAKAGE_CONCERN =
+  /(?:漏尿|尿失禁|尿漏|漏小便|憋不住尿|憋不住小便|\burinary\s+(?:leakage|incontinence)\b|\burine\s+leak(?:s|age|ing)?\b|\bleak(?:ing|age)?\s+urine\b|\bkencing\s+(?:bocor|tak\s+tahan)\b|\btak\s+tahan\s+kencing\b)/iu;
+const URINARY_DENIAL = /(?:没(?:有)?|沒有|没有|並無|并无|无|無|不會|不会|从不|從不|no|not\s+having|never)\s*(?:出现|出現|发生|發生|遇到|有|会|會)?\s*(?:漏尿|尿失禁|尿漏|漏小便|urinary\s+(?:leakage|incontinence)|urine\s+leak)/iu;
+function isUrinaryLeakageConcern(customerText) {
+  const value = String(customerText || "").normalize("NFKC");
+  if (!URINARY_LEAKAGE_CONCERN.test(value)) return false;
+  // Only suppress a clear denial of the symptom on its own, not a denial
+  // followed by a new positive disclosure or suitability question.
+  const withoutDenial = value.replace(URINARY_DENIAL, "");
+  return !URINARY_DENIAL.test(value) || URINARY_LEAKAGE_CONCERN.test(withoutDenial) ||
+    /(?:可以|能|会|會|怎么|怎麼|如何|治疗|治療|改善|help|treat|cure|safe|suitable)/iu.test(value);
+}
+
 const MEDICAL_HISTORY = /\b(?:diabet(?:es|ic)|cancer|hypertension|high blood pressure|pcos|polycystic|thyroid|heart disease|kidney disease|kencing manis|darah tinggi|kanser|buah pinggang|sakit jantung)\b|(?:糖尿病|高血压|高血壓|癌症|多囊卵巢|心脏病|心臟病|肾病|腎病)/iu;
 
 // This is a separate media-only gate. The broader AI review classifier
@@ -84,7 +100,8 @@ const CLINICAL_MEDIA_SUITABILITY =
 
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
-  return CLINICAL_MEDIA_SUITABILITY.test(value) ||
+  return isUrinaryLeakageConcern(value) ||
+    CLINICAL_MEDIA_SUITABILITY.test(value) ||
     (hasRecentPostpartumInterval(value) || RECENT_POSTPARTUM_RISK.test(value)) ||
     CLINICAL_MEDIA_RED_FLAGS.test(value) ||
     CLINICAL_PROCEDURE_TIMING.test(value) ||
@@ -111,6 +128,7 @@ function categorizeAiReview(customerText, proposedCategory) {
   const text = String(customerText || "");
   if ((!ADMINISTRATIVE_QUESTION.test(text) && !TECHNICAL_DEVICE_QUESTION.test(text)) ||
       CLINICAL_QUESTION.test(text) ||
+      isUrinaryLeakageConcern(text) ||
       CLINICAL_PROCEDURE_TIMING.test(text) ||
       MEDICAL_HISTORY.test(text) ||
       checkKeywordTriggers(text)) return "clinical";
@@ -135,6 +153,7 @@ function followUpAttentionAllowedSql(alias = "c") {
 }
 
 module.exports = {
+  isUrinaryLeakageConcern,
   categorizeAiReview,
   hasClinicalMediaRisk,
   followUpAttentionAllowedSql,
