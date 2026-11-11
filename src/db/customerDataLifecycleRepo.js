@@ -323,7 +323,9 @@ async function purgeContactData({
     // contact. FK cascade alone misses out-of-order events whose target was
     // never stored. Require the same verified sender account and an exact
     // customer identity, including provider-verified historical BSUID aliases.
-    if(contact.channel === "whatsapp") {
+    if(contact.channel === "whatsapp" && (await client.query(
+      "SELECT to_regclass(current_schema() || '.whatsapp_customer_message_mutations') IS NOT NULL AS installed"
+    )).rows[0]?.installed === true) {
       await client.query(
         `DELETE FROM whatsapp_customer_message_mutations event
           WHERE event.contact_id=$1 OR event.notice_contact_id=$1
