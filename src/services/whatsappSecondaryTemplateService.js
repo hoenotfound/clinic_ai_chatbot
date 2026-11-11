@@ -201,8 +201,9 @@ async function deliverSecondaryStaffTemplate(contact,messageId,prepared,{
           console.warn("[Promotional blast] Secondary final authorization failed:",error?.message);
         }
         if(!allowed) return {
-          success:false,definitivelyRejected:true,providerFailureKind:"http_rejection",
-          retryable:false,error:"Promotion was not sent: sender, consent, quiet hours or eligibility changed.",
+          success:false,definitivelyRejected:true,providerNotAttempted:true,
+          providerFailureKind:"http_rejection",retryable:false,
+          error:"Promotion was not sent: sender, consent, quiet hours or eligibility changed.",
         };
       }
       return transport.sendTemplatePayload(template.name,template.language,components);
