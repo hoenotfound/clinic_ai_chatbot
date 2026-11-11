@@ -1,6 +1,7 @@
 const path = require("path");
 const express = require("express");
 const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDiagnostics");
+const { createPortalFallback } = require("./utils/portalFallbackGuard");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
@@ -968,15 +969,9 @@ function createApp({
 
   const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
   app.use(express.static(portalBuildPath));
-  app.get(/^(?!\/(webhook|meta-webhook|api)).*/, (req, res) => {
-    res.sendFile(path.join(portalBuildPath, "index.html"), (err) => {
-      if (err) {
-        res.status(404).send(
-          "Portal not built yet — run `npm run build` in portal-frontend/, or use `npm run dev` there for local development."
-        );
-      }
-    });
-  });
+  // Serve the SPA shell only for known staff routes. Invalid public URLs
+  // receive tiny 404/429 responses rather than sending index.html repeatedly.
+  app.get(/^(?!\/(webhook|meta-webhook|api)).*/, createPortalFallback(portalBuildPath));
 
   return app;
 }

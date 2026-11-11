@@ -52,7 +52,16 @@ test("response size diagnostics are bounded, classified and contain no customer 
   assert.equal(coarseHttpRoute("/api/conversations/921"), "inbox_other");
   assert.equal(coarseHttpRoute("/api/config/secret"), "api_other");
   assert.equal(coarseHttpRoute("/webhook"), "webhook");
+  assert.equal(coarseHttpRoute("/meta-webhook"), "meta_webhook");
   assert.equal(coarseHttpRoute("/whatsapp/default"), "whatsapp_ingress");
+  assert.equal(coarseHttpRoute("/"), "health");
+  assert.equal(coarseHttpRoute("/health/ready"), "health");
+  assert.equal(coarseHttpRoute("/health/not-a-check"), "unknown_health");
+  assert.equal(coarseHttpRoute("/promo-images/123"), "promo_images");
+  assert.equal(coarseHttpRoute("/inbox"), "portal_page");
+  assert.equal(coarseHttpRoute("/settings/team"), "portal_page");
+  assert.equal(coarseHttpRoute("/assets/main.js"), "static");
+  assert.equal(coarseHttpRoute("/strange-bot-path"), "unknown_path");
   assert.equal(recordHttpResponse({
     statusCode: 200, pathname: "/api/conversations/secret-person/messages/345/media",
     contentLength: 1048576, env: enabled,
@@ -65,6 +74,14 @@ test("response size diagnostics are bounded, classified and contain no customer 
   assert.equal(recordHttpResponse({
     statusCode: 503, pathname: "/whatsapp/default", contentLength: 0, env: enabled,
   }), true);
+  assert.equal(recordHttpResponse({
+    statusCode: 404, pathname: "/secret-person/bot-scan",
+    contentLength: 10, env: enabled,
+  }), true);
+  assert.equal(recordHttpResponse({
+    statusCode: 429, pathname: "/secret-person/bot-scan",
+    contentLength: 18, env: enabled,
+  }), true);
   assert.equal(recordDirectR2Video("redirected", enabled), true);
   assert.equal(recordDirectR2Video("error", enabled), true);
   assert.equal(recordDirectR2Video("unknown-status", enabled), false);
@@ -72,15 +89,20 @@ test("response size diagnostics are bounded, classified and contain no customer 
   const media = snapshot.httpResponses.find(x => x.category === "inbox_media");
   const messages = snapshot.httpResponses.find(x => x.category === "inbox_messages");
   assert.deepEqual(media, {
-    category: "inbox_media", requests: 1, status503: 0,
-    knownResponseMiB: 1, unknownResponseSize: 0,
+    category: "inbox_media", requests: 1, status404: 0,
+    status429: 0, status503: 0, knownResponseMiB: 1,
+    unknownResponseSize: 0,
   });
   assert.equal(messages.status503, 1);
   assert.equal(messages.unknownResponseSize, 1);
   assert.equal(snapshot.httpResponses.find(x => x.category === "whatsapp_ingress").status503, 1);
+  const blocked = snapshot.httpResponses.find(x => x.category === "unknown_path");
+  assert.equal(blocked.requests, 2);
+  assert.equal(blocked.status404, 1);
+  assert.equal(blocked.status429, 1);
   assert.equal(snapshot.directR2Video.find(x => x.category === "redirected").count, 1);
   assert.equal(snapshot.directR2Video.find(x => x.category === "error").count, 1);
-  assert.doesNotMatch(JSON.stringify(snapshot), /secret-person|\/345|\/921|unknown-status/);
+  assert.doesNotMatch(JSON.stringify(snapshot), /secret-person|bot-scan|\/345|\/921|unknown-status/);
   // No extra network, SQL, timers or persistent data from diagnostics.
   const empty = takeOutboundPayloadSnapshot();
   assert.equal(empty.httpResponses.find(x => x.category === "inbox_media").requests, 0);

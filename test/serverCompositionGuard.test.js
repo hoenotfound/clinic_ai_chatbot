@@ -35,6 +35,7 @@ test("application composition preserves security and readiness middleware orderi
   );
   const payloadHandlerAt = appSource.indexOf("app.use(payloadTooLargeErrorHandler)");
   const staticAt = appSource.indexOf("app.use(express.static(portalBuildPath))");
+  const guardedFallbackAt = appSource.indexOf("createPortalFallback(portalBuildPath)");
 
   assert.ok(portalParserAt >= 0, "normal portal JSON parser should remain installed");
   assert.ok(advancedParserAt > portalParserAt, "Advanced Config should get its own parser");
@@ -55,6 +56,8 @@ test("application composition preserves security and readiness middleware orderi
   assert.ok(protectedConversationsAt > authAt, "portal data routes must remain authenticated");
   assert.ok(payloadHandlerAt > protectedConversationsAt, "413 handler stays after parsed routes");
   assert.ok(staticAt > payloadHandlerAt, "portal static fallback stays last");
+  assert.ok(guardedFallbackAt > staticAt, "only known staff URLs receive the SPA shell");
+  assert.match(appSource, /const \{ createPortalFallback \} = require\("\.\/utils\/portalFallbackGuard"\)/);
 });
 
 test("webhook parsers still verify raw signatures and portal routes stay protected", () => {
