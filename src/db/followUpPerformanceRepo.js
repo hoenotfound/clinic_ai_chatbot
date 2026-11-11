@@ -14,6 +14,10 @@ const PERFORMANCE_SQL = `WITH eligible AS (
     CASE WHEN m.pricing_reminder_anchor_id IS NOT NULL THEN 'Pricing'
       WHEN m.automated_follow_up_for_message_id IS NOT NULL
         THEN 'FU' || m.automated_follow_up_step::text
+      WHEN m.whatsapp_template->>'automatedSecondaryFollowup'='true'
+        THEN 'Secondary ' || COALESCE(m.whatsapp_template->>'slotHours','?') || 'h'
+      WHEN m.whatsapp_template->>'automatedSecondaryMarketingFollowup'='true'
+        THEN 'Secondary ' || COALESCE(m.whatsapp_template->>'slotHours','?') || 'h'
       ELSE 'Extended WA template' END AS step,
     COALESCE(NULLIF(BTRIM(m.automated_follow_up_target_service), ''), 'Unspecified (not recorded)') AS service,
     CASE
@@ -52,6 +56,16 @@ const PERFORMANCE_SQL = `WITH eligible AS (
       OR EXISTS (SELECT 1 FROM whatsapp_free_entry_followup_attempts fep
         WHERE fep.message_id=m.id AND fep.contact_id=m.contact_id
           AND fep.status='accepted')
+      -- Sender-specific secondary attempts are not represented by the primary
+      -- automated_follow_up_for_message_id column. Count only accepted,
+      -- sender-scoped attempts linked to the exact saved outbound message.
+      OR EXISTS (SELECT 1 FROM whatsapp_sender_followup_attempts secondary
+        WHERE secondary.message_id=m.id AND secondary.contact_id=m.contact_id
+          AND secondary.status='accepted')
+      OR EXISTS (SELECT 1 FROM whatsapp_sender_marketing_followup_attempts secondary_marketing
+        WHERE secondary_marketing.message_id=m.id
+          AND secondary_marketing.contact_id=m.contact_id
+          AND secondary_marketing.status='accepted')
     )
     AND m.created_at >= now() - $1::integer * interval '1 day'
     AND ($2::text='all' OR c.channel=$2)
