@@ -514,7 +514,7 @@ test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 
   const corrected = { ...offer, pricing: { ...offer.pricing, normal: 888 } };
   const fixed = { ...inputs, promotions: [corrected] };
   const candidate = resolveShadowPriceException(fixed);
-  assert.equal(candidate?.source, "meta_ad");
+  assert.equal(candidate?.source, "customer_engaged_single_treatment");
   assert.equal(candidate?.treatment, "3D 小颜术");
   assert.deepEqual(candidate?.prices.map(item => item.price), ["RM388"]);
 
@@ -546,14 +546,26 @@ test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 
   assert.deepEqual(graphic?.packages.map(item => item.imageUrl),
     ["https://example.test/3d-388.jpg"]);
 
-  // No pricing just because a CRM record or an older ad once named 3D.
-  assert.equal(resolveShadowPriceException({
-    ...fixed, metaAdContext: {
-      ...ad, attributedAt: new Date(now - 8 * day).toISOString(),
-    },
-  }), null);
+  // The customer independently named 3D and was invited to ask for its
+  // price. That customer-led evidence remains valid even without the ad hint.
   assert.equal(resolveShadowPriceException({
     ...fixed, metaAdContext: null,
+  })?.source, "customer_engaged_single_treatment");
+
+  // Without that customer selection, a CRM or assistant follow-up mention
+  // cannot authorize the offer after the original ad has expired.
+  const genericGreeting = [
+    { ...history[0], content: "Hi～" },
+    ...history.slice(1),
+  ];
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: genericGreeting, metaAdContext: null,
+  }), null);
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: genericGreeting,
+    metaAdContext: {
+      ...ad, attributedAt: new Date(now - 8 * day).toISOString(),
+    },
   }), null);
   const switched = [
     ...history.slice(0, -1),
