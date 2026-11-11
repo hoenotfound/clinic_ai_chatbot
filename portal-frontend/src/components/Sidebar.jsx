@@ -65,6 +65,7 @@ function SidebarNavLink({
   onHideTooltip,
   onNavigate,
 }) {
+  const location = useLocation();
   return (
     <NavLink
       to={item.to}
@@ -78,7 +79,7 @@ function SidebarNavLink({
         onNavigate?.();
       }}
       className={({ isActive }) =>
-        `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive ? "is-active" : ""}`
+        `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive || (item.label === "Settings" && location.pathname.startsWith("/settings")) ? "is-active" : ""}`
       }
     >
       <item.icon className="h-[19px] w-[19px] shrink-0" />
