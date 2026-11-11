@@ -7,6 +7,29 @@ const LANGUAGES=new Set(["zh_CN","en_US","ms"]);
 const CANDIDATE_SQL=String.raw`
 WITH campaign AS (
  SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1 AND enabled AND valid_until>now()
+),
+// Only a provably unsent, failed staged blast message is recoverable.
+// The claim is consumed atomically *before* every Graph messages call.
+// A provider attempt, unknown result, untagged manual send, or missing
+// claim always fails closed. No TTL on this proof: rotating an unused
+// reservation must not turn its earlier unsent row into a blocker.
+recoverable_unsent AS (
+  SELECT message.id
+  FROM messages message
+  JOIN whatsapp_promotional_blast_claims claim
+    ON claim.contact_id=message.contact_id
+   AND claim.campaign_key=$1
+   AND claim.state='reserved'
+   AND claim.attempted_at IS NULL
+  JOIN contacts recipient
+    ON recipient.id=message.contact_id
+   AND recipient.whatsapp_sender_id=claim.sender_id
+   AND regexp_replace(recipient.whatsapp_number,'[^0-9]','','g')=claim.recipient_key
+  JOIN campaign promo ON promo.campaign_key=claim.campaign_key
+  WHERE message.role='assistant'
+    AND message.whatsapp_template->>'blastCampaignKey'=promo.campaign_key
+    AND message.whatsapp_message_id IS NULL
+    AND message.delivery_status='failed'
 ),active_leads AS (
   SELECT DISTINCT ON (l.contact_id)
     l.contact_id, l.treatment_interest, l.marketing_consent,
@@ -189,12 +212,14 @@ candidates AS (
       WHERE outgoing.contact_id=c.id AND outgoing.role='assistant'
         AND outgoing.created_at>now()-interval '5 hours'
         AND outgoing.delivery_status IS DISTINCT FROM 'cancelled'
+        AND NOT EXISTS (SELECT 1 FROM recoverable_unsent unsent WHERE unsent.id=outgoing.id)
     )
     AND NOT EXISTS (
       SELECT 1 FROM messages staff
       JOIN users u ON u.username=staff.sent_by_username
       WHERE staff.contact_id=c.id AND staff.role='assistant'
         AND staff.created_at>session.first_reply_at
+        AND NOT EXISTS (SELECT 1 FROM recoverable_unsent unsent WHERE unsent.id=staff.id)
     )
     AND NOT EXISTS (
       SELECT 1 FROM sales_follow_up_tasks handled
@@ -211,6 +236,7 @@ candidates AS (
       SELECT 1 FROM messages sent_promo
       WHERE sent_promo.contact_id=c.id AND sent_promo.role='assistant'
         AND sent_promo.whatsapp_template->>'name'=campaign.template_name
+        AND NOT EXISTS (SELECT 1 FROM recoverable_unsent unsent WHERE unsent.id=sent_promo.id)
     )
     AND now()<campaign.valid_until
     AND NOT EXISTS (
