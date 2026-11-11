@@ -188,7 +188,8 @@ async function applyUnavailableNotice(event, {database = pool, env = process.env
   const existing = await database.query(
     `SELECT c.id FROM contacts c
       LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
-      WHERE c.channel='whatsapp' AND ${SENDER_MATCH} AND ${CUSTOMER_MATCH}
+      WHERE c.channel='whatsapp' AND $1::text IS NULL
+        AND ${SENDER_MATCH} AND ${CUSTOMER_MATCH}
       ORDER BY c.id DESC LIMIT 1`, qp
   );
   const contactId = existing.rows[0]?.id;
