@@ -1,5 +1,5 @@
 # Neutro Sense secondary WhatsApp: seven-day reminder copy v2
-Prepared 11 Nov 2026 for Meta template submission. **Drafts, not approved or active.**
+Prepared 11 Nov 2026. **All eight new variants are approved by Meta but are not enabled by this PR.**
 
 ## Existing 48-hour template: add Malay variant only
 Name: `ns_48h_choice_v2`, language `ms`, category `MARKETING`.
@@ -52,10 +52,10 @@ Hai~ Kalau anda masih nak tahu tentang rawatan yang pernah ditanya, boleh balas 
 Saya boleh bantu semak sesi penilaian individu atau aturan sesi percubaan terkini apabila anda bersedia. Saya tak ganggu lagi buat masa ini. Semoga hari anda baik!
 
 ## Approval and rollout
-- Create eight language templates: six for the new Day 4/6 v2 names, two Malay additions for existing 48/66 names. **Do not overwrite existing approved messages.**
-- Submit for Meta review as MARKETING, with no variables, media or CTA buttons. Existing 48/66 Chinese and English copy is unchanged.
+- All eight language templates were submitted and verified APPROVED on the Neutro secondary WhatsApp account: six Day 4/6 v2 variants and two 48/66 Malay variants. Existing approved templates were preserved.
+- Templates are MARKETING text without variables, media or CTA buttons. Existing 48/66 Chinese and English copy is unchanged.
 - Every selected language must be independently APPROVED before saving a sender-specific enabled rule. Do not silently substitute another language or an earlier approved template.
 - Preserve explicit sender- and treatment-specific marketing consent, staff/appointment/opt-out holds, 00:00–07:00 MYT quiet hours, verified ad origin, 167-hour deadline and one-shot ambiguous-send guards.
-- The secondary number's unknown billing reservation from 4 Nov has no matched provider receipt and has not been reconciled. Day 4/6 remain OFF until reviewed and authorised.
-- Keep `WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED` disabled until approval, database rule configuration and billing review. Do not backfill older ad conversations.
+- The unknown billing reservation from 4 Nov has no matched provider receipt. It continues to block its affected contact only. Sender-wide billing alarms still block all sends; never clear uncertain records automatically.
+- Keep `WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED` disabled until the separately approved language rules, operator billing acknowledgement, and sender-level safeguards have been checked. Do not backfill older ad conversations.
 - A verified free-entry receipt is not proof future MARKETING templates are all free.
