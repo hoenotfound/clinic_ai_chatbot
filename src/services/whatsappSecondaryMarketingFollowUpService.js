@@ -335,12 +335,20 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
       WHERE gate.sender_id=sa.id AND gate.state<>'idle')
+   -- Each verified seven-day ad session may receive up to four template
+   -- reminders, even if the contact had prior successful ad sessions.
+   -- Preserve the global unknown-send hold above: never replay ambiguity.
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts other
       WHERE other.sender_id=sa.id AND other.contact_id=c.id
         AND other.slot_hours=rule.slot_hours
+        AND other.claimed_at>=qualified_session.first_reply_at
+        AND other.claimed_at<qualified_session.first_reply_at+INTERVAL '167 hours'
         AND other.status IN('accepted','unknown','blocked'))
    AND (SELECT COUNT(*) FROM whatsapp_sender_marketing_followup_attempts sent
-      WHERE sent.sender_id=sa.id AND sent.contact_id=c.id AND sent.status='accepted')<4
+      WHERE sent.sender_id=sa.id AND sent.contact_id=c.id
+        AND sent.claimed_at>=qualified_session.first_reply_at
+        AND sent.claimed_at<qualified_session.first_reply_at+INTERVAL '167 hours'
+        AND sent.status='accepted')<4
   ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5`);
 
 // Only freshly configured Day 4/6 rules may follow new ad sessions.
