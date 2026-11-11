@@ -41,6 +41,86 @@ function attempt(overrides = {}) {
   });
 }
 
+test("Neutro golden pulse ad prefill selects 脉冲波调理 and bypasses Gemini safely", () => {
+  const pulseServices = [...services, { name: "脉冲波调理" }];
+  const pulseAliases = [
+    ...aliases,
+    { alias: "黄金脉冲技术", officialService: "脉冲波调理" },
+  ];
+  const customerText = "你好！想了解你们家的【黄金脉冲技术】";
+  const pulseReply = "Hi～欢迎来到 Neutro Sense 😊\\n\\n想了解我们的脉冲波调理对吗～";
+  const pulseConfig = { enabled: true, replies: [{
+    service: "脉冲波调理",
+    translations: { zh: pulseReply, en: "Pulse Wave enquiry", ms: "Pertanyaan Pulse Wave" },
+  }] };
+  const pulseCreative = {
+    attributedAt: ad.attributedAt,
+    headline: "黄金脉冲技术",
+    body: "黄金脉冲技术介绍",
+  };
+  const first = attempt({
+    config: pulseConfig,
+    customerText,
+    conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: pulseCreative,
+    metaAdCreativeService: "脉冲波调理",
+    services: pulseServices,
+    serviceAliases: pulseAliases,
+  });
+  assert.equal(isStandardAdPrefill(customerText, {
+    services: pulseServices, serviceAliases: pulseAliases,
+  }), true);
+  assert.equal(first?.reply, pulseReply);
+  assert.equal(first?.treatment, "脉冲波调理");
+  assert.equal(first?.serviceQuery, true);
+  assert.equal(first?.serviceQuerySource, "customer_message");
+  assert.equal(configuredPrefill(customerText), false,
+    "unknown alias must not match another treatment");
+  assert.equal(attempt({
+    config: pulseConfig,
+    customerText,
+    conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: pulseCreative,
+    metaAdCreativeService: "脉冲波调理",
+    services: pulseServices,
+    serviceAliases: aliases,
+  }), null, "without the configured alias the fixed reply is blocked");
+  assert.equal(attempt({
+    config: pulseConfig,
+    customerText,
+    conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: { ...pulseCreative, headline: "9D 逆龄抗衰", body: "9D 护理" },
+    metaAdCreativeService: "9D 逆龄抗衰",
+    services: pulseServices,
+    serviceAliases: pulseAliases,
+  }), null, "mismatched creative must not send a pulse script");
+});
+
+test("golden pulse prefill keeps substantive and edited enquiries on AI", () => {
+  const pulseServices = [...services, { name: "脉冲波调理" }];
+  const pulseAliases = [
+    ...aliases,
+    { alias: "黄金脉冲技术", officialService: "脉冲波调理" },
+  ];
+  const exact = "你好！想了解你们家的【黄金脉冲技术】";
+  const isPulsePrefill = text => isStandardAdPrefill(text, {
+    services: pulseServices, serviceAliases: pulseAliases,
+  });
+  assert.equal(isPulsePrefill(exact), true);
+  assert.equal(isPulsePrefill("你好！想了解你们家【黄金脉冲技术】"), true);
+  assert.equal(isPulsePrefill("你好！想了解贵店的【黄金脉冲技术】"), true);
+  for (const edited of [
+    exact + "多少钱？",
+    exact + "可以预约明天吗？",
+    exact + "有什么副作用？",
+    exact + "和9D有什么不同？",
+    exact + "，我怀孕了能做吗？",
+    "你好！想了解你们家的【陌生疗程】",
+  ]) {
+    assert.equal(isPulsePrefill(edited), false, edited);
+  }
+});
+
 test("bypasses AI for recognised Chinese opt-in prefill without treating future discounts as a price request", () => {
   const match = attempt();
   assert.ok(match);
