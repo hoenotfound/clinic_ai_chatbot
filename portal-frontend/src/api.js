@@ -195,6 +195,14 @@ export const api = {
         ...(replyToMessageId != null ? { replyToMessageId } : {}),
       }),
     }),
+  getPromotionalBlastCampaigns: () =>
+    request("/promotional-blast/campaigns", { cache: "no-store" }),
+  createPromotionalBlastCampaign: payload =>
+    request("/promotional-blast/campaigns", {method:"POST", body:JSON.stringify(payload)}),
+  getPromotionalBlastPreview: campaignKey =>
+    request(`/promotional-blast/preview?campaign=${encodeURIComponent(campaignKey)}`, { cache: "no-store" }),
+  claimPromotionalBlastRecipient: (payload) =>
+    request("/promotional-blast/claim", { method: "POST", body: JSON.stringify(payload) }),
   getWhatsAppTemplateFreeWindowStatus: (contactId) =>
     request(`/conversations/${contactId}/whatsapp-template-free-window`),
   listWhatsAppTemplates: (contactId, { force = false } = {}) =>
@@ -220,6 +228,8 @@ export const api = {
     form.append("marketingConsentConfirmed", String(payload.marketingConsentConfirmed === true));
     form.append("billingAcknowledged", String(payload.billingAcknowledged === true));
     form.append("billingReviewToken", payload.billingReviewToken || "");
+    if (payload.blastCampaignKey) form.append("blastCampaignKey", payload.blastCampaignKey);
+    if (payload.blastReservationToken) form.append("blastReservationToken", payload.blastReservationToken);
     form.append("media", mediaFile);
     const res = await fetch(`${BASE}/conversations/${contactId}/whatsapp-templates/send`, {
       method: "POST",

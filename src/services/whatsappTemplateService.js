@@ -467,6 +467,7 @@ async function sendApprovedTemplateUnchecked(
     treatmentInterest = null,
     fetchImpl = global.fetch,
     timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS,
+    beforeProviderDispatch = null,
   } = {}
 ) {
   const name = clean(templateName);
@@ -525,6 +526,21 @@ async function sendApprovedTemplateUnchecked(
   };
   if (Array.isArray(components) && components.length) {
     template.components = components;
+  }
+
+  // Blast claim is committed only at the last possible point before Graph.
+  // A denied/expired window never contacts Meta. All ordinary Inbox sends
+  // retain their existing behavior when no callback is supplied.
+  if (typeof beforeProviderDispatch === "function") {
+    let allowed=false;
+    try { allowed=(await beforeProviderDispatch())===true; } catch(error) {
+      console.warn("[Promotional blast] Final authorization unavailable:",error?.message);
+    }
+    if(!allowed) return {
+      success:false,wamid:null,unknown:false,providerNotAttempted:true,
+      policyBlocked:true,policyCode:"blast_final_eligibility_changed",
+      error:"Promotion not sent. Eligibility, consent, quiet hours or reservation changed. Review this chat.",
+    };
   }
 
   let providerAccepted = false;

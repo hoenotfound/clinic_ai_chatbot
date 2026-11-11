@@ -942,6 +942,8 @@ function createApp({
   app.use("/api/ops/readiness", opsReadinessRoutes);
 
   app.use("/api/auth", authRoutes);
+  app.use("/api/promotional-blast", requireAuth,
+    require("./routes/promotionalBlast"));
   app.use("/api/conversations", requireAuth, conversationsRoutes);
   app.use("/api/config", requireAuth, configRoutes);
   app.use("/api/follow-up-activity", requireAuth, followUpActivityRoutes);
