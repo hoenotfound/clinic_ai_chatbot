@@ -12,6 +12,7 @@ import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
 import TeamAccess from "./pages/TeamAccess";
 import ToolsRoute from "./pages/ToolsRoute";
+import PromotionalBlast from "./pages/PromotionalBlast";
 import Pipeline from "./pages/Pipeline";
 import SalesFollowUp from "./pages/SalesFollowUp";
 import Analytics from "./pages/Analytics";
@@ -137,6 +138,7 @@ export default function App() {
             <Route path="/sales-follow-up" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><SalesFollowUp /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
+            <Route path="/promotional-blast" element={<ProtectedRoute adminOnly><PromotionalBlast /></ProtectedRoute>} />
             <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
             <Route path="/conversation-flow" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><ConversationFlow /></ProtectedRoute>} />
