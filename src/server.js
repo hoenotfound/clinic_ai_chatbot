@@ -62,7 +62,8 @@ const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue"
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
-const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
+const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
+  require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
@@ -1386,6 +1387,25 @@ async function processIncomingMessage(
         } = languageCheckedReply);
       }
 
+      // A confirmed urinary-leakage report needs staff clinical review even
+      // when the model incorrectly returned a normal or information outcome.
+      // Genuine urgent events and explicit staff ownership remain separate.
+      if (clinicConfig.businessType === "tcm_clinic" &&
+          isUrinaryLeakageConcern(text) && !keywordReason && !urgentSafety &&
+          !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+          (!flagged || reviewRequired)) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "clinical";
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        details = null;
+        clinicalAcknowledgement = null;
+      }
+
       // A model can miss a clear complaint, refund or legal escalation.
       // These need staff ownership, unlike a single unknown FAQ.
       if (keywordReason && (!flagged || reviewRequired)) {
@@ -2170,6 +2190,8 @@ async function processIncomingMessage(
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const continuity = planNeutroReviewContinuation({
         customerText: text, conversationHistory: history, language: mediaLanguage,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
       });
       if (continuity) {
         const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
