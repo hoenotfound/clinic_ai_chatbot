@@ -145,6 +145,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     customerMutations: {
       record: async () => null,
       reconcileForOriginal: async () => 0,
+      reconcileAfterInbound: async () => 0,
     },
     realtimeEvents: { publish() {} },
     setupStatusRepo: { recordWebhook: noop },
