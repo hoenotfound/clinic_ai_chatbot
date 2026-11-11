@@ -75,15 +75,19 @@ test("sender-specific follow-up controls are separated without mixing save actio
 });
 
 
-test("secondary extended follow-ups consistently use 48h/66h with optional Malay approvals",()=>{
+test("secondary 48h/66h and Day 4/Day 6 template controls require per-language approval",()=>{
  const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
  const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
- assert.match(ui,/\[48,66\]/);
+ assert.match(ui,/MARKETING_SLOTS=\[48,66,96,144\]/);
  assert.doesNotMatch(ui,/\[48,72\]/);
  assert.match(ui,/ms/);
  assert.match(route,/\["zh_CN","en_US","ms"\]/);
  assert.match(ui,/approved treatment video is chosen automatically/);
- assert.match(route,/if\(!\[48,66\]\.includes\(slot\)\)/);
+ assert.match(route,/if\(!MARKETING_SLOTS\.has\(slot\)\)/);
+ assert.match(route,/secondary_extended_template_mismatch/);
+ assert.match(ui,/ns_day4_checkin/);
+ assert.match(ui,/ns_day6_invitation/);
+ assert.match(route,/extendedWorkerEnabled/);
  assert.doesNotMatch(route,/Only 48h and 72h/);
 });
 
