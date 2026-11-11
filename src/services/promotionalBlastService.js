@@ -8,11 +8,11 @@ const CANDIDATE_SQL=String.raw`
 WITH campaign AS (
  SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1 AND enabled AND valid_until>now()
 ),
-// Only a provably unsent, failed staged blast message is recoverable.
-// The claim is consumed atomically *before* every Graph messages call.
-// A provider attempt, unknown result, untagged manual send, or missing
-// claim always fails closed. No TTL on this proof: rotating an unused
-// reservation must not turn its earlier unsent row into a blocker.
+-- Only a provably unsent, failed staged blast message is recoverable.
+-- The claim is consumed atomically *before* every Graph messages call.
+-- A provider attempt, unknown result, untagged manual send, or missing
+-- claim always fails closed. No TTL on this proof: rotating an unused
+-- reservation must not turn its earlier unsent row into a blocker.
 recoverable_unsent AS (
   SELECT message.id
   FROM messages message
