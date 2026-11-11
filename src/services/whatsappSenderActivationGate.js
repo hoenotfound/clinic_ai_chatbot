@@ -61,7 +61,17 @@ function secondaryAdsOnlyFullAiMode(env = process.env) {
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED !== "true" &&
+    // Manual IMAGE/VIDEO templates are independent of AI treatment media.
+    // Permit them in full-AI mode only when the existing sender-specific staff
+    // template lane and billable marketing protections are all enabled. This
+    // does not grant AI or automated follow-ups any new media send authority.
+    (env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED !== "true" ||
+      (env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
+       env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
+       env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
+       env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
+       env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true")) &&
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true";
 }

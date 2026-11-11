@@ -405,6 +405,58 @@ test("secondary full AI allows separately authorized staff sending while protect
   WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
  };
  assert.doesNotThrow(()=>assertSenderIngressSafety(marketing));
+
+ // A manual image-header MARKETING template must be able to coexist with
+ // sender-scoped secondary full AI without enabling generic staff attachments
+ // or changing the AI / follow-up media authorization.
+ const mediaMarketing={
+  ...marketing,
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+  WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true",
+ };
+ assert.doesNotThrow(()=>assertSenderIngressSafety(mediaMarketing));
+ assert.equal(mediaMarketing.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED,"false");
+ assert.equal(mediaMarketing.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED,"true");
+
+ // Neutro has also enabled AI for all contacts. Preserve its independently
+ // pinned activation timestamps and prove this configuration can start.
+ const allContactsMedia={
+  ...mediaMarketing,
+  WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+  WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+  WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+  WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-02T01:00:00Z",
+ };
+ assert.doesNotThrow(()=>assertSenderIngressSafety(allContactsMedia));
+ for(const change of [
+  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"false"},
+  {WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"false"},
+  {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_TOKEN:""},
+  {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
+  {WHATSAPP_SECONDARY_WABA_ID:mediaMarketing.WHATSAPP_WABA_ID,
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:mediaMarketing.WHATSAPP_PHONE_NUMBER_ID},
+ ]){
+  assert.throws(()=>assertSenderIngressSafety({...mediaMarketing,...change}),
+   /Unsafe WhatsApp secondary/,JSON.stringify(change));
+ }
+ for(const change of [
+  {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"invalid"},
+  {WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"ads_only"},
+  {WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-11-01T23:59:59Z"},
+ ]){
+  assert.throws(()=>assertSenderIngressSafety({...allContactsMedia,...change}),
+   /Unsafe WhatsApp secondary/,JSON.stringify(change));
+ }
+
  for(const key of ["WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED",
   "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
   "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
