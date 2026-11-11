@@ -499,9 +499,14 @@ test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 
     turn("assistant", "你比较想先看价钱，还是了解整个护理过程？", 8 * 60_000),
     turn("user", "价钱", 0),
   ];
+  const neutroServices = [...services, { name: "9D 逆龄抗衰" }];
+  const neutroAliases = [
+    ...serviceAliases, { alias: "9D", officialService: "9D 逆龄抗衰" },
+  ];
   const inputs = {
     customerText: "价钱", conversationHistory: history, metaAdContext: ad,
-    services, serviceAliases, promotions: [offer], now,
+    services: neutroServices, serviceAliases: neutroAliases,
+    promotions: [offer], now,
   };
   // With the normal price omitted, the translated original-price claims
   // cannot be independently checked against structured promotion pricing.
@@ -521,7 +526,7 @@ test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 
   const approval = resolveApprovedPricingAssessment({
     mode: "shadow", shadowException: candidate,
     customerText: "价钱", conversationHistory: history,
-    services, serviceAliases, resultMedia: [],
+    services: neutroServices, serviceAliases: neutroAliases, resultMedia: [],
   });
   assert.equal(approval.reason, "approved");
   const reply = ensureVerifiedPriceReply({
