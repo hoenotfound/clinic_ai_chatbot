@@ -291,6 +291,8 @@ const EXTENDED_SESSION_SQL=`
       ON reply_context.message_id=first.id AND reply_context.conversation_id=sc.id
     WHERE first.contact_id=c.id AND first.role='assistant'
       AND first.whatsapp_message_id IS NOT NULL
+      AND first.sent_by_username IS NULL
+      AND first.is_automated_follow_up IS DISTINCT FROM TRUE
       AND first.created_at>=origin.created_at
       AND first.created_at<origin.created_at+INTERVAL '24 hours'
     ORDER BY first.created_at,first.id LIMIT 1
