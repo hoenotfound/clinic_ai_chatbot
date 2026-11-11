@@ -535,18 +535,6 @@ function createApp({
       return res.sendStatus(503);
     }
 
-    // Meta may send an edit/delete before its original inbound. The provider
-    // mutation was already durably recorded above; reconcile after the original
-    // message claim has committed, without generating an AI turn or follow-up.
-    for (const incoming of customerMessages) {
-      try {
-        await customerMutations.reconcileForOriginal(incoming.id);
-      } catch (error) {
-        durabilityFailures += 1;
-        console.error("Could not reconcile an earlier customer WhatsApp mutation:", error);
-      }
-    }
-
     for (let echoIndex = 0; echoIndex < durableBusinessAppEchoes.length; echoIndex++) {
       const persisted = durableBusinessAppEchoes[echoIndex];
       if (!persisted) continue;
@@ -688,6 +676,15 @@ function createApp({
     // response. Calling this on an HTTP 503 permits a durable Neutro
     // message to continue while Meta retries a failed secondary event.
     function scheduleAcceptedWhatsAppWork() {
+      // Out-of-order edits are replayed after the original inbound is durably
+      // claimed. This repair is advisory and must never return 503 or stall an
+      // otherwise accepted normal customer message if a test/client DB differs.
+      for (const incoming of customerMessages) {
+        void customerMutations.reconcileForOriginal(incoming.id)
+          .catch((error) => console.error(
+            "Customer WhatsApp message mutation reconciliation failed:", error
+          ));
+      }
       setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
         console.error("Failed to record WhatsApp webhook activity:", err);
       });
