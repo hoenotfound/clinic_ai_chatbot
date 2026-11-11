@@ -5,6 +5,7 @@ const { createPortalFallback } = require("./utils/portalFallbackGuard");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const customerMutations = require("./services/whatsappCustomerMutationService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
@@ -351,6 +352,7 @@ function createApp({
 
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
+    const customerMutationEvents = whatsapp.parseCustomerMessageMutations(webhookBody);
     const identityRotations=incomingMessages.filter(item=>item.identityRotationOnly===true);
     const customerMessages=incomingMessages.filter(item=>item.identityRotationOnly!==true);
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
@@ -401,7 +403,7 @@ function createApp({
     let durableBusinessAppEchoes;
     let durableReactionUpdates;
     try {
-      [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
+      [durableClaims, durableStatusJobs, durableBusinessAppEchoes, , durableReactionUpdates] = await Promise.all([
         Promise.all(
           customerMessages.map(async (incoming) => {
             // A phone-visible turn and a later BSUID-only turn from the same
@@ -425,6 +427,10 @@ function createApp({
                   () => durablyClaimIncoming(queueKey, incoming),
                   "Secondary inbound claim",
                   (lateClaim) => {
+                    // The delayed original can now be matched with an earlier
+                    // edit/delete. Repair only after its durable claim commits.
+                    void customerMutations.reconcileAfterInbound(incoming)
+                      .catch((error) => console.error("Late customer mutation repair failed:", error));
                     if (lateClaim) {
                       scheduleDurableClaim(queueKey, lateClaim).catch((error) => {
                         console.error("Failed to schedule late durable WhatsApp inbound:", error);
@@ -432,6 +438,11 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
+              // A successful durable claim is the earliest safe point to
+              // match a mutation to its original message. A parallel mutation
+              // insert also calls applyOne, so either arrival order is covered.
+              void customerMutations.reconcileAfterInbound(incoming)
+                .catch((error) => console.error("Customer mutation repair failed:", error));
               // The event is HMAC-verified and durably saved before this log.
               // Record only an identity TYPE, never a phone, BSUID, username,
               // ad reference, original message or raw webhook.
@@ -499,6 +510,15 @@ function createApp({
               whatsappCoexistence.releasePendingAiForEcho(echo);
             }
             console.error("Could not durably store WhatsApp Business App echo:", error);
+            return null;
+          }
+        })),
+        Promise.all(customerMutationEvents.map(async (mutation) => {
+          try {
+            return await customerMutations.record(mutation);
+          } catch (error) {
+            durabilityFailures += 1;
+            console.error("Could not durably store customer WhatsApp message mutation:", error);
             return null;
           }
         })),

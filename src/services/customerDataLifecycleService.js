@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const repo = require("../db/customerDataLifecycleRepo");
 const mediaStorage = require("./mediaStorageService");
+const revokedMediaCleanup = require("./whatsappCustomerRevokedMediaCleanup");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
@@ -163,6 +164,14 @@ async function runMediaCleanupSweep({
     }
   }
 
+  // The existing retry worker owns revoked customer-media cleanup too.
+  // Test repositories intentionally have no full production mutation schema.
+  if (repository === repo) {
+    const revoked = await revokedMediaCleanup.runPending({media:storage,limit});
+    processed += revoked.processed;
+    completed += revoked.completed;
+    failed += revoked.failed;
+  }
   return { processed, completed, failed };
 }
 
@@ -221,9 +230,13 @@ function startCustomerDataLifecycle({
 } = {}) {
   const runCleanup = async () => {
     await runMediaCleanupSweep({ repository, storage });
-    return typeof repository.getNextPurgeJobDueAt === "function"
-      ? repository.getNextPurgeJobDueAt()
-      : null;
+    const nextPurge = typeof repository.getNextPurgeJobDueAt === "function"
+      ? await repository.getNextPurgeJobDueAt() : null;
+    if (repository !== repo) return nextPurge;
+    const nextRevoked = await revokedMediaCleanup.getNextDueAt();
+    if (!nextPurge) return nextRevoked;
+    if (!nextRevoked) return nextPurge;
+    return new Date(Math.min(new Date(nextPurge).getTime(),new Date(nextRevoked).getTime()));
   };
   const runRetention = () => {
     withDatabaseActivitySource(
