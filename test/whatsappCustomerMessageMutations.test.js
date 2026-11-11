@@ -195,9 +195,9 @@ test("startup reconciliation only scans committed original WhatsApp messages",as
     async query(sql,args) {calls.push({sql,args});return {rows:[]};},
     async connect(){throw Error("should not open a transaction for an empty sweep")}
   },env});
-  assert.equal(n,0);
+  assert.deepEqual(n,{repaired:0,scanned:0});
   assert.match(calls[0].sql,/EXISTS\(SELECT 1 FROM messages/);
-  assert.deepEqual(calls[0].args,[40]);
+  assert.deepEqual(calls[0].args,[40,null,null]);
 });
 
 test("caption edits retain original media when final download is processed",()=>{
@@ -207,4 +207,106 @@ test("caption edits retain original media when final download is processed",()=>
   assert.match(sql,/media_key = \$4, media_mime_type = \$5/);
   assert.match(sql,/whatsapp_customer_mutation IS DISTINCT FROM 'revoke'/);
   assert.match(sql,/async function getMessageUpdatesForContact/);
+});
+
+test("mutation finalization cancels stale AI and marks an inbound job completed",async()=>{
+  const {db,calls}=stubDatabase("edit");
+  await mutations.applyOne("wamid.change05",{database:db,env});
+  const cancelJob=calls.find(call=>call.sql.includes("UPDATE inbound_processing_jobs"));
+  assert.ok(cancelJob,"mutation must terminally complete earlier pending/processing job");
+  assert.match(cancelJob.sql,/status='completed'/);
+  assert.deepEqual(cancelJob.args,[71,14]);
+  const final=calls.find(call=>call.sql.includes("status='applied'"));
+  assert.match(final.sql,/customer_address=NULL,customer_user_id=NULL/);
+  assert.deepEqual(final.args,["wamid.change05",71,14]);
+});
+
+test("expired or erased customer mutations are not retained indefinitely",()=>{
+  const fs=require("node:fs");
+  const service=fs.readFileSync(require.resolve("../src/services/whatsappCustomerMutationService"),"utf8");
+  const lifecycle=fs.readFileSync(require.resolve("../src/db/customerDataLifecycleRepo"),"utf8");
+  assert.match(service,/created_at<NOW\(\)-INTERVAL '7 days'/);
+  assert.match(service,/updated_at<NOW\(\)-INTERVAL '30 days'/);
+  assert.match(lifecycle,/DELETE FROM whatsapp_customer_message_mutations event/);
+  assert.match(lifecycle,/event\.customer_address IN/);
+  assert.match(lifecycle,/event\.target_wamid/);
+});
+
+test("deleted customer message tombstone rejects a late revoke",async()=>{
+  const calls=[];
+  const normalized={
+    id:"wamid.late01",originalMessageId:"wamid.original01",
+    action:"revoke",from:"60123456789",
+    businessAccountId:env.WHATSAPP_WABA_ID,
+    businessPhoneNumberId:env.WHATSAPP_PHONE_NUMBER_ID,
+  };
+  const result=await mutations.record(normalized,{database:{
+    async query(sql,args) {
+      calls.push({sql,args});
+      if(sql.includes("customer_data_deleted_message_ids"))return {rows:[{one:1}]};
+      throw Error("Mutation should not create a record for purged customer");
+    }
+  },env});
+  assert.equal(result,null);
+  assert.equal(calls.length,1);
+});
+
+test("restart recovery drains more than one page and processes orphan edit notices",async()=>{
+  const calls=[];
+  const initial=[
+    {event_wamid:"wamid.notice01",action:"unavailable_edit",target_wamid:null,
+     customer_address:"60123456789",customer_user_id:null,
+     business_phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID,
+     business_account_id:env.WHATSAPP_WABA_ID,provider_timestamp:1794355000,
+     created_at:new Date("2026-11-09T12:00:00Z")},
+    {event_wamid:"wamid.notice02",action:"unavailable_edit",target_wamid:null,
+     customer_address:"60123456789",customer_user_id:null,
+     business_phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID,
+     business_account_id:env.WHATSAPP_WABA_ID,provider_timestamp:1794355000,
+     created_at:new Date("2026-11-09T13:00:00Z")},
+    {event_wamid:"wamid.notice03",action:"unavailable_edit",target_wamid:null,
+     customer_address:"60123456789",customer_user_id:null,
+     business_phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID,
+     business_account_id:env.WHATSAPP_WABA_ID,provider_timestamp:1794355000,
+     created_at:new Date("2026-11-09T14:00:00Z")},
+  ];
+  let page=0;
+  const database={async query(sql,args=[]) {
+    calls.push({sql,args});
+    if(sql.includes("SELECT v.event_wamid"))return {rows:initial.slice(page++*2,page*2)};
+    if(sql.includes("SELECT c.id"))return {rows:[{id:25}]};
+    if(sql.includes("UPDATE whatsapp_customer_message_mutations"))return {rows:[{event_wamid:args[0]}]};
+    throw Error("Unexpected query: "+sql);
+  }};
+  const result=await mutations.reconcilePendingOnStartup({database,env,limit:2});
+  assert.deepEqual(result,{repaired:3,scanned:3});
+  const pages=calls.filter(c=>c.sql.includes("SELECT v.event_wamid"));
+  assert.equal(pages.length,2);
+  assert.equal(pages[1].args[2],"wamid.notice02");
+});
+
+test("new verified inbound can recover a targetless edit notice from before contact creation",async()=>{
+  let selected=0,updated=0;
+  const database={async query(sql,args=[]) {
+    if(sql.includes("SELECT event_wamid FROM whatsapp_customer_message_mutations"))
+      return {rows:[]};
+    if(sql.includes("SELECT event_wamid, customer_address")) {
+      return {rows:selected++===0?[{
+        event_wamid:"wamid.notice04",customer_address:"60123456789",
+        customer_user_id:null,provider_timestamp:1794355000
+      }]:[]};
+    }
+    if(sql.includes("SELECT c.id"))return {rows:[{id:25}]};
+    if(sql.includes("UPDATE whatsapp_customer_message_mutations")) {
+      updated++;return {rows:[{event_wamid:"wamid.notice04"}]};
+    }
+    throw Error("Unexpected query: "+sql);
+  }};
+  const applied=await mutations.reconcileAfterInbound({
+    id:"wamid.inbound01",from:"60123456789",
+    businessPhoneNumberId:env.WHATSAPP_PHONE_NUMBER_ID,
+    businessAccountId:env.WHATSAPP_WABA_ID
+  },{database,env});
+  assert.equal(applied,1);
+  assert.equal(updated,1);
 });
