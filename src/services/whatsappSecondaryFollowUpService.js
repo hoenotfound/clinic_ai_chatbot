@@ -508,8 +508,15 @@ async function runOnce({
     let messageId=null;
     let phase="initial_recheck";
     const fail=async(code)=>{
+      // Before a message is saved, no provider send is attempted. Keep that
+      // one-shot slot blocked without labelling it a possibly delivered
+      // WhatsApp message. Once saved, provider acceptance may be ambiguous:
+      // preserve 'unknown' and never retry automatically.
+      const beforeSave=messageId===null;
       await database.query(
-        "UPDATE whatsapp_sender_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
+        beforeSave
+          ? "UPDATE whatsapp_sender_followup_attempts SET status='blocked',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'"
+          : "UPDATE whatsapp_sender_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
         [id,String(code||"unknown").slice(0,120)]
       );
     };

@@ -131,7 +131,7 @@ test("live opt-out/staff takeover/service-window change blocks after claim",asyn
   assert.equal(result.attempted,1);
   assert.equal(result.accepted,0);
   assert.equal(f.sends,0);
-  assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
+  assert.ok(f.calls.some(x=>x.sql?.includes("status='blocked'")));
 });
 
 test("provider exception marks attempt unknown and never retries automatically",async()=>{
@@ -186,7 +186,7 @@ test("secondary video removed from primary config cannot create an outbound or u
  assert.equal(result.accepted,0);
  assert.equal(f.sends,0);
  assert.equal(f.calls.filter(x=>x.save).length,0);
- assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='blocked'")));
 });
 test("secondary video revoked while uploading is never submitted to WhatsApp",async()=>{
  const f=fake({rows:[{...candidate,media_key:"approved-video",
@@ -410,7 +410,7 @@ test("20h pre-save AI exception records fixed phase and never sends or retries",
   assert.equal(f.sends,0);
   assert.deepEqual(phases,[{phase:"ai_generation",slot:20}]);
   assert.equal(f.calls.filter(x=>x.save).length,0);
-  const failed=f.calls.find(x=>x.sql?.includes("SET status='unknown'"));
+  const failed=f.calls.find(x=>x.sql?.includes("SET status='blocked'"));
   assert.equal(failed?.args?.[1],"sender_followup_before_save_ai_generation");
   assert.equal(JSON.stringify(f.calls).includes("test secret"),false);
 });
