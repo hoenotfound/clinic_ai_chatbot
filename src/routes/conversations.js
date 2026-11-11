@@ -80,6 +80,7 @@ const whatsappTemplate = require("../services/whatsappTemplateService");
 const secondaryTemplate = require("../services/whatsappSecondaryTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
+const promotionalBlast = require("../services/promotionalBlastService");
 
 const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
@@ -1782,6 +1783,28 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if ((contact.channel || "whatsapp") !== "whatsapp") {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    if (req.body?.blastCampaignKey != null) {
+      if (req.user?.role !== "admin" ||
+          !["manage_tools","view_all_leads","reply_to_assigned_leads"]
+            .every(cap=>req.user?.permissions?.[cap]===true) ||
+          req.body?.templateName!==promotionalBlast.CAMPAIGN_KEY) {
+        return res.status(403).json({
+          code:"blast_send_not_authorized",
+          error:"This promotional blast is not authorized for this operator or template.",
+        });
+      }
+      // Consume the one-shot claim before any media upload or provider call.
+      // Failure, timeout or browser restart must never replay this blast.
+      const consumed=await promotionalBlast.consumeClaim(
+        contact.id,req.body.blastCampaignKey,
+        String(req.body?.languageCode||""),req.session?.username
+      );
+      if (!consumed) return res.status(409).json({
+        code:"blast_claim_invalid",
+        error:"This recipient's blast claim was used or the eligibility window changed. Check the conversation; do not resend automatically.",
+      });
     }
 
     // Secondary templates must never fall through to Neutro's catalog,
