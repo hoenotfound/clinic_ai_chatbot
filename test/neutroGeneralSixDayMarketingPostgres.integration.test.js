@@ -182,6 +182,27 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
       if(test===general.CANDIDATES_SQL)console.error("missing token",token);
     }
   }
+  // Active customers must not receive a paid reminder moments after asking
+  // a new question. The same selector is used for final send rechecks.
+  const active=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user','Can I ask about the assessment?','wamid.generic-active',"+
+    "NOW()-INTERVAL '2 minutes',NOW()-INTERVAL '2 minutes') RETURNING id",
+    [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [active,conversation]);
+  assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,0,
+    "a newly active customer holds the 48h generic template");
+  // Unlike the previous fixed eight-hour cutoff, a fresh customer reply
+  // shifts the due time rather than silently losing the whole sequence.
+  const nextDay=[...p];
+  nextDay[3]=new Date(Date.now()+25*3600000);
+  const resumed=(await db.query(general.CANDIDATES_SQL,nextDay)).rows;
+  assert.equal(resumed.length,1,
+    "a postponed 48h stage becomes eligible after 24 hours of inactivity");
+  assert.equal(resumed[0].slot_hours,48);
+  await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[active]);
+  await db.query("DELETE FROM messages WHERE id=$1",[active]);
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
   assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
   assert.equal(eligible[0].language_code,"en_US");
@@ -195,6 +216,21 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     [sender,contact,ad])).rows[0].id;
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
     "claimed generic marketing follow-up survives independent final consent check");
+  // A reply arriving between the one-shot claim and the provider call must
+  // also cancel the template during the final sender-bound recheck.
+  const justReplied=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user','One more question','wamid.generic-recheck-activity',"+
+    "NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute') RETURNING id",
+    [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [justReplied,conversation]);
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
+    "new customer question prevents send after the claim");
+  await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[justReplied]);
+  await db.query("DELETE FROM messages WHERE id=$1",[justReplied]);
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
+    "normal eligibility returns after the active-message fixture is removed");
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "fresh marketing opt-out cancels the claimed generic send");
