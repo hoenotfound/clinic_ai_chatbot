@@ -723,6 +723,9 @@ async function processIncomingMessage(
     // This check does NOT authorize AI inference or a follow-up from the
     // unreadable placeholder; the patient must first respond.
     const secondary131060RecoveryEligible = secondaryAiReady &&
+      incoming.unsupportedType === "unsupported" &&
+      Array.isArray(incoming.unsupportedErrors) &&
+      incoming.unsupportedErrors.some(error => Number(error?.code)===131060) &&
       is131060Message(incoming) && Boolean(recoveryActivation(process.env)) &&
       await canSend131060Recovery({
         contactId:contact.id,inboundMessageId:savedInbound.id,
