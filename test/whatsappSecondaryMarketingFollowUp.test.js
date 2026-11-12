@@ -289,6 +289,37 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
  assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
 });
 
+test("ordinary 48h/66h delays late replies safely without moving Day4/Day6",()=>{
+ const all=[svc.CANDIDATES_SQL,svc.RECHECK_SQL,svc.POTENTIAL_DUE_SQL];
+ for(const sql of all){
+   assert.match(sql,/inbound\.created_at\+INTERVAL '24 hours'/,
+     "due must wait 24h after the most recent authenticated customer message");
+   assert.match(sql,/prior48\.status='accepted'/,
+     "66h must preserve 18h gap after an accepted 48h reminder");
+   assert.match(sql,/prior48\.completed_at\)\+INTERVAL '18 hours'/);
+   assert.match(sql,/rule\.slot_hours=48 THEN INTERVAL '66 hours'/,
+     "48h reminders expire before the 66h phase");
+   assert.match(sql,/ELSE INTERVAL '96 hours'/,
+     "delayed 66h reminders expire before Day4");
+   assert.match(sql,/first_reply\.at\+INTERVAL '167 hours'/);
+   assert.match(sql,/same_session\.status IN\('claimed','accepted','unknown','blocked'\)/);
+   assert.match(sql,/same_session\.anchor_message_id<>inbound\.id/,
+     "an existing claim must not reject itself at the pre-send recheck");
+ }
+ assert.match(svc.CANDIDATES_SQL,/\$4::timestamptz-INTERVAL '24 hours'/,
+   "late replies never authorize immediate marketing sends");
+ assert.match(svc.RECHECK_SQL,/attempted\.status='claimed'/);
+ assert.match(svc.ORDINARY_MARKETING_DUE_SQL,/GREATEST/);
+ assert.match(svc.ORDINARY_NEWER_DUE_SQL,/newer\.slot_hours=66/);
+ for(const sql of [svc.EXTENDED_CANDIDATES_SQL,svc.EXTENDED_RECHECK_SQL,
+   svc.EXTENDED_POTENTIAL_DUE_SQL]){
+   assert.match(sql,/qualified_session\.first_reply_at\+rule\.slot_hours\*INTERVAL '1 hour'/);
+   assert.doesNotMatch(sql,/prior48\.completed_at/,"Day4/Day6 keep independent fixed ad-session timing");
+   assert.doesNotMatch(sql,/first_reply\.at/);
+   assert.match(sql,/qualified_session\.first_reply_at>=rule\.updated_at/);
+ }
+});
+
 test("66h only follows a verified later customer response; silence is capped across both workers",()=>{
  for(const sql of [
    svc.CANDIDATES_SQL,svc.RECHECK_SQL,svc.POTENTIAL_DUE_SQL,
