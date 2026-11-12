@@ -430,7 +430,7 @@ async function listRecentStaffImages(candidate,database=pool){
 async function recordDecision(candidate,reason,database=pool){
   if(!candidate?.contact_id||!candidate?.inbound_id)return;
   const safe=String(reason||"unknown").slice(0,145);
-  await database.query(
+  const result=await database.query(
     `INSERT INTO standalone_pricing_reminder_decisions
       (contact_id,inbound_message_id,reason)
      VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,
