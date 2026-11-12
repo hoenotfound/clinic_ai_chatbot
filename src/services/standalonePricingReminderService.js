@@ -19,7 +19,7 @@ const realtimeEvents=require("../utils/realtimeEvents");
 
 const PRIMARY="neutro";
 const SECONDARY="neutro_secondary";
-const MAX_SENDS_PER_WAKE=8;
+const MAX_SENDS_PER_WAKE=2;
 const SAFE_END_MINUTES=23*60+30;
 const DUE_AFTER_HOURS=22;
 const FLAG="NEUTRO_STANDALONE_PRICING_REMINDER_ENABLED";
@@ -35,29 +35,33 @@ function settings(env=process.env,config=clinicConfig){
   if(env.NEUTRO_STANDALONE_PRICING_PRIMARY_ENABLED==="true")senderKeys.push(PRIMARY);
   if(env.NEUTRO_STANDALONE_PRICING_SECONDARY_ENABLED==="true")senderKeys.push(SECONDARY);
   if(!senderKeys.length)return null;
+  const quietHours=normalizeQuietHours(config.automatedFollowUp.quietHours);
+  if(!quietHours)return null;
   return {senderKeys,activatedAt:new Date(env[ACTIVATION]).toISOString(),
-    sendBothPelvicPackages:true,requirePricingInterest:false,
-    quietHours:normalizeQuietHours(config.automatedFollowUp.quietHours)};
+    sendBothPelvicPackages:true,requirePricingInterest:false,quietHours};
 }
 
-// Price is due near closing. If 22h lands in 00:00-07:00 MYT, bring it
-// forward to 22:20 MYT the previous evening to avoid the late 20h follow-up.
-// Malaysia has no daylight-saving clock changes.
-function dueAt(candidate){
-  const source=new Date(candidate.source_at).getTime();
+// A pricing graphic is the last service-window message, not an early offer.
+// A non-quiet due time is 22 hours after the last inbound. When that time
+// lands in 00:00-07:00 MYT, the previous evening can be used ONLY if the
+// customer message is at least 20 hours old. Otherwise skip rather than send
+// an aggressive offer 14-17 hours into the conversation.
+function dueAt(candidate,quietHours=normalizeQuietHours()){
+  const source=Date.parse(candidate.source_at);
   if(!Number.isFinite(source))return null;
   let due=source+DUE_AFTER_HOURS*3600000;
-  const localHour=new Date(due+8*3600000).getUTCHours();
-  if(localHour<7){
+  if(quietHoursStatus(new Date(due),quietHours).active){
+    if(!quietHours.enabled || quietHours.start!=="00:00" || quietHours.end!=="07:00")
+      return null;
     const local=new Date(due+8*3600000);
     local.setUTCHours(0,0,0,0);
-    due=local.getTime()-100*60000-8*3600000;
+    due=local.getTime()-40*60000-8*3600000; // 23:20 MYT
+    if(due<source+20*3600000)return null;
   }
-  // Existing service and opt-in messages always get right of way.
-  // Give the customer at least 45 minutes before another automatic offer.
-  const last=new Date(candidate.last_automation_at).getTime();
-  if(candidate.last_automation_at && Number.isFinite(last))
-    due=Math.max(due,last+45*60000);
+  const last=candidate.last_automation_at?Date.parse(candidate.last_automation_at):NaN;
+  if(Number.isFinite(last))due=Math.max(due,last+45*60000);
+  if(due>source+SAFE_END_MINUTES*60000 ||
+      quietHoursStatus(new Date(due),quietHours).active)return null;
   return new Date(due);
 }
 function beforeEnd(candidate,now=new Date()){
@@ -82,7 +86,13 @@ function select(candidate,options){
   const language=detectConversationLanguage(customerTexts,"zh");
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
-    candidate,services:clinicConfig.services||[],
+    candidate:{...candidate,
+      // A staff-sent image may have no caption. Preserve it when checking
+      // all language variants and uncertain delivery statuses.
+      sent_media:(candidate.sent_media||[]).map(m=>({
+        ...m,content:m.content||"[image]"
+      }))},
+    services:clinicConfig.services||[],
     aliases:clinicConfig.serviceAliases||[],
     language,
     requirePricingInterest:options.requirePricingInterest,
@@ -128,7 +138,7 @@ async function dispatch(candidate,offer,options,row,allOffers){
     if(candidate.whatsapp_sender_key===SECONDARY &&
        !(await contactsRepo.canSendAutomaticReviewMedia(candidate.contact_id)))
       return false;
-    const still=await repo.stillEligible(candidate,row.id,options);
+    const still=await repo.stillEligible(candidate,row.id,options,offer);
     if(!still)return false;
     const selected=select(candidate,options);
     return selected.offers.length===allOffers.length &&
@@ -177,11 +187,13 @@ async function dispatch(candidate,offer,options,row,allOffers){
     }
   });
 }
-async function sendOne(candidate,offer,options,index,allOffers){
-  const row=index===0
-    ?await repo.claim(candidate,offer)
-    :await repo.claimAdditional(candidate,offer);
-  if(!row)return false;
+async function sendOne(candidate,offer,options,allOffers){
+  // Reuse only a provably unsent queued claim. For a fresh request, claim the
+  // first image; Package B is a separate claim after A's verified acceptance.
+  const row=await repo.resumeDeferred(candidate,offer)
+    || await repo.claim(candidate,offer)
+    || await repo.claimAdditional(candidate,offer);
+  if(!row)return {sent:false,waiting:true};
   publish(row);
   let result;
   try{result=await dispatch(candidate,offer,options,row,allOffers);}
@@ -190,33 +202,55 @@ async function sendOne(candidate,offer,options,index,allOffers){
     result={success:false,unknown:true,ambiguous:true};
   }
   const accepted=result?.success===true &&
-    result?.unknown!==true && /^wamid\./.test(String(result.wamid||""));
+    result?.unknown!==true && /^wamid\\./.test(String(result.wamid||""));
   if(accepted){
     try{
       const saved=await messagesRepo.setWhatsappMessageId(row.id,result.wamid,
         candidate.whatsapp_sender_key===SECONDARY?
           {preserveVerifiedSecondaryReceipt:true}:undefined);
-      if(saved){publish(saved);return true;}
+      if(saved){
+        publish(saved);
+        await repo.recordDecision(candidate,"provider_accepted:"+offer.packageName).catch(()=>{});
+        return {sent:true};
+      }
     }catch(error){
       console.warn("[Standalone pricing] Accepted but receipt save unconfirmed:",error?.message);
     }
+    await repo.recordDecision(candidate,"provider_accepted_local_receipt_unconfirmed").catch(()=>{});
     await reportUncertain(candidate,row.id);
-    return false;
+    return {sent:false,review:true};
   }
-  const definiteRejection=result?.definitivelyRejected===true &&
+  // Only a confirmed PRE-provider block can be retried; a sender billing
+  // reservation, ambiguous HTTP response or WAMID is never reset.
+  const safelyBlocked=result?.unknown!==true && result?.ambiguous!==true &&
+    !result?.wamid && (result?.policyBlocked===true || result?.cancelled===true);
+  if(safelyBlocked){
+    const deferred=await repo.deferUnsent(candidate,row,result.code||"preflight");
+    if(deferred){
+      publish(deferred.row);
+      const retry=deferred.retry;
+      await repo.recordDecision(candidate,"deferred:"+String(result.code||"preflight")).catch(()=>{});
+      if(retry && Number(retry.attempts)>=3){
+        await repo.recordDecision(candidate,"preflight_exhausted:"+offer.packageName).catch(()=>{});
+        return {sent:false,review:true};
+      }
+      return {sent:false,nextAt:retry?.retry_after||null};
+    }
+  }
+  const rejected=result?.definitivelyRejected===true &&
     result?.unknown!==true && result?.ambiguous!==true;
-  const definitelyUnsent=result?.cancelled===true &&
-    result?.unknown!==true && result?.ambiguous!==true;
-  const status=definiteRejection?"failed":definitelyUnsent?"cancelled":"unknown";
+  const status=rejected?"failed":"unknown";
   try{
     const saved=await messagesRepo.setDeliveryStatusById(row.id,status,
-      status==="unknown"?
-        "Pricing image delivery uncertain. Staff must verify before retry.":
-        "Pricing send was blocked or rejected.");
+      rejected?"Pricing image rejected by Meta. Manual review required."
+        :"Pricing image delivery uncertain. Check sender receipt; do not retry blindly.");
     publish(saved);
   }catch{}
-  if(status==="unknown")await reportUncertain(candidate,row.id);
-  return false;
+  await repo.recordDecision(candidate,status+":"+offer.packageName).catch(()=>{});
+  // A definite rejection should not trigger the identical image again; an
+  // unknown outcome must be surfaced and block any subsequent package.
+  await reportUncertain(candidate,row.id);
+  return {sent:false,review:true};
 }
 async function runOnce(now=new Date()){
   const options=settings();
