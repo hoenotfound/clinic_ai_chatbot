@@ -91,6 +91,14 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   assert.equal(afterStaff[0].recovery_no_selection,true);
   assert.equal(afterStaff[0].staff_reply,true);
 
+  await db.query("UPDATE messages SET content=$2 WHERE id=$1",
+    [staff,"请问您想了解哪方面的护理呢？"]);
+  const afterStaffQuestion=await candidates();
+  assert.equal(afterStaffQuestion.length,1,
+    "an ordinary staff question does not cancel a verified 131060 recovery slot");
+  assert.equal(afterStaffQuestion[0].staff_question,true);
+  assert.equal(afterStaffQuestion[0].recovery_no_selection,true);
+
   // A second unreadable event has no new treatment intent; the initial
   // accepted menu is still the only safe reminder anchor.
   const repeat=(await db.query(
