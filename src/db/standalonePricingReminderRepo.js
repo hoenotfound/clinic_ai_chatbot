@@ -271,7 +271,7 @@ async function claim(candidate,offer,database=pool){
           AND (SELECT recent.id FROM messages recent
                WHERE recent.contact_id=c.id AND recent.role='user'
                ORDER BY recent.created_at DESC,recent.id DESC LIMIT 1)=inbound.id)
-    ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status
+    ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status,pricing_reminder_package_key
   `,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
       offer.packageName,offer.serviceName,candidate.whatsapp_sender_id]);
   return result.rows?.[0]||null;
@@ -310,7 +310,7 @@ async function claimAdditional(candidate,offer,database=pool){
       AND NOT EXISTS(
         SELECT 1 FROM messages same WHERE same.pricing_reminder_anchor_id=$2
         AND same.pricing_reminder_package_key=$5)
-    ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status
+    ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status,pricing_reminder_package_key
   `,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
      offer.packageName,offer.serviceName,candidate.whatsapp_sender_id]);
   return result.rows?.[0]||null;
