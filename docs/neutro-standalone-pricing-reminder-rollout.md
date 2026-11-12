@@ -46,6 +46,17 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
 - Attempts and skips are recorded in the separate migration 127 audit table.
   This leaves the legacy pricing reminder's constrained decision table
   completely untouched.
+- Standalone decisions appear in the existing Follow-up Activity and Health
+  screens, honoring the same contact-access permissions. Ordinary skips stay
+  in the activity log; ambiguous/manual-media and uncertain delivery reviews
+  appear as attention events. Actionable new reviews also set the existing
+  Inbox attention flag without replacing higher-priority clinical/booking holds.
+- For staff-uploaded images using a new R2 key, a **confirmed**, distinctive
+  matching caption is treated as already sent. A captionless or short pricing
+  image from the current conversation cannot be proven identical from its URL;
+  it is held for a staff check rather than resent automatically. The classifier
+  never fetches customer media bytes or scans unrelated contacts. Images with
+  clear unrelated captions are left alone.
 - Sender-specific API, freeform window, billing gate and final pre-send
   checks remain in force. Meta timeouts and missing/unknown receipts always
   require human review.
