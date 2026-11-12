@@ -51,6 +51,22 @@ test("signed pelvic choice stays the 2h/6h/20h choice after a bare postpartum co
  assert.equal(latestMarketingIntentMatches({customerMessages:["产后"],
   treatmentInterest:"3D 小颜术",clinicConfig:config}),false);
 });
+test("old incorrect postpartum state is held instead of sending the wrong service",()=>{
+ const candidate={verified_treatment_status:"selected",
+  verified_treatment_name:"产后调理",treatment_interest:"产后调理",
+  customer_texts:["想问一下价格大概是多少","产后","骨盆调理"]};
+ assert.deepEqual(chooseSecondaryFollowUpTreatment({
+  candidate,clinicConfig:config,
+ }),{treatment:null,generalOnly:true,customerSelected:false});
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,
+  treatmentInterest:"产后调理",clinicConfig:config}),false);
+ // Explicitly selecting the actual separate postpartum service is NOT
+ // blocked just because the customer mentioned pelvic care earlier.
+ const explicit={...candidate,customer_texts:["我想了解产后调理","产后","骨盆调理"]};
+ assert.equal(chooseSecondaryFollowUpTreatment({
+  candidate:explicit,clinicConfig:config,
+ }).treatment,"产后调理");
+});
 test("only automation-owned, open, unassigned, signed and unedited unattributed leads may reconcile CRM",()=>{
  assert.match(RECONCILE_CRM_SQL,/l.source IN \('meta_ads','whatsapp_unattributed'\)/);
  for(const required of [
