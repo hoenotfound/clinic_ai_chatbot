@@ -80,7 +80,7 @@ function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.
  if(env.WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED!=="true")return "FALSE";
  const cutoff=secondaryLegacyStaffCutoff(env);
  const raw=String(env.WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT||"");
- if(!cutoff||!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/.test(raw))
+ if(!cutoff||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw))
    return "FALSE";
  const active=new Date(raw);
  if(!Number.isFinite(active.getTime()))return "FALSE";
