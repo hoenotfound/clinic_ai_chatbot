@@ -46,6 +46,9 @@ test("all contact automation adds legacy staff guard without weakening provider 
  // Explicit environment parameter allows SQL review without switching live flags.
  const sql=eligibility.secondaryLegacyStaffAudienceSql("c","inbound",env);
  assert.match(sql,/whatsapp_sender_message_context ad_context/);
+ const automation=eligibility.secondaryAutomationEligibleSql("c","$6","inbound","$7","$8",env);
+ assert.match(automation,/whatsapp_free_entry_referrals verified_ad/);
+ assert.match(automation,/inbound.created_at<ad_inbound.created_at\\+INTERVAL '7 days'/);
  // Secondary marketing still applies treatment-specific consent; this helper
  // can only narrow an existing eligible candidate, never grant consent.
  assert.match(sql,/whatsapp_free_entry_referrals/);
