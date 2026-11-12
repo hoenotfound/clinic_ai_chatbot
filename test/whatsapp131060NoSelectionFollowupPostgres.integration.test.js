@@ -130,13 +130,17 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     contact,inbound,2,senderName,phoneId,waba,
     ready[0].rule_version,activation,"all_contacts",
     new Date(Date.now()-7*3600000).toISOString(),activation]);
-  assert.equal((await recheck()).rows[0].allowed,true,
-    "the final pre-send check authorizes the same accepted recovery proof");
+  // Provider pre-send authorization uses actual NOW(), not the test's
+  // candidate-time override. Overnight it must remain false.
+  const myHour=(new Date().getUTCHours()+8)%24;
+  const canSendNow=myHour>=7 && myHour<=23;
+  assert.equal((await recheck()).rows[0].allowed,canSendNow,
+    "the final pre-send check respects the real quiet-hour rule");
   await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[menu]);
   assert.equal((await recheck()).rows[0].allowed,false,
     "a later definitive delivery failure cancels the pending reminder");
   await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[menu]);
-  assert.equal((await recheck()).rows[0].allowed,true);
+  assert.equal((await recheck()).rows[0].allowed,canSendNow);
 
   await db.query(
     "UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[contact]);
@@ -211,7 +215,8 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
       c,anchor,slot,senderName,phoneId,waba,live[0].rule_version,
       activation,"all_contacts",new Date(Date.now()-7*3600000).toISOString(),
       activation])).rows[0].allowed;
-    assert.equal(await check(),true,"provider recheck permits silent "+slot+"h recovery");
+    assert.equal(await check(),canSendNow,
+      "provider recheck permits silent "+slot+"h recovery only in active hours");
     await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[verifiedMenu]);
     assert.equal(await check(),false,"failed menu must block "+slot+"h send");
     await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[verifiedMenu]);
@@ -221,7 +226,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     await db.query("UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[c]);
     assert.equal(await check(),false,"opt-out must block "+slot+"h send");
     await db.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=$1",[c]);
-    assert.equal(await check(),true);
+    assert.equal(await check(),canSendNow);
     if(slot===20){
       const lead=(await db.query(
         "INSERT INTO leads(contact_id,created_by) VALUES($1,'Automation') RETURNING id",
@@ -229,7 +234,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
       await db.query("UPDATE leads SET appointment_status='booked' WHERE id=$1",[lead]);
       assert.equal(await check(),false,"confirmed booking must stop 20h recovery");
       await db.query("UPDATE leads SET appointment_status='none' WHERE id=$1",[lead]);
-      assert.equal(await check(),true);
+      assert.equal(await check(),canSendNow);
     }
     await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[reservation]);
   }
