@@ -1640,7 +1640,7 @@ async function setDeliveryAttention(id, reason, failedMessageId = null) {
 // Real booking, safety, AI-review and clinical tasks still require deliberate
 // staff resolution. Keep failed media actionable even after later text replies.
 // The SQL tests the latest customer turn atomically to avoid stale-send races.
-async function clearDeliveryAttentionIfNoFailedMessages(id) {
+async function clearDeliveryAttentionIfNoFailedMessages(id, expectedReason = null) {
   const result = await pool.query(
     `UPDATE contacts c
      SET needs_attention = EXISTS (
@@ -1659,6 +1659,7 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
          delivery_attention_message_id = NULL,
          updated_at = now()
      WHERE c.id = $1
+       AND ($2::text IS NULL OR c.attention_reason = $2::text)
        AND c.needs_attention = true
        AND (
          c.attention_reason LIKE 'Delivery failed:%'
@@ -1700,7 +1701,7 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
            )
        )
      RETURNING *`,
-    [id]
+    [id, expectedReason]
   );
   const updated = result.rows[0] || null;
   if (updated) publishContactChange(updated.id, { contact: updated });

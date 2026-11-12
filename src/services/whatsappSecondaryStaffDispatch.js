@@ -275,15 +275,22 @@ async function sendSecondaryStaffText({
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
   }, { database, env });
-  // Consecutive staff or forward-only photos can race the signed receipt
-  // for the previous photo. The NEXT message has not reached Meta or reserved
-  // billing yet. Give the previous accepted send a short chance to reconcile,
-  // never retrying a provider request or releasing an unknown billing hold.
-  if ((origin === "staff" || origin === "staff_forward") &&
-      typeof dispatchTransport === "function" &&
+  // A signed pricing receipt can arrive shortly after Meta accepts an
+  // earlier message. In particular, AI text may be ready while the previous
+  // AI media message is still awaiting its receipt. No reservation or provider
+  // request exists for this NEXT message yet, so retry only the pre-provider
+  // billing reservation, never a Meta send. Keep media's existing 3s bound;
+  // AI text gets up to 6s, with policy, audience and cancellation rechecked
+  // on each iteration. An unknown prior outcome must remain blocked.
+  const waitingStaffMedia = (origin === "staff" || origin === "staff_forward") &&
+    typeof dispatchTransport === "function";
+  const waitingAutomatedText = (origin === "ai_reply" || origin === "system_fallback") &&
+    typeof dispatchTransport !== "function" && templateRequest == null;
+  if ((waitingStaffMedia || waitingAutomatedText) &&
       !reserved.reserved &&
       reserved.code === "secondary_billing_previous_send_unresolved") {
-    for (let i = 0; i < 4; i++) {
+    const maxWaitChecks = waitingAutomatedText ? 8 : 4;
+    for (let i = 0; i < maxWaitChecks; i++) {
       await waitForPriorSettlement(750);
       if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
         return { ...block("secondary_send_cancelled"), cancelled: true };
