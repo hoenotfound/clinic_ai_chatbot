@@ -12,9 +12,12 @@ function setup(t, uploadResult, { onTemporary = () => {} } = {}) {
   const contact = { id: 9020, channel: "facebook", channel_user_id: "psid-9020" };
   t.mock.method(policy, "checkFreeformAllowed", async () => ({ allowed: true }));
   t.mock.method(storage, "downloadMedia", async () => Buffer.from("valid-video-bytes"));
-  t.mock.method(storage, "uploadTemporaryMedia", async (buffer, mimeType, options) => {
+  t.mock.method(storage, "uploadTemporaryMedia", async () => {
+    throw new Error("Messenger fallback must not re-upload video bytes to R2");
+  });
+  t.mock.method(storage, "copyStoredMediaToTemporary", async (key, mimeType, options) => {
     onTemporary();
-    calls.push(["temporary", buffer.toString(), mimeType, options.contactId]);
+    calls.push(["temporary", key, mimeType, options.contactId]);
     return { url: "https://r2.example.test/temporary-video", key: "temporary-video-key" };
   });
   t.mock.method(storage, "scheduleTemporaryMediaDelete", key => {
@@ -49,7 +52,7 @@ test("Messenger video uses one private URL fallback after a definite upload 500,
   assert.deepEqual(calls, [
     ["caption", "Only once"],
     ["upload", "video"],
-    ["temporary", "valid-video-bytes", "video/mp4", 9020],
+    ["temporary", "clinic/follow-up/9d.mp4", "video/mp4", 9020],
     ["url", "facebook", "psid-9020", "video", "https://r2.example.test/temporary-video"],
     ["cleanup", "temporary-video-key"],
   ]);
