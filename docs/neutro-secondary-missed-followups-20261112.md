@@ -24,7 +24,7 @@ Each verified customer reply correctly starts a new 24-hour service-window seque
 
 The amended worker may use a recently accepted previous 2h or 6h step as a **prerequisite only**, without sending that stage again. This proof must belong to the same sender-bound conversation, have been accepted within 24h before the new inbound, and have no intervening staff message, uncertain/blocked send, imported message or newer verified treatment decision. The latest inbound and its normal AI reply still define the new due time. All existing 7-day media cooldowns, sender-specific one-shot claims, reply windows, booking and opt-out holds remain.
 
-An explicit new treatment selection, even if it names the same service, starts a fresh treatment chain conservatively. The worker will not reuse media from a prior choice without a durable same-treatment proof. This may skip some otherwise valid 6h/20h reminders, but cannot send cross-treatment videos.
+A new treatment selection may continue the earlier sequence only when the previously accepted outbound message contains the exact same saved treatment name. New secondary 2h/6h messages now store that treatment snapshot. Older messages with no snapshot remain blocked if the customer makes another explicit selection, so an earlier 3D testimonial can never unlock a 9D sequence.
 
 ## Symptom B3: AI lead-scoring summaries can overwrite the saved customer choice
 
