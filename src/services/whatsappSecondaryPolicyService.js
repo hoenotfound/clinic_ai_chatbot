@@ -5,6 +5,7 @@
 // call Graph API: billing and receipt reconciliation are a separate gate.
 const { pool } = require("../db/db");
 const { normalizeCustomerAddress } = require("../utils/whatsappCustomerIdentity");
+const generalMarketing=require("./neutroSecondaryGeneralMarketingSql");
 
 const POLICY_MARGIN_MS = 2 * 60 * 1000;
 const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -173,6 +174,26 @@ const SECONDARY_MARKETING_CONSENT_SQL = `
   FROM active_lead l
 `;
 
+const SECONDARY_GENERIC_MARKETING_CONSENT_SQL = 
+  "WITH active_lead AS ("+
+  " SELECT l.id,l.marketing_consent FROM leads l WHERE l.contact_id=$1"+
+  " ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1)"+
+  " SELECT l.marketing_consent,EXISTS("+
+  " SELECT 1 FROM whatsapp_marketing_consent_events e"+
+  " JOIN messages m ON m.id=e.message_id AND m.contact_id=$1"+
+  " AND m.role='user' AND m.whatsapp_message_id=e.provider_message_id"+
+  " JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id AND mc.conversation_id=$2"+
+  " WHERE e.contact_id=$1 AND e.lead_id=l.id"+
+  " AND e.consent_category='MARKETING'"+
+  " AND e.consent_scope='general_clinic_followups_and_related_offers'"+
+  " AND e.consent_service='neutro_general_tcm_care'"+
+  " AND e.consent_method='customer_whatsapp_text'"+
+  " AND e.consented_at=$3::timestamptz"+
+  " AND e.consented_at=COALESCE(m.source_created_at,m.created_at)"+
+  " AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages h"+
+  " WHERE h.message_id=m.id)"+
+  " ) AS verified FROM active_lead l";
+
 // Template lookup is always made against the secondary sender's own verified WABA and token.
 // No shared Neutro catalog, name-only cached result, or caller-asserted approval.
 async function verifySecondaryApprovedTemplate({
@@ -237,13 +258,19 @@ async function previewSecondaryTemplatePolicy(contact, {
     name, languageCode, contact, env, database, fetchImpl,
   });
   if (!approval.template) return approval;
+  const genericTemplate=generalMarketing.GENERAL_TEMPLATE_NAMES.has(clean(name));
+  if(genericTemplate && (clean(treatmentInterest) || !generalMarketing.enabled(env)))
+    return deny("secondary_general_marketing_disabled_or_treatment_mismatched");
   if (approval.template.category === "MARKETING") {
     if (row.whatsapp_marketing_opt_out_at) return deny("secondary_marketing_opted_out");
     try {
-      const consent = await database.query(SECONDARY_MARKETING_CONSENT_SQL, [
-        Number(contact.id), row.sender_conversation_id, optInAt.toISOString(),
-        clean(treatmentInterest) || null,
-      ]);
+      const consent = await database.query(
+        genericTemplate?SECONDARY_GENERIC_MARKETING_CONSENT_SQL:SECONDARY_MARKETING_CONSENT_SQL,
+        genericTemplate
+          ? [Number(contact.id),row.sender_conversation_id,optInAt.toISOString()]
+          : [Number(contact.id),row.sender_conversation_id,optInAt.toISOString(),
+             clean(treatmentInterest) || null],
+      );
       const evidence = consent.rows?.[0];
       if (consent.rows?.length !== 1 || evidence.marketing_consent !== "opted_in" ||
           evidence.verified !== true) return deny("secondary_marketing_consent_unverified");
@@ -318,6 +345,7 @@ async function inspectSecondaryCtwaEvidence(contact, {
 module.exports = {
   SECONDARY_POLICY_SNAPSHOT_SQL,
   SECONDARY_MARKETING_CONSENT_SQL,
+  SECONDARY_GENERIC_MARKETING_CONSENT_SQL,
   SECONDARY_CTWA_EVIDENCE_SQL,
   secondaryPolicySnapshot,
   evaluateServiceWindow,
