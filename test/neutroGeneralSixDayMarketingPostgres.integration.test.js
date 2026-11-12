@@ -196,7 +196,16 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   // Unlike the previous fixed eight-hour cutoff, a fresh customer reply
   // shifts the due time rather than silently losing the whole sequence.
   const nextDay=[...p];
-  nextDay[3]=new Date(Date.now()+25*3600000);
+  // The real scheduler suppresses marketing sends during Malaysia quiet hours.
+  // Keep the resumption test >=25h after fresh activity, at an allowed hour.
+  const resumedAt=new Date(Date.now()+25*3600000);
+  const localMinute=(resumedAt.getUTCHours()*60+resumedAt.getUTCMinutes()+480)%1440;
+  if(localMinute<7*60){
+    resumedAt.setTime(resumedAt.getTime()+
+      (7*60-localMinute)*60000-resumedAt.getUTCSeconds()*1000-
+      resumedAt.getUTCMilliseconds());
+  }
+  nextDay[3]=resumedAt;
   const resumed=(await db.query(general.CANDIDATES_SQL,nextDay)).rows;
   assert.equal(resumed.length,1,
     "a postponed 48h stage becomes eligible after 24 hours of inactivity");
