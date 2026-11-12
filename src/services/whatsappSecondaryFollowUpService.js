@@ -70,9 +70,60 @@ const ALLOWED_MIME={
 // Treat a verified staff answer as a potential service follow-up anchor.
 // Imported, forwarded and deleted messages are excluded in the shared policy.
 const FIRST_REPLY_SQL=serviceReplyAnchorSql();
+// A sender-bound, confirmed-delivered recovery menu anchors the entire
+// 131060 service sequence. Staff-authored replies remain visible to the
+// safeguards, but do not reset the original reminder due times.
+const RECOVERY_MENU_SQL=String.raw`
+ LEFT JOIN LATERAL (
+   SELECT verified_recovery.id,verified_recovery.created_at AS at FROM messages verified_recovery
+    JOIN whatsapp_sender_message_context verified_recovery_context
+      ON verified_recovery_context.message_id=verified_recovery.id
+      AND verified_recovery_context.conversation_id=sc.id
+    JOIN outbound_message_evidence recovery_evidence
+      ON recovery_evidence.message_id=verified_recovery.id
+      AND recovery_evidence.contact_id=c.id
+      AND recovery_evidence.channel='whatsapp'
+      AND recovery_evidence.origin='system_fallback'
+      AND recovery_evidence.accepted=TRUE
+      AND recovery_evidence.provider_message_id=verified_recovery.whatsapp_message_id
+    WHERE verified_recovery.contact_id=c.id
+      AND verified_recovery.role='assistant'
+      AND verified_recovery.whatsapp_message_id IS NOT NULL
+      AND verified_recovery.created_at>=inbound.created_at
+      AND verified_recovery.created_at<inbound.created_at+INTERVAL '24 hours'
+      AND (verified_recovery.created_at,verified_recovery.id)<=(first_reply.at,first_reply.id)
+      AND verified_recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+      AND verified_recovery.content LIKE '%可以点下面的选项%'
+      -- Meta's initial WAMID acceptance is not final delivery evidence.
+      -- Hold a reminder unless the provider has subsequently confirmed a
+      -- sent/delivered/read state, and never follow up a failed menu.
+      AND verified_recovery.delivery_status IN ('sent','delivered','read')
+      AND NOT EXISTS (
+        SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_menu
+        WHERE old_menu.sender_id=sa.id AND old_menu.message_id=verified_recovery.id
+      )
+   ORDER BY verified_recovery.created_at ASC,verified_recovery.id ASC LIMIT 1
+ ) recovery_menu ON TRUE
+`;
+
+const RECOVERY_NO_SELECTION_SQL=String.raw`(
+  inbound.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+  AND recovery_menu.id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM messages newer_customer
+    WHERE newer_customer.contact_id=c.id AND newer_customer.role='user'
+      AND (newer_customer.created_at,newer_customer.id)
+          >(inbound.created_at,inbound.id)
+      -- Another unreadable event is not a treatment selection. It does not
+      -- restart the seven-day recovery menu or suppress a verified reminder.
+      AND newer_customer.content NOT LIKE
+          '📎 [% sent a WhatsApp message that could not be displayed]'
+  )
+)`;
 // FU3 remains four hours before the latest inbound 24h window expires.
-const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
-   THEN inbound.created_at
+const FOLLOWUP_DUE_SQL=`(CASE WHEN ${RECOVERY_NO_SELECTION_SQL}
+   THEN recovery_menu.at
+   WHEN rule.slot_hours=20 THEN inbound.created_at
    WHEN rule.slot_hours=2 AND first_reply.staff_question
      THEN first_reply.at+INTERVAL '4 hours'
    ELSE first_reply.at END)
@@ -173,7 +224,8 @@ const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
    ${FOLLOWUP_DUE_SQL},
    COALESCE(previous_step.completed_at + INTERVAL '15 minutes',
      ${FOLLOWUP_DUE_SQL}),
-   CASE WHEN first_reply.staff_reply THEN first_reply.at+INTERVAL '2 hours'
+   CASE WHEN first_reply.staff_reply AND NOT ${RECOVERY_NO_SELECTION_SQL}
+      THEN first_reply.at+INTERVAL '2 hours'
      ELSE ${FOLLOWUP_DUE_SQL} END
  )
  ELSE GREATEST(
@@ -193,48 +245,6 @@ const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
 // customer treatment selection. It must be provider-accepted, tied to the
 // original sender-bound unavailable message and never treated as a treatment
 // enquiry, ad click, marketing opt-in or permission to send media/templates.
-const RECOVERY_NO_SELECTION_SQL=String.raw`(
-  inbound.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
-  AND EXISTS (
-    SELECT 1 FROM messages verified_recovery
-    JOIN whatsapp_sender_message_context verified_recovery_context
-      ON verified_recovery_context.message_id=verified_recovery.id
-      AND verified_recovery_context.conversation_id=sc.id
-    JOIN outbound_message_evidence recovery_evidence
-      ON recovery_evidence.message_id=verified_recovery.id
-      AND recovery_evidence.contact_id=c.id
-      AND recovery_evidence.channel='whatsapp'
-      AND recovery_evidence.origin='system_fallback'
-      AND recovery_evidence.accepted=TRUE
-      AND recovery_evidence.provider_message_id=verified_recovery.whatsapp_message_id
-    WHERE verified_recovery.contact_id=c.id
-      AND verified_recovery.role='assistant'
-      AND verified_recovery.whatsapp_message_id IS NOT NULL
-      AND verified_recovery.created_at>=inbound.created_at
-      AND verified_recovery.created_at<inbound.created_at+INTERVAL '24 hours'
-      AND (verified_recovery.created_at,verified_recovery.id)<=(first_reply.at,first_reply.id)
-      AND verified_recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
-      AND verified_recovery.content LIKE '%可以点下面的选项%'
-      -- Meta's initial WAMID acceptance is not final delivery evidence.
-      -- Hold a reminder unless the provider has subsequently confirmed a
-      -- sent/delivered/read state, and never follow up a failed menu.
-      AND verified_recovery.delivery_status IN ('sent','delivered','read')
-      AND NOT EXISTS (
-        SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_menu
-        WHERE old_menu.sender_id=sa.id AND old_menu.message_id=verified_recovery.id
-      )
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM messages newer_customer
-    WHERE newer_customer.contact_id=c.id AND newer_customer.role='user'
-      AND (newer_customer.created_at,newer_customer.id)
-          >(inbound.created_at,inbound.id)
-      -- Another unreadable event is not a treatment selection. It does not
-      -- restart the seven-day recovery menu or suppress a verified reminder.
-      AND newer_customer.content NOT LIKE
-          '📎 [% sent a WhatsApp message that could not be displayed]'
-  )
-)`;
 const RECOVERY_REMINDER_TEXT=Object.freeze({
   zh:Object.freeze({
     2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
@@ -432,6 +442,7 @@ const CANDIDATES_SQL=`
    THEN 1 ELSE 0 END DESC,m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON true
  ${FIRST_REPLY_SQL}
+ ${RECOVERY_MENU_SQL}
  ${PREVIOUS_STEP_SQL}
  LEFT JOIN LATERAL (
    SELECT lead.id,lead.marketing_consent,lead.is_closed,lead.appointment_status,
@@ -463,7 +474,8 @@ const CANDIDATES_SQL=`
    ${repeatSlotCooldownSql('$4::timestamptz')}
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
-   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2
+      OR ${RECOVERY_NO_SELECTION_SQL})
    AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -555,6 +567,7 @@ const RECHECK_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  ${FIRST_REPLY_SQL}
+ ${RECOVERY_MENU_SQL}
  ${PREVIOUS_STEP_SQL}
  LEFT JOIN LATERAL (
    SELECT l.marketing_consent,l.is_closed,l.appointment_status,
@@ -578,7 +591,8 @@ const RECHECK_SQL=`
    ${repeatSlotCooldownSql('NOW()')}
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
-   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2
+      OR ${RECOVERY_NO_SELECTION_SQL})
    AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -699,10 +713,10 @@ async function runOnce({
       forceGeneral:generalOnly,
     });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
-    const safeText=candidate.staff_reply && candidate.staff_question
-      ? gentleStaffQuestionNudge(replyLanguage)
-      : candidate.recovery_no_selection
-        ? recoveryNoSelectionReminderText(slot,replyLanguage) : localized;
+    const safeText=candidate.recovery_no_selection
+      ? recoveryNoSelectionReminderText(slot,replyLanguage)
+      : candidate.staff_reply && candidate.staff_question
+        ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
