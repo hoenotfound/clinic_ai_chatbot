@@ -170,7 +170,9 @@ const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
  THEN GREATEST(
    ${FOLLOWUP_DUE_SQL},
    COALESCE(previous_step.completed_at + INTERVAL '15 minutes',
-     ${FOLLOWUP_DUE_SQL})
+     ${FOLLOWUP_DUE_SQL}),
+   CASE WHEN first_reply.staff_reply THEN first_reply.at+INTERVAL '2 hours'
+     ELSE ${FOLLOWUP_DUE_SQL} END
  )
  ELSE GREATEST(
    ${FOLLOWUP_DUE_SQL},
