@@ -2346,7 +2346,7 @@ function ConversationList({
     if (filters.control !== "all") {
       active.push({
         key: "control",
-        label: "AI status · " + (INBOX_CONTROL_LABELS[filters.control] || filters.control),
+        label: "AI handling · " + (INBOX_CONTROL_LABELS[filters.control] || filters.control),
       });
     }
     if (filters.replyWindow !== "all") {
@@ -2509,7 +2509,7 @@ function ConversationList({
                 />
               </div>
               <FilterSelect
-                label="AI status"
+                label="AI handling"
                 value={filters.control}
                 onChange={(value) => updateFilter("control", value)}
                 options={[
@@ -4027,7 +4027,7 @@ function ThreadView({
                 </button>
             ) : needsManualApproval && !canManageLeads ? (
               <span title="AI is paused by the secondary-number policy or another restriction"
-                className="px-2 text-xs text-[var(--color-text-muted)]">AI paused</span>
+                className="px-2 text-xs text-[var(--color-text-muted)]">Admin approval required</span>
             ) : (
               <button
                 type="button"
