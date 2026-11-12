@@ -243,6 +243,7 @@ async function sendTrackedText(
   // Only the signed Meta 131060 recovery path may bypass an old contact's
   // ordinary AI audience, and only to send the one fixed treatment menu.
   const recoveryAnchor=origin==="system_fallback" &&
+    interactiveButtons != null &&
     validRecoveryTreatmentButtons(interactiveButtons) &&
     Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
     Number(reviewReplyToInboundMessageId)>0
