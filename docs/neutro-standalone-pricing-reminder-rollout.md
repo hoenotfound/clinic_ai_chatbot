@@ -26,30 +26,46 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
   history on secondary, a genuine business reply, and a verified *recent*
   customer treatment mention. Generic hellos, unsupported messages and stale
   CRM-only treatment labels are excluded.
-- Normally due ~22h after latest customer message, before a 23h30 safety
-  cutoff. When 22h falls inside 00:00-07:00 MYT quiet hours, send earlier at
-  22:20 MYT the previous evening if still inside the current service window.
+- Normally due ~22h after the latest customer message, before a 23h30 safety
+  cutoff. If 22h falls in 00:00-07:00 MYT quiet hours, use 23:20 MYT the
+  previous evening only if at least 20h has elapsed since the customer message.
+  Otherwise skip rather than send an early or overnight offer. Other quiet
+  hour configurations fail closed when the scheduled time is quiet.
 - Verified pricing media already delivered, pricing text already quoted,
   ambiguous service/package, clinical risk, staff ownership, pending review,
   confirmed appointment, opt-out, expired reply window or a changed promotion
   mean no automatic graphic.
-- If both pelvis package graphics are required, Meta must accept package A
-  before B can be attempted. A partially confirmed set is never replayed.
+- For pelvic Package A+B, primary sends B only after A has a saved accepted
+  WAMID. Secondary requires A's matched signed *successful* delivery receipt
+  AND a cleared sender-specific billing gate before claiming B. An interrupted
+  or uncertain package is never automatically replayed.
+- Confirmed pre-provider blocks use the existing pricing reminder backoff
+  (30 seconds, 1 minute, 2 minutes, at most three attempts); queued rows are
+  reused only when there is no unresolved billing attempt or provider receipt.
+  Failed/unknown Meta outcomes always require staff review.
+- Attempts and skips are recorded in the separate migration 127 audit table.
+  This leaves the legacy pricing reminder's constrained decision table
+  completely untouched.
 - Sender-specific API, freeform window, billing gate and final pre-send
   checks remain in force. Meta timeouts and missing/unknown receipts always
   require human review.
-- The new message is step 4 for reporting only. It never advances or changes
-  the existing 3-step sequence. The existing pricing reminder switch remains
-  disabled and independent.
+- The pricing worker is lowest priority, with at most two accepted images per
+  pass. It runs after regular follow-ups, legacy pricing and consent prompts.
+  The new message is step 4 for reporting only. It never advances or changes
+  the existing three-step sequence. The legacy pricing reminder switch must
+  remain disabled.
 
 ## Release checks
 
-1. CI backend, portal and mobile tests pass.
-2. Read-only PostgreSQL EXPLAIN for candidate, pre-send and claim SQL.
+1. CI backend, portal and mobile tests pass, including the stable daytime
+   PostgreSQL fixtures for 131060 and the six-day sequence.
+2. Apply and verify migration 127 in the intended database; check read-only
+   PostgreSQL EXPLAIN for candidate, pre-send and claim SQL.
 3. Inspect one new qualified customer per sender, one already-priced
    customer, one staff handoff, one booked customer and one opt-out.
 4. Verify before-end time, quiet hours, signed secondary message context,
-   the correct sending phone and the provider/billing receipt.
+   the correct sending phone, A/B signed billing receipts, safe preflight
+   retries and the new audit rows.
 5. Verify no duplicate graphic and that 2h/6h/20h, consent request and
    48h/66h/96h/144h marketing schedule remain unchanged.
 6. Monitor for 24h, then review before enabling another channel.
