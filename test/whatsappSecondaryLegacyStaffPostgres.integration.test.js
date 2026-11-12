@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations}=require("../src/db/migrationRunner");
-const {isSecondaryAiReplyEligible,eligibleSecondaryAiReplyContactIds}=
+const {isSecondaryAiReplyEligible,eligibleSecondaryAiReplyContactIds,isSecondaryAutomationEligible}=
  require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const cs=process.env.TEST_DATABASE_URL;
 test("migrated Postgres: older contact stays staff-only until a fresh verified secondary CTWA ad",{
@@ -37,6 +37,11 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
    WHATSAPP_SECONDARY_WABA_ID:accountId,
    WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"true",
+   WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT:cutoff,
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+   WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:cutoff,
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:new Date(Date.now()-3600000).toISOString(),
   };
   const older=(await db.query(
    "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
@@ -70,6 +75,53 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
   const newDirect=await inbound(newer,newerConv,"Hello");
   assert.equal(await isSecondaryAiReplyEligible(newer,{database:db,env,inboundMessageId:newDirect}),true,
    "a genuinely new secondary contact may use the existing all-contact AI audience");
+
+  // A returning staff-managed patient receives the one provider-verified
+  // 131060 recovery menu. No ad referral is claimed. The placeholder itself
+  // never grants AI or follow-up permissions until the patient replies.
+  const recoveryOld=(await db.query(
+    "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
+    "VALUES('whatsapp','60123499047',$1,NOW()-INTERVAL '3 years') RETURNING id",
+    [sender])).rows[0].id;
+  const recoveryConv=(await db.query(
+    "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+    "VALUES($1,'60123499047',$2,'bound') RETURNING id",
+    [sender,recoveryOld])).rows[0].id;
+  const recoveryMissing=await inbound(recoveryOld,recoveryConv,
+    "📎 [Customer sent a WhatsApp message that could not be displayed]");
+  assert.equal(await isSecondaryAiReplyEligible(recoveryOld,{
+    database:db,env,inboundMessageId:recoveryMissing
+  }),false,"no old-contact AI solely from unreadable content");
+  const recoveryMenu=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at) "+
+    "VALUES($1,'assistant',$2,'wamid.recovery-menu',NOW()) RETURNING id",
+    [recoveryOld,"Hi～欢迎来到 Neutro Sense 😊\\n\\n想了解哪方面的护理呢？\\n可以点下面的选项～"]
+  )).rows[0].id;
+  await db.query(
+    "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [recoveryMenu,recoveryConv]);
+  await db.query(
+    "INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) "+
+    "VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-menu',NOW())",
+    [recoveryMenu,recoveryOld]);
+  assert.equal(await isSecondaryAutomationEligible(recoveryOld,{
+    database:db,env,inboundMessageId:recoveryMissing
+  }),false,"unsupported placeholder never triggers follow-up even after recovery menu");
+  const readable=await inbound(recoveryOld,recoveryConv,"骨盆调理");
+  assert.equal(await isSecondaryAiReplyEligible(recoveryOld,{
+    database:db,env,inboundMessageId:readable
+  }),true,"the verified recovery menu and readable customer reply restore AI");
+  assert.equal(await isSecondaryAutomationEligible(recoveryOld,{
+    database:db,env,inboundMessageId:readable
+  }),true,"the readable treatment choice is now eligible for service follow-up");
+  assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([recoveryOld],{
+    database:db,env})],[recoveryOld],
+    "Inbox recognizes AI re-entry only after accepted 131060 recovery menu");
+  await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[recoveryOld]);
+  assert.equal(await isSecondaryAiReplyEligible(recoveryOld,{
+    database:db,env,inboundMessageId:readable
+  }),false,"direct human takeover still overrides recovered AI");
+  await db.query("UPDATE contacts SET mode='ai' WHERE id=$1",[recoveryOld]);
 
   const unsupported=await inbound(older,conv,"📎 [Customer sent a WhatsApp message that could not be displayed]");
   assert.equal(await isSecondaryAiReplyEligible(older,{database:db,env,inboundMessageId:unsupported}),false,
