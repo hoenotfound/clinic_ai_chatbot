@@ -9,6 +9,8 @@ const crypto = require("node:crypto");
 const MAX_ENTRIES = 32;
 const MAX_CHANGES = 64;
 const MAX_PROVIDER_REFS = 8;
+const MAX_INSPECTED_MESSAGES = 128;
+const MAX_INSPECTED_STATUSES = 128;
 const PATHS = Object.freeze({
   "/webhook": "primary_endpoint",
   "/whatsapp/default": "app_default_endpoint",
@@ -77,9 +79,12 @@ function summarizeSignedPayload(body, env = process.env, nowMs = Date.now()) {
     return summary;
   }
   const refs = new Set();
+  let inspectedMessages = 0;
+  let inspectedStatuses = 0;
   const addRef = value => {
+    if (refs.size >= MAX_PROVIDER_REFS) return;
     const digest = providerRef(value);
-    if (digest && refs.size < MAX_PROVIDER_REFS) refs.add(digest);
+    if (digest) refs.add(digest);
   };
   for (const entry of body.entry.slice(0, MAX_ENTRIES)) {
     summary.entriesSeen++;
@@ -90,9 +95,14 @@ function summarizeSignedPayload(body, env = process.env, nowMs = Date.now()) {
       const sender = senderKind(entry.id, phone, env);
       summary.senderKinds[sender] = (summary.senderKinds[sender] || 0) + 1;
       if (change?.field !== "messages") continue;
-      for (const message of (Array.isArray(change.value?.messages)
-        ? change.value.messages : []).slice(0, MAX_CHANGES)) {
-        summary.messageCount++;
+      const messages = Array.isArray(change.value?.messages) ? change.value.messages : [];
+      const statuses = Array.isArray(change.value?.statuses) ? change.value.statuses : [];
+      summary.messageCount += messages.length;
+      summary.statusCount += statuses.length;
+      const remainingMessages = Math.max(0, MAX_INSPECTED_MESSAGES - inspectedMessages);
+      const remainingStatuses = Math.max(0, MAX_INSPECTED_STATUSES - inspectedStatuses);
+      for (const message of messages.slice(0, remainingMessages)) {
+        inspectedMessages++;
         addRef(message?.id);
         const kind = customerKind(message);
         summary.identityKinds[kind] = (summary.identityKinds[kind] || 0) + 1;
@@ -101,13 +111,13 @@ function summarizeSignedPayload(body, env = process.env, nowMs = Date.now()) {
         summary.ageBuckets[bucket] = (summary.ageBuckets[bucket] || 0) + 1;
         if (age !== null) summary.maxAgeSeconds = Math.max(summary.maxAgeSeconds ?? 0, age);
       }
-      for (const status of (Array.isArray(change.value?.statuses)
-        ? change.value.statuses : []).slice(0, MAX_CHANGES)) {
-        summary.statusCount++;
+      for (const status of statuses.slice(0, remainingStatuses)) {
+        inspectedStatuses++;
         addRef(status?.id);
       }
-      if ((change.value?.messages?.length || 0) > MAX_CHANGES ||
-          (change.value?.statuses?.length || 0) > MAX_CHANGES) summary.truncated = true;
+      if (messages.length > remainingMessages || statuses.length > remainingStatuses) {
+        summary.truncated = true;
+      }
     }
     if (entry.changes.length > MAX_CHANGES) summary.truncated = true;
   }
