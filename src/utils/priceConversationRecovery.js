@@ -148,6 +148,58 @@ function resolveRecentPriceSelection({
   return selected;
 }
 
+// A bare "产后" after a pelvic concern question describes the customer's
+// situation, not a request to buy the separate 产后调理 service. Only recognise
+// this when the customer chose 骨盆调理 first and the bot asked that exact
+// concern question in the same uninterrupted, trusted pricing session.
+// A new "产后调理" treatment enquiry must still supersede pelvic context.
+function pelvicPostpartumConcernIndex(turns, services, serviceAliases) {
+  for (let i = 1; i < turns.length - 1; i++) {
+    if (turns[i]?.role !== "user" ||
+        !/^(?:产后|產後)(?:的?(?:体态|體態|身材))?[。.!！\\s]*$/u.test(
+          pricingMessageText(turns[i]).trim())) continue;
+    const priorCustomer = turns.slice(0, i).findLastIndex(t => t.role === "user");
+    if (priorCustomer < 0 ||
+        namedSingle(pricingMessageText(turns[priorCustomer]),
+          services, serviceAliases)?.name !== "骨盆调理") continue;
+    const replies = turns.slice(priorCustomer + 1, i);
+    if (!replies.length || replies.length > 4 ||
+        replies.some(t => t.role !== "assistant" || isVerifiedStaffTurn(t))) continue;
+    if (replies.some(t => {
+      const question = pricingMessageText(t);
+      return /(?:骨盆|盆骨)/u.test(question) &&
+        /(?:还是|還是|或者|主要|哪一|哪种|哪種)/u.test(question) &&
+        /(?:产后|產後).{0,24}(?:体态|體態|身材|恢复|恢復)/u.test(question) &&
+        /[?？呢]/u.test(question);
+    })) return i;
+  }
+  return -1;
+}
+
+// Do not let the bot's ordinary explanation of a verified postpartum *concern*
+// create a paid-treatment switch. Actual separate offerings, prices and
+// competing recommendations remain hard stops. This exception applies only
+// after the independently verified pelvic concern answer above.
+function pelvicPostpartumAdviceOnly(turn, index, concernIndex, candidates) {
+  if (concernIndex < 0 || index <= concernIndex || turn?.role !== "assistant" ||
+      isVerifiedStaffTurn(turn)) return false;
+  const text = pricingMessageText(turn);
+  if (!/(?:产后|產後)/u.test(text) ||
+      /(?:另外|另一个|另一项|還有|还有|也有|推荐|推薦|可选|可選|套餐|配套|优惠|優惠|收费|收費|价格|價格|价钱|價錢|\\b(?:RM|MYR)\\s*\\d+)/iu.test(text) ||
+      /(?:产后|產後)(?:调理|調理)/u.test(text)) return false;
+  const postpartumServicePhrase =
+    /(?:产后|產後)(?:体态|體態)(?:调理|調理)/u.test(text);
+  if (postpartumServicePhrase &&
+      (index !== concernIndex + 1 ||
+       !/(?:周|週|生产|生產|生完|体态评估|體態評估)/u.test(text))) return false;
+  const mentioned = [...new Set(findServicesInText(text, candidates))];
+  if (mentioned.some(name =>
+    !["骨盆调理", "产后调理", "1对1体态评估"].includes(name))) return false;
+  if (mentioned.includes("1对1体态评估") &&
+      !/(?:先|免费|免費|初步|首先)/u.test(text)) return false;
+  return true;
+}
+
 // A bare monetary follow-up within a recent customer-led discussion may
 // refer to an independently selected treatment even after ordinary Q&A.
 // Require bot acknowledgement, bounded trusted timestamps, no staff and no
@@ -168,10 +220,12 @@ function resolveEstablishedTreatmentPrice({
   if (namedNow.length > 1) return null;
   if (namedNow.length === 1) return namedSingle(current, services, serviceAliases);
   const prior = turns.slice(0, -1);
+  const postpartumConcern = pelvicPostpartumConcernIndex(prior, services, serviceAliases);
   // The latest customer-selected service takes priority, never the last
   // service a bot happened to recommend. Reject competing or mixed selections.
   const users = prior.flatMap((turn,index) => turn.role === "user" ? [index] : []).slice(-7);
   for (const index of users.reverse()) {
+    if (index === postpartumConcern) continue;
     const source = pricingMessageText(prior[index]).trim();
     if (!source || RESET.test(source) || BROAD.test(source)) return null;
     const mentions = [...new Set(findServicesInText(source,candidates))];
@@ -206,12 +260,16 @@ function resolveEstablishedTreatmentPrice({
     // A bot mentioning a different treatment after the customer's selection
     // interrupts the single-service topic. Only a NEW customer selection can
     // then authorize a specific treatment price.
-    if (since.some(turn => turn.role === "assistant" &&
-      assistantIntroducesCompetingPaidService(turn, named.name, candidates))) return null;
+    if (since.some((turn, offset) => turn.role === "assistant" &&
+      assistantIntroducesCompetingPaidService(turn, named.name, candidates) &&
+      !(named.name === "骨盆调理" &&
+        pelvicPostpartumAdviceOnly(turn, index + offset + 1, postpartumConcern, candidates))))
+      return null;
     if (!since.some(turn => turn.role === "assistant" &&
         findServicesInText(pricingMessageText(turn),candidates).includes(named.name)))
       continue;
-    if (since.some(turn => turn.role === "user" &&
+    if (since.some((turn, offset) => turn.role === "user" &&
+      !(named.name === "骨盆调理" && index + offset + 1 === postpartumConcern) &&
       [...new Set(findServicesInText(pricingMessageText(turn),candidates))]
         .some(service => service !== named.name))) return null;
     return named;
