@@ -681,6 +681,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
+ ORDINARY_MARKETING_DUE_SQL,ORDINARY_NEWER_DUE_SQL,
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
