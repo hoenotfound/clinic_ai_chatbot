@@ -19,6 +19,7 @@ test("pricing is opt-in, Neutro-only, sender-scoped and preserves assessment-fir
  assert.equal(feature.settings({},base),null);
  assert.equal(feature.settings(flags({NEUTRO_STANDALONE_PRICING_REMINDER_ENABLED:"false"}),base),null);
  assert.equal(feature.settings(flags(),{...base,businessName:"Other Clinic"}),null);
+ assert.equal(feature.settings(flags(),{...base,automatedFollowUp:{...base.automatedFollowUp,pricingReminder:{enabled:true}}}),null);
  const active=feature.settings(flags(),base);
  assert.deepEqual(active.senderKeys,["neutro","neutro_secondary"]);
  assert.equal(active.requirePricingInterest,false);
@@ -33,6 +34,11 @@ test("independent due time is 22 hours after customer and before 24-hour expiry"
  assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-13T00:00:00.000Z");
  assert.equal(feature.beforeEnd(candidate,new Date("2026-11-13T01:29:59Z")),true);
  assert.equal(feature.beforeEnd(candidate,new Date("2026-11-13T01:30:00Z")),false);
+});
+test("pricing waits 45 minutes after any accepted consent or service message",()=>{
+ const c={source_at:"2026-11-12T02:00:00.000Z",
+   last_automation_at:"2026-11-13T00:10:00.000Z"};
+ assert.equal(feature.dueAt(c).toISOString(),"2026-11-13T00:55:00.000Z");
 });
 test("quiet-hours target is brought forward to previous local evening",()=>{
  const candidate={source_at:"2026-11-11T22:00:00.000Z"}; // 06:00 MYT
