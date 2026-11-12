@@ -103,8 +103,9 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
   assert.equal(staffImages.length,1,"manual image must be checked even with a new R2 key");
   assert.equal(staffImages[0].sent_by_username,"WhatsApp Business App");
   assert.equal(Object.hasOwn(staffImages[0],"media_key"),false,"do not expose R2 keys to review query");
-  await repo.recordDecision(c,"staff_review:Package B",db);
-  await repo.recordDecision(c,"staff_review:Package B",db);
+  assert.equal(await repo.recordDecision(c,"staff_review:Package B",db),true);
+  assert.equal(await repo.recordDecision(c,"staff_review:Package B",db),false,
+    "repeat review must not emit another staff alert");
   const audit=(await db.query("SELECT reason FROM standalone_pricing_reminder_decisions WHERE contact_id=$1",[contact])).rows;
   assert.deepEqual(audit.map(x=>x.reason),["standalone:staff_review:Package B"]);
  }finally{
