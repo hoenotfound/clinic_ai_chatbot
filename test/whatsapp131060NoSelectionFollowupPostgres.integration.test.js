@@ -186,8 +186,8 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
         "INSERT INTO whatsapp_sender_followup_attempts "+
         "(sender_id,contact_id,anchor_message_id,slot_hours,status,completed_at) "+
         "VALUES($1,$2,$3,$4,'accepted',NOW()-$5::int*INTERVAL '1 hour'"+
-        "+($4::int*60+5)*INTERVAL '1 minute')",
-        [sender,c,anchor,previousSlot,hoursAgo]);
+        "+$6::int*INTERVAL '1 minute')",
+        [sender,c,anchor,previousSlot,hoursAgo,previousSlot*60+5]);
     }
     const live=(await candidates()).filter(item=>Number(item.contact_id)===Number(c));
     assert.equal(live.length,1,"staff question must not delay verified "+slot+"h recovery");
