@@ -57,3 +57,54 @@ test("secondary 20h customer service slot can invite explicit permission without
  assert.doesNotMatch(service.CANDIDATES_SQL,/general_clinic_followups_and_related_offers/,
   "service follow-ups do not claim any marketing permission");
 });
+
+
+test("a generic opt-in records only after a delivered secondary invitation, never from a prefilled ad",async()=>{
+ const phrase=consent.SENTENCES.en;
+ const now=new Date().toISOString();
+ function fake({verified,click=false}={}){
+  const calls=[];
+  const client={
+   async query(sql,params=[]){
+    calls.push({sql,params});
+    if(sql.includes("SELECT id, channel"))return {rows:[{
+      id:101,channel:"whatsapp",whatsapp_opt_in_at:null,
+      whatsapp_opt_out_at:null,whatsapp_marketing_opt_out_at:null,
+    }]};
+    if(sql.includes("SELECT id, role, content"))return {rows:[{
+      id:202,role:"user",content:phrase,
+      whatsapp_message_id:"wamid.user-general-opt-in",
+      sent_at:now,is_forwarded:false,media_mime_type:null,
+    }]};
+    if(sql.includes("AS verified"))return {rows:[{verified}]};
+    if(sql.startsWith("SELECT id FROM leads"))return {rows:[{id:303}]};
+    if(sql.includes("INSERT INTO whatsapp_marketing_consent_events"))
+      return {rowCount:1,rows:[{id:404}]};
+    return {rowCount:1,rows:[]};
+   },release(){},
+  };
+  return {calls,database:{connect:async()=>client},click};
+ }
+ for(const c of [{verified:false},{verified:true,click:true}]){
+  const {calls,database,click}=fake(c);
+  const result=await inbound.recordFromInbound({
+   contactId:101,messageId:202,leadId:303,
+   businessName:"Neutro Sense TCM Centre",
+   isClickToWhatsApp:click===true,
+  },{database});
+  assert.equal(result.recorded,false);
+  assert.equal(calls.some(x=>x.sql.includes("INSERT INTO whatsapp_marketing_consent_events")),false);
+ }
+ const {calls,database}=fake({verified:true});
+ const result=await inbound.recordFromInbound({
+  contactId:101,messageId:202,leadId:303,
+  businessName:"Neutro Sense TCM Centre",
+ },{database});
+ assert.equal(result.recorded,true);
+ const inserted=calls.find(x=>x.sql.includes("INSERT INTO whatsapp_marketing_consent_events"));
+ assert.ok(inserted);
+ assert.equal(inserted.params[7],consent.GENERAL_SCOPE);
+ assert.equal(inserted.params[11],consent.GENERAL_SERVICE);
+ assert.equal(inserted.params[5],phrase);
+ assert.equal(calls.some(x=>x.sql.startsWith("COMMIT")),true);
+});
