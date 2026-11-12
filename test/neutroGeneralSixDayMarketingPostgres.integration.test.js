@@ -168,16 +168,11 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     const diagnosticWhere="\n WHERE $6::timestamptz IS NOT NULL AND $7::text IS NOT NULL"+
       " AND $8::timestamptz IS NOT NULL AND $9::timestamptz IS NOT NULL";
     const cross=(await db.query(from+diagnosticWhere+tail,p)).rows;
-    const clauses=q.slice(whereAt+8,orderAt).split(/\n   AND /);
-    const booleans=clauses.map((x,i)=>"('"+i+"',("+x.trim()+"))").join(",");
-    const diagnostics=await db.query(
-      from.replace("SELECT c.id AS contact_id,","SELECT jsonb_build_object("+
-        clauses.map((x,i)=>"'"+i+"',("+x.trim()+")").join(",")+
-        ") AS guards, c.id AS contact_id,")+
-      diagnosticWhere+tail,p);
-    console.error("Generic guard results",JSON.stringify({cross:cross.length,
-      clauses:clauses.map((x,i)=>({index:i,preview:x.trim().slice(0,70)})),
-      guards:diagnostics.rows.map(x=>x.guards)}));
+    console.error("Generic candidate base joins",JSON.stringify({
+      joined:cross.length,baseRows:cross.map(x=>({contact_id:x.contact_id,
+        inbound_id:x.inbound_id,slot_hours:x.slot_hours,
+        language_code:x.language_code,consent_id:x.consent_id})),
+    }));
     console.error("Generic candidate diagnostic",JSON.stringify({rows:row,ads,audience,
       args:p.map(x=>x instanceof Date?x.toISOString():x)}));
   }
