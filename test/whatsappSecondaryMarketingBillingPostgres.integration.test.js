@@ -5,6 +5,7 @@ const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+const service=require("../src/services/whatsappSecondaryFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -86,6 +87,44 @@ test("approved secondary marketing billing requires one claimed attempt for each
    "ariel","100000000000002","200000000000002",
    new Date(),"2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
   ]);
+
+  // Compile ALL changed secondary service and marketing selectors against
+  // the migrated PostgreSQL schema. EXPLAIN is read-only; no provider send.
+  await db.query("EXPLAIN "+service.CANDIDATES_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+service.RECHECK_SQL,[
+    contact,inbound,20,"ariel","100000000000002","200000000000002",
+    "1","2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+service.POTENTIAL_DUE_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+marketing.CANDIDATES_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
+  await db.query("EXPLAIN "+marketing.RECHECK_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
+  // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
+  // example; no historical attempts are opened or replayed.
+  const due=await db.query(
+    "SELECT GREATEST($1::timestamptz + INTERVAL '20 hours'," +
+    " $2::timestamptz + INTERVAL '15 minutes') AS due_at, " +
+    " ($1::timestamptz + INTERVAL '24 hours') AS expires_at",[
+      "2026-11-10T12:36:14.753Z","2026-11-10T23:00:08Z",
+    ]);
+  assert.equal(due.rows[0].due_at.toISOString(),"2026-11-11T08:36:14.753Z");
+  assert.ok(due.rows[0].due_at<due.rows[0].expires_at);
 
   const later=(await db.query(
    "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
