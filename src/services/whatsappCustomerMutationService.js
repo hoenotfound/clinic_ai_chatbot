@@ -52,23 +52,23 @@ function normalize(event, env = process.env) {
 
 const SENDER_MATCH = `(
  (c.whatsapp_sender_id IS NOT NULL AND
-  sa.meta_phone_number_id = $2 AND sa.meta_account_id = $3 AND sa.state = 'active')
+  sa.meta_phone_number_id = $2::text AND sa.meta_account_id = $3::text AND sa.state = 'active')
  OR
- (c.whatsapp_sender_id IS NULL AND $2 = $6 AND $3 = $7)
+ (c.whatsapp_sender_id IS NULL AND $2::text = $6::text AND $3::text = $7::text)
 )`;
 const CUSTOMER_MATCH = `(
- c.whatsapp_number = $4 OR c.whatsapp_user_id = $4 OR
- c.whatsapp_last_customer_address = $4 OR
- ($5 IS NOT NULL AND (c.whatsapp_number = $5 OR
-   c.whatsapp_user_id = $5 OR c.whatsapp_last_customer_address = $5)) OR
+ c.whatsapp_number = $4::text OR c.whatsapp_user_id = $4::text OR
+ c.whatsapp_last_customer_address = $4::text OR
+ ($5::text IS NOT NULL AND (c.whatsapp_number = $5::text OR
+   c.whatsapp_user_id = $5::text OR c.whatsapp_last_customer_address = $5::text)) OR
  -- A signed older BSUID is valid only when it belongs to this exact
  -- contact AND verified sender. Never match a user ID across accounts.
  (c.whatsapp_sender_id IS NOT NULL AND EXISTS (
    SELECT 1 FROM whatsapp_sender_user_id_aliases alias
    WHERE alias.sender_id = c.whatsapp_sender_id
      AND alias.contact_id = c.id
-     AND (alias.previous_user_id = $4 OR
-          ($5 IS NOT NULL AND alias.previous_user_id = $5))
+     AND (alias.previous_user_id = $4::text OR
+          ($5::text IS NOT NULL AND alias.previous_user_id = $5::text))
  ))
 )`;
 
