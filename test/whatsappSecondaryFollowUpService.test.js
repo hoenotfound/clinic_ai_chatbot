@@ -93,6 +93,35 @@ test("secondary followups never inherit Neutro content or start by default",asyn
   assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
 });
 
+test("genuine re-engagement carries only verified prior accepted stages, never duplicate media",()=>{
+ const sql=worker.PREVIOUS_STEP_SQL;
+ for(const proof of [
+   /preceding_sent.anchor_message_id=inbound.id/,
+   /preceding_sent.status='accepted'/,
+   /earlier.status='accepted'/,
+   /earlier.completed_at<inbound.created_at/,
+   /earlier.completed_at>=inbound.created_at-INTERVAL '24 hours'/,
+   /previous_context.conversation_id=sc.id/,
+   /previous_inbound.whatsapp_message_id IS NOT NULL/,
+   /imported.message_id=previous_inbound.id/,
+   /human_between.sent_by_username IS NOT NULL/,
+   /uncertain_between.status IN\('unknown','blocked'\)/,
+   /changed.source_message_id>earlier.anchor_message_id/,
+   /changed.source_message_id<=inbound.id/,
+   /ORDER BY preceding.slot_hours DESC LIMIT 1/,
+ ]) assert.match(sql,proof);
+ assert.doesNotMatch(sql,/earlier.status IN\('claimed','unknown'\)/);
+ // Each stage still has its own one-shot anchor, current opt-in, booking,
+ // consent, treatment and 24h policy checks before provider dispatch.
+ for(const query of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(query,/previous_step.completed_at IS NOT NULL/);
+   assert.match(query,/inbound.created_at \+ INTERVAL '24 hours'/);
+   assert.match(query,/whatsapp_marketing_opt_out_at IS NULL/);
+ }
+ assert.match(worker.CANDIDATES_SQL,/same_slot.status='accepted'/);
+ assert.match(worker.CANDIDATES_SQL,/INTERVAL '7 days'/);
+});
+
 test("quiet-hour-delayed 6h video cannot push the 20h check-in out of its 24h window",()=>{
   const candidate=worker.CANDIDATES_SQL, recheck=worker.RECHECK_SQL;
   const duePattern=/CASE WHEN rule\.slot_hours=20[\s\S]*?INTERVAL '15 minutes'/;
