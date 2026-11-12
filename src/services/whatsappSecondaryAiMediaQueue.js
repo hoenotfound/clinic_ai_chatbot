@@ -20,7 +20,7 @@ const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
 const {followUpAttentionAllowedSql}=require("../utils/aiReviewPolicy");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
-  isSecondaryAutomationEligible,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql } = require("./whatsappSecondaryAdsOnlyEligibility");
+  originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 
 /**
@@ -113,6 +113,33 @@ const NEWER_MEDIA_PLAN_SQL=`EXISTS(
 // Only a newer result-image plan supersedes a prior result. A price graphic
 // should not erase a queued Before & After result.
 
+// Do not broaden the shared secondary automation entry rule for marketing,
+// follow-ups or text AI. This media-only eligibility check is identical
+// except for permitting independently verified information-only reviews.
+async function isSecondaryMediaEligible(contactId,{database=pool,env=process.env,
+  inboundMessageId}={}){
+  const cutoff=secondaryAutomationActivation(env);
+  if(!cutoff || env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+     !Number.isSafeInteger(Number(contactId)) ||
+     !Number.isSafeInteger(Number(inboundMessageId)))return false;
+  try{
+    const found=await database.query(
+      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
+       FROM contacts c JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
+       WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
+         AND ${SECONDARY_MEDIA_ATTENTION_SQL}
+         AND c.whatsapp_opt_out_at IS NULL
+         AND c.whatsapp_marketing_opt_out_at IS NULL`,
+      [contactId,inboundMessageId,cutoff,
+        env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,originalAdsOnlyCutoff(env)]
+    );
+    return found.rows?.length===1 && found.rows[0].eligible===true;
+  }catch(err){
+    console.error("[Secondary WhatsApp AI media] eligibility unavailable:",err?.message);
+    return false;
+  }
+}
+
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
@@ -170,7 +197,7 @@ async function enqueue({
      !Number.isSafeInteger(sequenceOffset)||sequenceOffset<0||
      !Array.isArray(items)||!items.length||items.length+sequenceOffset>MAX_ITEMS||
      !items.every(validItem))return false;
-  if (!await isSecondaryAutomationEligible(contactId, {database,env,inboundMessageId})) return false;
+  if (!await isSecondaryMediaEligible(contactId, {database,env,inboundMessageId})) return false;
   const client=await database.connect();
   try{
     await client.query("BEGIN");
