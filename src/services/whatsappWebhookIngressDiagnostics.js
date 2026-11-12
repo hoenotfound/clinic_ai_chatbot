@@ -131,7 +131,7 @@ function observe(req, res, next, env = process.env) {
   if (!route || req.method !== "POST" || !enabled(env)) return next();
   const trace = {
     route, signed: false, phase: "request", reason: null,
-    claimAttempts: 0, claimsInserted: 0, summary: null,
+    claimAttempts: 0, claimsInserted: 0, summary: null, routeAudit: null,
   };
   req.whatsappIngressTrace = trace;
   let logged = false;
@@ -152,6 +152,7 @@ function observe(req, res, next, env = process.env) {
       ...(trace.signed && trace.summary ? {
         ...trace.summary, claimAttempts: trace.claimAttempts,
         claimsInserted: trace.claimsInserted,
+        ...(trace.routeAudit ? { routing: trace.routeAudit } : {}),
       } : {}),
     };
     console.info("[WhatsApp signed ingress] " + JSON.stringify(safe));
@@ -186,6 +187,21 @@ function markPhase(req, phase) {
   }
 }
 
+function markRouting(req, isolated, parsedCustomerCount) {
+  const trace = req.whatsappIngressTrace;
+  if (!trace) return;
+  // A 200 can acknowledge a quarantined callback without creating a message.
+  // Record both accepted and excluded counts so silent local filtering is visible.
+  const boundedCount = value => Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, 100000) : null;
+  trace.routeAudit = {
+    acceptedChanges: boundedCount(isolated?.acceptedChanges),
+    quarantinedChanges: boundedCount(isolated?.quarantined?.length),
+    parsedCustomers: boundedCount(parsedCustomerCount),
+  };
+  trace.phase = "sender_routed";
+}
+
 function markClaim(req, inserted) {
   if (!req.whatsappIngressTrace) return;
   req.whatsappIngressTrace.claimAttempts++;
@@ -215,5 +231,5 @@ function markRejected(req, error) {
 module.exports = {
   enabled, providerRef, customerKind, senderKind, ageBucket,
   summarizeSignedPayload, observe, markVerified, captureSignedEvent,
-  markPhase, markClaim, markRejected,
+  markPhase, markRouting, markClaim, markRejected,
 };
