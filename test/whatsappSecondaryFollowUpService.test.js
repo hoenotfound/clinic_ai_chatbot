@@ -448,7 +448,6 @@ test("20h secondary follow-up invokes existing personalized generator and saves 
   assert.equal(f.calls.filter(x=>x.sql?.startsWith("UPDATE whatsapp_sender_followup_attempts SET status='accepted'")).length,1);
 });
 
-
 test("20h AI skip sends one reviewed neutral reminder in the customer's language",async()=>{
  const samples=[
   ["en","Can you explain how the first visit works?",/first assessment/],
@@ -700,11 +699,11 @@ test("verified WhatsApp Business App replies are permitted only as safe service 
    assert.match(sql,/reply.content NOT LIKE '\[media_placeholder%'/);
    assert.match(sql,/whatsapp_sender_coexistence_history_messages imported_staff/);
    assert.match(sql,/first_reply.staff_pending_action/);
-   assert.match(sql,/first_reply.staff_question OR rule.slot_hours=2/);
+   assert.match(sql,/first_reply.staff_question OR rule.slot_hours=2\s+OR \(/);
    assert.match(sql,/c.takeover_by IS NULL/);
    assert.match(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
    assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
-   assert.match(sql,/CASE WHEN first_reply.staff_reply THEN first_reply.at\+INTERVAL '2 hours'/);
+   assert.match(sql,/CASE WHEN first_reply.staff_reply AND NOT/);
  }
 });
 test("manual unanswered staff question sends one gentle text reminder instead of media",async()=>{
@@ -720,8 +719,30 @@ test("manual unanswered staff question sends one gentle text reminder instead of
 });
 
 
+test("verified 131060 recovery keeps neutral 2h, 6h and 20h messages after an ordinary staff question",async()=>{
+ const unsupported="📎 [Customer sent a WhatsApp message that could not be displayed]";
+ for(const slot of [2,6,20]){
+  const recovery={...candidate,slot_hours:slot,recovery_no_selection:true,
+   staff_reply:true,staff_question:true,
+   first_reply_text:"请问您想了解哪方面的护理呢？",
+   customer_texts:[unsupported]};
+  const f=fake({rows:[recovery]});
+  const result=await worker.runOnce({...f,env});
+  assert.equal(result.accepted,1,"recovery slot "+slot);
+  const saved=f.calls.find(x=>x.save)?.save;
+  assert.ok(saved);
+  assert.doesNotMatch(saved[2],/刚才的问题/,
+   "verified recovery must use its neutral sequence rather than a one-time staff nudge");
+  assert.match(saved[2],/护理|评估/);
+  assert.equal(saved[8].mediaKey,null);
+  assert.equal(saved[8].whatsappTemplate.recoveryNoSelection,true);
+ }
+});
+
 test("131060 no-selection follow-ups require accepted recovery evidence in candidate and final recheck",()=>{
  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(sql,/recovery_menu\.id IS NOT NULL/);
+   assert.match(sql,/recovery_menu\.at/);
    assert.match(sql,/recovery_evidence\.accepted=TRUE/);
    assert.match(sql,/recovery_evidence\.origin='system_fallback'/);
    assert.match(sql,/recovery_evidence\.provider_message_id=verified_recovery\.whatsapp_message_id/);
@@ -737,6 +758,8 @@ test("131060 no-selection follow-ups require accepted recovery evidence in candi
    assert.match(sql,/BETWEEN 7 AND 23/);
  }
  assert.match(worker.POTENTIAL_DUE_SQL,/recovery_evidence\.accepted=TRUE/);
+ assert.match(worker.POTENTIAL_DUE_SQL,/recovery_menu\.at/);
+ assert.match(worker.RECHECK_SQL,/recovery_menu\.id IS NOT NULL/);
  assert.match(worker.CANDIDATES_SQL,/readable_later\.content NOT LIKE/);
  assert.match(worker.CANDIDATES_SQL,/prior_recovery\.delivery_status IN/);
  assert.match(worker.RECHECK_SQL,/newer\.content NOT LIKE/);
