@@ -522,5 +522,5 @@ test("a customer acknowledgement does not cancel selected promotion art while re
   assert.match(sql, /NOT \(.*BTRIM\(newer\.content\)/s);
   assert.match(sql, /不要了/);
   assert.match(sql, /RESULT_MEDIA_SUPERSESSION_SQL|停止发送/);
-  assert.doesNotMatch(sql, /job\.media_kind='promotion' AND/);
+  assert.doesNotMatch(sql, /job\.media_kind<>'result' AND NOT/);
 });
