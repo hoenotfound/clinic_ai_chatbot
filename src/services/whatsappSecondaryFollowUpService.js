@@ -6,6 +6,7 @@
 // A claimed slot is one-shot even after timeout, worker crash or uncertain
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
+const {invitation:generalSixDayInvitation}=require("../utils/neutroGeneralFollowupConsent");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
 const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
@@ -318,6 +319,24 @@ const CANDIDATES_SQL=`
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
+   lead.marketing_consent AS lead_marketing_consent,
+   EXISTS (
+     SELECT 1 FROM whatsapp_free_entry_referrals r
+     JOIN messages ad ON ad.id=r.origin_message_id
+       AND ad.contact_id=c.id AND ad.role='user'
+     JOIN whatsapp_sender_message_context ad_ctx
+       ON ad_ctx.message_id=ad.id AND ad_ctx.conversation_id=sc.id
+     WHERE r.contact_id=c.id AND r.source_type='ad'
+       AND (NULLIF(BTRIM(r.ctwa_clid),'') IS NOT NULL
+        OR NULLIF(BTRIM(r.meta_ad_id),'') IS NOT NULL)
+       AND ad.whatsapp_message_id IS NOT NULL
+       AND ad.created_at>=inbound.created_at-INTERVAL '7 days'
+       AND ad.created_at<=inbound.created_at
+       AND NOT EXISTS(
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+         WHERE imported.sender_id=sa.id AND imported.message_id=ad.id
+       )
+   ) AS verified_meta_ad,
    treatment_state.status AS verified_treatment_status,
    treatment_state.treatment_name AS verified_treatment_name,
    ad_followup.source AS ad_followup_source,
@@ -790,6 +809,16 @@ async function runOnce({
         }
         outboundText=personalized.message;
         aiMode=personalized.mode;
+      }
+      // Offer a genuine, optional way to request Day2-Day6 marketing
+      // follow-ups while the customer-service window is still open. This is
+      // ONLY an invitation: no CTA, ad click or 131060 error grants consent.
+      // A customer's later full affirmative WhatsApp reply must be verified
+      // against this actually delivered sender-owned invitation.
+      if(slot===20 && candidate.lead_marketing_consent!=="opted_in" &&
+         (candidate.recovery_no_selection===true ||
+          candidate.verified_meta_ad===true)){
+        outboundText+="\n\n"+generalSixDayInvitation(replyLanguage);
       }
       if(!await preSendCheck()){
         await fail("secondary_followup_policy_changed_after_ai");continue;
