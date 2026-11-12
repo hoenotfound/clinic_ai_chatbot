@@ -72,7 +72,7 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
       ${anchor ? `AND ${anchor}.role='user'
         AND ${anchor}.whatsapp_message_id IS NOT NULL
         AND ${anchor}.source_created_at IS NOT NULL
-        AND ${anchor}.source_created_at >= ${contact}.whatsapp_secondary_manual_ai_approved_at
+        AND ${anchor}.source_created_at >= date_trunc('second', ${contact}.whatsapp_secondary_manual_ai_approved_at)
         AND ${anchor}.created_at >= ${contact}.whatsapp_secondary_manual_ai_approved_at
         AND ${anchor}.created_at < ${contact}.whatsapp_secondary_manual_ai_approved_until` : ""}
     )
