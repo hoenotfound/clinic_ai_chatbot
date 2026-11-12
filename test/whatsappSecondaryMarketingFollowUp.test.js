@@ -344,6 +344,27 @@ test("66h only follows a verified later customer response; silence is capped acr
  }
 });
 
+test("66h re-engagement on all_contacts requires real earlier sender-owned conversation turns",()=>{
+ for(const sql of [svc.CANDIDATES_SQL,svc.RECHECK_SQL,svc.POTENTIAL_DUE_SQL]){
+   assert.match(sql,/recent_contact\.legacy_ads_eligible=FALSE/);
+   assert.match(sql,/earlier_ai\.created_at<inbound\.created_at/);
+   assert.match(sql,/earlier_ai\.sent_by_username IS NULL/);
+   assert.match(sql,/earlier_ai\.is_automated_follow_up IS DISTINCT FROM TRUE/);
+   assert.match(sql,/earlier_ai_context\.conversation_id=sc\.id/);
+   assert.match(sql,/earlier_ai\.whatsapp_message_id IS NOT NULL/);
+   assert.match(sql,/earlier_customer_context\.conversation_id=sc\.id/);
+   assert.match(sql,/earlier_customer\.role='user'/);
+   assert.match(sql,/earlier_customer\.whatsapp_message_id IS NOT NULL/);
+   assert.match(sql,/earlier_imported\.sender_id=sa\.id/);
+   assert.match(sql,/earlier_history\.sender_id=sa\.id/);
+   assert.match(sql,/\$(6|7)::text='all_contacts'/);
+   assert.match(sql,/consent\.consent_service/);
+ }
+ // A recent initial enquiry without an earlier real AI response cannot
+ // satisfy the special non-ad re-engagement branch.
+ assert.match(svc.CANDIDATES_SQL,/AND EXISTS \(\s*SELECT 1 FROM messages earlier_customer/);
+});
+
 test("Day 4 and Day 6 rely on verified ad-session first reply, not unrelated legacy contact creation",()=>{
  assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/\) first_reply ON TRUE/);
  assert.doesNotMatch(svc.EXTENDED_CANDIDATES_SQL,/first_reply\.at/);
