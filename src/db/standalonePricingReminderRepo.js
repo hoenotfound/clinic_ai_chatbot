@@ -6,7 +6,7 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { temporaryStaffConversationSql } = require("../utils/temporaryStaffConversation");
 
-const ELIGIBLE_SQL = \`
+const ELIGIBLE_SQL = `
 WITH latest_inbound AS (
   SELECT DISTINCT ON (m.contact_id)
     m.id, m.contact_id, m.created_at,
@@ -50,7 +50,7 @@ LEFT JOIN LATERAL (
 ) lead ON TRUE
 WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND c.mode='ai' AND c.takeover_by IS NULL
-  AND \${followUpAttentionAllowedSql("c")}
+  AND ${followUpAttentionAllowedSql("c")}
   AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
   AND inbound.created_at >= $2::timestamptz
   AND inbound.source_at <= NOW()
@@ -68,7 +68,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
     AND NOT EXISTS (
       SELECT 1 FROM whatsapp_sender_coexistence_history_messages history
       WHERE history.sender_id=sa.id AND history.message_id=inbound.id)))
-  AND NOT \${temporaryStaffConversationSql("c","inbound")}
+  AND NOT ${temporaryStaffConversationSql("c","inbound")}
   AND COALESCE(inbound.content,'') !~*
      '^(谢谢|謝謝|多谢|多謝|thanks|thank you|tq|terima kasih)[[:space:].!！。🙏😊]*$'
   AND COALESCE(inbound.content,'') !~*
@@ -104,7 +104,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
     SELECT 1 FROM messages prior
     WHERE prior.pricing_reminder_anchor_id=inbound.id)
 ORDER BY inbound.source_at ASC,c.id ASC LIMIT 500
-\`;
+`;
 
 async function listCandidates({senderKeys,activatedAt},database=pool){
   if(!senderKeys.length || !Number.isFinite(Date.parse(activatedAt)))return[];
@@ -114,7 +114,7 @@ async function listCandidates({senderKeys,activatedAt},database=pool){
 
 // Read again after obtaining the actual sender's outbound/billing proof.
 async function stillEligible(candidate,messageId,{senderKeys,activatedAt},database=pool){
-  const result=await database.query(\`
+  const result=await database.query(`
     SELECT EXISTS(
       SELECT 1 FROM messages outbound
       JOIN contacts c ON c.id=outbound.contact_id
@@ -130,9 +130,9 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
              AND newer.role='user' ORDER BY newer.created_at DESC,newer.id DESC LIMIT 1)=inbound.id
         AND c.channel='whatsapp' AND c.mode='ai' AND c.takeover_by IS NULL
         AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-        AND \${followUpAttentionAllowedSql("c")}
+        AND ${followUpAttentionAllowedSql("c")}
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
-        AND NOT \${temporaryStaffConversationSql("c","inbound")}
+        AND NOT ${temporaryStaffConversationSql("c","inbound")}
         AND NOT EXISTS(
           SELECT 1 FROM messages quote WHERE quote.contact_id=c.id AND quote.role='assistant'
             AND quote.pricing_reminder_anchor_id IS NULL
@@ -148,7 +148,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
               ('set','visited','confirmed','booked','completed')
               OR COALESCE(s.system_key,'') IN ('appointment_set','visited')))
     ) AS allowed
-  \`,[messageId,candidate.inbound_id,candidate.contact_id,activatedAt,
+  `,[messageId,candidate.inbound_id,candidate.contact_id,activatedAt,
       candidate.whatsapp_sender_id,senderKeys]);
   return result.rows?.[0]?.allowed===true;
 }
@@ -157,8 +157,8 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
 // replay across worker crashes. A claim is never treated as unsent after a
 // Meta request has possibly started.
 async function claim(candidate,offer,database=pool){
-  const result=await database.query(\`
-    WITH lock AS (SELECT pg_advisory_xact_lock(\${CONVERSATION_LOCK_NAMESPACE},$1::integer))
+  const result=await database.query(`
+    WITH lock AS (SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE},$1::integer))
     INSERT INTO messages(
       contact_id,role,content,sent_by_username,media_url,
       is_automated_follow_up,automated_follow_up_step,
@@ -179,14 +179,14 @@ async function claim(candidate,offer,database=pool){
                WHERE recent.contact_id=c.id AND recent.role='user'
                ORDER BY recent.created_at DESC,recent.id DESC LIMIT 1)=inbound.id)
     ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status
-  \`,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
+  `,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
       offer.packageName,offer.serviceName,candidate.whatsapp_sender_id]);
   return result.rows?.[0]||null;
 }
 
 async function claimAdditional(candidate,offer,database=pool){
-  const result=await database.query(\`
-    WITH lock AS (SELECT pg_advisory_xact_lock(\${CONVERSATION_LOCK_NAMESPACE},$1::integer))
+  const result=await database.query(`
+    WITH lock AS (SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE},$1::integer))
     INSERT INTO messages(
       contact_id,role,content,sent_by_username,media_url,is_automated_follow_up,
       automated_follow_up_step,pricing_reminder_anchor_id,pricing_reminder_package_key,
@@ -203,7 +203,7 @@ async function claimAdditional(candidate,offer,database=pool){
         SELECT 1 FROM messages same WHERE same.pricing_reminder_anchor_id=$2
         AND same.pricing_reminder_package_key=$5)
     ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status
-  \`,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
+  `,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
      offer.packageName,offer.serviceName]);
   return result.rows?.[0]||null;
 }
