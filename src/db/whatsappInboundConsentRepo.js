@@ -83,6 +83,12 @@ async function recordFromInbound({
                prompt.id=$4
                AND prompt.whatsapp_template->>'generalConsentButton'='true'
                AND prompt.whatsapp_template->>'generalConsentLanguage'=$5::text
+               AND prompt.whatsapp_template->>'senderKey'='neutro_secondary'
+               AND prompt.whatsapp_template->>'slotHours' IN ('6','20')
+               AND EXISTS(SELECT 1 FROM leads current_lead
+                 WHERE current_lead.id=$6 AND current_lead.contact_id=$1
+                   AND current_lead.is_closed=FALSE
+                   AND current_lead.created_at<=prompt.created_at)
                AND prompt.whatsapp_accepted_at IS NOT NULL
                AND prompt.whatsapp_accepted_at <= $3::timestamptz
              ))
@@ -92,7 +98,7 @@ async function recordFromInbound({
              )
          ) AS verified`,
         [contactId,SENTENCES[lang],message.sent_at,
-         button?button.promptId:null,lang]
+         button?button.promptId:null,lang,leadId]
       );
       if(verified.rows?.[0]?.verified===true)
         generalExplicit=button?{
