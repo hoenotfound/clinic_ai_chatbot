@@ -43,3 +43,7 @@ Draft PR only. No production SQL writes, template sends, blasts, environment cha
 - **Ad source unknown** identifies a recent Meta 131060 unreadable inbound without verified CTWA attribution. It is an investigation clue, not proof of an ad click, marketing permission, or eligibility.
 
 A staff reply through the WhatsApp Business App must not by itself change an AI-owned contact into explicit `mode='human'`. This feature does not alter that existing behavior.
+
+## Integration verification after PR #602
+
+PR #602 updates pelvic/postpartum treatment selection and manual promotion-image duplicate detection. This UI and legacy-ad re-entry change does not widen treatment-specific marketing consent, change those pricing paths, or replay historical follow-ups. Re-run PR checks against the updated main branch before production deployment.
