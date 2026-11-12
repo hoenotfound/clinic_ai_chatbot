@@ -232,7 +232,9 @@ function createApp({
   });
 
   let primaryWhatsappWebhookHandler;
-  app.post("/webhook", webhookJsonParser, ingressDiagnostics.captureSignedEvent, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
+  app.post("/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
+    // This handler is also executed without the outer module by isolated QA tests.
+    if (req.whatsappIngressTrace) ingressDiagnostics.captureSignedEvent(req, res, () => {});
     // Keep diagnostics self-contained inside the extracted webhook handler:
     // synthetic QA replays use this handler without the outer module closure.
     const inboundIdentityKind = value =>
@@ -260,7 +262,7 @@ function createApp({
         strictMissingMetadata: process.env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA === "true",
       });
     } catch (err) {
-      ingressDiagnostics.markRejected(req, err);
+      if (req.whatsappIngressTrace) ingressDiagnostics.markRejected(req, err);
       console.error("Rejected WhatsApp webhook due to sender config or payload limit:", err);
       return res.sendStatus(503);
     }
@@ -356,7 +358,7 @@ function createApp({
       void notifyWhatsAppSenderQuarantine(isolated.quarantined);
     }
 
-    ingressDiagnostics.markPhase(req, "sender_routed");
+    if (req.whatsappIngressTrace) ingressDiagnostics.markPhase(req, "sender_routed");
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
     const customerMutationEvents = whatsapp.parseCustomerMessageMutations(webhookBody);
@@ -445,7 +447,7 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
-              ingressDiagnostics.markClaim(req, Boolean(durableClaim));
+              if (req.whatsappIngressTrace) ingressDiagnostics.markClaim(req, Boolean(durableClaim));
               // A successful durable claim is the earliest safe point to
               // match a mutation to its original message. A parallel mutation
               // insert also calls applyOne, so either arrival order is covered.
@@ -761,7 +763,8 @@ function createApp({
     // but validate signature/parse first so a misconfigured receiver leaves
     // signed evidence of the callback it rejected, without logging PII.
     return next();
-  }, paidDefaultHistoryJsonParser, ingressDiagnostics.captureSignedEvent, async (req, res) => {
+  }, paidDefaultHistoryJsonParser, async (req, res) => {
+    if (req.whatsappIngressTrace) ingressDiagnostics.captureSignedEvent(req, res, () => {});
     try {
       if (productionHistoryReceiver.configured(process.env) ||
           productionHistoryReceiver.liveConfigured(process.env)) {
