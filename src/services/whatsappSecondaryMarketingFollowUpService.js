@@ -284,7 +284,45 @@ const CANDIDATES_SQL=`
          WHERE imported_engagement.sender_id=sa.id
            AND imported_engagement.message_id=engaged.id
        )
+   ) OR (
+     $7::text='all_contacts' AND recent_contact.legacy_ads_eligible=FALSE
+     AND EXISTS (
+       SELECT 1 FROM messages earlier_ai
+       JOIN whatsapp_sender_message_context earlier_ai_context
+         ON earlier_ai_context.message_id=earlier_ai.id
+         AND earlier_ai_context.conversation_id=sc.id
+       WHERE earlier_ai.contact_id=c.id AND earlier_ai.role='assistant'
+         AND earlier_ai.whatsapp_message_id IS NOT NULL
+         AND earlier_ai.sent_by_username IS NULL
+         AND earlier_ai.is_automated_follow_up IS DISTINCT FROM TRUE
+         AND earlier_ai.created_at<inbound.created_at
+         AND earlier_ai.created_at>=inbound.created_at-INTERVAL '7 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages earlier_imported
+           WHERE earlier_imported.sender_id=sa.id AND earlier_imported.message_id=earlier_ai.id
+         )
+         AND EXISTS (
+           SELECT 1 FROM messages earlier_customer
+           JOIN whatsapp_sender_message_context earlier_customer_context
+             ON earlier_customer_context.message_id=earlier_customer.id
+             AND earlier_customer_context.conversation_id=sc.id
+           WHERE earlier_customer.contact_id=c.id AND earlier_customer.role='user'
+             AND earlier_customer.whatsapp_message_id IS NOT NULL
+             AND earlier_customer.created_at<=earlier_ai.created_at
+             AND earlier_customer.created_at>earlier_ai.created_at-INTERVAL '24 hours'
+             AND NOT EXISTS (
+               SELECT 1 FROM whatsapp_sender_coexistence_history_messages earlier_history
+               WHERE earlier_history.sender_id=sa.id
+                 AND earlier_history.message_id=earlier_customer.id
+             )
+         )
+     )
    ))
+   -- For ad-originated sessions first_reply is the original AI response.
+   -- For all_contacts non-ad conversations it is instead anchored to the
+   -- latest inbound; that cannot prove re-engagement by itself. Require a
+   -- genuine earlier inbound + normal, sender-owned AI reply in the SAME
+   -- bound conversation before the latest customer response.
    -- Five accepted follow-ups is the maximum across the 2/6/20h service
    -- steps AND all marketing templates for a completely silent customer.
    -- An actual later sender-owned customer reply resets the silence guard;
