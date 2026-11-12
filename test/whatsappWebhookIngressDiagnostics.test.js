@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const diag = require("../src/services/whatsappWebhookIngressDiagnostics");
+const fs = require("node:fs");
 
 const env = Object.freeze({
   WHATSAPP_WEBHOOK_INGRESS_DIAGNOSTICS_ENABLED: "true",
@@ -265,4 +266,19 @@ test("feature remains disabled unless explicitly enabled, without other-route in
   diag.observe({method:"POST",path:"/whatsapp/default"},response(),()=>count++,{});
   diag.observe({method:"POST",path:"/api/settings"},response(),()=>count++,env);
   assert.equal(count,2);
+});
+
+test("paid default receiver retains config validation both with and without diagnostics", () => {
+  const appSource = fs.readFileSync(require.resolve("../src/createApp"), "utf8");
+  const from = appSource.indexOf('  app.post("/whatsapp/default",');
+  const to = appSource.indexOf('  app.post("/whatsapp/secondary-qa-capture",', from);
+  assert.ok(from >= 0 && to > from);
+  const route = appSource.slice(from, to);
+  assert.match(route, /if \(ingressDiagnostics\.enabled\(\)\) return next\(\);/);
+  assert.match(route, /try \{\s*paidDefaultIngress\.configFromEnv\(\);\s*return next\(\);/);
+  assert.match(route, /paidDefaultHistoryJsonParser, async \(req, res\) => \{/);
+  assert.match(route, /try \{\s*\/\/ Never weaken the default-route config gate in diagnostic mode\.\s*paidDefaultIngress\.configFromEnv\(\);/);
+  assert.ok(route.indexOf('paidDefaultIngress.configFromEnv();',
+    route.indexOf('paidDefaultHistoryJsonParser')) <
+    route.indexOf('productionHistoryReceiver.configured(process.env)'));
 });
