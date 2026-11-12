@@ -197,7 +197,8 @@ async function claimAdditional(candidate,offer,database=pool){
     FROM lock WHERE EXISTS(
       SELECT 1 FROM messages previous WHERE previous.pricing_reminder_anchor_id=$2
         AND previous.contact_id=$1 AND previous.whatsapp_message_id IS NOT NULL
-        AND previous.delivery_status IN ('sent','delivered','read')
+        AND (previous.delivery_status IN ('sent','delivered','read') OR
+             (previous.delivery_status='pending' AND previous.whatsapp_accepted_at IS NOT NULL))
         AND previous.pricing_reminder_package_key<>$5)
       AND NOT EXISTS(
         SELECT 1 FROM messages same WHERE same.pricing_reminder_anchor_id=$2
