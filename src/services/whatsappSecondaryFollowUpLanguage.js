@@ -82,4 +82,16 @@ function localizedFollowUpText({
  if(language==="zh")return String(originalText||"").trim()||null;
  return translated[Number(slot)]?.[language]||null;
 }
-module.exports={localizedFollowUpText,resolveFollowUpTreatment};
+// Reviewed, treatment-neutral service reminder. Used only when optional
+// secondary 20h AI personalization skips or is temporarily unavailable.
+// Do not infer a treatment from old CRM fields or an ad name.
+const NEUTRAL_20H_FALLBACK=Object.freeze({
+ zh:"您好 😊 如果您对 Neutro Sense TCM 的一对一评估流程还有疑问，欢迎随时回复我们。不需要急着决定。",
+ en:"Hi 😊 If you have questions about the first assessment at Neutro Sense TCM, feel free to reply here. There is no need to decide now.",
+ ms:"Hai 😊 Jika ada soalan tentang penilaian pertama di Neutro Sense TCM, boleh balas di sini bila-bila masa. Tak perlu buat keputusan sekarang.",
+});
+function neutral20hFallbackText(language){
+ return Object.prototype.hasOwnProperty.call(NEUTRAL_20H_FALLBACK,language)
+   ? NEUTRAL_20H_FALLBACK[language] : null;
+}
+module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText};
