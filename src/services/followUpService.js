@@ -987,12 +987,21 @@ async function sendSocialVideoCompanion(
     return;
   }
 
-  const videoError =
-    videoResult?.policyBlocked && videoResult.error
+  const videoAccepted = videoResult?.success === true &&
+    typeof videoResult.externalMessageId === "string" &&
+    videoResult.externalMessageId.trim().length > 0;
+  // Meta can accept /messages while losing the response. A missing message ID
+  // or an explicit uncertain result is NOT proof of non-delivery.
+  const videoUnknown = videoResult?.unknown === true ||
+    videoResult?.ambiguous === true ||
+    (videoResult?.success === true && !videoAccepted);
+  const videoError = videoUnknown
+    ? `${channelMessaging.labelForChannel(contact.channel)} service-video delivery is unconfirmed. The follow-up text was sent; check Meta before attempting any retry.`
+    : videoResult?.policyBlocked && videoResult.error
       ? videoResult.error
       : `${channelMessaging.labelForChannel(contact.channel)} did not accept the optional service video. The follow-up text was sent; retry this video from the Inbox if needed.`;
   let finalVideoMessage = videoMessage;
-  if (videoResult?.success && videoResult.externalMessageId) {
+  if (videoAccepted) {
     finalVideoMessage =
       (await messagesRepo.setSocialProviderMessageId(
         videoMessage.id,
@@ -1003,16 +1012,16 @@ async function sendSocialVideoCompanion(
     finalVideoMessage =
       (await messagesRepo.setDeliveryStatusById(
         videoMessage.id,
-        videoResult?.success ? "sent" : "failed",
-        videoResult?.success ? null : videoError
+        videoUnknown ? "unknown" : "failed",
+        videoError
       )) || videoMessage;
   }
   publishConversationChange(finalVideoMessage, "delivery_status");
 
-  if (!videoResult?.success) {
+  if (!videoAccepted) {
     await contactsRepo.setDeliveryAttention(
       contactId,
-      `Delivery failed: ${videoError}`,
+      `${videoUnknown ? "Delivery unconfirmed" : "Delivery failed"}: ${videoError}`,
       videoMessage.id
     );
   }
