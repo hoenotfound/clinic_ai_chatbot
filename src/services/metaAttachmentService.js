@@ -77,7 +77,7 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename, optio
         raw || `${label} attachment upload returned HTTP ${response.status}.`
       );
       console.error(`${label} attachment upload failed:`, response.status, error);
-      return { success: false, attachmentId: null, error };
+      return { success: false, attachmentId: null, error, uploadHttpStatus: response.status };
     }
 
     return { success: true, attachmentId: data.attachment_id, error: null };
@@ -234,6 +234,10 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
       externalMessageId: null,
       ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: uploaded.error,
+      // Only upload failures are safe to fall back from. No customer-facing
+      // Send API request has happened yet.
+      uploadRejected: true,
+      uploadHttpStatus: uploaded.uploadHttpStatus || null,
     };
   }
   // Upload alone does not contact the customer. Recheck immediately before
