@@ -189,6 +189,29 @@ test("accepted signed requests record an actual durability attempt", () => {
   assert.equal(data.httpStatus,200);
 });
 
+test("successful quarantine is distinguishable from a genuinely persisted customer message", () => {
+  const request = { method:"POST",path:"/webhook",
+    headers:{"x-hub-signature-256":"sha256=synthetic"},body:signedBody() };
+  const res=response();
+  const logged=[];
+  const original=console.info;
+  console.info=line=>logged.push(line);
+  try {
+    diag.observe(request,res,()=>{},env);
+    diag.markVerified(request,env);
+    diag.captureSignedEvent(request,res,()=>{},env);
+    diag.markRouting(request,{acceptedChanges:0,
+      quarantined:[{reason:"different_business_phone"}]},0);
+    res.emit("finish");
+  } finally { console.info=original; }
+  const data=JSON.parse(logged[0].slice("[WhatsApp signed ingress] ".length));
+  assert.equal(data.httpStatus,200);
+  assert.deepEqual(data.routing,{
+    acceptedChanges:0,quarantinedChanges:1,parsedCustomers:0,
+  });
+  assert.equal(data.claimsInserted,0);
+});
+
 test("status-only success is not logged, while failures are logged without personal data", () => {
   const request = { method:"POST",path:"/whatsapp/default",
     headers:{"x-hub-signature-256":"sha256=synthetic"},
