@@ -148,6 +148,14 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     assert.equal(policyQueue.dueNowPolicyReviewCount,0);
     assert.deepEqual(policyQueue.upcoming,[]);
 
+    await client.query(`INSERT INTO standalone_pricing_reminder_decisions(id,contact_id,reason)
+      VALUES (401,1,'standalone:review:manual_image_identity_unverified'),
+             (402,2,'standalone:skipped:manual_pricing_confirmed')`);
+    const priced=await health.getFollowUpHealth({days:7,channel:"facebook"},[1],execute);
+    assert.ok(priced.alerts.some(item=>item.id==="standalone_pricing:401"&&item.status==="attention"));
+    const other=await health.getFollowUpHealth({days:7,channel:"instagram"},[2],execute);
+    assert.ok(other.breakdown.some(item=>item.type==="pricing"&&item.status==="skipped"));
+
     // A nominally due FU3 at 23h40 after inbound is past the worker's
     // 23h35 pricing cutoff even though the reply window is still open.
     await client.query(`
