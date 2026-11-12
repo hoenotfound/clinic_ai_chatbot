@@ -119,7 +119,7 @@ test("runtime reserves the reply through existing guarded secondary billing and 
   assert.match(server,/await canSend131060Recovery\(/);
   assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig\)/);
   assert.match(server,/"system_fallback"/);
-  assert.match(server,/processingJobId,\s*interactiveButtons: recoveryTreatmentButtons\(\),\s*latePreSendCheck:/);
+  assert.match(server,/processingJobId,\s*interactiveButtons: recoveryTreatmentButtons\(\),\s*reviewReplyToInboundMessageId: savedInbound\.id,\s*latePreSendCheck:/);
   assert.match(server,/latePreSendCheck\(saved.id\)/);
   assert.match(server,/sendSecondaryStaffText\(/);
 });
