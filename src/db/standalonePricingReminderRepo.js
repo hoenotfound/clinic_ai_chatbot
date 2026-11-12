@@ -31,6 +31,8 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
              OR (first_price.delivery_status='pending'
                AND first_price.whatsapp_accepted_at IS NOT NULL))
        ) AS has_accepted_package_a,
+       (SELECT MIN(retry.retry_after) FROM pricing_reminder_preflight_retries retry
+        WHERE retry.anchor_id=inbound.id AND retry.attempts<3) AS next_preflight_retry_at,
        (SELECT MAX(busy.created_at) FROM messages busy
         WHERE busy.contact_id=c.id AND busy.role='assistant'
           AND busy.created_at>=inbound.created_at
