@@ -473,7 +473,7 @@ test("20h AI skip sends one reviewed neutral reminder in the customer's language
   assert.match(saved[2],copy,language);
   assert.doesNotMatch(saved[2],/RM ?[0-9]+|骨盆调理|9D逆龄|9D 逆龄/,language);
   assert.equal(saved[8].isAutomatedFollowUp,true);
-  assert.equal(f.calls.filter(x=>x.sql?.includes("status='accepted'")).length,1);
+  assert.equal(f.calls.filter(x=>x.sql?.startsWith("UPDATE whatsapp_sender_followup_attempts SET status='accepted'")).length,1);
  }
 });
 
