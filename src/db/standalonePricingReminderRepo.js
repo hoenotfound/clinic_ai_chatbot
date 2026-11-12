@@ -159,10 +159,17 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
         AND NOT EXISTS(
           SELECT 1 FROM messages quote WHERE quote.contact_id=c.id AND quote.role='assistant'
             AND quote.pricing_reminder_anchor_id IS NULL
-            AND quote.created_at>outbound.created_at
+            AND quote.created_at>=inbound.created_at-INTERVAL '24 hours'
             AND quote.whatsapp_message_id IS NOT NULL
             AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
             AND quote.content ~* 'RM[[:space:]]*[0-9]')
+        AND NOT EXISTS (
+          SELECT 1 FROM messages media
+          WHERE media.contact_id=c.id AND media.role='assistant'
+            AND media.id<>outbound.id
+            AND media.media_url IS NOT NULL AND media.media_url<>''
+            AND split_part(media.media_url,'?',1)=split_part(outbound.media_url,'?',1)
+            AND media.delivery_status IS DISTINCT FROM 'cancelled')
         AND NOT EXISTS (
           SELECT 1 FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
           WHERE l.id=(SELECT recent.id FROM leads recent WHERE recent.contact_id=c.id
