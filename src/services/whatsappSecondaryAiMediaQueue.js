@@ -73,7 +73,7 @@ const HARMLESS_CONTINUATION_SQL=`(
 // Harmless later replies must not cancel the pending send.
 const RESULT_MEDIA_SUPERSESSION_SQL=resultSupersessionSql("inbound","newer");
 const PROMOTION_DECLINE_SQL=`BTRIM(newer.content) ~*
-  '^(no[[:space:]-]+thanks?|not[[:space:]]+interested|do[[:space:]]+not[[:space:]]+send|don.t[[:space:]]+send|tak[[:space:]]+(nak|mahu)|tidak[[:space:]]+mahu|不要了|不用了|不需要了|不想要|别发了|別發了|先不用)[[:space:]?？!.。！]*$'`;
+  '^((谢谢|謝謝|thanks|thank you)[,，[:space:]]*)?(no[[:space:]-]+thanks?|not[[:space:]]+interested|do[[:space:]]+not[[:space:]]+send|don.t[[:space:]]+send|tak[[:space:]]+(nak|mahu)|tidak[[:space:]]+mahu|不要了|不用了|不需要了|不想要|别发了|別發了|先不用)[[:space:]?？!.。！]*$'`;
 const NEWER_CUSTOMER_SUPERSESSION_SQL=`(
   (job.media_kind='result' AND ${RESULT_MEDIA_SUPERSESSION_SQL})
   OR (job.media_kind='promotion' AND (
