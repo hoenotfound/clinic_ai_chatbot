@@ -761,13 +761,22 @@ function createApp({
 
   app.post("/whatsapp/default", (req, res, next) => {
     if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
-    // Retain all configuration safety checks in the verified receiver below,
-    // but validate signature/parse first so a misconfigured receiver leaves
-    // signed evidence of the callback it rejected, without logging PII.
-    return next();
+    // With diagnostics OFF retain the original pre-parser config gate.
+    // With diagnostics ON verify the signature first so local config failures
+    // still yield proof of an authentic attempted Meta delivery.
+    if (ingressDiagnostics.enabled()) return next();
+    try {
+      paidDefaultIngress.configFromEnv();
+      return next();
+    } catch (error) {
+      console.error("[Paid default router] Configuration unavailable:", error.message);
+      return res.sendStatus(503);
+    }
   }, paidDefaultHistoryJsonParser, async (req, res) => {
     if (req.whatsappIngressTrace) ingressDiagnostics.captureSignedEvent(req, res, () => {});
     try {
+      // Never weaken the default-route config gate in diagnostic mode.
+      paidDefaultIngress.configFromEnv();
       if (productionHistoryReceiver.configured(process.env) ||
           productionHistoryReceiver.liveConfigured(process.env)) {
         return await productionHistoryReceiver.dispatch(
