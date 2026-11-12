@@ -142,7 +142,45 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const activation=new Date(Date.now()-6*86400000).toISOString();
   const p=["neutro_secondary","100000000011111","200000000011111",
     new Date(),5,activation,"ads_only",activation,activation];
+  const bareWhere=general.CANDIDATES_SQL.indexOf("\n WHERE rule.enabled=TRUE");
+  const order=general.CANDIDATES_SQL.lastIndexOf("\n ORDER BY inbound.created_at");
+  assert.ok(bareWhere>0&&order>bareWhere);
+  const candidateFrom=general.CANDIDATES_SQL.slice(0,bareWhere);
+  const withoutSafeguards=candidateFrom+
+    "\n WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE"+
+    " AND rule.slot_hours IN(48,66,96,144)"+
+    general.CANDIDATES_SQL.slice(order);
+  const joined=(await db.query(withoutSafeguards,p)).rows;
+  if(joined.length===0){
+    const fromNoConsent=candidateFrom.replace(/\n JOIN LATERAL \(\n   SELECT e\.id,e\.consented_at,[\s\S]*?\n \) general_consent ON TRUE/,"");
+    console.error("No matched generic campaign from core consent join",{
+      hasConsentNode:fromNoConsent!==candidateFrom});
+  }
+  assert.ok(joined.length>0,"signed ad and valid consent must survive core sender, lead and opt-in joins");
   const eligible=(await db.query(general.CANDIDATES_SQL,p)).rows;
+  if(!eligible.length){
+    const parts=["   AND @@AUDIENCE@@","   AND @@REVIEWED@@",
+      "   AND @@APPOINTMENT@@","   AND @@CANCELLATION@@",
+      "   AND NOT @@TEMPORARY_STAFF@@","   AND NOT @@RECENT_STAFF@@",
+      "   AND NOT @@PENDING_STAFF@@","   AND @@ATTENTION@@"];
+    const full=general.CANDIDATES_SQL.slice(bareWhere,order);
+    const conditions=full.split("\n   AND ").map(x=>x.trim());
+    console.error("Generic joined but no candidate",{
+      rows:joined.map(x=>({inbound:x.inbound_id,consent:x.consent_id,
+        locale:x.language_code,slot:x.slot_hours})),
+      predicateCount:conditions.length});
+    for(const token of [
+      "   AND c.mode='ai'",
+      "   AND c.whatsapp_opt_in_at IS NOT NULL",
+      "   AND lead.marketing_consent='opted_in'",
+      "   AND $4::timestamptz<inbound.created_at+INTERVAL '167 hours'",
+      "   AND inbound.created_at+rule.slot_hours*INTERVAL '1 hour'<=$4::timestamptz",
+      "   AND inbound.created_at+rule.slot_hours*INTERVAL '1 hour'> $4::timestamptz-INTERVAL '8 hours'",
+    ]){
+      const test=general.CANDIDATES_SQL.replace(token," AND FALSE");
+      if(test===general.CANDIDATES_SQL)console.error("missing token",token);
+    }
+  }
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
   assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
   assert.equal(eligible[0].language_code,"en_US");
