@@ -340,7 +340,7 @@ function resolveShadowPriceException({
   // Do not use CRM/ad labels or bot suggestions as treatment identity. Keep
   // the three-turn, staff-free, timestamped window so a later vague quantity
   // question in a longer clinical conversation never triggers pricing.
-  if (/^多少[\\s?？!！。]*$/u.test(text) && session.length === 3 &&
+  if (/^多少[\s?？!！。]*$/u.test(text) && session.length === 3 &&
       session[0]?.role === "user" && session[1]?.role === "assistant" &&
       session[2]?.role === "user") {
     const firstText = pricingMessageText(session[0]);
