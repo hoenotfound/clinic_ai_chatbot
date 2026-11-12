@@ -48,10 +48,10 @@ const conversation = [
   ["assistant", "这个是顾客护理后的骨盆 Before & After 😊"],
   ["assistant", "再给你看一个顾客护理后的 Before & After 😊"],
   ["user", "产后"],
-  ["assistant", "产后体态调理我们一般建议等到产后大约6周，再安排1对1的体态评估+体验哦。请问你目前生产完大概多久了？是顺产还是剖腹产呢？"],
-  ["user", "一个月半"],
-  ["assistant", "大约一个半月刚好符合我们建议的6周左右哦。你目前恶露干净了吗？身体有明显不舒服吗？"],
-  ["user", "对，恶露没有了，身体没有明显不舒服，只是腰目前会时常酸痛"],
+  ["assistant", "产后体态调理需要先了解恢复情况，中医师会先安排1对1体态评估+体验。请问产后大概多久了呢？"],
+  ["user", "六周左右"],
+  ["assistant", "了解，是否还有不适呢？"],
+  ["user", "最近有点腰酸，其他没有明显不舒服"],
   ["assistant", "产后容易腰酸常跟骨盆和核心受力变化有关。中医师会先帮你做一个1对1的体态评估+体验，看看目前骨盆和体态状态。你平日或周末方便呢？"],
   ["user", priceQuestion],
 ];
@@ -91,7 +91,7 @@ test("pelvic treatment remains verified after a postpartum concern answer and no
   const graphics = await resolvePricePromotionForReply({
     ...input(h, now), pricingDecision: approval.decision, aiPricingEnabled: true,
     treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
-    priceQuery: true, packageQuery: false, language: "zh", contactId: 9035,
+    priceQuery: true, packageQuery: false, language: "zh", contactId: 1,
     textSendSucceeded: true,
     wasPromoRecentlySent: async () => false,
     hasUnconfirmedMediaDelivery: async () => false,
@@ -100,7 +100,7 @@ test("pelvic treatment remains verified after a postpartum concern answer and no
   const deduped = await resolvePricePromotionForReply({
     ...input(h, now), pricingDecision: approval.decision, aiPricingEnabled: true,
     treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
-    priceQuery: true, packageQuery: false, language: "zh", contactId: 9035,
+    priceQuery: true, packageQuery: false, language: "zh", contactId: 1,
     textSendSucceeded: true,
     wasPromoRecentlySent: async () => true,
     hasUnconfirmedMediaDelivery: async () => false,
