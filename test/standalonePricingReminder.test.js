@@ -40,9 +40,18 @@ test("pricing waits 45 minutes after any accepted consent or service message",()
    last_automation_at:"2026-11-13T00:10:00.000Z"};
  assert.equal(feature.dueAt(c).toISOString(),"2026-11-13T00:55:00.000Z");
 });
-test("quiet-hours target is brought forward to previous local evening",()=>{
+test("quiet-hour pricing never jumps to only 17h after a morning enquiry",()=>{
  const candidate={source_at:"2026-11-11T22:00:00.000Z"}; // 06:00 MYT
- assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-12T14:20:00.000Z");
+ assert.equal(feature.dueAt(candidate),null);
+});
+test("when at least 20 hours have elapsed, earlier evening is allowed",()=>{
+ const candidate={source_at:"2026-11-11T18:00:00.000Z"}; // 02:00 MYT
+ assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-12T15:20:00.000Z"); // 23:20 MYT
+});
+test("disabled quiet hours keep the 22h due time",()=>{
+ const candidate={source_at:"2026-11-11T22:00:00.000Z"};
+ assert.equal(feature.dueAt(candidate,{enabled:false,start:"00:00",end:"07:00"}).toISOString(),
+   "2026-11-12T20:00:00.000Z");
 });
 test("clinical questions and generic messages cannot trigger a price offer",()=>{
  const opts={requirePricingInterest:false,sendBothPelvicPackages:true};
@@ -59,8 +68,34 @@ test("query is independent of third follow-up, sender-bound and uses fresh inbou
  assert.match(sql,/whatsapp_sender_message_context/);
  assert.match(sql,/whatsapp_sender_coexistence_history_messages/);
  assert.match(sql,/c\.takeover_by IS NULL/);
- assert.match(sql,/prior\.pricing_reminder_anchor_id=inbound\.id/);
+ assert.match(sql,/pricing_reminder_anchor_id=inbound\.id/);
+ assert.match(sql,/has_accepted_package_a/);
+ assert.match(sql,/next_preflight_retry_at/);
+ assert.match(sql,/whatsapp_sender_billing_attempts/);
+ assert.match(sql,/pricing_reminder_preflight_retries/);
  assert.match(sql,/quote\.content.*RM\[/s);
  assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
  assert.match(sql,/appointment_set/);
+});
+
+test("Package B is gated behind a verified A, and prevents resending uncertain results",()=>{
+ const dbFunctions=[repo.claimAdditional.toString(),repo.stillEligible.toString(),repo.deferUnsent.toString(),
+   repo.resumeDeferred.toString()].join("\n");
+ assert.match(dbFunctions,/previous\.pricing_reminder_package_key='Package A'/);
+ assert.match(dbFunctions,/gate\.state='idle'/);
+ assert.match(dbFunctions,/media\.delivery_status IS DISTINCT FROM 'cancelled'/);
+ assert.match(dbFunctions,/attempt\.state<>'rejected'/);
+ assert.match(dbFunctions,/retry\.attempts<3/);
+ assert.match(dbFunctions,/pricing_reminder_anchor_id/);
+});
+test("standalone sender checks keep existing stages and never enable messenger",()=>{
+ const src=require("node:fs").readFileSync(require("node:path").join(__dirname,
+  "../src/services/standalonePricingReminderService.js"),"utf8");
+ assert.match(src,/const MAX_SENDS_PER_WAKE=2/);
+ assert.match(src,/if\(contact\.channel!=="whatsapp"/);
+ assert.match(src,/origin:"ai_media"/);
+ assert.match(src,/purpose:"marketing"/);
+ assert.match(src,/await repo\.resumeDeferred/);
+ assert.match(src,/await repo\.claimAdditional/);
+ assert.match(src,/repo\.recordDecision/);
 });
