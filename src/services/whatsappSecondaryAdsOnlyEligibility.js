@@ -430,14 +430,14 @@ function secondaryAutomationActivation(env = process.env) {
 // audienceSql is a bound SQL parameter, never an untrusted SQL string.
 function secondaryAutomationEligibleSql(
   contactSql = "c", cutoffSql = "$6", anchorSql = "inbound",
-  audienceSql = "$7", legacyCutoffSql = "$8"
+  audienceSql = "$7", legacyCutoffSql = "$8", policyEnv = process.env
 ) {
   return `(
     (${audienceSql}::text='ads_only'
       AND ${adsOnlyEligibleSql(contactSql,cutoffSql)})
     OR
     (${audienceSql}::text='all_contacts'
-      AND ${secondaryLegacyStaffAudienceSql(contactSql,anchorSql)}
+      AND ${secondaryLegacyStaffAudienceSql(contactSql,anchorSql,policyEnv)}
       AND (${adsOnlyEligibleSql(contactSql,legacyCutoffSql)}
       OR (
       ${contactSql}.channel='whatsapp'
@@ -482,7 +482,7 @@ async function isSecondaryAutomationEligible(contactId, {
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
   try {
     const out = await database.query(
-      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5")} AS eligible
+      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
         WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
