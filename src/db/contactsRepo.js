@@ -825,6 +825,28 @@ ${senderAwareInboxReadsEnabled() ? `
       c.created_at,
       c.needs_attention,
       c.attention_reason,
+      ${senderAwareInboxReadsEnabled() ? `
+      CASE
+        WHEN sa.sender_key='neutro_secondary'
+          AND c.updated_at >= NOW()-INTERVAL '14 days'
+          AND EXISTS (
+            SELECT 1 FROM messages unsupported
+            WHERE unsupported.contact_id=c.id
+              AND unsupported.role='user'
+              AND unsupported.source_created_at >= NOW()-INTERVAL '14 days'
+              AND unsupported.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_free_entry_referrals identified_ad
+            WHERE identified_ad.contact_id=c.id
+              AND identified_ad.source_type='ad'
+              AND (NULLIF(BTRIM(identified_ad.meta_ad_id),'') IS NOT NULL
+                   OR NULLIF(BTRIM(identified_ad.ctwa_clid),'') IS NOT NULL)
+          )
+        THEN 'meta_131060_unverified'
+        ELSE NULL
+      END AS whatsapp_ad_evidence_status,
+      ` : "NULL::text AS whatsapp_ad_evidence_status,"}
       COALESCE(pending_reviews.pending_review_count, 0) AS pending_review_count,
       pending_reviews.pending_review_summaries,
       COALESCE(pending_reviews.pending_review_items, '[]'::jsonb) AS pending_review_items,

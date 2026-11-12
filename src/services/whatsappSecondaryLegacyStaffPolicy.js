@@ -18,6 +18,45 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
  // Date is strict ISO-8601 and normalized by Date.toISOString(), never raw SQL.
  const at="'"+cutoff+"'::timestamptz";
  const anchorTime=anchor?anchor+".created_at":"NOW()";
+ // A genuine ad received before the policy cutover remains useful evidence
+ // for seven days. It does not by itself re-enable old contacts. Only a NEW,
+ // readable, provider-bound customer message after cutover can renew AI access.
+ // This never creates an ad referral or marketing consent.
+ const postCutoverReadable=alias=>`
+       ${alias}.role='user'
+       AND ${alias}.whatsapp_message_id IS NOT NULL
+       AND ${alias}.source_created_at IS NOT NULL
+       AND ${alias}.created_at>=${at}
+       AND ${alias}.source_created_at>=${at}
+       AND ${alias}.content NOT LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+       AND ${alias}.id>ad_inbound.id
+       AND ${alias}.created_at>=ad_inbound.created_at
+       AND ${alias}.created_at<ad_inbound.created_at+INTERVAL '7 days'`;
+ const renewedBeforeCutoverAd=anchor?
+   `AND ${postCutoverReadable(anchor)}
+      AND EXISTS (
+        SELECT 1 FROM whatsapp_sender_message_context renewed_context
+        WHERE renewed_context.message_id=${anchor}.id
+          AND renewed_context.conversation_id=ad_conversation.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM whatsapp_sender_coexistence_history_messages renewed_history
+        WHERE renewed_history.message_id=${anchor}.id
+          AND renewed_history.sender_id=ad_conversation.sender_id
+      )`:
+   `AND EXISTS (
+        SELECT 1 FROM messages renewed_inbound
+        JOIN whatsapp_sender_message_context renewed_context
+          ON renewed_context.message_id=renewed_inbound.id
+         AND renewed_context.conversation_id=ad_conversation.id
+        WHERE renewed_inbound.contact_id=${contact}.id
+          AND ${postCutoverReadable("renewed_inbound")}
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_coexistence_history_messages renewed_history
+            WHERE renewed_history.message_id=renewed_inbound.id
+              AND renewed_history.sender_id=ad_conversation.sender_id
+          )
+      )`;
  const ordering=anchor?
    `AND (ad_inbound.created_at,ad_inbound.id)<=(
       ${anchor}.created_at,${anchor}.id)
@@ -63,6 +102,35 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
         )
         AND ${anchorTime}>=ad_inbound.created_at
         ${ordering}
+    )
+    OR EXISTS (
+      SELECT 1 FROM whatsapp_free_entry_referrals prior_ad
+      JOIN messages ad_inbound ON ad_inbound.id=prior_ad.origin_message_id
+        AND ad_inbound.contact_id=${contact}.id
+        AND ad_inbound.role='user'
+        AND ad_inbound.whatsapp_message_id IS NOT NULL
+        AND ad_inbound.source_created_at IS NOT NULL
+      JOIN whatsapp_sender_conversations ad_conversation
+        ON ad_conversation.contact_id=${contact}.id
+        AND ad_conversation.sender_id=${contact}.whatsapp_sender_id
+        AND ad_conversation.customer_wa_id=${contact}.whatsapp_number
+        AND ad_conversation.state='bound'
+      JOIN whatsapp_sender_message_context prior_context
+        ON prior_context.message_id=ad_inbound.id
+       AND prior_context.conversation_id=ad_conversation.id
+      WHERE prior_ad.contact_id=${contact}.id
+        AND prior_ad.source_type='ad'
+        AND (NULLIF(BTRIM(prior_ad.ctwa_clid),'') IS NOT NULL
+             OR NULLIF(BTRIM(prior_ad.meta_ad_id),'') IS NOT NULL)
+        AND ad_inbound.created_at<${at}
+        AND ad_inbound.source_created_at<${at}
+        AND NOW()<ad_inbound.created_at+INTERVAL '7 days'
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_coexistence_history_messages ad_history
+          WHERE ad_history.message_id=ad_inbound.id
+            AND ad_history.sender_id=ad_conversation.sender_id
+        )
+        ${renewedBeforeCutoverAd}
     )
     OR (
       -- Seven-day admin approval. Only future sender-bound customer messages

@@ -42,6 +42,31 @@ test("old secondary contact is manual unless genuine new sender-bound ad was rec
  assert.match(ui,/NOW\(\)<ad_inbound.created_at\+INTERVAL '7 days'/);
  assert.doesNotMatch(ui,/AND inbound\\.created_at/);
 });
+test("verified pre-cutover ads require a fresh readable, sender-bound inbound before seven-day expiry",()=>{
+ const anchored=secondaryLegacyStaffAudienceSql("c","inbound",env);
+ for(const fragment of [
+  /whatsapp_free_entry_referrals prior_ad/,
+  /prior_ad.source_type='ad'/,
+  /ad_inbound.created_at<'2026-11-12T02:36:00.000Z'::timestamptz/,
+  /ad_inbound.source_created_at<'2026-11-12T02:36:00.000Z'::timestamptz/,
+  /NOW\(\)<ad_inbound.created_at\+INTERVAL '7 days'/,
+  /inbound.created_at>='2026-11-12T02:36:00.000Z'::timestamptz/,
+  /inbound.source_created_at>='2026-11-12T02:36:00.000Z'::timestamptz/,
+  /inbound.id>ad_inbound.id/,
+  /inbound.content NOT LIKE/,
+  /renewed_context.message_id=inbound.id/,
+  /renewed_history.message_id=inbound.id/,
+  /prior_context.message_id=ad_inbound.id/,
+  /ad_conversation.customer_wa_id=c.whatsapp_number/,
+ ])assert.match(anchored,fragment);
+ const listing=secondaryLegacyStaffAudienceSql("c",null,env);
+ assert.match(listing,/FROM messages renewed_inbound/);
+ assert.match(listing,/renewed_inbound.id>ad_inbound.id/);
+ assert.match(listing,/renewed_inbound.content NOT LIKE/);
+ assert.match(listing,/renewed_context.message_id=renewed_inbound.id/);
+ assert.doesNotMatch(secondaryLegacyStaffAudienceSql("c","inbound",{}),/prior_ad/);
+});
+
 test("all contact automation adds legacy staff guard without weakening provider or consent rules",()=>{
  // Explicit environment parameter allows SQL review without switching live flags.
  const sql=eligibility.secondaryLegacyStaffAudienceSql("c","inbound",env);
