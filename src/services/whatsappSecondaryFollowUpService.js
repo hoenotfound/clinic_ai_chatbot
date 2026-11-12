@@ -17,7 +17,7 @@ const mediaStorage=require("./mediaStorageService");
 const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
-const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
   chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
@@ -47,6 +47,10 @@ function serviceFollowupParityActivation(env=process.env) {
     ? new Date(ms).toISOString() : null;
 }
 
+// A failed policy/identity check must never be converted into a fallback send.
+const SAFE_20H_FALLBACK_CODES=new Set([
+ "secondary_20h_ai_skipped","secondary_20h_ai_unavailable",
+]);
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
 const SLOW_QUERY_WARNING_MS=3000;
@@ -810,9 +814,10 @@ async function runOnce({
           }
         }
       }
-      // This is the PRIMARY Neutro follow-up AI generator, using only
-      // sender-bound SECONDARY customer history. Generate after the one-shot
-      // claim, and never send a static substitute when AI mode is explicitly on.
+      // Use sender-bound SECONDARY history for optional 20h AI copy.
+      // If AI declines or temporarily fails, use a reviewed, treatment-neutral
+      // service reminder in the verified customer language. Do not bypass an
+      // identity/policy failure, fabricate a treatment, or retry a sent slot.
       let outboundText=safeText;
       let aiMode=null;
       phase="ai_generation";
@@ -820,10 +825,16 @@ async function runOnce({
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
-          await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
+          const code=personalized?.code||"secondary_20h_ai_unavailable";
+          const fallback=SAFE_20H_FALLBACK_CODES.has(code)
+            ? neutral20hFallbackText(replyLanguage):null;
+          if(!fallback){await fail(code);continue;}
+          outboundText=fallback;
+          aiMode="neutral_20h_fallback";
+        }else{
+          outboundText=personalized.message;
+          aiMode=personalized.mode;
         }
-        outboundText=personalized.message;
-        aiMode=personalized.mode;
       }
       // Offer a genuine, optional way to request Day2-Day6 marketing
       // follow-ups while the customer-service window is still open. This is
