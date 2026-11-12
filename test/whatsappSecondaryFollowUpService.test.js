@@ -93,6 +93,23 @@ test("secondary followups never inherit Neutro content or start by default",asyn
   assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
 });
 
+test("quiet-hour-delayed 6h video cannot push the 20h check-in out of its 24h window",()=>{
+  const candidate=worker.CANDIDATES_SQL, recheck=worker.RECHECK_SQL;
+  const duePattern=/CASE WHEN rule\.slot_hours=20[\s\S]*?INTERVAL '15 minutes'/;
+  for(const sql of [candidate,recheck]){
+    assert.match(sql,duePattern,"20h must use a short post-video buffer, not the old fourteen-hour gap");
+    assert.match(sql,/rule\.slot_hours<>20 OR[\s\S]*?inbound\.created_at \+ INTERVAL '24 hours'/);
+    assert.match(sql,/previous_step\.completed_at IS NOT NULL/);
+    assert.match(sql,/previous\.status IN\('unknown','blocked'\)|prior_problem\.status IN\('unknown','blocked'\)/);
+  }
+  const inbound=Date.parse("2026-11-10T12:36:14.753Z");
+  const quietHourDelayedSix=Date.parse("2026-11-10T23:00:08Z");
+  const due=Math.max(inbound+20*3600000,quietHourDelayedSix+15*60000);
+  assert.equal(new Date(due).toISOString(),"2026-11-11T08:36:14.753Z",
+    "9D #8997 reminder becomes due 16:36 MYT, not 21:00 after the window");
+  assert.ok(due<inbound+24*3600000);
+});
+
 test("one eligible Ariel followup is durably claimed before sender-specific send",async()=>{
   const f=fake();
   const result=await worker.runOnce({...f,env});
