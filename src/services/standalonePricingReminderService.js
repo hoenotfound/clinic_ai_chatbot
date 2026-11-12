@@ -258,26 +258,45 @@ async function runOnce(now=new Date()){
   if(quietHoursStatus(now,options.quietHours).active)return null;
   const candidates=await repo.listCandidates(options);
   let sends=0,nextDue=null;
+  const soon=(delayMs=90000)=>new Date(new Date(now).getTime()+delayMs);
+  const track=(timestamp)=>{
+    if(!timestamp || !Number.isFinite(Date.parse(timestamp)))return;
+    const date=new Date(timestamp);
+    if(!nextDue || date<nextDue)nextDue=date;
+  };
   for(const candidate of candidates){
-    const due=dueAt(candidate);
-    if(!due || !beforeEnd(candidate,now))continue;
-    if(due.getTime()>new Date(now).getTime()){
-      if(!nextDue || due<nextDue)nextDue=due;
+    const due=dueAt(candidate,options.quietHours);
+    if(!due){
+      await repo.recordDecision(candidate,"quiet_hours_no_safe_window").catch(()=>{});
       continue;
     }
-    if(sends>=MAX_SENDS_PER_WAKE){
-      const soon=new Date(new Date(now).getTime()+15000);
-      if(!nextDue || soon<nextDue)nextDue=soon;
+    if(!beforeEnd(candidate,now))continue;
+    if(due.getTime()>new Date(now).getTime()){
+      track(due.toISOString());
+      continue;
+    }
+    if(sends>=MAX_SENDS_PER_WAKE){track(soon().toISOString());break;}
+    const selected=select(candidate,options);
+    if(!selected.offers?.length){
+      await repo.recordDecision(candidate,"skipped:"+String(selected.reason||"no_offer")).catch(()=>{});
+      continue;
+    }
+    // The selected package set is fixed for this pass, but final rechecks
+    // still verify current promotions, recipient and follow-up state.
+    for(const offer of selected.offers){
+      if(!beforeEnd(candidate))break;
+      const result=await sendOne(candidate,offer,options,selected.offers);
+      if(result.sent){sends++;continue;}
+      if(result.nextAt)track(result.nextAt);
+      if(result.waiting && candidate.has_accepted_package_a)
+        track(soon().toISOString());
+      if(result.review)await repo.recordDecision(candidate,"staff_review:"+offer.packageName).catch(()=>{});
       break;
     }
-    const selected=select(candidate,options);
-    if(!selected.offers.length)continue;
-    // A/B is a single package set. Never continue after unknown acceptance.
-    for(const [index,offer] of selected.offers.entries()){
-      if(!beforeEnd(candidate) || !(await sendOne(candidate,offer,options,index,selected.offers)))
-        break;
-      sends++;
-    }
+    // After accepting A on secondary, B cannot be sent until the signed Meta
+    // receipt has released the sender-specific billing gate. Wake again later.
+    if(candidate.whatsapp_sender_key===SECONDARY && selected.offers.length>1 &&
+       sends>0)track(soon().toISOString());
   }
   return nextDue?.toISOString()||null;
 }
