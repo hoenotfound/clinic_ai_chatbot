@@ -319,6 +319,65 @@ function repeatSlotCooldownSql(atSql){
  )`;
 }
 
+// Operator-approved recovery for ONE missed, verified ad conversation.
+// Service-window text only. No old AI replay, inferred MARKETING consent,
+// additional 6h/20h stages, or out-of-window/template sends.
+const MANUAL_SERVICE_CONTINUATION_SQL=String.raw`
+ (
+   rule.slot_hours=2
+   AND first_reply.staff_reply=TRUE
+   AND first_reply.staff_question=TRUE
+   AND sa.sender_key='neutro_secondary'
+   AND c.whatsapp_secondary_manual_ai_approved_at IS NOT NULL
+   AND c.whatsapp_secondary_manual_ai_approved_until>NOW()
+   AND EXISTS (
+     SELECT 1 FROM whatsapp_secondary_manual_service_followup_continuations approved
+     JOIN messages staff ON staff.id=approved.staff_message_id
+       AND staff.contact_id=c.id AND staff.role='assistant'
+       AND staff.sent_by_username IS NOT NULL
+       AND staff.whatsapp_message_id IS NOT NULL
+       AND staff.delivery_status IN ('sent','delivered','read')
+       AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
+       AND staff.is_forwarded IS DISTINCT FROM TRUE
+     JOIN whatsapp_sender_message_context staff_context
+       ON staff_context.message_id=staff.id
+       AND staff_context.conversation_id=sc.id
+     JOIN whatsapp_free_entry_referrals genuine_ad
+       ON genuine_ad.contact_id=c.id
+       AND genuine_ad.origin_message_id=inbound.id
+       AND genuine_ad.source_type='ad'
+       AND (NULLIF(BTRIM(genuine_ad.ctwa_clid),'') IS NOT NULL
+         OR NULLIF(BTRIM(genuine_ad.meta_ad_id),'') IS NOT NULL)
+     WHERE approved.contact_id=c.id
+       AND approved.sender_id=sa.id
+       AND approved.anchor_message_id=inbound.id
+       AND approved.staff_message_id=first_reply.id
+       AND approved.approved_at<=NOW()
+       AND approved.approved_at>=staff.created_at
+       AND approved.expires_at>NOW()+INTERVAL '2 minutes'
+       AND inbound.role='user'
+       AND inbound.whatsapp_message_id IS NOT NULL
+       AND inbound.source_created_at IS NOT NULL
+       AND approved.expires_at<=inbound.source_created_at+INTERVAL '24 hours'
+       AND staff.created_at>inbound.created_at
+       AND staff.created_at<inbound.source_created_at+INTERVAL '24 hours'
+       AND staff.created_at>=c.whatsapp_secondary_manual_ai_approved_at
+       AND c.whatsapp_coexistence_imported_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM messages earlier_customer
+         WHERE earlier_customer.contact_id=c.id
+           AND earlier_customer.role='user'
+           AND earlier_customer.id<inbound.id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.sender_id=sa.id
+           AND historical.message_id IN (inbound.id,staff.id)
+       )
+   )
+ )
+`;
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -468,7 +527,7 @@ const CANDIDATES_SQL=`
    AND treatment_state.source_message_id<=inbound.id
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
-   AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
+   AND (${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')} OR ${MANUAL_SERVICE_CONTINUATION_SQL})
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
@@ -491,6 +550,8 @@ const CANDIDATES_SQL=`
      ($9::timestamptz IS NOT NULL
        AND inbound.created_at >= $9::timestamptz
        AND inbound.source_created_at >= $9::timestamptz
+       AND COALESCE(lead.marketing_consent,'unknown')<>'opted_out')
+     OR (${MANUAL_SERVICE_CONTINUATION_SQL}
        AND COALESCE(lead.marketing_consent,'unknown')<>'opted_out')
    )
    AND COALESCE(lead.is_closed,FALSE)=FALSE
@@ -585,7 +646,7 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
-   AND ${secondaryAutomationEligibleSql('c','$8','inbound','$9','$10')}
+   AND (${secondaryAutomationEligibleSql('c','$8','inbound','$9','$10')} OR ${MANUAL_SERVICE_CONTINUATION_SQL})
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    ${CUSTOMER_FOLLOWUP_GUARD_SQL}
@@ -608,6 +669,8 @@ const RECHECK_SQL=`
      ($11::timestamptz IS NOT NULL
        AND inbound.created_at >= $11::timestamptz
        AND inbound.source_created_at >= $11::timestamptz
+       AND COALESCE(latest_lead.marketing_consent,'unknown')<>'opted_out')
+     OR (${MANUAL_SERVICE_CONTINUATION_SQL}
        AND COALESCE(latest_lead.marketing_consent,'unknown')<>'opted_out')
    )
    AND COALESCE(latest_lead.is_closed,FALSE)=FALSE
