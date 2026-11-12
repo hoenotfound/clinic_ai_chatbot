@@ -218,6 +218,59 @@ test("AI text requires its own activation and does not inherit staff send permis
   assert.equal(calls.send.length,1);
 });
 
+test("AI text waits for signed prior receipt before its first provider call",async()=>{
+  for(const origin of ["ai_reply","system_fallback"]){
+    const {opts,calls}=setup();
+    const waits=[];
+    opts.waitForPriorSettlement=async(ms)=>waits.push(ms);
+    opts.billingRepo.reserveSecondaryBillingAttempt=async()=>{
+      calls.reserved++;
+      return calls.reserved < 3 ?
+        {reserved:false,code:"secondary_billing_previous_send_unresolved"}:
+        {reserved:true,reservationId};
+    };
+    const result=await sendSecondaryStaffText({...data,origin},{
+      ...opts,env:aiOnlyEnv,
+    });
+    assert.equal(result.success,true);
+    assert.deepEqual(waits,[750,750]);
+    assert.equal(calls.reserved,3);
+    assert.equal(calls.send.length,1,"only one Meta provider call");
+    assert.equal(calls.mark.length,1,"only the fresh attempt is recorded");
+  }
+});
+
+test("AI pending-receipt wait cancels on staff takeover before reservation",async()=>{
+  const {opts,calls}=setup({billingDenied:true});
+  let checks=0;
+  const result=await sendSecondaryStaffText({
+    ...data,origin:"ai_reply",preSendCheck:async()=>++checks<3,
+  },{
+    ...opts,env:aiOnlyEnv,
+    waitForPriorSettlement:async()=>{},
+  });
+  assert.equal(result.cancelled,true);
+  assert.equal(calls.reserved,2);
+  assert.equal(calls.send.length,0);
+  assert.equal(calls.mark.length,0);
+});
+
+test("AI wait never bypasses unresolved prior billing or replays a send",async()=>{
+  const {opts,calls}=setup({billingDenied:true});
+  let waits=0;
+  const result=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+    ...opts,env:aiOnlyEnv,
+    waitForPriorSettlement:async(ms)=>{assert.equal(ms,750);waits++;},
+  });
+  assert.equal(result.success,false);
+  assert.equal(result.code,"secondary_billing_previous_send_unresolved");
+  assert.equal(result.retryable,false);
+  assert.equal(waits,8);
+  assert.equal(calls.reserved,9);
+  assert.equal(calls.send.length,0);
+  assert.equal(calls.mark.length,0);
+});
+
 test("AI staff-takeover cancellation before reservation never calls Meta",async()=>{
   const {opts,calls}=setup();
   const result=await sendSecondaryStaffText({
