@@ -66,4 +66,81 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
     )
   )`;
 }
-module.exports={secondaryLegacyStaffCutoff,secondaryLegacyStaffAudienceSql};
+
+/**
+ * A verified Meta 131060 may arrive without any advertising referral.
+ * A single accepted recovery menu followed by a readable customer inbound
+ * re-opens conversation AI and service follow-ups for up to seven days.
+ * The unreadable event itself is NEVER a follow-up anchor or ad attribution.
+ */
+function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.env) {
+ for(const name of [contact,...(anchor?[anchor]:[])])
+   if(!/^[a-z][a-z0-9_]*$/i.test(name))throw new Error("Invalid SQL alias");
+ if(env.WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED!=="true")return "FALSE";
+ const cutoff=secondaryLegacyStaffCutoff(env);
+ const raw=String(env.WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT||"");
+ if(!cutoff||!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/.test(raw))
+   return "FALSE";
+ const active=new Date(raw);
+ if(!Number.isFinite(active.getTime()))return "FALSE";
+ const since="'"+new Date(Math.max(new Date(cutoff).getTime(),active.getTime())).toISOString()+"'::timestamptz";
+ const afterMenu=anchor?
+   `AND ${anchor}.role='user'
+       AND ${anchor}.whatsapp_message_id IS NOT NULL
+       AND ${anchor}.source_created_at IS NOT NULL
+       AND ${anchor}.id>recovery_menu.id
+       AND ${anchor}.created_at>=recovery_menu.created_at
+       AND ${anchor}.created_at<recovery_menu.created_at+INTERVAL '7 days'
+       AND ${anchor}.content NOT LIKE '📎 [% sent a WhatsApp message that could not be displayed]'`:
+   `AND NOW()>=recovery_menu.created_at
+       AND NOW()<recovery_menu.created_at+INTERVAL '7 days'`;
+ return `EXISTS (
+   SELECT 1 FROM messages unavailable131060
+   JOIN whatsapp_sender_message_context missing_ctx
+     ON missing_ctx.message_id=unavailable131060.id
+   JOIN whatsapp_sender_conversations recovery_conv
+     ON recovery_conv.id=missing_ctx.conversation_id
+     AND recovery_conv.contact_id=${contact}.id
+     AND recovery_conv.sender_id=${contact}.whatsapp_sender_id
+     AND recovery_conv.customer_wa_id=${contact}.whatsapp_number
+     AND recovery_conv.state='bound'
+   JOIN messages recovery_menu
+     ON recovery_menu.contact_id=${contact}.id
+     AND recovery_menu.role='assistant'
+     AND recovery_menu.whatsapp_message_id IS NOT NULL
+     AND recovery_menu.created_at>=unavailable131060.created_at
+     AND recovery_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+     AND recovery_menu.content LIKE '%可以点下面的选项%'
+   JOIN whatsapp_sender_message_context recovery_ctx
+     ON recovery_ctx.message_id=recovery_menu.id
+     AND recovery_ctx.conversation_id=recovery_conv.id
+   JOIN outbound_message_evidence accepted_menu
+     ON accepted_menu.message_id=recovery_menu.id
+     AND accepted_menu.contact_id=${contact}.id
+     AND accepted_menu.channel='whatsapp'
+     AND accepted_menu.origin='system_fallback'
+     AND accepted_menu.accepted=TRUE
+     AND accepted_menu.provider_message_id=recovery_menu.whatsapp_message_id
+   WHERE unavailable131060.contact_id=${contact}.id
+     AND unavailable131060.role='user'
+     AND unavailable131060.whatsapp_message_id IS NOT NULL
+     AND unavailable131060.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+     AND unavailable131060.source_created_at>=${since}
+     AND unavailable131060.created_at>=${since}
+     AND NOT EXISTS(
+       SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+       WHERE imported.message_id=unavailable131060.id
+     )
+     AND EXISTS (
+       SELECT 1 FROM inbound_processing_jobs recorded131060
+       WHERE recorded131060.message_id=unavailable131060.id
+         AND recorded131060.channel='whatsapp'
+         AND recorded131060.incoming_payload->>'unsupportedType'='unsupported'
+         AND recorded131060.incoming_payload->'unsupportedErrors'
+             @> '[{"code":131060}]'::jsonb
+     )
+     ${afterMenu}
+ )`;
+}
+
+module.exports={secondaryLegacyStaffCutoff,secondaryLegacyStaffAudienceSql,secondary131060RecoveryAudienceSql};
