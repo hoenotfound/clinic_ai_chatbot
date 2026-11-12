@@ -140,8 +140,18 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "VALUES($1,48,TRUE,'old_treatment_template','en_US',$2,TRUE)",
     [sender,"a".repeat(64)]);
   const activation=new Date(Date.now()-6*86400000).toISOString();
+  // Candidate simulation follows the same allowed sending hours as the
+  // production scheduler, irrespective of the time the CI job starts.
+  const candidateAt=new Date();
+  const candidateMinute=(candidateAt.getUTCHours()*60+
+    candidateAt.getUTCMinutes()+480)%1440;
+  if(candidateMinute<7*60){
+    candidateAt.setTime(candidateAt.getTime()+
+      (7*60-candidateMinute)*60000-candidateAt.getUTCSeconds()*1000-
+      candidateAt.getUTCMilliseconds());
+  }
   const p=["neutro_secondary","100000000011111","200000000011111",
-    new Date(),5,activation,"ads_only",activation,activation];
+    candidateAt,5,activation,"ads_only",activation,activation];
   const bareWhere=general.CANDIDATES_SQL.indexOf("\n WHERE rule.enabled=TRUE");
   const order=general.CANDIDATES_SQL.lastIndexOf("\n ORDER BY inbound.created_at");
   assert.ok(bareWhere>0&&order>bareWhere);
@@ -196,7 +206,16 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   // Unlike the previous fixed eight-hour cutoff, a fresh customer reply
   // shifts the due time rather than silently losing the whole sequence.
   const nextDay=[...p];
-  nextDay[3]=new Date(Date.now()+25*3600000);
+  // The real scheduler suppresses marketing sends during Malaysia quiet hours.
+  // Keep the resumption test >=25h after fresh activity, at an allowed hour.
+  const resumedAt=new Date(Date.now()+25*3600000);
+  const localMinute=(resumedAt.getUTCHours()*60+resumedAt.getUTCMinutes()+480)%1440;
+  if(localMinute<7*60){
+    resumedAt.setTime(resumedAt.getTime()+
+      (7*60-localMinute)*60000-resumedAt.getUTCSeconds()*1000-
+      resumedAt.getUTCMilliseconds());
+  }
+  nextDay[3]=resumedAt;
   const resumed=(await db.query(general.CANDIDATES_SQL,nextDay)).rows;
   assert.equal(resumed.length,1,
     "a postponed 48h stage becomes eligible after 24 hours of inactivity");
@@ -214,8 +233,13 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "(sender_id,contact_id,anchor_message_id,slot_hours,status) "+
     "VALUES($1,$2,$3,48,'claimed') RETURNING id",
     [sender,contact,ad])).rows[0].id;
-  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
-    "claimed generic marketing follow-up survives independent final consent check");
+  // The final recheck deliberately uses the actual server clock, unlike the
+  // synthetic future-time candidate search. Never expect a paid template send
+  // during Malaysia quiet hours.
+  const localHour=(new Date().getUTCHours()+8)%24;
+  const canSendNow=localHour>=7 && localHour<=23;
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,canSendNow?1:0,
+    "claimed generic marketing follow-up respects consent and current quiet hours");
   // A reply arriving between the one-shot claim and the provider call must
   // also cancel the template during the final sender-bound recheck.
   const justReplied=(await db.query(
@@ -229,8 +253,8 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "new customer question prevents send after the claim");
   await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[justReplied]);
   await db.query("DELETE FROM messages WHERE id=$1",[justReplied]);
-  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
-    "normal eligibility returns after the active-message fixture is removed");
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,canSendNow?1:0,
+    "ordinary eligibility returns except while current quiet hours block sending");
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "fresh marketing opt-out cancels the claimed generic send");

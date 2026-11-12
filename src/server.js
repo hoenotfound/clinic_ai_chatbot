@@ -1632,6 +1632,18 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
+    // A bare amount question may only be recovered from a model's clinical
+    // classification after independently verifying one current treatment and
+    // its active prices. Any real clinical concern or unresolved clinical
+    // review continues to block the later recovery.
+    if (shadowPriceException && flagged && reviewRequired &&
+        reviewType === "clinical" &&
+        /^多少[\s?？!！。]*$/u.test(String(text || "").trim()) &&
+        !hasClinicalMediaRisk(text) && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+        !bookingReady && !marketingStopQuestion) {
+      reviewType = "information";
+    }
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&

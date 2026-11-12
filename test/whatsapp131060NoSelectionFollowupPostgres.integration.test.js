@@ -50,7 +50,17 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     [inbound,conversation]);
 
   const activation=new Date(Date.now()-25*3600000).toISOString();
-  const params=[senderName,phoneId,waba,new Date(),10,activation,"all_contacts",
+  // The query correctly suppresses service reminders from 00:00 to 06:59 MYT.
+  // Test the earliest permitted 07:00 instant if CI runs overnight, still
+  // inside the 8-hour backfill grace for the verified recovery menu.
+  const candidateAt=new Date();
+  const localMinute=(candidateAt.getUTCHours()*60+candidateAt.getUTCMinutes()+480)%1440;
+  if(localMinute<7*60){
+    candidateAt.setTime(candidateAt.getTime()+
+      (7*60-localMinute)*60000-candidateAt.getUTCSeconds()*1000-
+      candidateAt.getUTCMilliseconds());
+  }
+  const params=[senderName,phoneId,waba,candidateAt,10,activation,"all_contacts",
     new Date(Date.now()-7*3600000).toISOString(),activation];
   const candidates=async()=> (await db.query(worker.CANDIDATES_SQL,params)).rows;
   assert.equal((await candidates()).length,0,
@@ -120,13 +130,17 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     contact,inbound,2,senderName,phoneId,waba,
     ready[0].rule_version,activation,"all_contacts",
     new Date(Date.now()-7*3600000).toISOString(),activation]);
-  assert.equal((await recheck()).rows[0].allowed,true,
-    "the final pre-send check authorizes the same accepted recovery proof");
+  // Provider pre-send authorization uses actual NOW(), not the test's
+  // candidate-time override. Overnight it must remain false.
+  const myHour=(new Date().getUTCHours()+8)%24;
+  const canSendNow=myHour>=7 && myHour<=23;
+  assert.equal((await recheck()).rows[0].allowed,canSendNow,
+    "the final pre-send check respects the real quiet-hour rule");
   await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[menu]);
   assert.equal((await recheck()).rows[0].allowed,false,
     "a later definitive delivery failure cancels the pending reminder");
   await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[menu]);
-  assert.equal((await recheck()).rows[0].allowed,true);
+  assert.equal((await recheck()).rows[0].allowed,canSendNow);
 
   await db.query(
     "UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[contact]);
@@ -147,7 +161,13 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "INSERT INTO whatsapp_sender_followup_rules(sender_id,slot_hours,enabled,message_text) "+
     "VALUES($1,6,TRUE,'Do not send this generic text'),($1,20,TRUE,'Do not send this generic text')",[sender]);
   for(const slot of [2,6,20]){
-    const hoursAgo=slot+1;
+    // The 20h stage must remain inside the 24h service window even when
+    // overnight CI has advanced its simulated candidate clock to 07:00 MYT.
+    // Only that fixture's age changes; the actual provider recheck remains
+    // controlled by real NOW() and must still block overnight.
+    const candidateShiftHours=Math.ceil(Math.max(0,
+      candidateAt.getTime()-Date.now())/3600000);
+    const hoursAgo=slot===20 ? slot+1-candidateShiftHours : slot+1;
     const customerWa="60122201"+String(600+slot);
     const c=(await db.query(
       "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
@@ -201,7 +221,8 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
       c,anchor,slot,senderName,phoneId,waba,live[0].rule_version,
       activation,"all_contacts",new Date(Date.now()-7*3600000).toISOString(),
       activation])).rows[0].allowed;
-    assert.equal(await check(),true,"provider recheck permits silent "+slot+"h recovery");
+    assert.equal(await check(),canSendNow,
+      "provider recheck permits silent "+slot+"h recovery only in active hours");
     await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[verifiedMenu]);
     assert.equal(await check(),false,"failed menu must block "+slot+"h send");
     await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[verifiedMenu]);
@@ -211,7 +232,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     await db.query("UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[c]);
     assert.equal(await check(),false,"opt-out must block "+slot+"h send");
     await db.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=$1",[c]);
-    assert.equal(await check(),true);
+    assert.equal(await check(),canSendNow);
     if(slot===20){
       const lead=(await db.query(
         "INSERT INTO leads(contact_id,created_by) VALUES($1,'Automation') RETURNING id",
@@ -219,7 +240,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
       await db.query("UPDATE leads SET appointment_status='booked' WHERE id=$1",[lead]);
       assert.equal(await check(),false,"confirmed booking must stop 20h recovery");
       await db.query("UPDATE leads SET appointment_status='none' WHERE id=$1",[lead]);
-      assert.equal(await check(),true);
+      assert.equal(await check(),canSendNow);
     }
     await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[reservation]);
   }

@@ -335,6 +335,29 @@ function resolveShadowPriceException({
     });
     if (result) return result;
   }
+  // "多少" can be a price question immediately after the customer explicitly
+  // selected a single treatment and the bot acknowledged that same service.
+  // Do not use CRM/ad labels or bot suggestions as treatment identity. Keep
+  // the three-turn, staff-free, timestamped window so a later vague quantity
+  // question in a longer clinical conversation never triggers pricing.
+  if (/^多少[\s?？!！。]*$/u.test(text) && session.length === 3 &&
+      session[0]?.role === "user" && session[1]?.role === "assistant" &&
+      session[2]?.role === "user") {
+    const firstText = pricingMessageText(session[0]);
+    const ackText = pricingMessageText(session[1]);
+    const stated = safeServiceFromCustomer(firstText, services, serviceAliases) ||
+      (/黄金脉冲技术/u.test(firstText) &&
+       /(?:想了解|想知道|有兴趣|有興趣)/u.test(firstText)
+        ? services.find(item => item?.name === "脉冲波调理") : null);
+    if (stated?.name && ackText.includes(stated.name) &&
+        /(?:想了解|想知道|有兴趣|有興趣|interested|berminat)/iu.test(firstText)) {
+      const verified = shadowVerifiedPrice({
+        source: "recent_bare_customer_price", treatment: stated.name,
+        customerText: text, conversationHistory: session, promotions,
+      });
+      if (verified) return verified;
+    }
+  }
   if (!hasExplicitPriceRequest(text)) return null;
 
   const concernContinuation = resolveAnsweredConcernPriceService({

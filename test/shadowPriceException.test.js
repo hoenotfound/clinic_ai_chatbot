@@ -461,3 +461,30 @@ test("9D context is retained across short administrative and concern replies in 
   assert.equal(resolveShadowPriceException({...args,conversationHistory:stale}),null);
   assert.equal(resolveAiPricingDecision({...args,conversationHistory:stale}),null);
 });
+
+
+test("Shadow allows only an immediate bare price question after a customer-selected, acknowledged service", () => {
+  const selected = [
+    turn("user", "Hi～我对骨盆调理有兴趣", 30_000),
+    turn("assistant", "骨盆调理可以先评估你的体态", 22_000),
+    turn("user", "多少", 12_000),
+  ];
+  const decision = price({customerText:"多少",conversationHistory:selected,metaAdContext:null});
+  assert.equal(decision?.source, "recent_bare_customer_price");
+  assert.equal(decision?.treatment, "骨盆调理");
+  assert.deepEqual(decision?.prices.map(x => x.price), ["RM388","RM288"]);
+  assert.equal(price({customerText:"多少",conversationHistory:[
+    turn("user","Hi～",30_000),
+    turn("assistant","骨盆调理好呀",22_000),
+    turn("user","多少",12_000),
+  ],metaAdContext:null}),null,"assistant-created treatment alone is insufficient");
+  assert.equal(price({customerText:"多少",conversationHistory:[
+    ...selected.slice(0,2),turn("assistant","你比较关注哪些部位？",14_000),
+    turn("user","多少",12_000),
+  ],metaAdContext:null}),null,"longer or uncertain discussion must not infer money intent");
+  assert.equal(price({customerText:"多少",conversationHistory:[
+    turn("user","我怀孕了，想了解骨盆调理",30_000),
+    turn("assistant","骨盆调理需要先确认安全",22_000),
+    turn("user","多少",12_000),
+  ],metaAdContext:null}),null,"clinical history never grants pricing");
+});

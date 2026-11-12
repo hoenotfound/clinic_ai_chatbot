@@ -278,3 +278,15 @@ test("staff-waiting reminders exclude AI-only reviews, which have their own accu
   assert.match(repo, /r\.category <> 'information'/);
   assert.match(repo, /r\.status = 'pending'/);
 });
+
+
+test("short price-only follow-ups do not create a clinical review or bypass verified pricing checks", () => {
+  const {categorizeAiReview}=require("../src/utils/aiReviewPolicy");
+  for(const q of ["多少","多少钱？","How much?","harga?"]) {
+    assert.equal(categorizeAiReview(q,"clinical"),"information",q);
+  }
+  assert.equal(categorizeAiReview("我怀孕了，多少钱？","clinical"),"clinical");
+  const server=source("src/server.js");
+  assert.match(server,/if \(shadowPriceException && flagged && reviewRequired &&/);
+  assert.match(server,/reviewEvidence\?\.pendingClinicalReview === false/);
+});
