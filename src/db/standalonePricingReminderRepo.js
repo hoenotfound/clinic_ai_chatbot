@@ -5,6 +5,7 @@ const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { temporaryStaffConversationSql } = require("../utils/temporaryStaffConversation");
+const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 
 const ELIGIBLE_SQL = `
 WITH latest_inbound AS (
@@ -85,8 +86,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
     WHERE reply.contact_id=c.id AND reply.role='assistant'
       AND (reply.created_at,reply.id)>(inbound.created_at,inbound.id)
       AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-      AND reply.whatsapp_message_id LIKE 'wamid.%'
-      AND reply.delivery_status IN ('sent','delivered','read')
+      AND ${acceptedNormalOutboundSql("reply")}
       AND NOT EXISTS (
         SELECT 1 FROM outbound_message_evidence e
         WHERE e.message_id=reply.id AND e.origin='system_fallback'))
@@ -98,7 +98,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
       AND quote.created_at>=inbound.created_at-INTERVAL '24 hours'
       AND quote.pricing_reminder_anchor_id IS NULL
       AND quote.whatsapp_message_id IS NOT NULL
-      AND quote.delivery_status IN ('sent','delivered','read')
+      AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
       AND COALESCE(quote.content,'') ~* 'RM[[:space:]]*[0-9]')
   AND NOT EXISTS (
     SELECT 1 FROM messages prior
@@ -138,7 +138,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
             AND quote.pricing_reminder_anchor_id IS NULL
             AND quote.created_at>outbound.created_at
             AND quote.whatsapp_message_id IS NOT NULL
-            AND quote.delivery_status IN ('sent','delivered','read')
+            AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
             AND quote.content ~* 'RM[[:space:]]*[0-9]')
         AND NOT EXISTS (
           SELECT 1 FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
