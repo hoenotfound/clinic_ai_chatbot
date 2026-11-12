@@ -41,7 +41,8 @@ test("secondary 20h customer service slot can invite explicit permission without
  const src=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  const inboundClaim=fs.readFileSync(path.join(__dirname,"../src/services/inboundMessageClaimService.js"),"utf8");
  const repoSrc=fs.readFileSync(path.join(__dirname,"../src/db/whatsappInboundConsentRepo.js"),"utf8");
- assert.match(src,/slot===20 && candidate\.lead_marketing_consent!=="opted_in"/);
+ assert.match(src,/slot===20 && generalSixDay\.enabled\(env\)/);
+ assert.match(src,/candidate\.lead_marketing_consent!=="opted_in"/);
  assert.match(src,/candidate\.recovery_no_selection===true \|\|/);
  assert.match(src,/candidate\.verified_meta_ad===true/);
  assert.match(src,/generalSixDayInvitation\(replyLanguage\)/);
