@@ -147,7 +147,22 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
           AND uncertain.pricing_reminder_package_key <> 'Package A'
           AND uncertain.delivery_status NOT IN ('queued','cancelled'))
     )
+    OR (
+      EXISTS(SELECT 1 FROM messages deferred
+        WHERE deferred.pricing_reminder_anchor_id=inbound.id
+          AND deferred.delivery_status='queued'
+          AND deferred.whatsapp_message_id IS NULL
+          AND deferred.whatsapp_accepted_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts pending
+                         WHERE pending.message_id=deferred.id AND pending.state<>'rejected'))
+      AND NOT EXISTS(SELECT 1 FROM messages other
+        WHERE other.pricing_reminder_anchor_id=inbound.id
+          AND other.delivery_status NOT IN ('queued','cancelled'))
+    )
   )
+  AND NOT EXISTS (
+    SELECT 1 FROM pricing_reminder_preflight_retries exhausted
+    WHERE exhausted.anchor_id=inbound.id AND exhausted.attempts>=3)
 ORDER BY inbound.source_at ASC,c.id ASC LIMIT 500
 `;
 
@@ -300,4 +315,71 @@ async function claimAdditional(candidate,offer,database=pool){
      offer.packageName,offer.serviceName,candidate.whatsapp_sender_id]);
   return result.rows?.[0]||null;
 }
-module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional};
+
+const { notePreflightFailure }=require("./pricingReminderRepo");
+
+// No Meta reservation, accepted provider ID or unresolved delivery may be
+// present when a preflight rejection becomes safely retryable.
+async function deferUnsent(candidate,row,code,database=pool){
+  const result=await database.query(
+    `UPDATE messages m SET delivery_status='queued',
+       delivery_error='Pricing image not sent: pre-provider block ('||$3||').'
+     WHERE m.id=$1 AND m.contact_id=$2
+       AND m.pricing_reminder_anchor_id=$4
+       AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+       AND m.delivery_status IN ('unknown','queued')
+       AND NOT EXISTS(
+         SELECT 1 FROM whatsapp_sender_billing_attempts attempt
+         WHERE attempt.message_id=m.id AND attempt.state<>'rejected')
+     RETURNING m.id,m.contact_id,m.delivery_status,m.pricing_reminder_package_key`,
+    [row.id,candidate.contact_id,String(code||"preflight").slice(0,80),candidate.inbound_id]
+  );
+  if(result.rows?.length!==1)return null;
+  const retry=await notePreflightFailure({
+    contactId:candidate.contact_id,anchorId:candidate.inbound_id,
+    packageKey:row.pricing_reminder_package_key||"unknown",
+    reason:"standalone:"+String(code||"blocked").slice(0,180),
+  });
+  return {row:result.rows[0],retry};
+}
+
+// Reusing an unsent row is permitted only after its recorded backoff, with
+// no sender billing attempt or provider receipt. Unknown outcome is never
+// eligible for this path.
+async function resumeDeferred(candidate,offer,database=pool){
+  const result=await database.query(
+    `UPDATE messages m SET delivery_status='unknown',
+       delivery_error='Pricing reminder resumed after verified pre-provider block.'
+     WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+       AND m.pricing_reminder_package_key=$3 AND m.delivery_status='queued'
+       AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+       AND EXISTS(SELECT 1 FROM pricing_reminder_preflight_retries retry
+         WHERE retry.anchor_id=m.pricing_reminder_anchor_id
+           AND retry.package_key=m.pricing_reminder_package_key
+           AND retry.attempts<3 AND retry.retry_after<=NOW())
+       AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts attempt
+         WHERE attempt.message_id=m.id AND attempt.state<>'rejected')
+       AND EXISTS(SELECT 1 FROM contacts c
+          WHERE c.id=m.contact_id AND c.mode='ai'
+            AND c.takeover_by IS NULL AND c.whatsapp_sender_id=$4)
+     RETURNING m.id,m.contact_id,m.delivery_status,m.pricing_reminder_package_key`,
+    [candidate.contact_id,candidate.inbound_id,offer.packageName,
+     candidate.whatsapp_sender_id]
+  );
+  return result.rows?.[0]||null;
+}
+
+async function recordDecision(candidate,reason,database=pool){
+  if(!candidate?.contact_id||!candidate?.inbound_id)return;
+  const safe=String(reason||"unknown").slice(0,150);
+  await database.query(
+    `INSERT INTO pricing_reminder_decisions (contact_id,anchor_id,reason)
+     SELECT $1,$2,$3 WHERE NOT EXISTS (
+       SELECT 1 FROM pricing_reminder_decisions prior
+       WHERE prior.contact_id=$1 AND prior.anchor_id=$2
+         AND prior.reason=$3 AND prior.created_at>NOW()-INTERVAL '1 hour')`,
+    [candidate.contact_id,candidate.inbound_id,"standalone:"+safe]
+  );
+}
+
+module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision};
