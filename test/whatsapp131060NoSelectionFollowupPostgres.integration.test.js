@@ -9,6 +9,11 @@ const cs=process.env.TEST_DATABASE_URL;
 test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only after accepted recovery and stops on reply or takeover",{
  skip:!cs
 },async()=>{
+ // Use a fixed logical daytime clock for this integration fixture. Real
+ // GitHub CI may run at 00:00-07:00 MYT when sends must be suppressed.
+ const local=new Date(Date.now()+8*3600000);
+ local.setUTCHours(14,0,0,0);
+ const fixtureNow=new Date(local.getTime()-8*3600000);
  const db=new Client({connectionString:cs});
  const schema="neutro_131060_silent_"+process.pid+"_"+Date.now();
  await db.connect();
@@ -22,6 +27,14 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
    return{query:(...args)=>c.query(...args),release:()=>c.end()};
   }};
   await runMigrations(migrator,{quiet:true});
+  // Test-schema clock shadowing is isolated and never touches production.
+  // Putting pg_catalog explicitly AFTER this schema lets now() resolve to the
+  // fixture clock in sender SQL, while other built-in functions stay usable.
+  await db.query("CREATE FUNCTION "+schema+".now() RETURNS timestamptz "+
+    "LANGUAGE SQL STABLE AS $ SELECT '"+fixtureNow.toISOString()+"'::timestamptz $");
+  await db.query("SET search_path TO "+schema+", pg_catalog");
+  assert.equal((await db.query("SELECT now() AS value")).rows[0].value.toISOString(),
+    fixtureNow.toISOString());
 
   const senderName="neutro_secondary",phoneId="100000000001060",waba="200000000001060";
   const sender=(await db.query(
@@ -49,9 +62,10 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [inbound,conversation]);
 
-  const activation=new Date(Date.now()-25*3600000).toISOString();
-  const params=[senderName,phoneId,waba,new Date(),10,activation,"all_contacts",
-    new Date(Date.now()-7*3600000).toISOString(),activation];
+  const activation=new Date(fixtureNow.getTime()-25*3600000).toISOString();
+  const audienceActivation=new Date(fixtureNow.getTime()-7*3600000).toISOString();
+  const params=[senderName,phoneId,waba,fixtureNow,10,activation,"all_contacts",
+    audienceActivation,activation];
   const candidates=async()=> (await db.query(worker.CANDIDATES_SQL,params)).rows;
   assert.equal((await candidates()).length,0,
     "unreadable 131060 alone cannot schedule reminders");
@@ -119,7 +133,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   const recheck=()=>db.query(worker.RECHECK_SQL,[
     contact,inbound,2,senderName,phoneId,waba,
     ready[0].rule_version,activation,"all_contacts",
-    new Date(Date.now()-7*3600000).toISOString(),activation]);
+    audienceActivation,activation]);
   assert.equal((await recheck()).rows[0].allowed,true,
     "the final pre-send check authorizes the same accepted recovery proof");
   await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[menu]);
@@ -199,7 +213,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
       "VALUES($1,$2,$3,$4) RETURNING id",[sender,c,anchor,slot])).rows[0].id;
     const check=async()=> (await db.query(worker.RECHECK_SQL,[
       c,anchor,slot,senderName,phoneId,waba,live[0].rule_version,
-      activation,"all_contacts",new Date(Date.now()-7*3600000).toISOString(),
+      activation,"all_contacts",audienceActivation,
       activation])).rows[0].allowed;
     assert.equal(await check(),true,"provider recheck permits silent "+slot+"h recovery");
     await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[verifiedMenu]);
