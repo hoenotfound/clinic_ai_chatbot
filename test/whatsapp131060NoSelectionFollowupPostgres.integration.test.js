@@ -57,8 +57,8 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "unreadable 131060 alone cannot schedule reminders");
 
   const menu=(await db.query(
-    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at) "+
-    "VALUES($1,'assistant',$2,'wamid.131060-menu',NOW()-INTERVAL '2 hours 58 minutes') RETURNING id",
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,delivery_status) "+
+    "VALUES($1,'assistant',$2,'wamid.131060-menu',NOW()-INTERVAL '2 hours 58 minutes','pending') RETURNING id",
     [contact,"Hi～欢迎来到 Neutro Sense 😊\n想了解哪方面的护理呢？\n可以点下面的选项"]
   )).rows[0].id;
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
@@ -68,10 +68,42 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) "+
     "VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.131060-menu',NOW()-INTERVAL '2 hours 58 minutes')",
     [menu,contact]);
+  assert.equal((await candidates()).length,0,
+    "Meta API acceptance alone cannot authorize follow-up while delivery remains pending");
+  await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[menu]);
   const ready=await candidates();
-  assert.equal(ready.length,1,"accepted recovery menu activates the 2h silent service slot");
+  assert.equal(ready.length,1,"delivered recovery menu activates the 2h silent service slot");
   assert.equal(ready[0].recovery_no_selection,true);
   assert.equal(Number(ready[0].slot_hours),2);
+
+  // A later staff explanation does not erase the recovered service session.
+  // The customer can remain silent without explicitly choosing a treatment.
+  const staff=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,sent_by_username,delivery_status) "+
+    "VALUES($1,'assistant',$2,'wamid.131060-staff',NOW()-INTERVAL '2 hours 45 minutes',"+
+    " 'WhatsApp Business App','delivered') RETURNING id",
+    [contact,"我们这里有不同的护理，可以先了解您的情况。"]
+  )).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [staff,conversation]);
+  const afterStaff=await candidates();
+  assert.equal(afterStaff.length,1,"a sender-verified staff explanation keeps neutral follow-up eligible");
+  assert.equal(afterStaff[0].recovery_no_selection,true);
+  assert.equal(afterStaff[0].staff_reply,true);
+
+  // A second unreadable event has no new treatment intent; the initial
+  // accepted menu is still the only safe reminder anchor.
+  const repeat=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user','📎 [Customer sent a WhatsApp message that could not be displayed]',"+
+    " 'wamid.131060-repeat',NOW()-INTERVAL '1 hour',NOW()-INTERVAL '1 hour') RETURNING id",
+    [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [repeat,conversation]);
+  const repeatedCandidates=await candidates();
+  assert.equal(repeatedCandidates.length,1,"another unreadable event must not kill the original recovery reminder");
+  assert.equal(Number(repeatedCandidates[0].inbound_id),Number(inbound),
+    "the reminder remains tied to the first provider-accepted recovery session");
 
   const claimed=(await db.query(
     "INSERT INTO whatsapp_sender_followup_attempts(sender_id,contact_id,anchor_message_id,slot_hours) "+
@@ -82,6 +114,12 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     new Date(Date.now()-7*3600000).toISOString(),activation]);
   assert.equal((await recheck()).rows[0].allowed,true,
     "the final pre-send check authorizes the same accepted recovery proof");
+  await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[menu]);
+  assert.equal((await recheck()).rows[0].allowed,false,
+    "a later definitive delivery failure cancels the pending reminder");
+  await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[menu]);
+  assert.equal((await recheck()).rows[0].allowed,true);
+
   await db.query(
     "UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await recheck()).rows[0].allowed,false,"opt-out blocks pre-send");
