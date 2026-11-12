@@ -158,12 +158,31 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
   assert.equal(send.send.contact.whatsapp_sender_key,"ariel");
   assert.equal(save.save[8].isAutomatedFollowUp,true);
   assert.equal(save.save[8].whatsappTemplate.automatedSecondaryFollowup,true);
-  assert.equal(save.save[8].whatsappTemplate.treatmentInterest,"骨盆调理");
+  assert.equal(save.save[8].whatsappTemplate.treatmentInterest,null,
+    "unverified/ambiguous service never gets a fabricated treatment snapshot");
   assert.deepEqual(provider.persist,[912,"wamid.ariel-followup",{
     preserveVerifiedSecondaryReceipt:true,
   }]);
   const audit=f.calls.find(x=>x.sql?.includes("status='accepted'"));
   assert.ok(audit);
+});
+
+test("verified pelvic treatment is saved as exact sender-specific follow-up snapshot",async()=>{
+  const f=fake({rows:[{
+    ...candidate,verified_treatment_status:"selected",
+    verified_treatment_name:"骨盆调理",
+  }]});
+  const result=await worker.runOnce({
+    ...f,env,
+    getConfig:()=>({
+      businessType:"tcm_clinic",
+      services:[{name:"骨盆调理"}],serviceAliases:{},
+      automatedFollowUp:{enabled:true},
+    }),
+  });
+  assert.equal(result.accepted,1);
+  const saved=f.calls.find(x=>x.save);
+  assert.equal(saved.save[8].whatsappTemplate.treatmentInterest,"骨盆调理");
 });
 
 test("duplicate one-shot slot cannot reach any provider or save a second message",async()=>{
