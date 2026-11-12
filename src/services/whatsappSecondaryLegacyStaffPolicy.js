@@ -64,6 +64,18 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
         AND ${anchorTime}>=ad_inbound.created_at
         ${ordering}
     )
+    OR (
+      -- Seven-day admin approval. Only future sender-bound customer messages
+      -- can become reply or follow-up anchors; no prior queue is replayed.
+      ${contact}.whatsapp_secondary_manual_ai_approved_at IS NOT NULL
+      AND ${contact}.whatsapp_secondary_manual_ai_approved_until > NOW()
+      ${anchor ? `AND ${anchor}.role='user'
+        AND ${anchor}.whatsapp_message_id IS NOT NULL
+        AND ${anchor}.source_created_at IS NOT NULL
+        AND ${anchor}.source_created_at >= ${contact}.whatsapp_secondary_manual_ai_approved_at
+        AND ${anchor}.created_at >= ${contact}.whatsapp_secondary_manual_ai_approved_at
+        AND ${anchor}.created_at < ${contact}.whatsapp_secondary_manual_ai_approved_until` : ""}
+    )
     OR ${secondary131060RecoveryAudienceSql(contact,anchor,env)}
   )`;
 }
