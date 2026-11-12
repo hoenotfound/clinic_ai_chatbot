@@ -13,7 +13,7 @@ test("general six-day invitation is optional, scoped and preserves STOP",()=>{
   const invitation=consent.invitation(language);
   assert.ok(invitation.includes(sentence));
   assert.match(invitation,/Neutro Sense TCM/);
-  assert.match(invitation,/STOP PROMOTIONS|停止优惠/);
+  assert.doesNotMatch(invitation,/STOP PROMOTIONS|停止优惠/);
   const captured=consent.explicitGeneralFollowupConsent(sentence);
   assert.deepEqual(captured,{
    language,category:"MARKETING",
@@ -37,11 +37,12 @@ test("ad prefills, unsupported messages and ordinary acknowledgements are NEVER 
   assert.equal(consent.explicitGeneralFollowupConsent(text),null,text);
  }
 });
-test("secondary 20h customer service slot can invite explicit permission without automatically permitting Day4/Day6",()=>{
+test("secondary 6h text and 20h customer service slots can invite consent without granting marketing permission",()=>{
  const src=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  const inboundClaim=fs.readFileSync(path.join(__dirname,"../src/services/inboundMessageClaimService.js"),"utf8");
  const repoSrc=fs.readFileSync(path.join(__dirname,"../src/db/whatsappInboundConsentRepo.js"),"utf8");
- assert.match(src,/slot===20 && generalSixDay\.enabled\(env\)/);
+ assert.match(src,/slot===20 \|\| \(slot===6 && !key\)/);
+ assert.match(src,/generalSixDay\.enabled\(env\)/);
  assert.match(src,/candidate\.lead_marketing_consent!=="opted_in"/);
  assert.match(src,/candidate\.recovery_no_selection===true \|\|/);
  assert.match(src,/candidate\.verified_meta_ad===true/);
