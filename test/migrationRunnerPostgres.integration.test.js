@@ -112,7 +112,9 @@ test(
               sql: "CREATE TABLE pooler_safe_probe (id INTEGER PRIMARY KEY);",
             },
           ],
-          lockTimeoutMs: 500,
+          // Several independent migrations run concurrently during CI.
+          // Preserve a finite timeout without falsely failing at 500 ms.
+          lockTimeoutMs: 5000,
           lockRetryMs: 20,
         });
 
