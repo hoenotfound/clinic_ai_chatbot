@@ -144,14 +144,29 @@ function matchesInboxTreatment(conversation, treatment) {
     : current === normalizeInboxTreatment(treatment);
 }
 
-// Keep old secondary contacts visibly staff-managed without rewriting thousands
-// of explicit takeover records. The server's sender-scoped eligibility is
-// authoritative; the original mode still controls intentional handoffs.
+// A paused AI audience, a review request and an actual staff takeover are
+// distinct states. Do not label ineligible secondary contacts as staff-owned.
+const INBOX_CONTROL_LABELS = {
+  ai: "AI active",
+  human: "Staff takeover",
+  paused: "AI paused",
+  review: "Needs review",
+};
+const INBOX_CONTROL_TITLES = {
+  ai: "AI can handle eligible customer replies",
+  human: "Conversation is explicitly handled by staff",
+  paused: "AI is paused by secondary-number eligibility or sender restrictions",
+  review: "A staff review or attention hold needs to be checked",
+};
+function inboxControlStatus(conversation) {
+  if (conversation?.mode === "human") return "human";
+  if (conversation?.needs_attention === true) return "review";
+  if (conversation?.whatsapp_is_secondary === true &&
+      conversation?.whatsapp_secondary_ai_enabled === false) return "paused";
+  return "ai";
+}
 function effectiveInboxControlMode(conversation) {
-  return conversation?.mode === "human" ||
-    (conversation?.whatsapp_is_secondary === true &&
-     conversation?.whatsapp_secondary_ai_enabled === false)
-    ? "human" : "ai";
+  return inboxControlStatus(conversation) === "ai" ? "ai" : "human";
 }
 
 // Use one matching rule for the Inbox list and all contextual filter counts.
@@ -175,7 +190,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
       conversation.whatsapp_sender_key !== filters.sender) return false;
   if (exclude !== "control" && filters.control !== "all" &&
-      effectiveInboxControlMode(conversation) !== filters.control) return false;
+      inboxControlStatus(conversation) !== filters.control) return false;
   if (exclude !== "assignment" && canViewAllLeads &&
       !matchesLeadAssignment(conversation, filters.assignment, currentUsername)) return false;
   if (exclude !== "replyWindow" && filters.replyWindow !== "all" &&
@@ -2325,7 +2340,7 @@ function ConversationList({
     if (filters.control !== "all") {
       active.push({
         key: "control",
-        label: filters.control === "human" ? "Handled by · Staff" : "Handled by · AI",
+        label: "AI status · " + (INBOX_CONTROL_LABELS[filters.control] || filters.control),
       });
     }
     if (filters.replyWindow !== "all") {
@@ -2488,13 +2503,15 @@ function ConversationList({
                 />
               </div>
               <FilterSelect
-                label="Handled by"
+                label="AI status"
                 value={filters.control}
                 onChange={(value) => updateFilter("control", value)}
                 options={[
                   ["all", "Any"],
-                  ["ai", "AI"],
-                  ["human", "Staff"],
+                  ["ai", "AI active"],
+                  ["human", "Staff takeover"],
+                  ["paused", "AI paused"],
+                  ["review", "Needs review"],
                 ]}
               />
               <FilterSelect
@@ -2653,7 +2670,11 @@ function ConversationList({
                       compact
                       showUnassigned={showUnassignedAssignment}
                     />
-                    <ControlIndicator mode={effectiveInboxControlMode(conversation)} />
+                    <ControlIndicator status={inboxControlStatus(conversation)} />
+                    {conversation.whatsapp_ad_evidence_status === "meta_131060_unverified" && (
+                      <span title="Meta 131060 message unavailable; no verified ad referral for this contact"
+                        className="text-[10px] text-[var(--color-text-muted)]">Ad source unknown</span>
+                    )}
                     {conversation.whatsapp_is_secondary === true &&
                       conversation.whatsapp_secondary_connection_state !== "connected" && (
                       <span role="status" title="Secondary number disconnected; outgoing messages paused"
@@ -3030,8 +3051,9 @@ function ThreadView({
         .replace(/^Reply available\s*·\s*/i, "")
         .replace(/\s+remaining$/i, "")
     : "";
+  const controlStatus = inboxControlStatus(contact);
   const effectiveStaff = effectiveInboxControlMode(contact) === "human";
-  const needsManualApproval = effectiveStaff && contact.mode !== "human" &&
+  const needsManualApproval = controlStatus === "paused" && contact.mode !== "human" &&
     contact.whatsapp_is_secondary === true &&
     contact.whatsapp_secondary_ai_enabled === false;
   const canEnablePausedAi = needsManualApproval && canManageLeads &&
@@ -3935,16 +3957,22 @@ function ThreadView({
                 )}
                 <span
                   className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
-                    effectiveStaff
+                    controlStatus === "human" || controlStatus === "paused"
                       ? "bg-[var(--color-accent-light)] text-[var(--color-accent-text)]"
+                      : controlStatus === "review"
+                      ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]"
                       : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                   }`}
-                  title={contact.mode === "human" ? "Handled by staff" : effectiveStaff
-                    ? "AI paused for this contact under the secondary-number audience policy"
-                    : "Handled by AI"}
+                  title={INBOX_CONTROL_TITLES[controlStatus]}
                 >
-                  {effectiveStaff ? "Staff" : "AI"}
+                  {INBOX_CONTROL_LABELS[controlStatus]}
                 </span>
+                {contact.whatsapp_ad_evidence_status === "meta_131060_unverified" && (
+                  <span title="Meta could not display an incoming message. Its advertising origin is not verified."
+                    className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-900">
+                    Ad source unknown
+                  </span>
+                )}
                 {quietReplyAvailable && replyWindowCompactLabel && (
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium text-[var(--color-text-muted)] sm:text-[10px]"
@@ -4900,15 +4928,18 @@ function ConversationActionItem({ icon: Icon, label, active, disabled, tone = "d
   );
 }
 
-function ControlIndicator({ mode }) {
-  if (mode !== "human") return null;
+function ControlIndicator({ status }) {
+  if (!INBOX_CONTROL_LABELS[status]) return null;
   return (
     <span
-      title="Handled by staff"
+      title={INBOX_CONTROL_TITLES[status]}
       className="inline-flex shrink-0 items-center gap-1 px-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
     >
-      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
-      Staff
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${
+        status === "review" ? "bg-red-500" :
+        status === "ai" ? "bg-emerald-500" : "bg-[var(--color-accent)]"
+      }`} />
+      {INBOX_CONTROL_LABELS[status]}
     </span>
   );
 }
