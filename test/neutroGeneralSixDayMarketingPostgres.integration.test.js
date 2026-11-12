@@ -160,7 +160,7 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "fresh marketing opt-out cancels the claimed generic send");
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=$1",[contact]);
-  await db.query("UPDATE contacts SET mode='staff' WHERE id=$1",[contact]);
+  await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "manual Staff mode cancels the generic send");
   await db.query("DELETE FROM whatsapp_sender_marketing_followup_attempts WHERE id=$1",[attempt]);
