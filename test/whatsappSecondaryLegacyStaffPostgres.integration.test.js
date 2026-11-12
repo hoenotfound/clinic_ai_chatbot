@@ -76,6 +76,53 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
   assert.equal(await isSecondaryAiReplyEligible(newer,{database:db,env,inboundMessageId:newDirect}),true,
    "a genuinely new secondary contact may use the existing all-contact AI audience");
 
+  // An earlier, genuine ad is not enough to reopen an older customer.
+  // A NEW readable sender-bound inbound after cutover can resume AI within
+  // seven days of that ad, without pretending the new message was itself an ad.
+  const returning=(await db.query(
+   "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
+   "VALUES('whatsapp','60123499048',$1,NOW()-INTERVAL '2 years') RETURNING id",
+   [sender])).rows[0].id;
+  const returningConv=(await db.query(
+   "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+   "VALUES($1,'60123499048',$2,'bound') RETURNING id",
+   [sender,returning])).rows[0].id;
+  const priorAd=await inbound(returning,returningConv,"Hello from a verified earlier ad");
+  await db.query(
+   "UPDATE messages SET created_at=$2::timestamptz-INTERVAL '10 minutes', "+
+   "source_created_at=$2::timestamptz-INTERVAL '10 minutes' WHERE id=$1",
+   [priorAd,cutoff]);
+  await db.query(
+   "INSERT INTO whatsapp_free_entry_referrals(origin_message_id,contact_id,meta_ad_id,source_type) "+
+   "VALUES($1,$2,'old-verified-ad','ad')",[priorAd,returning]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:priorAd
+  }),false,"the original pre-cutover ad never replays a reply");
+  assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([returning],{database:db,env})],[],
+   "original ad alone leaves the historical customer paused");
+  const unreadableReturn=await inbound(returning,returningConv,
+   "📎 [Customer sent a WhatsApp message that could not be displayed]");
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:unreadableReturn
+  }),false,"an unreadable new message cannot renew old ad eligibility");
+  const returned=await inbound(returning,returningConv,"Hi, can you explain the treatment?");
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),true,"fresh readable inbound within the original ad window reopens AI");
+  assert.equal(await isSecondaryAutomationEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),true,"normal eligible service follow-ups can resume with new inbound");
+  assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([returning],{database:db,env})],[returning],
+   "Inbox reflects re-entry only after the new readable inbound");
+  await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[returning]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),false,"explicit human takeover always wins");
+  await db.query("UPDATE contacts SET mode='ai',whatsapp_opt_out_at=NOW() WHERE id=$1",[returning]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),false,"opt-outs still prohibit re-entry");
+
   // A returning staff-managed patient receives the one provider-verified
   // 131060 recovery menu. No ad referral is claimed. The placeholder itself
   // never grants AI or follow-up permissions until the patient replies.
