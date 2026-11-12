@@ -601,6 +601,7 @@ test("verified WhatsApp Business App replies are permitted only as safe service 
    assert.match(sql,/c.takeover_by IS NULL/);
    assert.match(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
    assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
+   assert.match(sql,/CASE WHEN first_reply.staff_reply THEN first_reply.at\+INTERVAL '2 hours'/);
  }
 });
 test("manual unanswered staff question sends one gentle text reminder instead of media",async()=>{
