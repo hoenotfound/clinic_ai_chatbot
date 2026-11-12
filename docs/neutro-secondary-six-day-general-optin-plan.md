@@ -34,3 +34,22 @@ Each stage is a MARKETING template with a completely static body, no variables, 
 - Duplicate-suppression across generic and treatment-specific attempts for the same contact/session.
 - A reviewed, quiet-hours-aware scheduler with a durable one-shot send ledger and conservative unknown state.
 - No retroactive customer messaging or promotional blasts.
+
+## Meta template submission record (12 November 2026)
+
+Submitted for review only. These templates are not connected to an enabled Day 2–6 sender. Review states can change after this snapshot.
+
+| Stage | Language | Template ID | Status at verification |
+|---|---|---|---|
+| 48h | zh_CN | `1905472777488799` | APPROVED |
+| 48h | en_US | `1678631883658802` | APPROVED |
+| 48h | ms | `1050283584461707` | APPROVED |
+| 66h | zh_CN | `1428658446081895` | APPROVED |
+| 66h | en_US | `934353596290800` | APPROVED |
+| 66h | ms | `1014407884244968` | APPROVED |
+| day4 | zh_CN | `1437971061777600` | PENDING |
+| day4 | en_US | `2231905270698330` | APPROVED |
+| day4 | ms | `29319248334380148` | APPROVED |
+| day6 | zh_CN | `2101944657185777` | PENDING |
+| day6 | en_US | `29784962131111986` | PENDING |
+| day6 | ms | `1675055354240049` | PENDING |
