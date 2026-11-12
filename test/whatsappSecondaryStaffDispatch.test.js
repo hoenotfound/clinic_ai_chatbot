@@ -649,3 +649,60 @@ test("secondary sender refuses a changed recipient after billing reservation, wi
   assert.equal(calls.mark.length,1);
   assert.equal(calls.mark[0].definitivelyRejected,true);
 });
+
+test("secondary consent quick-reply uses one existing follow-up message and cannot be forged",async()=>{
+ const consent=require("../src/utils/neutroGeneralFollowupConsent");
+ const optedEnv={...aiOnlyEnv,
+  WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true",
+  WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+  WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+  WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+  WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+  WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+  WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true",
+  WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+  WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+  WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-10-30T03:00:00Z",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-12T07:00:00Z",
+ };
+ const {opts,calls}=setup();
+ opts.env=optedEnv;
+ opts.conversationRepo.senderForContact=async()=>({
+  conversation_id:75,sender_key:"neutro_secondary",sender_state:"active",
+  meta_phone_number_id:optedEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+  meta_account_id:optedEnv.WHATSAPP_SECONDARY_WABA_ID,
+  customer_wa_id:contact.whatsapp_number,
+ });
+ opts.createTransport=async()=>({
+  sendInteractiveButtons:async(...args)=>{
+   calls.send.push(args);
+   return {success:true,wamid:"wamid.secondary-genuine-consent-button"};
+  },
+ });
+ const payload={...data,
+  contact:{...contact,whatsapp_sender_key:"neutro_secondary"},
+  text:"Final follow-up\\n\\n"+consent.invitation("en"),
+  messageId:120,anchorMessageId:981,origin:"followup",
+  preSendCheck:async()=>true,
+  interactiveButtons:consent.consentButtons(120,"en"),
+ };
+ const accepted=await sendSecondaryStaffText(payload,opts);
+ assert.equal(accepted.success,true);
+ assert.equal(calls.reserved,1);
+ assert.equal(calls.send.length,1);
+ assert.deepEqual(calls.send[0],[payload.text,payload.interactiveButtons]);
+ for(const bad of [
+  [{...payload.interactiveButtons[0],title:"Random"}],
+  consent.consentButtons(121,"en"),
+  [{id:"da_consent_yes:120",title:"Yes"}],
+ ]){
+  const denied=await sendSecondaryStaffText({...payload,interactiveButtons:bad},opts);
+  assert.equal(denied.code,"secondary_interactive_followup_invalid");
+  assert.equal(calls.send.length,1);
+  assert.equal(calls.reserved,1);
+ }
+});

@@ -162,7 +162,9 @@ test("genuine Meta button tap becomes a readable selected treatment without fabr
 test("secondary button sender is not a generic interactive-message bypass", () => {
   const src=fs.readFileSync(path.join(__dirname,
     "../src/services/whatsappSecondaryStaffDispatch.js"),"utf8");
-  assert.match(src,/if \(recoveryMenu && \(origin !== "system_fallback"/);
+  assert.match(src,/const recoveryMenu = hasInteractive && origin === "system_fallback"/);
+ assert.match(src,/validRecoveryTreatmentButtons\(interactiveButtons\)/);
+ assert.match(src,/secondary_131060_recovery_menu_invalid/);
   assert.match(src,/!recoveryActivation\(env\)/);
   assert.match(src,/!validRecoveryTreatmentButtons\(interactiveButtons\)/);
   assert.match(src,/transport\.sendInteractiveButtons\(text\.trim\(\), interactiveButtons\)/);

@@ -12,7 +12,7 @@ const firstAdProofRepo = require("../db/whatsapp131060FirstAdRepo");
 const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
 const whatsappConsentPromptRepo = require("../db/whatsappConsentPromptRepo");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
-const {explicitGeneralFollowupConsent}=require("../utils/neutroGeneralFollowupConsent");
+const {explicitGeneralFollowupConsent,parseConsentButton}=require("../utils/neutroGeneralFollowupConsent");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -176,6 +176,25 @@ function createInboundMessageClaimService({
       lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    // A genuine one-tap general marketing opt-in is independent of the
+    // existing treatment-specific button workflow. The repository verifies
+    // the exact delivered invitation, sender and current lead before any
+    // contact/CRM permission changes. Invalid or stale taps never reach AI.
+    if(channel==="whatsapp" && lead?.id &&
+       parseConsentButton(incoming?.interactiveReplyId)){
+      const outcome=await inboundConsent.recordFromInbound({
+        contactId:contact.id,messageId:savedInbound.id,leadId:lead.id,
+        businessName:config.clinicName || config.businessName,
+        interactiveReplyId:incoming.interactiveReplyId,
+        isClickToWhatsApp:incoming.attribution?.source==="meta_ads" &&
+          String(incoming.attribution?.sourceType||"").toLowerCase()==="ad",
+      });
+      // Even a rejected tap must not become a treatment selection or
+      // a generic "Yes" that the AI might misinterpret as permission.
+      await processing.markCompletedByMessageId(savedInbound.id);
+      return null;
     }
 
     // Only a genuine Meta interactive.button_reply callback can confirm or

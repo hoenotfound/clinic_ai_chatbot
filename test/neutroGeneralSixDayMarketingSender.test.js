@@ -116,3 +116,21 @@ test("generic campaign is inactive when either feature or billable approval is m
   assert.equal(f.calls.filter(x=>x.sql===generic.CANDIDATES_SQL).length,0);
  }
 });
+
+test("a new reply after discovery releases only an unsent claim for later scheduling",async()=>{
+ const f=fake(48,"en_US",{authorized:false});
+ const query=f.database.query;
+ f.database.query=async(sql,args)=>{
+  if(sql.includes("DELETE FROM whatsapp_sender_marketing_followup_attempts attempt")){
+   f.calls.push({sql,args});
+   return {rows:[{id:123}],rowCount:1};
+  }
+  return query(sql,args);
+ };
+ const outcome=await svc.runOnce({...f,env,limit:2});
+ assert.equal(outcome.accepted,0);
+ assert.equal(f.calls.filter(x=>x.send).length,0);
+ assert.equal(f.calls.filter(x=>x.save).length,0);
+ assert.equal(f.calls.filter(x=>x.sql?.includes("DELETE FROM whatsapp_sender_marketing_followup_attempts attempt")).length,1);
+ assert.equal(f.calls.filter(x=>x.sql?.includes("SET status='unknown'")).length,0);
+});
