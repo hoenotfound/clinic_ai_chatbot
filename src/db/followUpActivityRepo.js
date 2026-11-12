@@ -81,6 +81,19 @@ const ACTIVITY_SQL = `WITH activity AS (
   JOIN contacts c ON c.id = p.contact_id
   WHERE p.created_at >= now() - $1::integer * interval '1 day'
   UNION ALL
+  SELECT 'standalone_pricing:' || d.id::text, d.created_at, d.contact_id, c.channel,
+    'pricing', 4,
+    CASE
+      WHEN d.reason LIKE 'standalone:review:%' THEN 'attention'
+      WHEN d.reason LIKE 'standalone:deferred:%' THEN 'pending'
+      ELSE 'skipped'
+    END,
+    LEFT(d.reason, 240), d.reason, NULL::text, NULL::text, NULL::text, NULL::integer, NULL::text
+  FROM standalone_pricing_reminder_decisions d
+  JOIN contacts c ON c.id=d.contact_id
+  WHERE d.created_at >= now() - $1::integer * interval '1 day'
+    AND d.reason NOT LIKE 'standalone:provider_accepted:%'
+  UNION ALL
   SELECT 'sequence_decision:' || d.id::text, d.created_at, d.contact_id, c.channel,
     'sequence', d.follow_up_step,
     CASE WHEN d.action = 'human_review' THEN 'attention' ELSE 'skipped' END,
