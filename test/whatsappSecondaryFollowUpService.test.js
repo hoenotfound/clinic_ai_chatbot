@@ -667,3 +667,70 @@ test("a silent 131060 customer receives the text-only 2h, 6h and 20h reminders, 
    assert.equal(send.dispatchTransport,undefined);
  }
 });
+
+test("Neutro 20h text-only follow-up carries a sender-bound one-tap opt-in",async()=>{
+ const consent=require("../src/utils/neutroGeneralFollowupConsent");
+ const envGeneral={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-12T07:00:00Z"};
+ const row={...candidate,slot_hours:20,
+  inbound_at:new Date("2026-11-12T07:01:00Z"),
+  recovery_no_selection:true,lead_marketing_consent:"unknown",
+  verified_meta_ad:true,customer_texts:["Hello, may I know more?"],
+  first_reply_text:"Hello, welcome to Neutro Sense"};
+ const f=fake({rows:[row]});
+ const result=await worker.runOnce({...f,env:envGeneral,
+  contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro_secondary"})}});
+ assert.equal(result.accepted,1);
+ const saved=f.calls.find(x=>x.save).save;
+ const sent=f.calls.find(x=>x.send).send;
+ assert.equal(saved[8].whatsappTemplate.generalConsentButton,true);
+ assert.match(saved[2],/I agree to receive WhatsApp follow-ups/);
+ assert.deepEqual(sent.interactiveButtons,consent.consentButtons(912,"en"));
+ assert.equal(sent.dispatchTransport,undefined);
+});
+
+test("Neutro 6h approved treatment video keeps its media and complete consent caption",async()=>{
+ const consent=require("../src/utils/neutroGeneralFollowupConsent");
+ const envGeneral={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+  WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-12T07:00:00Z"};
+ const row={...candidate,slot_hours:6,
+  inbound_at:new Date("2026-11-12T07:01:00Z"),
+  media_key:null,lead_marketing_consent:"unknown",
+  verified_meta_ad:true,customer_texts:["骨盆调理多少钱"],
+  treatment_interest:"骨盆调理"};
+ const f=fake({rows:[row]});
+ let mediaCalls=0;
+ const result=await worker.runOnce({...f,env:envGeneral,
+  contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro_secondary"})},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+   automatedFollowUp:{additionalSteps:[{message:"请问您想了解骨盆调理吗？"}]}}),
+  videoSelection:()=>({mediaKey:"approved-video",mediaType:"video",
+   mediaMimeType:"video/mp4",mediaFilename:"clinic-followup.mp4"}),
+  videoApproved:()=>true,
+  storage:{downloadMedia:async()=>Buffer.from("approved video")},
+  sendText:async payload=>{
+   assert.equal(payload.interactiveButtons,undefined);
+   assert.equal(typeof payload.dispatchTransport,"function");
+   return payload.dispatchTransport({
+    uploadMedia:async()=>({success:true,mediaId:"557"}),
+    sendMediaById:async(type,id,options)=>{
+     mediaCalls++;
+     assert.equal(type,"video");assert.equal(id,"557");
+     assert.match(options.caption,/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
+     assert.ok(Buffer.byteLength(options.caption,"utf8")<=1024);
+     return{success:true,wamid:"wamid.secondary-consent-video"};
+    },
+   });
+  },
+ });
+ assert.equal(result.accepted,1);
+ assert.equal(mediaCalls,1);
+ const saved=f.calls.find(x=>x.save).save;
+ assert.equal(saved[8].whatsappTemplate.generalConsentButton,false);
+ assert.match(saved[2],/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
+});
