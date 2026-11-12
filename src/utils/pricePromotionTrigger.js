@@ -335,8 +335,8 @@ function selectPromoDuplicateCheck({
   const verifiedPath = aiPricingEnabled === true ||
     Boolean(numberedPricingSelection || shadowPriceException || scopedPackagePrice);
   return verifiedPath
-    ? (contactId, imageUrl, _caption, hours) =>
-        messagesRepo.wasMediaRecentlySent(contactId, imageUrl, hours)
+    ? (contactId, imageUrl, caption, hours) =>
+        messagesRepo.wasMediaRecentlySent(contactId, imageUrl, hours, caption)
     : messagesRepo.wasPromoRecentlySent;
 }
 
