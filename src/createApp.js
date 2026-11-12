@@ -1,6 +1,7 @@
 const path = require("path");
 const express = require("express");
 const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDiagnostics");
+const ingressDiagnostics = require("./services/whatsappWebhookIngressDiagnostics");
 const { createPortalFallback } = require("./utils/portalFallbackGuard");
 const cookieSession = require("cookie-session");
 
@@ -101,6 +102,9 @@ function createApp({
   // which keeps req.protocol/req.ip correct without trusting arbitrary
   // leftmost X-Forwarded-For values supplied by clients.
   app.set("trust proxy", resolveTrustProxy(process.env));
+  // Attach before readiness so even a pre-parser 503 has a route/outcome marker.
+  // Only signed requests can contribute identity, timestamp and message metadata.
+  app.use(ingressDiagnostics.observe);
   app.use(applyPortalSecurityHeaders);
   // Passive, coarse 503 attribution. No URI paths, queries, customer IDs,
   // addresses or request bodies are persisted or logged.
@@ -129,6 +133,7 @@ function createApp({
   // validated against the exact bytes received.
   const verifySignedWhatsappBody = (req, res, buf) => {
     verifyWebhookSignature(req, res, buf);
+    ingressDiagnostics.markVerified(req);
     // Preserve signed raw bytes for whichever explicitly enabled secondary
     // sender bridge will independently verify the exact Meta HMAC.
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" ||
@@ -228,6 +233,8 @@ function createApp({
 
   let primaryWhatsappWebhookHandler;
   app.post("/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
+    // This handler is also executed without the outer module by isolated QA tests.
+    if (req.whatsappIngressTrace) ingressDiagnostics.captureSignedEvent(req, res, () => {});
     // Keep diagnostics self-contained inside the extracted webhook handler:
     // synthetic QA replays use this handler without the outer module closure.
     const inboundIdentityKind = value =>
@@ -255,6 +262,7 @@ function createApp({
         strictMissingMetadata: process.env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA === "true",
       });
     } catch (err) {
+      if (req.whatsappIngressTrace) ingressDiagnostics.markRejected(req, err);
       console.error("Rejected WhatsApp webhook due to sender config or payload limit:", err);
       return res.sendStatus(503);
     }
@@ -355,6 +363,9 @@ function createApp({
     const customerMutationEvents = whatsapp.parseCustomerMessageMutations(webhookBody);
     const identityRotations=incomingMessages.filter(item=>item.identityRotationOnly===true);
     const customerMessages=incomingMessages.filter(item=>item.identityRotationOnly!==true);
+    if (req.whatsappIngressTrace) {
+      ingressDiagnostics.markRouting(req, isolated, customerMessages.length);
+    }
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
       event.businessPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -438,6 +449,7 @@ function createApp({
                     }
                   },
                 ) : await durablyClaimIncoming(queueKey, incoming);
+              if (req.whatsappIngressTrace) ingressDiagnostics.markClaim(req, Boolean(durableClaim));
               // A successful durable claim is the earliest safe point to
               // match a mutation to its original message. A parallel mutation
               // insert also calls applyOne, so either arrival order is covered.
@@ -749,6 +761,10 @@ function createApp({
 
   app.post("/whatsapp/default", (req, res, next) => {
     if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
+    // With diagnostics OFF retain the original pre-parser config gate.
+    // With diagnostics ON verify the signature first so local config failures
+    // still yield proof of an authentic attempted Meta delivery.
+    if (ingressDiagnostics.enabled()) return next();
     try {
       paidDefaultIngress.configFromEnv();
       return next();
@@ -757,7 +773,10 @@ function createApp({
       return res.sendStatus(503);
     }
   }, paidDefaultHistoryJsonParser, async (req, res) => {
+    if (req.whatsappIngressTrace) ingressDiagnostics.captureSignedEvent(req, res, () => {});
     try {
+      // Never weaken the default-route config gate in diagnostic mode.
+      paidDefaultIngress.configFromEnv();
       if (productionHistoryReceiver.configured(process.env) ||
           productionHistoryReceiver.liveConfigured(process.env)) {
         return await productionHistoryReceiver.dispatch(
@@ -779,6 +798,7 @@ function createApp({
     } catch (error) {
       // Never return 200 for unknown accounts, undurable QA writes, or failed
       // primary processing. Meta may retry; database event keys deduplicate.
+      ingressDiagnostics.markRejected(req, error);
       console.error("[Paid default router] Rejected signed event:", error.message);
       if (!res.headersSent) return res.sendStatus(503);
     }
