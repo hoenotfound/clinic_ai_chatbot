@@ -23,6 +23,14 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
        inbound.id AS inbound_id,inbound.created_at AS inbound_at,
        inbound.source_at,lead.treatment_interest,
        NULL::text AS ad_name,
+       EXISTS (SELECT 1 FROM messages first_price
+         WHERE first_price.pricing_reminder_anchor_id=inbound.id
+           AND first_price.pricing_reminder_package_key='Package A'
+           AND first_price.whatsapp_message_id LIKE 'wamid.%'
+           AND (first_price.delivery_status IN ('sent','delivered','read')
+             OR (first_price.delivery_status='pending'
+               AND first_price.whatsapp_accepted_at IS NOT NULL))
+       ) AS has_accepted_package_a,
        (SELECT MAX(busy.created_at) FROM messages busy
         WHERE busy.contact_id=c.id AND busy.role='assistant'
           AND busy.created_at>=inbound.created_at
@@ -31,6 +39,7 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
              ('pending','sent','delivered','read'))
           AND (busy.is_automated_follow_up=TRUE
             OR busy.sent_by_username='Consent request automation')
+          AND busy.pricing_reminder_anchor_id IS NULL
        ) AS last_automation_at,
        (SELECT COALESCE(jsonb_agg(recent.content ORDER BY recent.created_at DESC,recent.id DESC),'[]'::jsonb)
         FROM (SELECT u.id,u.content,u.created_at FROM messages u
@@ -46,6 +55,13 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
               FROM messages x WHERE x.contact_id=c.id AND x.role='assistant'
                 AND x.media_url IS NOT NULL AND x.media_url<>''
                 AND x.delivery_status IS DISTINCT FROM 'cancelled'
+                AND NOT (x.delivery_status='queued'
+                  AND x.pricing_reminder_anchor_id=inbound.id
+                  AND x.whatsapp_message_id IS NULL
+                  AND x.whatsapp_accepted_at IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM whatsapp_sender_billing_attempts q
+                    WHERE q.message_id=x.id AND q.state<>'rejected'))
               ORDER BY x.created_at DESC,x.id DESC LIMIT 150) media
        ) AS sent_media
 FROM latest_inbound inbound
@@ -116,9 +132,22 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
       AND quote.whatsapp_message_id IS NOT NULL
       AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
       AND COALESCE(quote.content,'') ~* 'RM[[:space:]]*[0-9]')
-  AND NOT EXISTS (
-    SELECT 1 FROM messages prior
-    WHERE prior.pricing_reminder_anchor_id=inbound.id)
+  AND (
+    NOT EXISTS(SELECT 1 FROM messages prior
+               WHERE prior.pricing_reminder_anchor_id=inbound.id)
+    OR (
+      EXISTS(SELECT 1 FROM messages a
+        WHERE a.pricing_reminder_anchor_id=inbound.id
+          AND a.pricing_reminder_package_key='Package A'
+          AND a.whatsapp_message_id LIKE 'wamid.%'
+          AND (a.delivery_status IN ('sent','delivered','read') OR
+            (a.delivery_status='pending' AND a.whatsapp_accepted_at IS NOT NULL)))
+      AND NOT EXISTS(SELECT 1 FROM messages uncertain
+        WHERE uncertain.pricing_reminder_anchor_id=inbound.id
+          AND uncertain.pricing_reminder_package_key <> 'Package A'
+          AND uncertain.delivery_status NOT IN ('queued','cancelled'))
+    )
+  )
 ORDER BY inbound.source_at ASC,c.id ASC LIMIT 500
 `;
 
@@ -129,7 +158,7 @@ async function listCandidates({senderKeys,activatedAt},database=pool){
 }
 
 // Read again after obtaining the actual sender's outbound/billing proof.
-async function stillEligible(candidate,messageId,{senderKeys,activatedAt},database=pool){
+async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,database=pool){
   const result=await database.query(`
     SELECT EXISTS(
       SELECT 1 FROM messages outbound
@@ -161,6 +190,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
         AND NOT EXISTS (
           SELECT 1 FROM messages busy WHERE busy.contact_id=c.id
             AND busy.id<>outbound.id AND busy.role='assistant'
+            AND busy.pricing_reminder_anchor_id IS NULL
             AND busy.created_at>NOW()-INTERVAL '45 minutes'
             AND busy.whatsapp_message_id IS NOT NULL
             AND (busy.delivery_status IS NULL OR busy.delivery_status IN
@@ -179,8 +209,15 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
           WHERE media.contact_id=c.id AND media.role='assistant'
             AND media.id<>outbound.id
             AND media.media_url IS NOT NULL AND media.media_url<>''
-            AND split_part(media.media_url,'?',1)=split_part(outbound.media_url,'?',1)
-            AND media.delivery_status IS DISTINCT FROM 'cancelled')
+            AND regexp_replace(trim(trailing '/' FROM
+              split_part(media.media_url,'?',1)),
+              '^https?://[^/]+','') = ANY($7::text[])
+            AND media.delivery_status IS DISTINCT FROM 'cancelled'
+            AND NOT (media.delivery_status='queued'
+              AND media.whatsapp_message_id IS NULL
+              AND media.whatsapp_accepted_at IS NULL
+              AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts q
+                             WHERE q.message_id=media.id AND q.state<>'rejected')))
         AND NOT EXISTS (
           SELECT 1 FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
           WHERE l.id=(SELECT recent.id FROM leads recent WHERE recent.contact_id=c.id
@@ -190,7 +227,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
               OR COALESCE(s.system_key,'') IN ('appointment_set','visited')))
     ) AS allowed
   `,[messageId,candidate.inbound_id,candidate.contact_id,activatedAt,
-      candidate.whatsapp_sender_id,senderKeys]);
+      candidate.whatsapp_sender_id,senderKeys,offer?.identities||[]]);
   return result.rows?.[0]?.allowed===true;
 }
 
@@ -240,13 +277,27 @@ async function claimAdditional(candidate,offer,database=pool){
         AND previous.contact_id=$1 AND previous.whatsapp_message_id IS NOT NULL
         AND (previous.delivery_status IN ('sent','delivered','read') OR
              (previous.delivery_status='pending' AND previous.whatsapp_accepted_at IS NOT NULL))
-        AND previous.pricing_reminder_package_key<>$5)
+        AND previous.pricing_reminder_package_key='Package A')
+      AND EXISTS (
+        SELECT 1 FROM contacts c
+        JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
+        WHERE c.id=$1 AND c.mode='ai' AND c.takeover_by IS NULL
+          AND c.whatsapp_sender_id=$7
+          AND (
+            sa.sender_key<>'neutro_secondary' OR EXISTS(
+              SELECT 1 FROM whatsapp_sender_billing_gates gate
+              WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
+                AND gate.state='idle'
+                AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
+                               WHERE alarm.sender_id=sa.id)
+            ))
+      )
       AND NOT EXISTS(
         SELECT 1 FROM messages same WHERE same.pricing_reminder_anchor_id=$2
         AND same.pricing_reminder_package_key=$5)
     ON CONFLICT DO NOTHING RETURNING id,contact_id,delivery_status
   `,[candidate.contact_id,candidate.inbound_id,offer.caption,offer.imageUrl,
-     offer.packageName,offer.serviceName]);
+     offer.packageName,offer.serviceName,candidate.whatsapp_sender_id]);
   return result.rows?.[0]||null;
 }
 module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional};
