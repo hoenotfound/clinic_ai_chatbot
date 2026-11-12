@@ -7,6 +7,7 @@
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const {invitation:generalSixDayInvitation}=require("../utils/neutroGeneralFollowupConsent");
+const generalSixDay=require("./neutroSecondaryGeneralMarketingSql");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
 const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
@@ -815,7 +816,10 @@ async function runOnce({
       // ONLY an invitation: no CTA, ad click or 131060 error grants consent.
       // A customer's later full affirmative WhatsApp reply must be verified
       // against this actually delivered sender-owned invitation.
-      if(slot===20 && candidate.lead_marketing_consent!=="opted_in" &&
+      if(slot===20 && generalSixDay.enabled(env) &&
+         new Date(candidate.inbound_at).getTime()>=
+           new Date(generalSixDay.activation(env)).getTime() &&
+         candidate.lead_marketing_consent!=="opted_in" &&
          (candidate.recovery_no_selection===true ||
           candidate.verified_meta_ad===true)){
         outboundText+="\n\n"+generalSixDayInvitation(replyLanguage);
