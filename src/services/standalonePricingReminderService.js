@@ -12,6 +12,8 @@ const approval=require("./whatsappSecondaryClinicMediaAuthorization");
 const {getActivePromotions}=require("../utils/activePromotion");
 const {evaluatePricingReminder}=require("../utils/pricingReminderSelection");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
+const {inferConfiguredServiceFromText}=require("../utils/serviceInterest");
+const {hasClinicalMediaRisk}=require("../utils/aiReviewPolicy");
 const {quietHoursStatus,normalizeQuietHours}=require("../utils/quietHours");
 const realtimeEvents=require("../utils/realtimeEvents");
 
@@ -59,8 +61,20 @@ function beforeEnd(candidate,now=new Date()){
     at>=start && at<start+SAFE_END_MINUTES*60000;
 }
 function select(candidate,options){
-  const language=detectConversationLanguage(candidate.recent_customer_messages||[],"zh");
-  return evaluatePricingReminder({
+  const customerTexts=Array.isArray(candidate.recent_customer_messages)
+    ?candidate.recent_customer_messages:[];
+  // An old CRM label or unverified ad guess must not authorize unsolicited
+  // pricing. Require exactly one service in real, recent customer wording.
+  if(!customerTexts.length || customerTexts.some(hasClinicalMediaRisk))
+    return {offers:[],reason:"unverified_or_clinical_interest"};
+  const named=new Set(customerTexts.map(text=>
+    inferConfiguredServiceFromText(String(text||""),{
+      services:clinicConfig.services||[],
+      serviceAliases:clinicConfig.serviceAliases||[],
+    })).filter(Boolean).map(value=>String(value).normalize("NFKC").toLowerCase()));
+  if(named.size!==1)return {offers:[],reason:"ambiguous_or_missing_customer_treatment"};
+  const language=detectConversationLanguage(customerTexts,"zh");
+  const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
     candidate,services:clinicConfig.services||[],
     aliases:clinicConfig.serviceAliases||[],
@@ -68,6 +82,10 @@ function select(candidate,options){
     requirePricingInterest:options.requirePricingInterest,
     sendBothPelvicPackages:options.sendBothPelvicPackages,
   });
+  const only=[...named][0];
+  return result.offers?.every(offer=>
+    String(offer.serviceName||"").normalize("NFKC").toLowerCase()===only)
+    ?result:{offers:[],reason:"customer_treatment_changed"};
 }
 function publish(row){
   if(row?.id)realtimeEvents.publish("conversation_changed",{
