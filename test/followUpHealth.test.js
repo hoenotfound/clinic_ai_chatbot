@@ -61,6 +61,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       CREATE TABLE follow_up_ai_decisions(id integer,contact_id integer,trigger_message_id integer,
         action text,follow_up_step integer,reason text,created_at timestamptz default now());
       CREATE TABLE pricing_reminder_decisions(id integer,contact_id integer,created_at timestamptz default now(),reason text);
+      CREATE TABLE standalone_pricing_reminder_decisions(id integer,contact_id integer,created_at timestamptz default now(),reason text);
       CREATE TABLE outbound_message_evidence(message_id integer,origin text);
       CREATE TABLE leads(id integer primary key,contact_id integer,treatment_interest text,
         is_closed boolean default false, appointment_status text,stage_id integer,
