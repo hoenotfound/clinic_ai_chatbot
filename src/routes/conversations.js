@@ -87,6 +87,7 @@ const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
 const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
+const { sameStaffVideoOwner } = require("../utils/staffVideoOwnership");
 const {
   hasPartialCaptionMarker,
   deliveryErrorForSend,
@@ -689,6 +690,23 @@ function socialProviderSendOptions(message, contact, options = {}) {
   );
   // This adapter is invoked only from authenticated staff Inbox routes.
   const withCurrentMessage = { ...options, currentMessageId: message?.id, staffMedia: true };
+  // A staff video can take seconds to upload. Re-check the *persisted* owner
+  // before caption, after upload, and again before a URL fallback. This also
+  // covers saved video Retry and Forward through the common staff adapter.
+  if (["facebook", "instagram"].includes(contact?.channel) &&
+      String(message?.media_mime_type || "").toLowerCase().startsWith("video/")) {
+    const priorCheck = withCurrentMessage.preSendCheck;
+    withCurrentMessage.preSendCheck = async () => {
+      try {
+        const latest = await contactsRepo.getContactById(contact.id);
+        if (!sameStaffVideoOwner(contact, latest)) return false;
+        return typeof priorCheck !== "function" || await priorCheck() === true;
+      } catch (error) {
+        console.warn("[Staff video] Could not confirm conversation ownership before send:", error?.message);
+        return false;
+      }
+    };
+  }
   return recorder
     ? { ...withCurrentMessage, onProviderMessageId: recorder }
     : withCurrentMessage;
@@ -2520,6 +2538,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       return res.status(409).json({
         code: "automated_voice_retry_requires_manual_review",
         error: "This automated voice note cannot be retried directly. Check the channel's delivery status (especially if unconfirmed), then send a new staff voice note only after reviewing the customer's reply window and consent.",
+      });
+    }
+
+    // An unknown video send may already have reached Meta even without a
+    // message ID. Block generic Retry for both staff and automated videos.
+    if (message.delivery_status === "unknown" &&
+        String(message.media_mime_type || "").toLowerCase().startsWith("video/")) {
+      return res.status(409).json({
+        code: "video_delivery_unconfirmed_retry_requires_review",
+        error: "This video may already have reached the customer. Verify Meta delivery before composing a new staff video; direct Retry is blocked.",
       });
     }
 
