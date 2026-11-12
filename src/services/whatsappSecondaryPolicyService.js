@@ -189,7 +189,7 @@ const SECONDARY_GENERIC_MARKETING_CONSENT_SQL =
   " AND e.consent_service='neutro_general_tcm_care'"+
   " AND e.consent_method='customer_whatsapp_text'"+
   " AND e.consented_at=$3::timestamptz"+
-  " AND e.consented_at=COALESCE(m.source_created_at,m.created_at)"+
+  " AND DATE_TRUNC('milliseconds',e.consented_at)=DATE_TRUNC('milliseconds',COALESCE(m.source_created_at,m.created_at))"+
   " AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages h"+
   " WHERE h.message_id=m.id)"+
   " ) AS verified FROM active_lead l";
