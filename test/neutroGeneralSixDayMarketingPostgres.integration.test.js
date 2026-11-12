@@ -149,6 +149,7 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const withoutSafeguards=candidateFrom+
     "\n WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE"+
     " AND rule.slot_hours IN(48,66,96,144)"+
+    " AND $6::timestamptz IS NOT NULL AND $7::text IS NOT NULL AND $8::timestamptz IS NOT NULL"+
     general.CANDIDATES_SQL.slice(order);
   const joined=(await db.query(withoutSafeguards,p)).rows;
   if(joined.length===0){
