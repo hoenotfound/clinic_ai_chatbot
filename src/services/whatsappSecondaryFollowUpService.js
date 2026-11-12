@@ -7,6 +7,7 @@
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
+const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
@@ -64,27 +65,15 @@ const ALLOWED_MIME={
   audio:new Set(["audio/ogg","audio/mpeg","audio/mp4","audio/aac"]),
 };
 
- // Use the first verified AI reply to the latest customer message as the
- // anchor for FU1/FU2, just as the primary WhatsApp does. A later customer
- // message starts a new sequence; staff replies never authorize automation.
-const FIRST_REPLY_SQL=`
- JOIN LATERAL (
-   SELECT reply.created_at AS at, reply.content AS text FROM messages reply
-   JOIN whatsapp_sender_message_context reply_context
-     ON reply_context.message_id=reply.id
-    AND reply_context.conversation_id=sc.id
-   WHERE reply.contact_id=c.id AND reply.role='assistant'
-     AND reply.whatsapp_message_id IS NOT NULL
-     AND reply.sent_by_username IS NULL
-     AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-     AND reply.created_at>=inbound.created_at
-     AND reply.created_at<inbound.created_at + INTERVAL '24 hours'
-   ORDER BY reply.created_at ASC,reply.id ASC LIMIT 1
- ) first_reply ON TRUE
-`;
+// Treat a verified staff answer as a potential service follow-up anchor.
+// Imported, forwarded and deleted messages are excluded in the shared policy.
+const FIRST_REPLY_SQL=serviceReplyAnchorSql();
 // FU3 remains four hours before the latest inbound 24h window expires.
 const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
-   THEN inbound.created_at ELSE first_reply.at END)
+   THEN inbound.created_at
+   WHEN rule.slot_hours=2 AND first_reply.staff_question
+     THEN first_reply.at+INTERVAL '4 hours'
+   ELSE first_reply.at END)
    + rule.slot_hours * INTERVAL '1 hour'`;
 // Resolve only the last enabled earlier slot. A later reminder must not jump
 // ahead of an unsent, failed or ambiguous previous reminder.
@@ -253,6 +242,7 @@ const CANDIDATES_SQL=`
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
    rule.media_type,rule.media_mime_type,rule.media_filename,
    first_reply.text AS first_reply_text,
+   first_reply.staff_reply,first_reply.staff_question,
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
@@ -343,7 +333,10 @@ const CANDIDATES_SQL=`
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('$4::timestamptz')}
-   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND c.mode='ai' AND c.takeover_by IS NULL
+   AND NOT first_reply.staff_pending_action
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -374,20 +367,13 @@ const CANDIDATES_SQL=`
    -- sender-specific step to have been accepted, not merely scheduled.
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
-   AND EXISTS (
-     SELECT 1 FROM messages reply JOIN whatsapp_sender_message_context mc
-       ON mc.message_id=reply.id AND mc.conversation_id=sc.id
-     WHERE reply.contact_id=c.id AND reply.role='assistant'
-       AND reply.whatsapp_message_id IS NOT NULL
-       AND reply.sent_by_username IS NULL
-       AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-       AND reply.created_at>=inbound.created_at
-   )
    AND NOT EXISTS (
      SELECT 1 FROM messages human
      WHERE human.contact_id=c.id AND human.role='assistant'
        AND human.sent_by_username IS NOT NULL
-       AND human.created_at>=inbound.created_at
+       AND (human.created_at,human.id)>(first_reply.at,first_reply.id)
+       AND COALESCE(human.whatsapp_customer_mutation,'')=''
+       AND human.content NOT LIKE '🗑️ %'
    )
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts previous
@@ -462,7 +448,10 @@ const RECHECK_SQL=`
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    ${repeatSlotCooldownSql('NOW()')}
-   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND c.mode='ai' AND c.takeover_by IS NULL
+   AND NOT first_reply.staff_pending_action
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -489,7 +478,9 @@ const RECHECK_SQL=`
      SELECT 1 FROM messages human
      WHERE human.contact_id=c.id AND human.role='assistant'
        AND human.sent_by_username IS NOT NULL
-       AND human.created_at>=inbound.created_at
+       AND (human.created_at,human.id)>(first_reply.at,first_reply.id)
+       AND COALESCE(human.whatsapp_customer_mutation,'')=''
+       AND human.content NOT LIKE '🗑️ %'
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
    AND (rule.slot_hours<>20 OR
@@ -574,11 +565,14 @@ async function runOnce({
       clinicConfig,
       forceGeneral:generalOnly,
     });
+    // A question from staff gets one low-pressure nudge, not a treatment ad.
+    const safeText=candidate.staff_reply && candidate.staff_question
+      ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
-    if(!localized)continue;
+    if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && !generalOnly &&
+    if(candidate.media_key && !generalOnly && !candidate.staff_reply &&
        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
@@ -621,13 +615,13 @@ async function runOnce({
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
-      const selectedVideo=!generalOnly &&
+      const selectedVideo=!candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=generalOnly ? null
+      const key=(generalOnly || candidate.staff_reply) ? null
         : candidate.media_key || selectedVideo?.mediaKey || null;
       const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
       const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
@@ -667,7 +661,7 @@ async function runOnce({
       // This is the PRIMARY Neutro follow-up AI generator, using only
       // sender-bound SECONDARY customer history. Generate after the one-shot
       // claim, and never send a static substitute when AI mode is explicitly on.
-      let outboundText=localized;
+      let outboundText=safeText;
       let aiMode=null;
       phase="ai_generation";
       if(slot===20 && !generalOnly &&
