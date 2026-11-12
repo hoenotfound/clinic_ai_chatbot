@@ -567,6 +567,7 @@ export default function Inbox() {
   const canViewAllLeads = permissions.view_all_leads === true;
   const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const canManageLeads = permissions.manage_assigned_leads === true;
+  const canManageAutomation = permissions.manage_tools === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedContactParam = searchParams.get("contact");
@@ -1322,6 +1323,32 @@ export default function Inbox() {
     }
   }
 
+  async function handleEnableSecondaryAi() {
+    if (selectedId == null) return;
+    const contactId = selectedId;
+    const snapshot = conversations?.find((item) =>
+      Number(item.contact_id) === Number(contactId));
+    if (!snapshot || !window.confirm(
+      "Enable AI for this contact for 7 days? Only new customer messages can receive AI replies. " +
+      "Follow-ups may start only from messages received after approval. " +
+      "Opt-outs, unresolved staff issues and WhatsApp rules still apply."
+    )) return;
+    setActionPending(true);
+    try {
+      await api.enableSecondaryAi(contactId, snapshot.updated_at);
+      await refreshConversations();
+      showToast("AI approved for 7 days. No old messages or follow-ups were replayed.", "success");
+    } catch (err) {
+      console.error("Failed to enable secondary AI:", err);
+      showToast(err?.status === 409
+        ? "AI approval blocked or conversation changed. Refresh and review the contact."
+        : "Couldn't enable AI for this contact.", "error");
+      if (err?.status === 409) await refreshConversations();
+    } finally {
+      if (selectedIdRef.current === contactId) setActionPending(false);
+    }
+  }
+
   async function handleReturnToAi() {
     if (selectedId == null) return;
     const contactId = selectedId;
@@ -1914,6 +1941,7 @@ export default function Inbox() {
         currentUsername={username}
         canReplyToLeads={canReplyToLeads}
         canManageLeads={canManageLeads}
+        canManageAutomation={canManageAutomation}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
         mutationNotices={customerEditNotices}
@@ -1930,6 +1958,7 @@ export default function Inbox() {
         onLoadOlder={loadOlderMessages}
         onTakeOver={handleTakeOver}
         onReturnToAi={handleReturnToAi}
+        onEnableSecondaryAi={handleEnableSecondaryAi}
         onDismissAttention={handleDismissAttention}
         onResolveReview={handleResolveReview}
         onToggleFollowUp={handleToggleFollowUp}
@@ -2877,6 +2906,7 @@ function ThreadView({
   currentUsername,
   canReplyToLeads,
   canManageLeads,
+  canManageAutomation,
   showUnassignedAssignment,
   messages,
   mutationNotices = [],
@@ -2890,6 +2920,7 @@ function ThreadView({
   onLoadOlder,
   onTakeOver,
   onReturnToAi,
+  onEnableSecondaryAi,
   onDismissAttention,
   onResolveReview,
   onToggleFollowUp,
@@ -3000,6 +3031,11 @@ function ThreadView({
         .replace(/\s+remaining$/i, "")
     : "";
   const effectiveStaff = effectiveInboxControlMode(contact) === "human";
+  const needsManualApproval = effectiveStaff && contact.mode !== "human" &&
+    contact.whatsapp_is_secondary === true &&
+    contact.whatsapp_secondary_ai_enabled === false;
+  const canEnablePausedAi = needsManualApproval && canManageLeads &&
+    canManageAutomation && contact.whatsapp_secondary_manual_ai_can_enable === true;
   const composerPlaceholder = secondarySenderSuspended
     ? "Secondary WhatsApp disconnected. Sending paused."
     : policyBlocksComposer
@@ -3939,7 +3975,7 @@ function ThreadView({
                   setActionsOpen(false);
                   onReturnToAi();
                 }}
-                disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+                disabled={actionPending || !canManageLeads || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
                 aria-label="Return control to AI"
                 className="wa-thread-desktop-handoff inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
@@ -3947,6 +3983,17 @@ function ThreadView({
                 {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Return to AI</span>
               </button>
+            ) : canEnablePausedAi ? (
+                <button type="button" onClick={() => { setActionsOpen(false); onEnableSecondaryAi(); }}
+                  disabled={actionPending} aria-label="Enable AI for this contact"
+                  title="Approve AI for seven days. New customer messages only."
+                  className="wa-thread-desktop-handoff inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white disabled:opacity-50">
+                  {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
+                  <span>Enable AI</span>
+                </button>
+            ) : needsManualApproval && !canManageLeads ? (
+              <span title="AI is paused by the secondary-number policy or another restriction"
+                className="px-2 text-xs text-[var(--color-text-muted)]">AI paused</span>
             ) : (
               <button
                 type="button"
@@ -3954,7 +4001,7 @@ function ThreadView({
                   setActionsOpen(false);
                   onTakeOver();
                 }}
-                disabled={actionPending}
+                disabled={actionPending || !canManageLeads}
                 aria-label="Take over conversation"
                 className="wa-thread-desktop-handoff inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
@@ -3983,18 +4030,35 @@ function ThreadView({
                     <ConversationActionItem
                       icon={BotIcon}
                       label="Return control to AI"
-                      disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+                      disabled={actionPending || !canManageLeads || isStartingRecording || isRecording || !!voiceBlob}
                       onClick={() => { setActionsOpen(false); onReturnToAi(); }}
                     />
+                  ) : needsManualApproval ? (
+                    canEnablePausedAi ? (
+                      <ConversationActionItem
+                        icon={BotIcon}
+                        label="Enable AI for 7 days"
+                        disabled={actionPending}
+                        onClick={() => { setActionsOpen(false); onEnableSecondaryAi(); }}
+                      />
+                    ) : null
                   ) : (
                     <ConversationActionItem
                       icon={UserIcon}
                       label="Take over conversation"
-                      disabled={actionPending}
+                      disabled={actionPending || !canManageLeads}
                       onClick={() => { setActionsOpen(false); onTakeOver(); }}
                     />
                   )}
                 </div>
+                {needsManualApproval && canManageLeads && (
+                  <ConversationActionItem
+                    icon={UserIcon}
+                    label="Take over conversation"
+                    disabled={actionPending}
+                    onClick={() => { setActionsOpen(false); onTakeOver(); }}
+                  />
+                )}
                 {canManageLeads && <ConversationActionItem
                   icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
                   label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}

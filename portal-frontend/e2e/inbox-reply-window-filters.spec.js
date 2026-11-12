@@ -35,7 +35,7 @@ function conversation(id, name, changes = {}) {
   };
 }
 
-async function mockInbox(page, conversations) {
+async function mockInbox(page, conversations, { actor = user } = {}) {
   // Preserve the server-side state of the mocked conversations. A static
   // is_unread=true response can overwrite the Inbox's optimistic read update
   // when the iPad suite reloads its conversation list.
@@ -55,9 +55,34 @@ async function mockInbox(page, conversations) {
     if (pathname === "/api/auth/branding") {
       value = { clientName: "Test Clinic", clientLogoUrl: "", loginTagline: "Staff portal" };
     } else if (pathname === "/api/auth/me") {
-      value = { user, username: user.username };
+      value = { user: actor, username: actor.username };
     } else if (pathname === "/api/conversations") {
       value = currentConversations.map(item => ({ ...item }));
+    } else if (/^\/api\/conversations\/\d+\/enable-secondary-ai$/.test(pathname) &&
+      route.request().method() === "POST") {
+      const id = Number(pathname.split("/")[3]);
+      const payload = JSON.parse(route.request().postData() || "{}");
+      if (!payload.expectedUpdatedAt) {
+        await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Missing expected version" }) });
+        return;
+      }
+      currentConversations = currentConversations.map(item =>
+        Number(item.contact_id) === id ? {
+          ...item, whatsapp_secondary_ai_enabled: true,
+          whatsapp_secondary_manual_ai_can_enable: false,
+          updated_at: new Date().toISOString(),
+        } : item
+      );
+      value = { enabled: true, expiresAt: new Date(Date.now() + 7 * 86400000).toISOString() };
+    } else if (/^\/api\/conversations\/\d+\/takeover$/.test(pathname) &&
+      route.request().method() === "POST") {
+      const id = Number(pathname.split("/")[3]);
+      currentConversations = currentConversations.map(item =>
+        Number(item.contact_id) === id
+          ? { ...item, mode: "human", updated_at: new Date().toISOString() }
+          : item
+      );
+      value = currentConversations.find(item => Number(item.contact_id) === id) || {};
     } else if (/^\/api\/conversations\/\d+\/read-state$/.test(pathname) &&
       route.request().method() === "PATCH") {
       const id = Number(pathname.split("/")[3]);
@@ -339,4 +364,71 @@ test("secondary old contacts show effective Staff mode without mutating takeover
   await handled.selectOption("ai");
   await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Old Staff Contact", { exact: true })).toHaveCount(0);
+});
+
+test("paused secondary chats can still be taken over by ordinary staff", async ({ page }) => {
+  const actor = { ...user, permissions: { ...user.permissions, manage_tools: false } };
+  await mockInbox(page, [
+    conversation(301, "Paused Secondary", {
+      mode: "ai", whatsapp_is_secondary: true,
+      whatsapp_secondary_ai_enabled: false,
+      whatsapp_secondary_manual_ai_can_enable: true,
+      updated_at: ago(1),
+    }),
+  ], { actor });
+  await page.goto("/inbox?contact=301");
+  const thread = page.locator('section[aria-label="Conversation with Paused Secondary"]');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByRole("button", { name: "Enable AI for this contact" })).toHaveCount(0);
+  await expect(thread.getByRole("button", { name: "Take over conversation" })).toBeVisible();
+  await thread.getByRole("button", { name: "Take over conversation" }).click();
+  await expect(thread.getByRole("button", { name: "Return control to AI" })).toBeVisible();
+});
+
+test("secondary AI approval requires both permissions and preserves manual takeover", async ({ page }) => {
+  const actor = { ...user, permissions: { ...user.permissions, manage_tools: true } };
+  await mockInbox(page, [
+    conversation(302, "Approval Secondary", {
+      mode: "ai", whatsapp_is_secondary: true,
+      whatsapp_secondary_ai_enabled: false,
+      whatsapp_secondary_manual_ai_can_enable: true,
+      updated_at: ago(1),
+    }),
+  ], { actor });
+  await page.goto("/inbox?contact=302");
+  const thread = page.locator('section[aria-label="Conversation with Approval Secondary"]');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByRole("button", { name: "Enable AI for this contact" })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(thread.getByText("Take over conversation", { exact: true })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  page.once("dialog", dialog => dialog.accept());
+  const approved = page.waitForResponse(response =>
+    response.url().includes("/api/conversations/302/enable-secondary-ai") &&
+    response.request().method() === "POST" && response.status() === 200
+  );
+  await thread.getByRole("button", { name: "Enable AI for this contact" }).click();
+  await approved;
+  await expect(thread.getByRole("button", { name: "Take over conversation" })).toBeVisible();
+  await expect(thread.getByRole("button", { name: "Enable AI for this contact" })).toHaveCount(0);
+});
+
+test("automation-only permission cannot approve AI or claim a contact", async ({ page }) => {
+  const actor = { ...user, permissions: {
+    ...user.permissions, manage_tools: true, manage_assigned_leads: false,
+  } };
+  await mockInbox(page, [
+    conversation(303, "View Only Secondary", {
+      mode: "ai", whatsapp_is_secondary: true,
+      whatsapp_secondary_ai_enabled: false,
+      whatsapp_secondary_manual_ai_can_enable: true,
+      updated_at: ago(1),
+    }),
+  ], { actor });
+  await page.goto("/inbox?contact=303");
+  const thread = page.locator('section[aria-label="Conversation with View Only Secondary"]');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByRole("button", { name: "Enable AI for this contact" })).toHaveCount(0);
+  await expect(thread.getByRole("button", { name: "Take over conversation" })).toHaveCount(0);
+  await expect(thread.getByText("AI paused", { exact: true })).toBeVisible();
 });
