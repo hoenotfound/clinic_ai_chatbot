@@ -67,7 +67,11 @@ const HEALTH_SQL = `WITH evidence AS (
     d.created_at, 4, 'Unspecified (not recorded)',
     'pricing', 'decision',
     CASE
-      WHEN d.reason LIKE 'standalone:review:%' THEN 'attention'
+      WHEN d.reason LIKE 'standalone:review:%'
+        OR d.reason LIKE 'standalone:staff_review:%'
+        OR d.reason LIKE 'standalone:preflight_exhausted:%'
+        OR d.reason='standalone:provider_accepted_local_receipt_unconfirmed'
+        THEN 'attention'
       WHEN d.reason LIKE 'standalone:deferred:%' THEN 'pending'
       ELSE 'skipped'
     END,
