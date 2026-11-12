@@ -71,6 +71,12 @@ function withPricingHistoryMetadata(entry, row) {
   const timestamp = rawTime instanceof Date
     ? rawTime.getTime() : Date.parse(String(rawTime ?? ""));
   Object.defineProperties(entry, {
+    // Internal-only exact identity for safe 131060 prompt cleanup. The ID is
+    // intentionally non-enumerable: it must not reach model prompts or the UI.
+    contextMessageId: {
+      value: Number.isSafeInteger(Number(row?.id)) ? Number(row.id) : null,
+      enumerable: false,
+    },
     pricingCreatedAtMs: {
       value: Number.isFinite(timestamp) ? timestamp : null,
       enumerable: false,

@@ -113,6 +113,10 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
       "VALUES($1,$2,$3,'ad')",[ad,contact,adId]
     );
     assert.equal(await eligible(),false,"readable customer reply stops duplicate recovery");
+    // A provider WAMID without a sent/delivered receipt must not be
+    // interpreted as a visible recovery menu in the model's prompt.
+    await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",
+      [recoveryMessage]);
     const cleanupProof=await getVerifiedRecoveryHistoryProof({
       contactId:contact,inboundMessageId:ad,database:db,
     });

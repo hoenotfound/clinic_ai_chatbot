@@ -622,7 +622,9 @@ test("131060 no-selection follow-ups require accepted recovery evidence in candi
    assert.match(sql,/recovery_evidence\.accepted=TRUE/);
    assert.match(sql,/recovery_evidence\.origin='system_fallback'/);
    assert.match(sql,/recovery_evidence\.provider_message_id=verified_recovery\.whatsapp_message_id/);
-   assert.match(sql,/first_reply\.text LIKE 'Hi～欢迎来到 Neutro Sense/);
+   assert.match(sql,/verified_recovery\.content LIKE 'Hi～欢迎来到 Neutro Sense/);
+   assert.match(sql,/verified_recovery\.delivery_status IN \('sent','delivered','read'\)/);
+   assert.match(sql,/verified_recovery_context\.conversation_id=sc\.id/);
    assert.match(sql,/newer_customer\.role='user'/);
    assert.match(sql,/inbound\.content LIKE '📎 \[% sent a WhatsApp message that could not be displayed\]'/);
    assert.match(sql,/whatsapp_opt_out_at IS NULL/);
@@ -632,6 +634,9 @@ test("131060 no-selection follow-ups require accepted recovery evidence in candi
    assert.match(sql,/BETWEEN 7 AND 23/);
  }
  assert.match(worker.POTENTIAL_DUE_SQL,/recovery_evidence\.accepted=TRUE/);
+ assert.match(worker.CANDIDATES_SQL,/readable_later\.content NOT LIKE/);
+ assert.match(worker.CANDIDATES_SQL,/prior_recovery\.delivery_status IN/);
+ assert.match(worker.RECHECK_SQL,/newer\.content NOT LIKE/);
 });
 
 test("a silent 131060 customer receives the text-only 2h, 6h and 20h reminders, never media or personalized sales",async()=>{

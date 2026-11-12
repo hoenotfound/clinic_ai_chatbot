@@ -159,6 +159,12 @@ async function getVerifiedRecoveryHistoryProof({
          ON recovery_ctx.message_id=recovery.id
          AND recovery_ctx.conversation_id=sc.id
        WHERE c.id=$1 AND c.channel='whatsapp'
+         AND initial.content LIKE
+          '📎 [% sent a WhatsApp message that could not be displayed]'
+         AND initial.source_created_at IS NOT NULL
+         AND initial.created_at>=current_inbound.created_at-INTERVAL '7 days'
+         AND recovery.created_at<initial.created_at+INTERVAL '24 hours'
+         AND recovery.delivery_status IN('sent','delivered','read')
          AND (
            (
              original_job.channel='whatsapp'
@@ -175,16 +181,12 @@ async function getVerifiedRecoveryHistoryProof({
            )
          )
          AND NOT EXISTS (
-           SELECT 1 FROM messages before_first
-           WHERE before_first.contact_id=c.id AND before_first.id<initial.id
-         )
-         AND NOT EXISTS (
            SELECT 1 FROM messages between_first_and_menu
            WHERE between_first_and_menu.contact_id=c.id
              AND between_first_and_menu.id>initial.id
              AND between_first_and_menu.id<recovery.id
          )
-       LIMIT 1`,
+       ORDER BY initial.created_at DESC,initial.id DESC LIMIT 1`,
       [cid, mid]
     );
     return result.rows?.[0] || null;
@@ -202,11 +204,25 @@ async function getVerifiedRecoveryHistoryProof({
 // typing "9D". Keep the actual Inbox history, staff messages and later
 // customer texts unchanged.
 function readableHistoryForRecoverySelection(history, proof) {
-  if (!Array.isArray(history) || !proof?.unavailable_message_id ||
-      history.length < 3 || history[0]?.role !== "user" ||
-      !/^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u.test(
-        String(history[0]?.content || ""))) return history;
-  return history.slice(1);
+  if(!Array.isArray(history) || !proof?.unavailable_message_id || history.length<3)
+    return history;
+  const originalId=Number(proof.unavailable_message_id);
+  const unreadable=/^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u;
+  const matched=history.some(entry =>
+    entry?.role==='user' && Number(entry.contextMessageId)===originalId &&
+    unreadable.test(String(entry.content||'')));
+  if(matched){
+    // Remove ONLY the provider-verified unreadable turn, even when this
+    // patient has older conversations. Preserve staff and readable history.
+    return history.filter(entry=>!(entry?.role==='user' &&
+      Number(entry.contextMessageId)===originalId &&
+      unreadable.test(String(entry.content||''))));
+  }
+  // Compatibility for existing callers/tests that provide a history without
+  // internal message IDs and have the original unreadable FIRST message.
+  return history[0]?.role==='user' && history[0].contextMessageId==null &&
+    unreadable.test(String(history[0]?.content||''))
+    ? history.slice(1) : history;
 }
 
 async function canSend131060Recovery({

@@ -193,11 +193,11 @@ const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
 // enquiry, ad click, marketing opt-in or permission to send media/templates.
 const RECOVERY_NO_SELECTION_SQL=String.raw`(
   inbound.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
-  AND first_reply.staff_reply=FALSE
-  AND first_reply.text LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
-  AND first_reply.text LIKE '%可以点下面的选项%'
   AND EXISTS (
     SELECT 1 FROM messages verified_recovery
+    JOIN whatsapp_sender_message_context verified_recovery_context
+      ON verified_recovery_context.message_id=verified_recovery.id
+      AND verified_recovery_context.conversation_id=sc.id
     JOIN outbound_message_evidence recovery_evidence
       ON recovery_evidence.message_id=verified_recovery.id
       AND recovery_evidence.contact_id=c.id
@@ -205,10 +205,18 @@ const RECOVERY_NO_SELECTION_SQL=String.raw`(
       AND recovery_evidence.origin='system_fallback'
       AND recovery_evidence.accepted=TRUE
       AND recovery_evidence.provider_message_id=verified_recovery.whatsapp_message_id
-    WHERE verified_recovery.id=first_reply.id
-      AND verified_recovery.contact_id=c.id
+    WHERE verified_recovery.contact_id=c.id
       AND verified_recovery.role='assistant'
       AND verified_recovery.whatsapp_message_id IS NOT NULL
+      AND verified_recovery.created_at>=inbound.created_at
+      AND verified_recovery.created_at<inbound.created_at+INTERVAL '24 hours'
+      AND (verified_recovery.created_at,verified_recovery.id)<=(first_reply.at,first_reply.id)
+      AND verified_recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+      AND verified_recovery.content LIKE '%可以点下面的选项%'
+      -- Meta's initial WAMID acceptance is not final delivery evidence.
+      -- Hold a reminder unless the provider has subsequently confirmed a
+      -- sent/delivered/read state, and never follow up a failed menu.
+      AND verified_recovery.delivery_status IN ('sent','delivered','read')
       AND NOT EXISTS (
         SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_menu
         WHERE old_menu.sender_id=sa.id AND old_menu.message_id=verified_recovery.id
@@ -219,13 +227,32 @@ const RECOVERY_NO_SELECTION_SQL=String.raw`(
     WHERE newer_customer.contact_id=c.id AND newer_customer.role='user'
       AND (newer_customer.created_at,newer_customer.id)
           >(inbound.created_at,inbound.id)
+      -- Another unreadable event is not a treatment selection. It does not
+      -- restart the seven-day recovery menu or suppress a verified reminder.
+      AND newer_customer.content NOT LIKE
+          '📎 [% sent a WhatsApp message that could not be displayed]'
   )
 )`;
 const RECOVERY_REMINDER_TEXT=Object.freeze({
-  2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
-  6:"您好 😊 如果还不确定适合什么护理，也可以简单说说您的需求，我们会先了解情况，再安排适合的评估哦。",
-  20:"Hi dear 😊 再轻轻跟进一下～如果想了解护理或预约中医师评估，随时回复我们就好 ❤️",
+  zh:Object.freeze({
+    2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
+    6:"您好 😊 如果还不确定适合什么护理，也可以简单说说您的需求，我们会先了解情况，再安排适合的评估哦。",
+    20:"Hi dear 😊 再轻轻跟进一下～如果想了解护理或预约中医师评估，随时回复我们就好 ❤️",
+  }),
+  en:Object.freeze({
+    2:"Hi 😊 Just following up. What would you like to know about our treatments? You can choose an option above or tell us what concerns you.",
+    6:"Hello 😊 If you are unsure which treatment is suitable, feel free to share your concerns. We can understand your needs before arranging an assessment.",
+    20:"Hi 😊 A gentle final follow-up. If you have questions or would like to arrange an assessment, you are welcome to reply anytime.",
+  }),
+  ms:Object.freeze({
+    2:"Hai 😊 Kami nak susuli pertanyaan anda. Boleh pilih pilihan di atas atau beritahu apa yang anda ingin tahu tentang rawatan kami.",
+    6:"Hai 😊 Jika belum pasti rawatan yang sesuai, boleh ceritakan keperluan anda. Kami boleh fahamkan keadaan dahulu sebelum cadangkan penilaian.",
+    20:"Hai 😊 Sekadar susulan terakhir. Jika ada soalan atau ingin aturkan penilaian, boleh balas mesej ini bila-bila masa.",
+  }),
 });
+function recoveryNoSelectionReminderText(slot,language){
+  return (RECOVERY_REMINDER_TEXT[["zh","en","ms"].includes(language)?language:"zh"]||{})[slot]||null;
+}
 
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  -- An unreadable Meta 131060 first message is not a genuine service enquiry.
@@ -342,11 +369,47 @@ const CANDIDATES_SQL=`
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user'
      AND m.whatsapp_message_id IS NOT NULL
+     -- Every eligible free-form follow-up already requires a live 24h
+     -- inbound window. Bound the recovery-priority check to that window
+     -- instead of scanning a patient's entire historical timeline.
+     AND m.created_at > $4::timestamptz - INTERVAL '24 hours'
      AND NOT EXISTS(
        SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
        WHERE h.message_id=m.id AND h.sender_id=sa.id
      )
-   ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+   -- A second unreadable Meta event has no readable customer intent. Keep
+   -- the earlier accepted recovery session as the anchor rather than
+   -- switching to a duplicate placeholder that cannot receive a new menu.
+   ORDER BY CASE WHEN
+     m.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+     AND m.source_created_at IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM messages prior_recovery
+       JOIN whatsapp_sender_message_context prior_context
+         ON prior_context.message_id=prior_recovery.id
+         AND prior_context.conversation_id=sc.id
+       JOIN outbound_message_evidence prior_acceptance
+         ON prior_acceptance.message_id=prior_recovery.id
+         AND prior_acceptance.contact_id=c.id
+         AND prior_acceptance.channel='whatsapp'
+         AND prior_acceptance.origin='system_fallback'
+         AND prior_acceptance.accepted=TRUE
+         AND prior_acceptance.provider_message_id=prior_recovery.whatsapp_message_id
+       WHERE prior_recovery.contact_id=c.id
+         AND prior_recovery.created_at>=m.created_at
+         AND prior_recovery.created_at<m.created_at+INTERVAL '24 hours'
+         AND prior_recovery.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+         AND prior_recovery.content LIKE '%可以点下面的选项%'
+         AND prior_recovery.delivery_status IN ('sent','delivered','read')
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM messages readable_later
+       WHERE readable_later.contact_id=c.id AND readable_later.role='user'
+         AND (readable_later.created_at,readable_later.id)>(m.created_at,m.id)
+         AND readable_later.content NOT LIKE
+           '📎 [% sent a WhatsApp message that could not be displayed]'
+     )
+   THEN 1 ELSE 0 END DESC,m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON true
  ${FIRST_REPLY_SQL}
  ${PREVIOUS_STEP_SQL}
@@ -518,6 +581,9 @@ const RECHECK_SQL=`
      SELECT 1 FROM messages newer
      WHERE newer.contact_id=c.id AND newer.role='user'
        AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+       AND (NOT ${RECOVERY_NO_SELECTION_SQL}
+         OR newer.content NOT LIKE
+            '📎 [% sent a WhatsApp message that could not be displayed]')
    )
    AND NOT EXISTS(
      SELECT 1 FROM messages human
@@ -613,10 +679,10 @@ async function runOnce({
       forceGeneral:generalOnly,
     });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
-    const safeText=candidate.recovery_no_selection
-      ? RECOVERY_REMINDER_TEXT[slot]
-      : (candidate.staff_reply && candidate.staff_question
-        ? gentleStaffQuestionNudge(replyLanguage) : localized);
+    const safeText=candidate.staff_reply && candidate.staff_question
+      ? gentleStaffQuestionNudge(replyLanguage)
+      : candidate.recovery_no_selection
+        ? recoveryNoSelectionReminderText(slot,replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a

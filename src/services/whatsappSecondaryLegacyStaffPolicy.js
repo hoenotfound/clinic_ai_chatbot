@@ -118,6 +118,9 @@ function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.
      ON recovery_menu.contact_id=${contact}.id
      AND recovery_menu.role='assistant'
      AND recovery_menu.whatsapp_message_id IS NOT NULL
+     -- Initial Meta acceptance is insufficient after a failed delivery
+     -- callback. A recovered old contact needs a usable menu receipt.
+     AND recovery_menu.delivery_status IN ('sent','delivered','read')
      AND recovery_menu.created_at>=unavailable131060.created_at
      AND recovery_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
      AND recovery_menu.content LIKE '%可以点下面的选项%'
