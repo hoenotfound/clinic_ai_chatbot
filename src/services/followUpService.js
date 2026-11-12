@@ -39,6 +39,7 @@ const { pool } = require("../db/db");
 const { previouslySentVideo, textOnlyVideoFallback } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const pricingReminderService = require("./pricingReminderService");
+const standalonePricingReminderService = require("./standalonePricingReminderService");
 const whatsappConsentPromptService = require("./whatsappConsentPromptService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
@@ -2142,6 +2143,14 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       };
     }
 
+    // Completely separate, default-off pricing reminder. Its failure cannot
+    // interrupt the existing follow-up sequence or consent worker.
+    const standalonePricingNextDueAt = await standalonePricingReminderService
+      .runOnce(now).catch(error => {
+        console.error("[Standalone pricing] Isolated scheduler failed:", error);
+        return null;
+      });
+
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.steps.map((step) => step.delayMinutes),
       timingModes: settings.steps.map((step) => step.timingMode),
@@ -2190,7 +2199,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       progressedCount,
       recoveredCount,
       nextDueAt: (() => {
-        const times = [nextDueAt, pricingNextDueAt, consentNextDueAt]
+        const times = [nextDueAt, pricingNextDueAt, standalonePricingNextDueAt, consentNextDueAt]
           .filter(Boolean)
           .map((value) => new Date(value).getTime())
           .filter(Number.isFinite);
