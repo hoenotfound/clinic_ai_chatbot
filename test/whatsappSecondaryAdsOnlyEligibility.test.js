@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
   eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
+  secondaryResolvedTransientDeliveryAttentionSql, isSecondaryAiReplyEligible,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
 const followups = require("../src/services/whatsappSecondaryFollowUpService");
@@ -64,6 +65,53 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
   assert.equal(queries,1);
   assert.equal(await isSecondaryAdsOnlyEligible("invalid",{database,env}),false);
   assert.equal(queries,1);
+});
+
+test("resolved pre-provider billing race permits only fresh AI replies",async()=>{
+  const clause=secondaryResolvedTransientDeliveryAttentionSql("c");
+  for(const proof of [
+    "c.delivery_attention_message_id",
+    "Delivery failed: The previous WhatsApp message is still being confirmed.",
+    "failed_text.delivery_status='failed'",
+    "failed_text.whatsapp_message_id IS NULL",
+    "whatsapp_sender_billing_attempts failed_attempt",
+    "cleared_gate.state='idle'",
+    "whatsapp_sender_billing_alarms unresolved_alarm",
+    "ai_review_items pending_review",
+  ]) assert.ok(clause.includes(proof),proof);
+  assert.throws(()=>secondaryResolvedTransientDeliveryAttentionSql("c; DROP TABLE contacts"));
+  const activated={
+    ...env,WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
+    WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
+    WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+  };
+  const db={query:async(sql,args)=>{
+    assert.ok(sql.includes(clause),"fresh AI text must check proven settled gate");
+    assert.match(sql,/c.mode='ai'/);
+    assert.match(sql,/c.whatsapp_opt_out_at IS NULL/);
+    assert.equal(args[0],9027);
+    return {rows:[{eligible:true}]};
+  }};
+  assert.equal(await isSecondaryAiReplyEligible(9027,{database:db,env:activated}),true);
+});
+
+test("new accepted secondary AI text clears only the exact stale delivery alert",()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const accepted=server.indexOf("if (!flagged && sendOutcome.sendResult.success)");
+  const next=server.indexOf("// Apply conversion-ready",accepted);
+  assert.ok(accepted>0 && next>accepted);
+  const cleanup=server.slice(accepted,next);
+  assert.match(cleanup,/resolvedReceiptRaceReason/);
+  assert.match(cleanup,/contact\.whatsapp_sender_key !== process\.env\.WHATSAPP_PRIMARY_SENDER_KEY/);
+  assert.match(cleanup,/contact\.attention_reason === resolvedReceiptRaceReason/);
+  assert.match(cleanup,/clearDeliveryAttentionIfNoFailedMessages\(\s*contact\.id, resolvedReceiptRaceReason\s*\)/);
+  const contactRepo=fs.readFileSync(path.join(__dirname,"../src/db/contactsRepo.js"),"utf8");
+  const fn=contactRepo.slice(contactRepo.indexOf("async function clearDeliveryAttentionIfNoFailedMessages("),
+    contactRepo.indexOf("async function setUnread("));
+  assert.match(fn,/\(\$2::text IS NULL OR c\.attention_reason = \$2::text\)/);
+  assert.match(fn,/\[id, expectedReason\]/);
+  assert.match(fn,/unresolvedFailedOutboundSql/);
 });
 
 test("reviewed old contacts only allow followups after operator verification",()=>{

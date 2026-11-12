@@ -2404,6 +2404,29 @@ async function processIncomingMessage(
           attentionErr
         );
       }
+      // A receipt-race rejection was blocked BEFORE Meta and has no provider
+      // message ID. Once this NEW AI reply is accepted, the existing guarded
+      // cleanup may retire its stale delivery-attention flag. Match the exact
+      // reason at UPDATE time so a concurrent clinical review, newer failure,
+      // or other staff task cannot be hidden. Failed media remains actionable.
+      const resolvedReceiptRaceReason =
+        "Delivery failed: The previous WhatsApp message is still being confirmed. Check its delivery before another send.";
+      if (contact.channel === "whatsapp" &&
+          contact.whatsapp_sender_id != null &&
+          contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY &&
+          contact.attention_reason === resolvedReceiptRaceReason) {
+        try {
+          const cleared = await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(
+            contact.id, resolvedReceiptRaceReason
+          );
+          if (cleared) contact = cleared;
+        } catch (attentionErr) {
+          console.error(
+            `Failed to reconcile resolved secondary receipt-race attention for contact ${contact.id}:`,
+            attentionErr
+          );
+        }
+      }
     }
 
     // Apply conversion-ready state only after this AI turn was not suppressed

@@ -279,6 +279,51 @@ function secondaryAutomationAttentionAllowedSql(alias = "c") {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)})`;
 }
+// A prior outbound AI text can be rejected BEFORE any Meta call because the
+// preceding accepted send is still awaiting a signed billing receipt. Once
+// that contact's gate is idle again, allow only a NEW inbound AI reply to
+// proceed. Preserve the visible delivery-attention banner for staff, and do
+// not waive clinical, booking, marketing, consent, or sender checks.
+function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
+  if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
+  return `(
+    ${alias}.mode='ai'
+    AND ${alias}.needs_attention IS TRUE
+    AND ${alias}.attention_reason =
+      'Delivery failed: The previous WhatsApp message is still being confirmed. Check its delivery before another send.'
+    AND EXISTS (
+      SELECT 1 FROM messages failed_text
+      WHERE failed_text.id=${alias}.delivery_attention_message_id
+        AND failed_text.contact_id=${alias}.id
+        AND failed_text.role='assistant'
+        AND failed_text.delivery_status='failed'
+        AND failed_text.whatsapp_message_id IS NULL
+        AND failed_text.delivery_error =
+          'The previous WhatsApp message is still being confirmed. Check its delivery before another send.'
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_billing_attempts failed_attempt
+          WHERE failed_attempt.contact_id=${alias}.id
+            AND failed_attempt.message_id=failed_text.id
+        )
+    )
+    AND EXISTS (
+      SELECT 1 FROM whatsapp_sender_billing_gates cleared_gate
+      WHERE cleared_gate.sender_id=${alias}.whatsapp_sender_id
+        AND cleared_gate.owner_contact_id=${alias}.id
+        AND cleared_gate.state='idle'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM whatsapp_sender_billing_alarms unresolved_alarm
+      WHERE unresolved_alarm.sender_id=${alias}.whatsapp_sender_id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_review_items pending_review
+      WHERE pending_review.contact_id=${alias}.id
+        AND pending_review.status='pending'
+    )
+  )`;
+}
+
 function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
@@ -293,6 +338,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
       )
     )
     OR ${verified131060InformationReviewSql(alias)}
+    OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
@@ -500,7 +546,8 @@ async function isSecondaryAutomationEligible(contactId, {
 module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
   eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
-  eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
+  eligibleSecondaryAiReplyContactIds, secondaryResolvedTransientDeliveryAttentionSql,
+  secondaryAutomationActivation,
   secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
   secondaryReplyAttentionAllowedSql, secondaryAutomationAttentionAllowedSql,
   verified131060InformationReviewSql, originalAdsOnlyCutoff,
