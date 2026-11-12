@@ -159,7 +159,9 @@ const INBOX_CONTROL_TITLES = {
   review: "A staff review or attention hold needs to be checked",
 };
 function inboxControlStatus(conversation) {
-  if (conversation?.mode === "human") return "human";
+  if (conversation?.mode === "human") {
+    return conversation?.takeover_by === "AI handoff" ? "review" : "human";
+  }
   if (conversation?.needs_attention === true) return "review";
   if (conversation?.whatsapp_is_secondary === true &&
       conversation?.whatsapp_secondary_ai_enabled === false) return "paused";
