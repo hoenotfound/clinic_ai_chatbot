@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
   eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
+  secondaryResolvedTransientDeliveryAttentionSql, isSecondaryAiReplyEligible,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
 const followups = require("../src/services/whatsappSecondaryFollowUpService");
@@ -64,6 +65,35 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
   assert.equal(queries,1);
   assert.equal(await isSecondaryAdsOnlyEligible("invalid",{database,env}),false);
   assert.equal(queries,1);
+});
+
+test("resolved pre-provider billing race permits only fresh AI replies",async()=>{
+  const clause=secondaryResolvedTransientDeliveryAttentionSql("c");
+  for(const proof of [
+    "c.delivery_attention_message_id",
+    "Delivery failed: The previous WhatsApp message is still being confirmed.",
+    "failed_text.delivery_status='failed'",
+    "failed_text.whatsapp_message_id IS NULL",
+    "whatsapp_sender_billing_attempts failed_attempt",
+    "cleared_gate.state='idle'",
+    "whatsapp_sender_billing_alarms unresolved_alarm",
+    "ai_review_items pending_review",
+  ]) assert.ok(clause.includes(proof),proof);
+  assert.throws(()=>secondaryResolvedTransientDeliveryAttentionSql("c; DROP TABLE contacts"));
+  const activated={
+    ...env,WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
+    WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
+    WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+  };
+  const db={query:async(sql,args)=>{
+    assert.ok(sql.includes(clause),"fresh AI text must check proven settled gate");
+    assert.match(sql,/c.mode='ai'/);
+    assert.match(sql,/c.whatsapp_opt_out_at IS NULL/);
+    assert.equal(args[0],9027);
+    return {rows:[{eligible:true}]};
+  }};
+  assert.equal(await isSecondaryAiReplyEligible(9027,{database:db,env:activated}),true);
 });
 
 test("reviewed old contacts only allow followups after operator verification",()=>{
