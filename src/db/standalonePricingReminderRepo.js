@@ -66,6 +66,8 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND inbound.source_at <= NOW()
   AND inbound.source_at > NOW()-INTERVAL '23 hours 45 minutes'
   AND inbound.whatsapp_message_id LIKE 'wamid.%'
+  AND NULLIF(BTRIM(inbound.content),'') IS NOT NULL
+  AND inbound.content NOT LIKE '📎 [%sent a WhatsApp message that could not be displayed]%'
   AND inbound.is_forwarded IS DISTINCT FROM TRUE
   AND (sa.sender_key <> 'neutro_secondary' OR (
     inbound.source_created_at IS NOT NULL
@@ -82,7 +84,12 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND COALESCE(inbound.content,'') !~*
      '^(谢谢|謝謝|多谢|多謝|thanks|thank you|tq|terima kasih)[[:space:].!！。🙏😊]*$'
   AND COALESCE(inbound.content,'') !~*
-     '(不要了|不需要|没兴趣|沒興趣|not interested|stop promotions|tak berminat|不要优惠|停止优惠)'
+     '(不要了|不需要|没兴趣|沒興趣|not interested|stop promotions|unsubscribe|tak berminat|不要优惠|停止优惠|停止推送|停止跟进|停止跟進)'
+  AND NOT EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_treatment_state withdrawal
+    WHERE withdrawal.sender_id=sa.id AND withdrawal.contact_id=c.id
+      AND withdrawal.status IN ('declined','deferred')
+      AND withdrawal.source_message_id<=inbound.id)
   AND (lead.is_closed IS NULL OR
        (lead.is_closed=FALSE AND COALESCE(lead.stage_type,'open')='open'
         AND COALESCE(lead.appointment_status,'none') NOT IN
@@ -133,6 +140,8 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
         AND outbound.pricing_reminder_anchor_id=inbound.id
         AND outbound.whatsapp_message_id IS NULL
         AND inbound.role='user' AND inbound.whatsapp_message_id LIKE 'wamid.%'
+        AND NULLIF(BTRIM(inbound.content),'') IS NOT NULL
+        AND inbound.content NOT LIKE '📎 [%sent a WhatsApp message that could not be displayed]%'
         AND inbound.created_at >= $4::timestamptz
         AND COALESCE(inbound.source_created_at,inbound.created_at)>NOW()-INTERVAL '23 hours 45 minutes'
         AND (SELECT newer.id FROM messages newer WHERE newer.contact_id=c.id
@@ -141,6 +150,11 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
         AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
         AND ${followUpAttentionAllowedSql("c")}
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_followup_treatment_state withdrawal
+          WHERE withdrawal.sender_id=sa.id AND withdrawal.contact_id=c.id
+            AND withdrawal.status IN ('declined','deferred')
+            AND withdrawal.source_message_id<=inbound.id)
         AND NOT ${temporaryStaffConversationSql("c","inbound")}
         AND NOT EXISTS(
           SELECT 1 FROM messages quote WHERE quote.contact_id=c.id AND quote.role='assistant'
