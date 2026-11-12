@@ -27,7 +27,7 @@ async function recordFromInbound({
   try {
     await client.query("BEGIN");
     const contact = (await client.query(
-      `SELECT id, channel, whatsapp_sender_id, whatsapp_opt_in_at, whatsapp_opt_out_at,
+      `SELECT id, channel, whatsapp_opt_in_at, whatsapp_opt_out_at,
               whatsapp_marketing_opt_out_at
          FROM contacts WHERE id=$1 FOR UPDATE`, [contactId]
     )).rows[0];
@@ -62,24 +62,25 @@ async function recordFromInbound({
              ON prompt_ctx.message_id=prompt.id
            JOIN whatsapp_sender_conversations sc
              ON sc.id=prompt_ctx.conversation_id
-             AND sc.contact_id=$1 AND sc.sender_id=$2
-             AND sc.state='bound'
+             AND sc.contact_id=$1 AND sc.state='bound'
            JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id
              AND sa.sender_key='neutro_secondary' AND sa.state='active'
+           JOIN contacts owner ON owner.id=$1
+             AND owner.whatsapp_sender_id=sc.sender_id
+             AND owner.whatsapp_number=sc.customer_wa_id
            WHERE prompt.contact_id=$1 AND prompt.role='assistant'
              AND prompt.is_automated_follow_up=TRUE
              AND prompt.whatsapp_message_id IS NOT NULL
              AND prompt.delivery_status IN ('sent','delivered','read')
-             AND prompt.content LIKE '%' || $3::text || '%'
-             AND prompt.created_at < $4::timestamptz
-             AND prompt.created_at >= $4::timestamptz-INTERVAL '7 days'
+             AND prompt.content LIKE '%' || $2::text || '%'
+             AND prompt.created_at < $3::timestamptz
+             AND prompt.created_at >= $3::timestamptz-INTERVAL '7 days'
              AND NOT EXISTS (
                SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
                WHERE imported.sender_id=sa.id AND imported.message_id=prompt.id
              )
          ) AS verified`,
-        [contactId,contact.whatsapp_sender_id,
-         SENTENCES[offeredGeneral.language],message.sent_at]
+        [contactId,SENTENCES[offeredGeneral.language],message.sent_at]
       );
       if(verified.rows?.[0]?.verified===true)generalExplicit=offeredGeneral;
     }
