@@ -47,7 +47,8 @@ change the URL to install these diagnostics.
 
 Log one line per accepted signed customer callback, or any failed callback.
 Successful status-only callbacks are not separately logged. Sampling is
-bounded to 32 entries, 64 changes per entry, and eight provider references.
+bounded to 32 entries, 64 changes per entry, 128 total inspected messages,
+128 total inspected statuses, and eight provider references.
 
 ## Interpretation
 
