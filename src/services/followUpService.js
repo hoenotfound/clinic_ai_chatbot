@@ -2143,14 +2143,6 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       };
     }
 
-    // Completely separate, default-off pricing reminder. Its failure cannot
-    // interrupt the existing follow-up sequence or consent worker.
-    const standalonePricingNextDueAt = await standalonePricingReminderService
-      .runOnce(now).catch(error => {
-        console.error("[Standalone pricing] Isolated scheduler failed:", error);
-        return null;
-      });
-
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.steps.map((step) => step.delayMinutes),
       timingModes: settings.steps.map((step) => step.timingMode),
@@ -2177,6 +2169,14 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
 
     const pricingNextDueAt = await pricingReminderService.runPricingReminders(settings, now);
     const consentNextDueAt = await whatsappConsentPromptService.runFinalConsentPrompts(settings, now);
+
+    // Pricing is lowest priority. Never spend image-upload time ahead of the
+    // existing 2h / 6h / 20h and consent workers.
+    const standalonePricingNextDueAt = await standalonePricingReminderService
+      .runOnce(now).catch(error => {
+        console.error("[Standalone pricing] Isolated scheduler failed:", error);
+        return null;
+      });
 
     const liveSettings = getActiveSettings();
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
