@@ -94,7 +94,7 @@ test("standalone sender checks keep existing stages and never enable messenger",
  const src=require("node:fs").readFileSync(require("node:path").join(__dirname,
   "../src/services/standalonePricingReminderService.js"),"utf8");
  assert.match(src,/const MAX_SENDS_PER_WAKE=2/);
- assert.match(src,/contact\?\.channel!=="whatsapp"/);
+ assert.match(src,/contact\.channel!=="whatsapp"/);
  assert.match(src,/origin:"ai_media"/);
  assert.match(src,/purpose:"marketing"/);
  assert.match(src,/await repo\.resumeDeferred/);
