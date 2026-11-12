@@ -357,6 +357,7 @@ test("Inbox distinguishes policy pause, genuine staff ownership, AI review and v
     }),
     conversation(203, "Actual Staff Contact", { mode: "human", takeover_by: "staff" }),
     conversation(204, "Review Contact", { mode: "ai", needs_attention: true, attention_reason: "AI review requested:" }),
+    conversation(205, "Pending AI Handoff", { mode: "human", takeover_by: "AI handoff", needs_attention: true }),
   ]);
   await page.goto("/inbox");
   const { inbox } = await openFilters(page);
@@ -367,11 +368,13 @@ test("Inbox distinguishes policy pause, genuine staff ownership, AI review and v
   await status.selectOption("human");
   await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toHaveCount(0);
   await status.selectOption("paused");
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toHaveCount(0);
   await status.selectOption("review");
   await expect(inbox.getByText("Review Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
   await status.selectOption("ai");
   await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toBeVisible();
