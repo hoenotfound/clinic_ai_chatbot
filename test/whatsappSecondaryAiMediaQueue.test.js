@@ -502,3 +502,25 @@ test("Before & After results stay queued after ordinary customer questions",asyn
   assert.match(statements[0],/successor\.media_kind='result'/);
   assert.match(statements[0],/job\.expires_at<=NOW\(\)/);
 });
+
+
+test("verified direct replies are allowed at night, but late media, opt-outs and staff sends remain blocked", () => {
+  for (const sql of [worker.READY_SQL, worker.STILL_VALID_SQL]) {
+    assert.match(sql, /BETWEEN 7 AND 23/);
+    assert.match(sql, /inbound\.created_at BETWEEN NOW\(\) - INTERVAL '2 hours' AND NOW\(\)/);
+    assert.match(sql, /job\.created_at <= inbound\.created_at \+ INTERVAL '5 minutes'/);
+    assert.match(sql, /whatsapp_opt_out_at IS NULL/);
+    assert.match(sql, /whatsapp_marketing_opt_out_at IS NULL/);
+    assert.match(sql, /staff|human/);
+    assert.match(sql, /NEWER_MEDIA_PLAN_SQL|successor\.sender_id=job\.sender_id/);
+  }
+});
+test("a customer acknowledgement does not cancel selected promotion art while refusal or treatment switch does", () => {
+  const sql = worker.READY_SQL;
+  assert.match(sql, /job\.media_kind='promotion'/);
+  assert.match(sql, /PROMOTION_DECLINE_SQL|no\[\[:space:\]-\]\+thanks/);
+  assert.match(sql, /NOT \(.*BTRIM\(newer\.content\)/s);
+  assert.match(sql, /不要了/);
+  assert.match(sql, /RESULT_MEDIA_SUPERSESSION_SQL|停止发送/);
+  assert.doesNotMatch(sql, /job\.media_kind<>'result' AND NOT/);
+});
