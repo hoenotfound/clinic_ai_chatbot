@@ -50,7 +50,17 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     [inbound,conversation]);
 
   const activation=new Date(Date.now()-25*3600000).toISOString();
-  const params=[senderName,phoneId,waba,new Date(),10,activation,"all_contacts",
+  // The query correctly suppresses service reminders from 00:00 to 06:59 MYT.
+  // Test the earliest permitted 07:00 instant if CI runs overnight, still
+  // inside the 8-hour backfill grace for the verified recovery menu.
+  const candidateAt=new Date();
+  const localMinute=(candidateAt.getUTCHours()*60+candidateAt.getUTCMinutes()+480)%1440;
+  if(localMinute<7*60){
+    candidateAt.setTime(candidateAt.getTime()+
+      (7*60-localMinute)*60000-candidateAt.getUTCSeconds()*1000-
+      candidateAt.getUTCMilliseconds());
+  }
+  const params=[senderName,phoneId,waba,candidateAt,10,activation,"all_contacts",
     new Date(Date.now()-7*3600000).toISOString(),activation];
   const candidates=async()=> (await db.query(worker.CANDIDATES_SQL,params)).rows;
   assert.equal((await candidates()).length,0,
