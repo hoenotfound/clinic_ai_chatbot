@@ -170,7 +170,7 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
 test("verified service snapshot is written only from the confirmed treatment",()=>{
  const source=worker.runOnce.toString();
  assert.match(source,/treatmentInterest:confirmedTreatment\|\|null/);
- assert.match(source,/const confirmedTreatment=choice.treatment/);
+ assert.match(source,/const confirmedTreatment=candidate\.recovery_no_selection\?null:choice.treatment/);
  assert.match(source,/chooseSecondaryFollowUpTreatment/);
  // A confirmed service is persisted with a new follow-up, but no text-only
  // or uncertain choice may create a fabricated treatment classification.
