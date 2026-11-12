@@ -17,6 +17,8 @@ const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
 const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery} = require("./whatsapp131060Recovery");
+const {parseConsentButton,SENTENCES}=require("../utils/neutroGeneralFollowupConsent");
+const generalCampaign=require("./neutroSecondaryGeneralMarketingSql");
 
 function block(code) {
   return {
@@ -57,16 +59,33 @@ async function sendSecondaryStaffText({
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
-  // Non-text automation is never opened generally: only the exact three
-  // recovery buttons for a post-activation Coexistence 131060 may use this
-  // sender-scoped, billed, receipt-guarded interactive dispatch.
-  const recoveryMenu = interactiveButtons !== null;
-  if (recoveryMenu && (origin !== "system_fallback" ||
-      typeof dispatchTransport === "function" || templateRequest != null ||
-      !recoveryActivation(env) ||
-      !validRecoveryTreatmentButtons(interactiveButtons) ||
-      typeof text !== "string" || !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") ||
-      text.length > 1024)) return block("secondary_131060_recovery_menu_invalid");
+  // Only two verified interactive flows are permitted: 131060 treatment
+  // recovery and a single affirmative marketing button in an existing 6h/20h
+  // service follow-up. The latter must be bound to THIS saved message ID,
+  // contain its own full explicit consent sentence, and pass all normal
+  // sender, service-window, billing and final pre-send checks.
+  const hasInteractive = interactiveButtons !== null;
+  const recoveryMenu = hasInteractive && origin === "system_fallback";
+  const rawButton = Array.isArray(interactiveButtons) && interactiveButtons.length===1
+    ? interactiveButtons[0] : null;
+  const optedButton = rawButton?parseConsentButton(rawButton.id):null;
+  const generalConsentMenu = hasInteractive && origin === "followup" &&
+    templateRequest == null && dispatchTransport == null &&
+    typeof preSendCheck === "function" && generalCampaign.enabled(env) &&
+    Number.isSafeInteger(Number(anchorMessageId)) && Number(anchorMessageId)>0 &&
+    optedButton?.promptId === Number(messageId) &&
+    rawButton?.title ===
+      ({zh:"同意接收",en:"Yes, send updates",ms:"Ya, saya setuju"})[optedButton?.language] &&
+    typeof text === "string" && text.includes(SENTENCES[optedButton?.language]) &&
+    text.length<=1024;
+  if (hasInteractive && !generalConsentMenu &&
+      (!recoveryMenu || typeof dispatchTransport === "function" ||
+       templateRequest != null || !recoveryActivation(env) ||
+       !validRecoveryTreatmentButtons(interactiveButtons) ||
+       typeof text !== "string" ||
+       !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") || text.length>1024)) {
+    return block("secondary_interactive_followup_invalid");
+  }
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
   const parity = aiTextOnly && parityRequested &&
@@ -365,7 +384,7 @@ async function sendSecondaryStaffText({
 
     }
 
-    const send = recoveryMenu
+    const send = (recoveryMenu || generalConsentMenu)
       ? await transport.sendInteractiveButtons(text.trim(), interactiveButtons)
       : typeof dispatchTransport === "function"
         ? await dispatchTransport(transport)
