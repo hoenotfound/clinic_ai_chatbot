@@ -37,7 +37,7 @@ function consentButtons(messageId,language="zh"){
  return id?[{id,title:BUTTON_TITLES[language]}]:[];
 }
 function parseConsentButton(value){
- const match=/^neutro_general_six_day_yes:([1-9]\\d{0,15}):(zh|en|ms)$/.exec(String(value||""));
+ const match=/^neutro_general_six_day_yes:([1-9]\d{0,15}):(zh|en|ms)$/.exec(String(value||""));
  if(!match)return null;
  const promptId=Number(match[1]);
  return Number.isSafeInteger(promptId)
@@ -46,7 +46,7 @@ function parseConsentButton(value){
 // WhatsApp video captions are limited in length. Preserve the video and the
 // exact opt-in sentence, trimming only the earlier explanatory caption text.
 function invitationText(base,language,{video=false}={}){
- const suffix="\\n\\n"+invitation(language);
+ const suffix="\n\n"+invitation(language);
  if(!video)return String(base||"")+suffix;
  const maximum=1024;
  if(Buffer.byteLength(String(base||"")+suffix,"utf8")<=maximum)
