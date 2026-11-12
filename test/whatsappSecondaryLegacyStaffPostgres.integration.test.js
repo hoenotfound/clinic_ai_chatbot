@@ -93,8 +93,8 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
     database:db,env,inboundMessageId:recoveryMissing
   }),false,"no old-contact AI solely from unreadable content");
   const recoveryMenu=(await db.query(
-    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at) "+
-    "VALUES($1,'assistant',$2,'wamid.recovery-menu',NOW()) RETURNING id",
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,delivery_status) "+
+    "VALUES($1,'assistant',$2,'wamid.recovery-menu',NOW(),'delivered') RETURNING id",
     [recoveryOld,"Hi～欢迎来到 Neutro Sense 😊\\n\\n想了解哪方面的护理呢？\\n可以点下面的选项～"]
   )).rows[0].id;
   await db.query(
