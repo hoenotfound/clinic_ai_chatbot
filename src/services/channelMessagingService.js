@@ -220,6 +220,25 @@ async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
   }
 }
 
+// The original video is already private in R2. A server-side copy makes a
+// disposable Meta-facing URL without uploading its bytes through Render again.
+async function withTemporaryStoredMediaUrl(contact, mediaKey, mimeType, deliver) {
+  const channel = channelOf(contact);
+  let temporary = null;
+  try {
+    temporary = await mediaStorage.copyStoredMediaToTemporary(mediaKey, mimeType, {
+      contactId: contact?.id || channel,
+    });
+    return await deliver(temporary.url);
+  } catch (err) {
+    return temporaryMediaFailure(channel, err);
+  } finally {
+    if (temporary?.key) {
+      mediaStorage.scheduleTemporaryMediaDelete(temporary.key);
+    }
+  }
+}
+
 function storedPromoImageId(imageUrl) {
   const raw = typeof imageUrl === "string" ? imageUrl.trim() : "";
   if (!raw) return null;
@@ -1016,18 +1035,38 @@ async function sendVideoByStoredKey(
       }
     );
   } else {
-    result = await trackSocialOutbound(
+    result = await metaAttachments.sendBuffer(
       channel,
-      metaAttachments.sendBuffer(
-        channel,
-        recipientFor(contact),
-        "video",
-        buffer,
-        videoMimeType,
-        videoFilename,
-        sendOptions
-      )
+      recipientFor(contact),
+      "video",
+      buffer,
+      videoMimeType,
+      videoFilename,
+      sendOptions
     );
+    // An HTTP 5xx from the reusable-attachment UPLOAD endpoint is a definite
+    // pre-send failure: the customer-facing /messages endpoint was never hit.
+    // Messenger also accepts a video URL through /messages. Use one short-lived
+    // R2 URL as a fallback, but never retry a rejected/ambiguous /messages send.
+    if (result?.uploadRejected === true &&
+        [500, 502, 503, 504].includes(result.uploadHttpStatus)) {
+      console.warn("[Messenger video] Attachment upload failed with HTTP", result.uploadHttpStatus,
+        "; trying the private URL transport once.");
+      result = await withTemporaryStoredMediaUrl(contact, videoKey, videoMimeType, async (mediaUrl) => {
+        // Recheck the service window and message ownership: uploads can take
+        // time, and a subsequent staff handoff must cancel the fallback send.
+        const retryGuard = await freeformGuard(
+          contact, options.purpose, options.inboxMediaTimings
+        );
+        if (retryGuard.blocked) return retryGuard.blocked;
+        const retryOptions = optionsForPolicy(options, retryGuard.policy);
+        const lateCancellation = await preSendCancelled(retryOptions);
+        if (lateCancellation) return lateCancellation;
+        return metaAttachments.sendUrlAttachment(
+          channel, recipientFor(contact), "video", mediaUrl, retryOptions
+        );
+      });
+    }
   }
 
   const tracked = recordAcceptedSocialOutbound(channel, result);
