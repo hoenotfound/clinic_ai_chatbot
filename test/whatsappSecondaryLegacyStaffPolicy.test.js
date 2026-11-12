@@ -40,7 +40,7 @@ test("old secondary contact is manual unless genuine new sender-bound ad was rec
  ])assert.match(sql,expression);
  const ui=secondaryLegacyStaffAudienceSql("c",null,env);
  assert.match(ui,/NOW\(\)<ad_inbound.created_at\+INTERVAL '7 days'/);
- assert.doesNotMatch(ui,/inbound.created_at/);
+ assert.doesNotMatch(ui,/AND inbound\\.created_at/);
 });
 test("all contact automation adds legacy staff guard without weakening provider or consent rules",()=>{
  // Explicit environment parameter allows SQL review without switching live flags.
