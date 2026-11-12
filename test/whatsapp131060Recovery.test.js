@@ -92,7 +92,9 @@ test("the replay-proof eligibility check is limited to persisted sender and mess
     assert.match(sql,/job.incoming_payload->>'businessPhoneNumberId'=\$4/);
     assert.match(sql,/job.incoming_payload->>'businessAccountId'=\$5/);
     assert.match(sql,/AND inbound.source_created_at >= \$6::timestamptz/);
-    assert.match(sql,/NOT EXISTS \(SELECT 1 FROM messages older/);
+    assert.match(sql,/outbound_message_evidence prior_evidence/);
+    assert.match(sql,/prior_menu\.created_at>=inbound\.created_at-INTERVAL '7 days'/);
+    assert.doesNotMatch(sql,/NOT EXISTS \(SELECT 1 FROM messages older/);
     assert.match(sql,/NOT EXISTS \(SELECT 1 FROM messages newer/);
     assert.match(sql,/c.whatsapp_opt_out_at IS NULL/);
     assert.match(sql,/c.mode='ai'/);
