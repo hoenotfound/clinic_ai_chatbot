@@ -1,6 +1,6 @@
 # Neutro Sense secondary WhatsApp: six-day follow-up redesign
 
-**Status:** Proposed; no marketing template submissions or customer sends have been authorized from this change. Do not enable a new marketing sequence until templates are approved and an independent pre-send/consent recheck is tested.
+**Status:** Implementation prepared under PR #596. All twelve secondary-account MARKETING templates are approved. A separately approved billing and activation switch remains required; no customer sends or retrospective backfills are part of the implementation.
 
 ## Objective
 
@@ -12,12 +12,12 @@ Increase eligible follow-up coverage for verified Meta ad leads and Meta error 1
 2. **2h and 6h:** Existing customer-service reminders, only in a live WhatsApp 24-hour window, respecting consent/opt-out/staff takeover/bookings.
 3. **20h:** Existing final service reminder, with an *optional* written invitation for genuine fresh ad enquiries or verified 131060 recoveries whose lead has no marketing permission. It explicitly describes up to six days of TCM information and related offers. Do not send another extra message merely to ask consent.
 4. **Consent:** The customer must reply with the complete affirmative sentence in Chinese, English or Malay after a delivered, sender-bound invitation. The verified inbound is stored as a new generic marketing consent event tied to the current contact/lead/provider WAMID. Pre-filled ads, generic 'yes', and silent contacts do not qualify.
-5. **48h, 66h, Day4 and Day6:** After additional reviewed marketing scheduler support, offer at most one approved, static MARKETING template per stage, only if the exact generic consent remains active and the customer's recent verified ad/131060 session is still eligible. Use the original verified event's age, no backfills, final sender/consent/template/billing checks, no duplicate or ambiguous sends.
+5. **48h, 66h, Day4 and Day6:** The existing billable marketing sender now selects the pinned approved generic template only with separate, signed generic consent linked to the secondary contact and lead. Recheck consent, sender, status, signature, billing, staff ownership and due window before each provider call. One-shot attempt ledger is shared with treatment-specific marketing to prevent duplicate slots. No backfills.
 6. **Unconsented/silent customers:** No paid marketing templates after the WhatsApp service window. Keep them in the staff Inbox for manual assessment without any automatic message.
 
-## Pending approval: generic static marketing templates
+## Approved generic static marketing templates
 
-Each stage is a MARKETING template with a completely static body, no variables, buttons or media. Per the operator's 12 Nov edit, the marketing bodies contain no standalone unsubscribe sentence; normal opt-out handling remains available. The language variants must be approved on the **secondary number's own account** before scheduling. No template is a Utility message.
+Each stage is an **APPROVED MARKETING** template with a completely static body, no variables, buttons or media. Per the operator's 12 Nov edit, the marketing bodies contain no standalone unsubscribe sentence; normal opt-out handling remains available. The language variants belong to the **secondary number's own account**. No template is a Utility message.
 
 | Stage | Template | Chinese (zh_CN) | English (en_US) | Malay (ms) |
 |---|---|---|---|---|
@@ -28,12 +28,12 @@ Each stage is a MARKETING template with a completely static body, no variables, 
 
 ## Required go-live checks
 
-- Template approval in zh_CN/en_US/ms on the *secondary* account.
-- An independent feature switch and operator approval of paid marketing volume.
-- A PostgreSQL test covering signed consent, ad/referral source, delivered recovery menu, all four slots, opt-outs, booking, staff takeover, language, billing and template signature.
+- Completed: twelve static templates approved in zh_CN/en_US/ms on the secondary account; pinned IDs and body signature are checked before every send.
+- Independent feature switch and operator approval of paid marketing volume: `WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED`, `WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED`, and `WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT`. All must be valid for any generic send.
+- PostgreSQL tests compile generic candidates, pre-send rechecks, due-time hint and signed consent policy; sender tests exercise all 12 pinned variants, delivery ambiguity, revoked authorization and body mismatch.
 - Duplicate-suppression across generic and treatment-specific attempts for the same contact/session.
-- A reviewed, quiet-hours-aware scheduler with a durable one-shot send ledger and conservative unknown state.
-- No retroactive customer messaging or promotional blasts.
+- Uses the existing reviewed, quiet-hours-aware marketing scheduler, durable one-shot send ledger and conservative unknown state.
+- Cutoff at activation timestamp excludes older customer enquiries and consent. No retroactive customer messaging or promotional blasts.
 
 ## Meta template submission record (12 November 2026)
 
