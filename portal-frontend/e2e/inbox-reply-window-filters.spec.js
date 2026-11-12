@@ -237,7 +237,7 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   const channel = inbox.getByRole("combobox", { name: "Channel" });
   const owner = inbox.getByRole("combobox", { name: "Lead owner" });
   const treatment = inbox.getByRole("combobox", { name: "Treatment" });
-  const handled = inbox.getByRole("combobox", { name: "AI status" });
+  const handled = inbox.getByRole("combobox", { name: "AI handling" });
 
   for (const control of [status, channel, owner, treatment, handled, reply]) {
     await expect(control).toBeVisible();
@@ -361,7 +361,7 @@ test("Inbox distinguishes policy pause, genuine staff ownership, AI review and v
   ]);
   await page.goto("/inbox");
   const { inbox } = await openFilters(page);
-  const status = inbox.getByRole("combobox", { name: "AI status" });
+  const status = inbox.getByRole("combobox", { name: "AI handling" });
   await expect(status.locator("option[value='paused']")).toHaveText("AI paused");
   await expect(status.locator("option[value='review']")).toHaveText("Needs review");
   await expect(inbox.getByText("Ad source unknown", { exact: true })).toBeVisible();
