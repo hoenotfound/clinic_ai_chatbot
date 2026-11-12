@@ -115,3 +115,5 @@ full CI run before merging, rather than relying on earlier successful tests.
 The new paid campaign must remain off until the combined deployment has passed
 its startup checks. Activate with a new timestamp so no historical consent or
 old ad conversation enters the new campaign.
+
+Combined release gate (12 November): PR #600 was merged into main before PR #599. Run the full checks again on PR #599 against the updated main before deploying or activating paid six-day templates.
