@@ -587,8 +587,10 @@ async function runOnce({
     const choice=chooseSecondaryFollowUpTreatment({
       candidate,clinicConfig,adFollowUpPolicy,latestDecision,
     });
-    const {generalOnly}=choice;
-    const confirmedTreatment=choice.treatment;
+    // Without readable patient intent, even an old CRM/ad treatment is
+    // not evidence of what this 131060 customer wants.
+    const generalOnly=candidate.recovery_no_selection?true:choice.generalOnly;
+    const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
     // The 20h AI invitation must not reuse a stale CRM/ad treatment either.
     const effectivePolicy=confirmedTreatment
       ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
