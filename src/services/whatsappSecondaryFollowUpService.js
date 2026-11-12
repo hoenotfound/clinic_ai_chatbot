@@ -811,12 +811,13 @@ async function runOnce({
         outboundText=personalized.message;
         aiMode=personalized.mode;
       }
-      // Offer a genuine, optional way to request Day2-Day6 marketing
-      // follow-ups while the customer-service window is still open. This is
+      // Offer optional marketing consent in the 6h text-only reminder (no
+      // video caption changes), then again at 20h if the customer has not
+      // opted in. Both invitations use the existing service message slot. This is
       // ONLY an invitation: no CTA, ad click or 131060 error grants consent.
       // A customer's later full affirmative WhatsApp reply must be verified
       // against this actually delivered sender-owned invitation.
-      if(slot===20 && generalSixDay.enabled(env) &&
+      if((slot===20 || (slot===6 && !key)) && generalSixDay.enabled(env) &&
          new Date(candidate.inbound_at).getTime()>=
            new Date(generalSixDay.activation(env)).getTime() &&
          candidate.lead_marketing_consent!=="opted_in" &&
