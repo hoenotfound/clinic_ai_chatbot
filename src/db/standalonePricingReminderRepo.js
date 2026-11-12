@@ -23,6 +23,15 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
        inbound.id AS inbound_id,inbound.created_at AS inbound_at,
        inbound.source_at,lead.treatment_interest,
        NULL::text AS ad_name,
+       (SELECT MAX(busy.created_at) FROM messages busy
+        WHERE busy.contact_id=c.id AND busy.role='assistant'
+          AND busy.created_at>=inbound.created_at
+          AND busy.whatsapp_message_id IS NOT NULL
+          AND (busy.delivery_status IS NULL OR busy.delivery_status IN
+             ('pending','sent','delivered','read'))
+          AND (busy.is_automated_follow_up=TRUE
+            OR busy.sent_by_username='Consent request automation')
+       ) AS last_automation_at,
        (SELECT COALESCE(jsonb_agg(recent.content ORDER BY recent.created_at DESC,recent.id DESC),'[]'::jsonb)
         FROM (SELECT u.id,u.content,u.created_at FROM messages u
               WHERE u.contact_id=c.id AND u.role='user'
