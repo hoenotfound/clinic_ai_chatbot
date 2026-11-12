@@ -196,6 +196,23 @@ test("validated menu removes the first unreadable placeholder for buttons, typin
     history[0],{role:"user",content:"staff-visible followup"}],verified).length,2);
 });
 
+test("returning customer prompts exclude only the exact signed 131060 placeholder",()=>{
+ const oldCustomerTurn={role:"user",content:"Which services do you provide?"};
+ const oldStaff={role:"assistant",content:"We provide TCM care."};
+ const unavailableTurn={role:"user",content:"📎 [Customer sent a WhatsApp message that could not be displayed]"};
+ Object.defineProperty(unavailableTurn,"contextMessageId",{value:55,enumerable:false});
+ const menu={role:"assistant",content:build131060RecoveryReply(unavailable,services)};
+ const selected={role:"user",content:"9D 逆龄抗衰"};
+ const history=[oldCustomerTurn,oldStaff,unavailableTurn,menu,selected];
+ assert.deepEqual(readableHistoryForRecoverySelection(history,{
+   unavailable_message_id:55,recovery_message_id:56,
+ }),[oldCustomerTurn,oldStaff,menu,selected]);
+ assert.deepEqual(readableHistoryForRecoverySelection(history,{
+   unavailable_message_id:999,recovery_message_id:56,
+ }),history,"an unrelated proof cannot hide another customer message");
+ assert.equal(JSON.stringify(unavailableTurn).includes("contextMessageId"),false);
+});
+
 test("database proof requires a first Meta 131060 error and an accepted same-inbound menu",async () => {
   let sqlCheckCount=0;
   const database = {async query(sql,values) {
@@ -211,7 +228,9 @@ test("database proof requires a first Meta 131060 error and an accepted same-inb
     assert.match(sql,/accepted_outbound\.accepted=TRUE/);
     assert.match(sql,/recovery_ctx\.conversation_id=sc\.id/);
     assert.match(sql,/current_ctx\.conversation_id=sc\.id/);
-    assert.match(sql,/NOT EXISTS \(\s*SELECT 1 FROM messages before_first/);
+    assert.doesNotMatch(sql,/SELECT 1 FROM messages before_first/);
+    assert.match(sql,/initial\.created_at>=current_inbound\.created_at-INTERVAL '7 days'/);
+    assert.match(sql,/recovery\.delivery_status IN/);
     return {rows:[{unavailable_message_id:11,recovery_message_id:12}]};
   }};
   assert.deepEqual(await getVerifiedRecoveryHistoryProof({
