@@ -369,6 +369,10 @@ const CANDIDATES_SQL=`
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user'
      AND m.whatsapp_message_id IS NOT NULL
+     -- Every eligible free-form follow-up already requires a live 24h
+     -- inbound window. Bound the recovery-priority check to that window
+     -- instead of scanning a patient's entire historical timeline.
+     AND m.created_at > $4::timestamptz - INTERVAL '24 hours'
      AND NOT EXISTS(
        SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
        WHERE h.message_id=m.id AND h.sender_id=sa.id
