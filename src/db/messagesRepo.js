@@ -6,6 +6,7 @@ const {
   lockWhatsappMessageId,
 } = require("./conversationLock");
 const mediaStorage = require("../services/mediaStorageService");
+const { sameManuallyUploadedPromotionCaption } = require("../utils/promotionManualMediaIdentity");
 const realtimeEvents = require("../utils/realtimeEvents");
 
 const MAX_PORTAL_PAGE_SIZE = 100;
@@ -448,7 +449,8 @@ async function wasMediaRecentlySentWithExecutor(
   executor,
   contactId,
   imageUrl,
-  withinHours = 168
+  withinHours = 168,
+  expectedCaption = null
 ) {
   const hours = Number(withinHours);
   if (
@@ -499,19 +501,44 @@ async function wasMediaRecentlySentWithExecutor(
          LIMIT 1`,
         [contactId, imageUrl, hours]
       );
-  return result.rowCount > 0;
+  if (result.rowCount > 0) return true;
+  // Staff may upload the actual promo JPG manually. In that case the
+  // provider-accepted image has an R2 key but no configured media_url.
+  // Query only recent staff-uploaded images with captions; avoid downloading
+  // the image, scanning unrelated contacts, or treating any photo as a promo.
+  // This is exclusively a duplicate check, never authorization to send.
+  if (typeof expectedCaption !== "string" || expectedCaption.length < 55) return false;
+  const manual = await executor.query(
+    `SELECT content FROM messages
+     WHERE contact_id = $1
+       AND role = 'assistant'
+       AND sent_by_username IS NOT NULL
+       AND media_key IS NOT NULL
+       AND media_mime_type LIKE 'image/%'
+       AND whatsapp_message_id IS NOT NULL
+       AND created_at >= NOW() - ($2::integer * INTERVAL '1 hour')
+       AND (delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown', 'cancelled'))
+     ORDER BY created_at DESC, id DESC
+     LIMIT 24`,
+    [contactId, hours]
+  );
+  return (manual.rows || []).some(row =>
+    sameManuallyUploadedPromotionCaption(expectedCaption, row.content));
 }
 
 async function wasMediaRecentlySent(
   contactId,
   imageUrl,
-  withinHours = 168
+  withinHours = 168,
+  expectedCaption = null
 ) {
   return wasMediaRecentlySentWithExecutor(
     pool,
     contactId,
     imageUrl,
-    withinHours
+    withinHours,
+    expectedCaption
   );
 }
 
