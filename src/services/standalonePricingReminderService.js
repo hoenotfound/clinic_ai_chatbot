@@ -29,7 +29,8 @@ function settings(env=process.env,config=clinicConfig){
   if(env[FLAG]!=="true" ||
       !/^neutro\s+sense\b/i.test(String(config.businessName||config.clinicName||"")) ||
       !Number.isFinite(Date.parse(env[ACTIVATION])) ||
-      config.automatedFollowUp?.enabled!==true)return null;
+      config.automatedFollowUp?.enabled!==true ||
+      config.automatedFollowUp?.pricingReminder?.enabled===true)return null;
   const senderKeys=[];
   if(env.NEUTRO_STANDALONE_PRICING_PRIMARY_ENABLED==="true")senderKeys.push(PRIMARY);
   if(env.NEUTRO_STANDALONE_PRICING_SECONDARY_ENABLED==="true")senderKeys.push(SECONDARY);
@@ -52,6 +53,11 @@ function dueAt(candidate){
     local.setUTCHours(0,0,0,0);
     due=local.getTime()-40*60000-8*3600000;
   }
+  // Existing service and opt-in messages always get right of way.
+  // Give the customer at least 45 minutes before another automatic offer.
+  const last=new Date(candidate.last_automation_at).getTime();
+  if(candidate.last_automation_at && Number.isFinite(last))
+    due=Math.max(due,last+45*60000);
   return new Date(due);
 }
 function beforeEnd(candidate,now=new Date()){
