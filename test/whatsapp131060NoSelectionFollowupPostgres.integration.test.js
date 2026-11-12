@@ -139,6 +139,91 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   assert.equal((await recheck()).rows[0].allowed,false,
     "a customer reply cancels the old no-selection reminder");
   await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[claimed]);
+
+  // All three stages must remain due against the ORIGINAL delivered recovery
+  // menu, even when staff ask an ordinary question just before the worker runs.
+  // Prior stages are explicitly accepted for later-stage fixtures.
+  await db.query(
+    "INSERT INTO whatsapp_sender_followup_rules(sender_id,slot_hours,enabled,message_text) "+
+    "VALUES($1,6,TRUE,'6h'),($1,20,TRUE,'20h')",[sender]);
+  for(const slot of [2,6,20]){
+    const hoursAgo=slot+1;
+    const customerWa="60122201"+String(600+slot);
+    const c=(await db.query(
+      "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
+      "VALUES('whatsapp',$1,$2,NOW()-INTERVAL '2 years') RETURNING id",
+      [customerWa,sender])).rows[0].id;
+    const sc=(await db.query(
+      "INSERT INTO whatsapp_sender_conversations(sender_id,contact_id,customer_wa_id,state) "+
+      "VALUES($1,$2,$3,'bound') RETURNING id",
+      [sender,c,customerWa])).rows[0].id;
+    const anchor=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+      "VALUES($1,'user','📎 [Customer sent a WhatsApp message that could not be displayed]',"+
+      " $2,NOW()-$3::int*INTERVAL '1 hour',NOW()-$3::int*INTERVAL '1 hour') RETURNING id",
+      [c,"wamid.recovery-timeline-"+slot,hoursAgo])).rows[0].id;
+    const verifiedMenu=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,delivery_status) "+
+      "VALUES($1,'assistant',$2,$3,NOW()-$4::int*INTERVAL '1 hour'+INTERVAL '2 minutes','delivered') RETURNING id",
+      [c,"Hi～欢迎来到 Neutro Sense 😊\n可以点下面的选项",
+        "wamid.recovery-timeline-menu-"+slot,hoursAgo])).rows[0].id;
+    const human=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,sent_by_username,delivery_status) "+
+      "VALUES($1,'assistant','请问您想了解哪方面的护理呢？',$2,NOW()-INTERVAL '15 minutes',"+
+      " 'WhatsApp Business App','delivered') RETURNING id",
+      [c,"wamid.recovery-timeline-staff-"+slot])).rows[0].id;
+    for(const id of [anchor,verifiedMenu,human]){
+      await db.query(
+        "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+        [id,sc]);
+    }
+    await db.query(
+      "INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) "+
+      "VALUES($1,$2,'whatsapp','system_fallback',TRUE,$3,NOW()-$4::int*INTERVAL '1 hour'+INTERVAL '2 minutes')",
+      [verifiedMenu,c,"wamid.recovery-timeline-menu-"+slot,hoursAgo]);
+    for(const previousSlot of [2,6].filter(p=>p<slot)){
+      await db.query(
+        "INSERT INTO whatsapp_sender_followup_attempts "+
+        "(sender_id,contact_id,anchor_message_id,slot_hours,status,completed_at) "+
+        "VALUES($1,$2,$3,$4,'accepted',NOW()-$5::int*INTERVAL '1 hour'"+
+        "+($4::int*60+5)*INTERVAL '1 minute')",
+        [sender,c,anchor,previousSlot,hoursAgo]);
+    }
+    const live=(await candidates()).filter(item=>Number(item.contact_id)===Number(c));
+    assert.equal(live.length,1,"staff question must not delay verified "+slot+"h recovery");
+    assert.equal(Number(live[0].slot_hours),slot);
+    assert.equal(live[0].recovery_no_selection,true);
+    assert.equal(live[0].staff_question,true);
+    const reservation=(await db.query(
+      "INSERT INTO whatsapp_sender_followup_attempts(sender_id,contact_id,anchor_message_id,slot_hours) "+
+      "VALUES($1,$2,$3,$4) RETURNING id",[sender,c,anchor,slot])).rows[0].id;
+    const check=async()=> (await db.query(worker.RECHECK_SQL,[
+      c,anchor,slot,senderName,phoneId,waba,live[0].rule_version,
+      activation,"all_contacts",new Date(Date.now()-7*3600000).toISOString(),
+      activation])).rows[0].allowed;
+    assert.equal(await check(),true,"provider recheck permits silent "+slot+"h recovery");
+    await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[verifiedMenu]);
+    assert.equal(await check(),false,"failed menu must block "+slot+"h send");
+    await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[verifiedMenu]);
+    await db.query("UPDATE contacts SET mode='staff' WHERE id=$1",[c]);
+    assert.equal(await check(),false,"staff takeover must block "+slot+"h send");
+    await db.query("UPDATE contacts SET mode='ai' WHERE id=$1",[c]);
+    await db.query("UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[c]);
+    assert.equal(await check(),false,"opt-out must block "+slot+"h send");
+    await db.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=$1",[c]);
+    assert.equal(await check(),true);
+    if(slot===20){
+      const lead=(await db.query(
+        "INSERT INTO leads(contact_id,created_by) VALUES($1,'Automation') RETURNING id",
+        [c])).rows[0].id;
+      await db.query("UPDATE leads SET appointment_status='booked' WHERE id=$1",[lead]);
+      assert.equal(await check(),false,"confirmed booking must stop 20h recovery");
+      await db.query("UPDATE leads SET appointment_status='none' WHERE id=$1",[lead]);
+      assert.equal(await check(),true);
+    }
+    await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[reservation]);
+  }
+
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
