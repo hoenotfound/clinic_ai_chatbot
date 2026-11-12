@@ -828,6 +828,7 @@ ${senderAwareInboxReadsEnabled() ? `
       ${senderAwareInboxReadsEnabled() ? `
       CASE
         WHEN sa.sender_key='neutro_secondary'
+          AND c.updated_at >= NOW()-INTERVAL '14 days'
           AND EXISTS (
             SELECT 1 FROM messages unsupported
             WHERE unsupported.contact_id=c.id
