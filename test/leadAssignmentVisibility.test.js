@@ -65,7 +65,7 @@ test("Inbox keeps AI handling separate from lead assignment with a clear filter 
   assert.match(inbox, /assignment: "all"/);
   assert.match(inbox, /label="Lead owner"/);
   assert.match(inbox, /label="Channel"/);
-  assert.match(inbox, /label="AI status"/);
+  assert.match(inbox, /label="AI handling"/);
   assert.match(inbox, /\["all", "Any"\]/);
   assert.match(inbox, /matchesLeadAssignment/);
   assert.match(inbox, /lead_owner_display_name/);
