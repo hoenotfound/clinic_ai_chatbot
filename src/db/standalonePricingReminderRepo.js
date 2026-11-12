@@ -133,7 +133,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
       AND quote.pricing_reminder_anchor_id IS NULL
       AND quote.whatsapp_message_id IS NOT NULL
       AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
-      AND COALESCE(quote.content,'') ~* 'RM[[:space:]]*[0-9]')
+      AND COALESCE(quote.content,'') ~* '(RM[[:space:]]*[0-9]|(price|pricing|cost|promo|package|harga|价格|價錢|价钱|优惠|套餐|配套).{0,80}[0-9]{2,4}|[0-9]{2,4}.{0,80}(price|cost|harga|价格|價錢|价钱))')
   AND (
     NOT EXISTS(SELECT 1 FROM messages prior
                WHERE prior.pricing_reminder_anchor_id=inbound.id)
@@ -220,7 +220,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
             AND quote.created_at>=inbound.created_at-INTERVAL '24 hours'
             AND quote.whatsapp_message_id IS NOT NULL
             AND (quote.delivery_status IS NULL OR quote.delivery_status IN ('pending','sent','delivered','read'))
-            AND quote.content ~* 'RM[[:space:]]*[0-9]')
+            AND quote.content ~* '(RM[[:space:]]*[0-9]|(price|pricing|cost|promo|package|harga|价格|價錢|价钱|优惠|套餐|配套).{0,80}[0-9]{2,4}|[0-9]{2,4}.{0,80}(price|cost|harga|价格|價錢|价钱))')
         AND NOT EXISTS (
           SELECT 1 FROM messages media
           WHERE media.contact_id=c.id AND media.role='assistant'
