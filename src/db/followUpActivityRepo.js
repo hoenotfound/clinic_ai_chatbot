@@ -84,7 +84,11 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'standalone_pricing:' || d.id::text, d.created_at, d.contact_id, c.channel,
     'pricing', 4,
     CASE
-      WHEN d.reason LIKE 'standalone:review:%' THEN 'attention'
+      WHEN d.reason LIKE 'standalone:review:%'
+        OR d.reason LIKE 'standalone:staff_review:%'
+        OR d.reason LIKE 'standalone:preflight_exhausted:%'
+        OR d.reason='standalone:provider_accepted_local_receipt_unconfirmed'
+        THEN 'attention'
       WHEN d.reason LIKE 'standalone:deferred:%' THEN 'pending'
       ELSE 'skipped'
     END,
