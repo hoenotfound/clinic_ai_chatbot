@@ -72,7 +72,13 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
    return {query:(...args)=>c.query(...args),release:()=>c.end()};
   }};
   await runMigrations(migrations,{quiet:true});
-  await db.query("PREPARE generic_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz,timestamptz) AS "+general.CANDIDATES_SQL);
+  try{
+   await db.query("PREPARE generic_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz,timestamptz) AS "+general.CANDIDATES_SQL);
+  }catch(err){
+   const pos=Number(err.position)||0;
+   console.error("Generic SQL compile failure at",pos,JSON.stringify(general.CANDIDATES_SQL.slice(Math.max(0,pos-300),pos+250)));
+   throw err;
+  }
   await db.query("PREPARE generic_recheck(text,text,text,timestamptz,integer,timestamptz,text,timestamptz,timestamptz) AS "+general.RECHECK_SQL);
   await db.query("PREPARE generic_due(text,text,text,timestamptz,timestamptz,text,timestamptz,timestamptz) AS "+general.POTENTIAL_DUE_SQL);
   await db.query("PREPARE generic_consent(integer,integer,timestamptz) AS "+secondaryPolicy.SECONDARY_GENERIC_MARKETING_CONSENT_SQL);
