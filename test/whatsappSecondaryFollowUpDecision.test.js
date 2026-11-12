@@ -101,13 +101,24 @@ test("record only from verified secondary sender and no raw history, consent or 
  assert.equal((await repo.recordFromInbound({contactId:8943,messageId:17192,
    senderKey:"neutro_secondary",text:"你们在哪？",clinicConfig:config},
    {database:db})).recorded,false);
- assert.equal(calls.length,1);
+ assert.equal(calls.length,2,"persisted verified choice triggers separate guarded CRM reconciliation");
+ assert.match(calls[1].sql,/UPDATE leads l SET treatment_interest/);
+ assert.deepEqual(calls[1].args,[8943,17188,"neutro_secondary"]);
  assert.match(repo.RECORD_SQL,/m.whatsapp_message_id IS NOT NULL/);
  assert.match(repo.RECORD_SQL,/m.source_created_at IS NOT NULL/);
  assert.match(repo.RECORD_SQL,/sc.state='bound'/);
  assert.match(repo.RECORD_SQL,/historical.sender_id=sa.id/);
  assert.match(repo.RECORD_SQL,/source_message_id <\s*EXCLUDED.source_message_id/);
  assert.doesNotMatch(repo.RECORD_SQL,/UPDATE leads|marketing_consent/i);
+ assert.match(repo.RECONCILE_CRM_SQL,/state.source_message_id=\$2/);
+ assert.match(repo.RECONCILE_CRM_SQL,/state.status='selected'/);
+ assert.match(repo.RECONCILE_CRM_SQL,/msg.source_created_at IS NOT NULL/);
+ assert.match(repo.RECONCILE_CRM_SQL,/imported.sender_id=sa.id/);
+ assert.match(repo.RECONCILE_CRM_SQL,/l.created_by='Automation'/);
+ assert.match(repo.RECONCILE_CRM_SQL,/l.owner_username IS NULL/);
+ assert.match(repo.RECONCILE_CRM_SQL,/l.source='meta_ads'/);
+ assert.match(repo.RECONCILE_CRM_SQL,/l.is_closed IS DISTINCT FROM TRUE/);
+ assert.doesNotMatch(repo.RECONCILE_CRM_SQL,/SET[^;]*marketing_consent=/);
 });
 test("SQL refuses stopped contacts at discovery and final provider check",()=>{
  const service=fs.readFileSync(path.join(__dirname,
@@ -138,6 +149,40 @@ test("SQL refuses stopped contacts at discovery and final provider check",()=>{
   "../src/db/migrations/118_whatsapp_secondary_followup_treatment_state.sql"),"utf8");
  assert.match(migration,/PRIMARY KEY \(sender_id, contact_id\)/);
  assert.doesNotMatch(migration,/INSERT INTO whatsapp_sender_followup_treatment_state/i);
+});
+
+test("nonselected and stale secondary messages never synchronize CRM",async()=>{
+ const calls=[];
+ const database={query:async(sql,args)=>{
+   calls.push({sql,args}); return{rowCount:1,rows:[{}]};
+ }};
+ const result=await repo.recordFromInbound({
+   contactId:8997,messageId:18236,senderKey:"neutro_secondary",
+   text:"不要了",clinicConfig:config,
+ },{database});
+ assert.equal(result.recorded,true);
+ assert.equal(result.crmReconciled,false);
+ assert.equal(calls.length,1,"withdrawal remains blocked, never writes treatment to CRM");
+ const noChoice=await repo.recordFromInbound({
+   contactId:8997,messageId:18237,senderKey:"neutro_secondary",
+   text:"请问在哪里？",clinicConfig:config,
+ },{database});
+ assert.equal(noChoice.recorded,false);
+ assert.equal(calls.length,1);
+});
+
+test("marketing candidate uses verified 9D choice but still requires independent 9D consent",()=>{
+ const m=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+ for(const sql of [m.CANDIDATES_SQL,m.RECHECK_SQL,
+   m.EXTENDED_CANDIDATES_SQL,m.EXTENDED_RECHECK_SQL]){
+   assert.match(sql,/verified_choice.sender_id=sa.id/);
+   assert.match(sql,/verified_choice.source_message_id<=inbound.id/);
+   assert.match(sql,/verified_choice.status='selected'/);
+   assert.match(sql,/THEN verified_choice.treatment_name/);
+   assert.match(sql,/LOWER\(BTRIM\(consent.consent_service\)\)=LOWER\(BTRIM\(lead.treatment_interest\)\)/);
+   assert.match(sql,/consent.consented_at>=c.whatsapp_opt_in_at/);
+   assert.match(sql,/decision_hold.status IN\('declined','deferred','ambiguous'\)/);
+ }
 });
 
 test("rejecting a price quote is not necessarily rejecting a treatment",()=>{
