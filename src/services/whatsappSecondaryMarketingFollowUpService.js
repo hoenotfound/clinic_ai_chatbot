@@ -583,7 +583,7 @@ async function runOnce({
   const isGeneral=candidate.general_campaign===true;
   const approvedGeneral=isGeneral?pinnedGeneralTemplate(slot,candidate.language_code):null;
   if(!SLOTS.has(slot) ||
-     (EXTENDED_SLOTS.has(slot) && !extendedEnabled(env)) ||
+     (EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env)) ||
      (isGeneral && (!generalSql.enabled(env) || !approvedGeneral ||
        approvedGeneral.name!==candidate.template_name ||
        !Number.isSafeInteger(Number(candidate.consent_id)) ||
@@ -604,7 +604,7 @@ async function runOnce({
    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   const current=async()=>{
-   if(EXTENDED_SLOTS.has(slot) && !extendedEnabled(env))return false;
+   if(EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env))return false;
    if(isGeneral && !generalSql.enabled(env))return false;
    const query=isGeneral?generalSql.RECHECK_SQL:
      EXTENDED_SLOTS.has(slot)?EXTENDED_RECHECK_SQL:RECHECK_SQL;
