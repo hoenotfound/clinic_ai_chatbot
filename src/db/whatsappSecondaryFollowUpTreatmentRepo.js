@@ -77,6 +77,12 @@ const RECONCILE_CRM_SQL=`
  WHERE l.id=latest.id AND l.contact_id=chosen.contact_id
    AND l.created_by='Automation' AND l.source='meta_ads'
    AND l.owner_username IS NULL AND l.is_closed IS DISTINCT FROM TRUE
+   AND NOT EXISTS (
+     SELECT 1 FROM lead_activities human_activity
+     WHERE human_activity.lead_id=l.id
+       AND COALESCE(NULLIF(BTRIM(human_activity.actor),''),'unknown')
+         NOT IN('Automation','AI','System')
+   )
    AND COALESCE(l.appointment_status,'none')
      NOT IN('set','visited','confirmed','booked','completed')
    AND LOWER(BTRIM(COALESCE(l.treatment_interest,'')))
