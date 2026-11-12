@@ -11,6 +11,7 @@ const clinicImage=require("./whatsappSecondaryClinicImage");
 const approval=require("./whatsappSecondaryClinicMediaAuthorization");
 const {getActivePromotions}=require("../utils/activePromotion");
 const {evaluatePricingReminder}=require("../utils/pricingReminderSelection");
+const {imageReview}=require("../utils/standalonePricingManualMedia");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {inferConfiguredServiceFromText}=require("../utils/serviceInterest");
 const {hasClinicalMediaRisk}=require("../utils/aiReviewPolicy");
@@ -120,6 +121,18 @@ async function reportUncertain(candidate,id){
     "Scheduled pricing image delivery is unconfirmed. Check WhatsApp before resending.",id)
       .catch(()=>{});
 }
+// Alerts are created once per contact/window/reason, not every scheduler wake.
+// Preserve higher-priority staff/clinical Inbox alerts through contactsRepo.
+async function staffReview(candidate,reason){
+  const inserted=await repo.recordDecision(candidate,"review:"+reason);
+  if(inserted)await contactsRepo.setDeliveryAttention(candidate.contact_id,
+    "Pricing reminder needs staff review: a manual image or uncertain delivery may already contain the price. Check this chat before sending any graphic.").catch(error=>
+      console.warn("[Standalone pricing] Could not surface Inbox review:",error?.message));
+}
+async function classifyStaffImages(candidate,offers){
+  const images=await repo.listRecentStaffImages(candidate);
+  return imageReview(offers,images,{inboundAt:candidate.inbound_at});
+}
 async function safeContact(candidate){
   const contact=await contactsRepo.getContactById(candidate.contact_id);
   if(!contact || contact.channel!=="whatsapp" ||
@@ -147,6 +160,14 @@ async function dispatch(candidate,offer,options,row,allOffers){
     const still=await repo.stillEligible(candidate,row.id,options,offer);
     if(!still)return false;
     const selected=select(candidate,options);
+    // Staff may have just sent the graphic from the WhatsApp Business App,
+    // using a different R2 key. Recheck immediately before the Meta call.
+    const manual=await classifyStaffImages(candidate,allOffers);
+    if(manual.action!=="clear"){
+      if(manual.action==="review")await staffReview(candidate,manual.reason);
+      else await repo.recordDecision(candidate,"skipped:"+manual.reason);
+      return false;
+    }
     return selected.offers.length===allOffers.length &&
       selected.offers.some(item=>
         item.packageName===offer.packageName &&
@@ -284,7 +305,17 @@ async function runOnce(now=new Date()){
     if(sends>=MAX_SENDS_PER_WAKE){track(soon().toISOString());break;}
     const selected=select(candidate,options);
     if(!selected.offers?.length){
-      await repo.recordDecision(candidate,"skipped:"+String(selected.reason||"no_offer")).catch(()=>{});
+      if(selected.reason==="delivery_review")await staffReview(candidate,"prior_image_delivery_unverified");
+      else await repo.recordDecision(candidate,"skipped:"+String(selected.reason||"no_offer")).catch(()=>{});
+      continue;
+    }
+    // Do not claim a new send while staff's image could already contain the
+    // price. A caption match confirms a duplicate; captionless/unclear media
+    // goes to Inbox review rather than being resent automatically.
+    const manual=await classifyStaffImages(candidate,selected.offers);
+    if(manual.action!=="clear"){
+      if(manual.action==="review")await staffReview(candidate,manual.reason);
+      else await repo.recordDecision(candidate,"skipped:"+manual.reason);
       continue;
     }
     // The selected package set is fixed for this pass, but final rechecks
