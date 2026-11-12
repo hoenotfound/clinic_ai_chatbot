@@ -155,17 +155,30 @@ const INBOX_CONTROL_LABELS = {
 const INBOX_CONTROL_TITLES = {
   ai: "AI can handle eligible customer replies",
   human: "Conversation is explicitly handled by staff",
-  paused: "AI is paused by secondary-number eligibility or sender restrictions",
+  paused: "AI is not replying due to an audience rule, sender restriction or unresolved handoff",
   review: "A staff review or attention hold needs to be checked",
 };
 function inboxControlStatus(conversation) {
+  const pendingReview = conversation?.needs_attention === true ||
+    Number(conversation?.pending_review_count || 0) > 0;
   if (conversation?.mode === "human") {
-    return conversation?.takeover_by === "AI handoff" ? "review" : "human";
+    // A synthetic, unclaimed AI handoff is not an actual staff takeover.
+    // Clearing attention does NOT restore AI ownership automatically.
+    if (conversation?.takeover_by === "AI handoff")
+      return pendingReview ? "review" : "paused";
+    return "human";
   }
-  if (conversation?.needs_attention === true) return "review";
+  if (pendingReview) return "review";
   if (conversation?.whatsapp_is_secondary === true &&
       conversation?.whatsapp_secondary_ai_enabled === false) return "paused";
   return "ai";
+}
+const UNVERIFIED_ORIGIN_TITLES = {
+  meta_131060_unverified: "Meta error 131060 confirmed; no verified ad referral is stored.",
+  unreadable_origin_unverified: "WhatsApp message unavailable; the Meta error code and ad origin are unverified.",
+};
+function unverifiedOriginTitle(conversation) {
+  return UNVERIFIED_ORIGIN_TITLES[conversation?.whatsapp_ad_evidence_status] || null;
 }
 function effectiveInboxControlMode(conversation) {
   // Composer behavior remains unchanged for existing primary conversations.
@@ -2677,9 +2690,9 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator status={inboxControlStatus(conversation)} />
-                    {conversation.whatsapp_ad_evidence_status === "meta_131060_unverified" && (
-                      <span title="Meta 131060 message unavailable; no verified ad referral for this contact"
-                        className="text-[10px] text-[var(--color-text-muted)]">Ad source unknown</span>
+                    {unverifiedOriginTitle(conversation) && (
+                      <span title={unverifiedOriginTitle(conversation)}
+                        className="text-[10px] text-[var(--color-text-muted)]">Ad source unverified</span>
                     )}
                     {conversation.whatsapp_is_secondary === true &&
                       conversation.whatsapp_secondary_connection_state !== "connected" && (
@@ -3973,10 +3986,10 @@ function ThreadView({
                 >
                   {INBOX_CONTROL_LABELS[controlStatus]}
                 </span>
-                {contact.whatsapp_ad_evidence_status === "meta_131060_unverified" && (
-                  <span title="Meta could not display an incoming message. Its advertising origin is not verified."
+                {unverifiedOriginTitle(contact) && (
+                  <span title={unverifiedOriginTitle(contact)}
                     className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-900">
-                    Ad source unknown
+                    Ad source unverified
                   </span>
                 )}
                 {quietReplyAvailable && replyWindowCompactLabel && (

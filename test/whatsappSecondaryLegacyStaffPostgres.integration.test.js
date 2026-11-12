@@ -105,6 +105,40 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
   assert.equal(await isSecondaryAiReplyEligible(returning,{
    database:db,env,inboundMessageId:unreadableReturn
   }),false,"an unreadable new message cannot renew old ad eligibility");
+  const otherUnsupported=await inbound(returning,returningConv,
+   "📎 [Customer sent an unsupported image message]");
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:otherUnsupported
+  }),false,"other provider unsupported placeholders cannot renew AI");
+  const blank=await inbound(returning,returningConv,"   ");
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:blank
+  }),false,"empty customer content cannot renew AI");
+  const importedReturn=await inbound(returning,returningConv,"Imported transcript text");
+  await db.query(
+   "INSERT INTO whatsapp_sender_coexistence_history_messages(message_id,sender_id,source_wamid_hash) "+
+   "VALUES($1,$2,$3)",[importedReturn,sender,"a".repeat(64)]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:importedReturn
+  }),false,"imported history cannot be used as a fresh reply");
+  const otherSender=(await db.query(
+   "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+   "VALUES('other_test_sender','100000000002045','200000000002045','Other','active') RETURNING id"
+  )).rows[0].id;
+  const otherContact=(await db.query(
+   "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
+   "VALUES('whatsapp','60123499049',$1,NOW()) RETURNING id",[otherSender]
+  )).rows[0].id;
+  const otherConversation=(await db.query(
+   "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+   "VALUES($1,'60123499049',$2,'bound') RETURNING id",
+   [otherSender,otherContact])).rows[0].id;
+  const wrongSender=await inbound(returning,otherConversation,"Reply from a different sender");
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:wrongSender
+  }),false,"cross-sender binding cannot renew the secondary ad");
+  assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([returning],{database:db,env})],[],
+   "unsupported, blank, imported and cross-sender messages do not enable AI in the Inbox");
   const returned=await inbound(returning,returningConv,"Hi, can you explain the treatment?");
   assert.equal(await isSecondaryAiReplyEligible(returning,{
    database:db,env,inboundMessageId:returned
@@ -122,6 +156,22 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
   assert.equal(await isSecondaryAiReplyEligible(returning,{
    database:db,env,inboundMessageId:returned
   }),false,"opt-outs still prohibit re-entry");
+  await db.query("UPDATE contacts SET mode='ai',whatsapp_opt_out_at=NULL WHERE id=$1",[returning]);
+  await db.query(
+   "INSERT INTO whatsapp_sender_coexistence_history_messages(message_id,sender_id,source_wamid_hash) "+
+   "VALUES($1,$2,$3)",[priorAd,sender,"b".repeat(64)]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),false,"an imported historical ad cannot authorize re-entry");
+  await db.query("DELETE FROM whatsapp_sender_coexistence_history_messages WHERE message_id=$1",[priorAd]);
+  await db.query(
+   "UPDATE messages SET created_at=NOW()-INTERVAL '8 days', "+
+   "source_created_at=NOW()-INTERVAL '8 days' WHERE id=$1",[priorAd]);
+  assert.equal(await isSecondaryAiReplyEligible(returning,{
+   database:db,env,inboundMessageId:returned
+  }),false,"an ad more than seven days old cannot authorize AI");
+  assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([returning],{database:db,env})],[],
+   "expired ad evidence cannot keep historical contacts eligible");
 
   // A returning staff-managed patient receives the one provider-verified
   // 131060 recovery menu. No ad referral is claimed. The placeholder itself
