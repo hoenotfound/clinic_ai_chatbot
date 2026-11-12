@@ -7,12 +7,13 @@ const storage = require("../src/services/mediaStorageService");
 const policy = require("../src/services/whatsappPolicyService");
 const messaging = require("../src/services/channelMessagingService");
 
-function setup(t, uploadResult) {
+function setup(t, uploadResult, { onTemporary = () => {} } = {}) {
   const calls = [];
   const contact = { id: 9020, channel: "facebook", channel_user_id: "psid-9020" };
   t.mock.method(policy, "checkFreeformAllowed", async () => ({ allowed: true }));
   t.mock.method(storage, "downloadMedia", async () => Buffer.from("valid-video-bytes"));
   t.mock.method(storage, "uploadTemporaryMedia", async (buffer, mimeType, options) => {
+    onTemporary();
     calls.push(["temporary", buffer.toString(), mimeType, options.contactId]);
     return { url: "https://r2.example.test/temporary-video", key: "temporary-video-key" };
   });
@@ -81,28 +82,17 @@ test("Messenger video never retries after a customer-facing Send API failure", a
 });
 
 test("Messenger video fallback cancels before sending if eligibility changes after upload", async t => {
+  let eligible = true;
+  // Ownership changes while preparing the provider-facing copy.
   const { calls, contact } = setup(t, {
     success: false, uploadRejected: true, uploadHttpStatus: 503,
     error: "Unavailable",
-  });
-  let eligible = true;
-  // The worker is allowed at dispatch, but ownership changes while preparing
-  // the provider-facing copy. The final pre-send check must stop the URL send.
-  t.mock.restoreAll();
-  const s = setup(t, {
-    success: false, uploadRejected: true, uploadHttpStatus: 503,
-    error: "Unavailable",
-  });
-  t.mock.method(storage, "uploadTemporaryMedia", async () => {
-    eligible = false;
-    s.calls.push(["temporary"]);
-    return { url: "https://r2.example.test/temporary-video", key: "temporary-video-key" };
-  });
+  }, { onTemporary: () => { eligible = false; } });
   const result = await messaging.sendVideoByStoredKey(
-    s.contact, "clinic/follow-up/9d.mp4", undefined, "9d.mp4",
+    contact, "clinic/follow-up/9d.mp4", undefined, "9d.mp4",
     { purpose: "marketing", preSendCheck: async () => eligible }
   );
   assert.equal(result.success, false);
   assert.equal(result.cancelled, true);
-  assert.equal(s.calls.some(call => call[0] === "url"), false);
+  assert.equal(calls.some(call => call[0] === "url"), false);
 });
