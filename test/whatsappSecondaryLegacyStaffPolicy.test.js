@@ -53,6 +53,21 @@ test("all contact automation adds legacy staff guard without weakening provider 
  // can only narrow an existing eligible candidate, never grant consent.
  assert.match(sql,/whatsapp_free_entry_referrals/);
 });
+
+test("manual AI approval expires in seven days and cannot authorize pre-approval follow-up anchors",()=>{
+ const sql=secondaryLegacyStaffAudienceSql("c","inbound",env);
+ assert.match(sql,/c.whatsapp_secondary_manual_ai_approved_until > NOW\(\)/);
+ assert.match(sql,/inbound.source_created_at >= date_trunc\('second', c.whatsapp_secondary_manual_ai_approved_at\)/);
+ assert.match(sql,/inbound.created_at >= c.whatsapp_secondary_manual_ai_approved_at/);
+ assert.match(sql,/inbound.created_at < c.whatsapp_secondary_manual_ai_approved_until/);
+ assert.match(sql,/inbound.role='user'/);
+ assert.match(sql,/inbound.whatsapp_message_id IS NOT NULL/);
+ const visible=secondaryLegacyStaffAudienceSql("c",null,env);
+ assert.match(visible,/c.whatsapp_secondary_manual_ai_approved_until > NOW\(\)/);
+ assert.doesNotMatch(visible,/inbound.created_at >= c.whatsapp_secondary_manual_ai_approved_at/);
+ assert.doesNotMatch(secondaryLegacyStaffAudienceSql("c","inbound",{}),/whatsapp_secondary_manual_ai/);
+});
+
 test("131060 recovery does not invent ad attribution but restores AI after accepted menu and a readable reply",()=>{
  const {secondary131060RecoveryAudienceSql}=
    require("../src/services/whatsappSecondaryLegacyStaffPolicy");

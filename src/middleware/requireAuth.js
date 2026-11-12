@@ -87,8 +87,13 @@ async function enforceConversationsPolicy(req, res, user) {
     return forbidden(res, "Replying to leads is disabled for this account.");
   }
 
+  if (req.method === "POST" && action === "enable-secondary-ai" &&
+      !hasCapability(user, "manage_tools")) {
+    return forbidden(res, "Managing AI approval is disabled for this account.");
+  }
+
   const isConversationManagement =
-    (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
+    (req.method === "POST" && ["takeover", "return-to-ai", "enable-secondary-ai"].includes(action)) ||
     (req.method === "PATCH" && (
       ["attention", "follow-up"].includes(action) ||
       (action === "reviews" && positiveId(subAction) != null && fourth === "resolve" && parts.length === 4)

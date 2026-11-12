@@ -361,6 +361,10 @@ export const api = {
     return res.json();
   },
   takeOver: (contactId) => request(`/conversations/${contactId}/takeover`, { method: "POST" }),
+  enableSecondaryAi: (contactId, expectedUpdatedAt) => request(`/conversations/${contactId}/enable-secondary-ai`, {
+    method: "POST",
+    body: JSON.stringify({ expectedUpdatedAt }),
+  }),
   returnToAi: (contactId, expectedUpdatedAt) => request(`/conversations/${contactId}/return-to-ai`, {
     method: "POST",
     body: JSON.stringify({ expectedUpdatedAt }),

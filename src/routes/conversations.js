@@ -52,9 +52,25 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const whatsappCustomerMutations = require("../services/whatsappCustomerMutationService");
 const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
-const {eligibleSecondaryAiReplyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
+const {eligibleSecondaryAiReplyContactIds,secondaryAutomationActivation}=require("../services/whatsappSecondaryAdsOnlyEligibility");
+const {secondaryLegacyStaffCutoff}=require("../services/whatsappSecondaryLegacyStaffPolicy");
 const {secondaryUsesPrimaryClinicContent}=require("../services/whatsappSenderActivationGate");
 const { canForwardBetweenInboxContacts } = require("../utils/inboxForwardSenderPermission");
+function secondaryManualApprovalAvailable(c) {
+  return c.channel==="whatsapp" &&
+    c.whatsapp_sender_key==="neutro_secondary" &&
+    c.whatsapp_sender_state==="active" &&
+    c.whatsapp_sender_coexistence_enabled===true &&
+    c.mode==="ai" && c.needs_attention!==true &&
+    c.whatsapp_opt_out_at==null &&
+    process.env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE==="all_contacts" &&
+    process.env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE==="all_contacts" &&
+    process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
+    process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+    !!secondaryLegacyStaffCutoff(process.env) &&
+    !!secondaryAutomationActivation(process.env) &&
+    secondaryUsesPrimaryClinicContent(process.env);
+}
 function secondaryAiForContact(c, eligibleIds) {
   return c.channel==="whatsapp" &&
     c.whatsapp_sender_key==="neutro_secondary" &&
@@ -1031,6 +1047,7 @@ router.get("/", async (req, res) => {
           ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
             ? "connected" : "suspended") : null,
         whatsapp_secondary_ai_enabled: secondary && secondaryAiForContact(c,eligibleIds),
+        whatsapp_secondary_manual_ai_can_enable: secondary && secondaryManualApprovalAvailable(c),
       };
     });
     sendMeasuredInboxJson(res, mapped, startedAt, "list");
@@ -1085,6 +1102,7 @@ async function handleInboxPage(req,res) {
             ? (row.whatsapp_sender_state==="active" && row.whatsapp_sender_coexistence_enabled===true
               ? "connected" : "suspended") : null,
           whatsapp_secondary_ai_enabled:secondary && secondaryAiForContact(row,eligibleIds),
+          whatsapp_secondary_manual_ai_can_enable:secondary && secondaryManualApprovalAvailable(row),
         };
       });
       return {...model,items,ids:undefined};
@@ -1155,6 +1173,7 @@ router.get("/:contactId/summary", async (req, res) => {
         ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
           ? "connected" : "suspended") : null,
       whatsapp_secondary_ai_enabled: secondary && secondaryAiForContact(c,eligibleIds),
+      whatsapp_secondary_manual_ai_can_enable: secondary && secondaryManualApprovalAvailable(c),
     }, startedAt, "summary");
   } catch (err) {
     console.error("Failed to load Inbox conversation summary:", err);
@@ -1440,6 +1459,30 @@ router.post("/:contactId/takeover", async (req, res) => {
   } catch (err) {
     console.error("Failed to take over conversation:", err);
     res.status(500).json({ error: "Something went wrong taking over this conversation." });
+  }
+});
+
+router.post("/:contactId/enable-secondary-ai", async (req, res) => {
+  try {
+    if (!secondaryLegacyStaffCutoff(process.env) ||
+        !secondaryAutomationActivation(process.env) ||
+        !secondaryUsesPrimaryClinicContent(process.env)) {
+      return res.status(409).json({ error: "Secondary AI approval is not available under the current rollout settings." });
+    }
+    const version = req.body?.expectedUpdatedAt;
+    if (typeof version !== "string" || !Number.isFinite(Date.parse(version))) {
+      return res.status(400).json({ error: "A valid conversation version is required." });
+    }
+    const updated = await contactsRepo.approveSecondaryManualAi(
+      req.params.contactId, req.session.username, version
+    );
+    if (!updated) {
+      return res.status(409).json({ error: "AI approval was blocked. Refresh and check staff ownership, pending reviews, opt-out, sender connection and approval status." });
+    }
+    res.json({ enabled: true, expiresAt: updated.whatsapp_secondary_manual_ai_approved_until });
+  } catch (err) {
+    console.error("Failed to approve secondary AI:", err);
+    res.status(500).json({ error: "Could not enable AI for this conversation." });
   }
 });
 
