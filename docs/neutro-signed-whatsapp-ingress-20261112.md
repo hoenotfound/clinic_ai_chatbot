@@ -42,6 +42,9 @@ change the URL to install these diagnostics.
 - ageBuckets / maxAgeSeconds: original Meta message age at server parsing.
 - providerRefs: up to eight SHA256 20-hex-character prefixes of provider
   message/status IDs, never the original WAMID.
+- routing: acceptedChanges, quarantinedChanges and parsedCustomers, so
+  even a 200 that quarantined a signed message is distinguishable from
+  a 200 that accepted a customer event.
 - claimAttempts and claimsInserted: successfully completed claim calls and
   newly inserted claim rows, differentiating idempotent replays.
 
@@ -56,6 +59,10 @@ bounded to 32 entries, 64 changes per entry, 128 total inspected messages,
   Meta reached Render, and a local receiver activation gate rejected it.
 - signature=verified, httpStatus=503, reason=sender_identity:
   A signed event reached Render but failed sender validation.
+- signature=verified, httpStatus=200, routing.quarantinedChanges>0,
+  routing.parsedCustomers=0, claimsInserted=0:
+  A callback reached the server, but local routing excluded it. Check the
+  existing quarantine records and sender configuration.
 - signature=verified, httpStatus=200, phase=durable_claim:
   The handler successfully attempted durable storage. Check the matching
   processing job if the AI did not reply.
