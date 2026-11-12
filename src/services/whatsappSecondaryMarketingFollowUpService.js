@@ -600,9 +600,43 @@ async function runOnce({
   const id=claimed.rows?.[0]?.id;
   if(!id)continue;
   attempted++;
-  const fail=async code=>database.query(
-   "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
-   [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
+  const fail=async code=>{
+   // If a fresh customer message arrived AFTER discovery but before any
+   // outbound message was saved, safely release only this unsent generic
+   // claim. The later 24h inactivity window can then reschedule the slot.
+   // No claim associated with a saved message or possible Meta send is ever
+   // released or retried automatically.
+   if(isGeneral && ["secondary_marketing_policy_changed",
+     "secondary_marketing_policy_revoked"].includes(code)){
+    try{
+     const released=await database.query(
+      `DELETE FROM whatsapp_sender_marketing_followup_attempts attempt
+       WHERE attempt.id=$1 AND attempt.status='claimed'
+         AND attempt.message_id IS NULL
+         AND EXISTS(
+           SELECT 1 FROM messages fresh
+           JOIN whatsapp_sender_message_context sc_ctx
+             ON sc_ctx.message_id=fresh.id
+             AND sc_ctx.conversation_id=$3
+           WHERE fresh.contact_id=$2 AND fresh.role='user'
+             AND fresh.whatsapp_message_id IS NOT NULL
+             AND fresh.created_at>=$4::timestamptz
+             AND COALESCE(fresh.source_created_at,fresh.created_at)
+               >NOW()-INTERVAL '24 hours'
+             AND NOT EXISTS(
+               SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+               WHERE imported.sender_id=attempt.sender_id
+                 AND imported.message_id=fresh.id
+             )
+         ) RETURNING attempt.id`,
+      [id,candidate.contact_id,candidate.conversation_id,now]);
+     if(Number(released.rows?.[0]?.id)===Number(id))return;
+    }catch{}
+   }
+   await database.query(
+    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
+    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
+  };
   const current=async()=>{
    if(EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env))return false;
    if(isGeneral && !generalSql.enabled(env))return false;
