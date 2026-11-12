@@ -1201,7 +1201,11 @@ async function processIncomingMessage(
     // history.length === 2 as the proof boundary: the durable ad proof
     // verifies both provider payloads and excludes unrelated intervening
     // staff/customer messages. A button tap is not ad attribution.
-    const hasFirstUnreadablePlaceholder = secondaryAiConversation &&
+    const hasUnreadablePlaceholder = secondaryAiConversation &&
+      history.some(entry => entry?.role === "user" &&
+        /^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u
+          .test(String(entry.content || "")));
+    const hasFirstUnreadablePlaceholder = hasUnreadablePlaceholder &&
       history.length >= 2 && history[0]?.role === "user" &&
       /^📎 \[[^\]]{1,100} sent a WhatsApp message that could not be displayed\]$/u
         .test(String(history[0]?.content || ""));
@@ -1225,7 +1229,7 @@ async function processIncomingMessage(
     // original unreadable placeholder from the model's prompt. The customer
     // may choose a button or type a treatment, and later turns still work.
     // Never change staff-visible history or infer a missing advertisement.
-    const recoveryPromptProof = hasFirstUnreadablePlaceholder &&
+    const recoveryPromptProof = hasUnreadablePlaceholder &&
       history.length >= 3
       ? await getVerifiedRecoveryHistoryProof({
           contactId: contact.id, inboundMessageId: savedInbound.id,
