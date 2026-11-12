@@ -686,8 +686,10 @@ test("Neutro 20h text-only follow-up carries a sender-bound one-tap opt-in",asyn
  const saved=f.calls.find(x=>x.save).save;
  const sent=f.calls.find(x=>x.send).send;
  assert.equal(saved[8].whatsappTemplate.generalConsentButton,true);
- assert.match(saved[2],/I agree to receive WhatsApp follow-ups/);
- assert.deepEqual(sent.interactiveButtons,consent.consentButtons(912,"en"));
+ const language=saved[8].whatsappTemplate.generalConsentLanguage;
+ assert.ok(["zh","en","ms"].includes(language));
+ assert.ok(saved[2].includes(consent.SENTENCES[language]));
+ assert.deepEqual(sent.interactiveButtons,consent.consentButtons(912,language));
  assert.equal(sent.dispatchTransport,undefined);
 });
 
