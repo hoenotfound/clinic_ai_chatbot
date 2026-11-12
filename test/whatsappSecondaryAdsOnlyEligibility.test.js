@@ -96,6 +96,24 @@ test("resolved pre-provider billing race permits only fresh AI replies",async()=
   assert.equal(await isSecondaryAiReplyEligible(9027,{database:db,env:activated}),true);
 });
 
+test("new accepted secondary AI text clears only the exact stale delivery alert",()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const accepted=server.indexOf("if (!flagged && sendOutcome.sendResult.success)");
+  const next=server.indexOf("// Apply conversion-ready",accepted);
+  assert.ok(accepted>0 && next>accepted);
+  const cleanup=server.slice(accepted,next);
+  assert.match(cleanup,/resolvedReceiptRaceReason/);
+  assert.match(cleanup,/contact\.whatsapp_sender_key !== process\.env\.WHATSAPP_PRIMARY_SENDER_KEY/);
+  assert.match(cleanup,/contact\.attention_reason === resolvedReceiptRaceReason/);
+  assert.match(cleanup,/clearDeliveryAttentionIfNoFailedMessages\(\s*contact\.id, resolvedReceiptRaceReason\s*\)/);
+  const contactRepo=fs.readFileSync(path.join(__dirname,"../src/db/contactsRepo.js"),"utf8");
+  const fn=contactRepo.slice(contactRepo.indexOf("async function clearDeliveryAttentionIfNoFailedMessages("),
+    contactRepo.indexOf("async function setUnread("));
+  assert.match(fn,/\(\$2::text IS NULL OR c\.attention_reason = \$2::text\)/);
+  assert.match(fn,/\[id, expectedReason\]/);
+  assert.match(fn,/unresolvedFailedOutboundSql/);
+});
+
 test("reviewed old contacts only allow followups after operator verification",()=>{
   const sql=reviewedContactFollowupGuardSql("c","inbound");
   assert.match(sql,/whatsapp_secondary_ad_eligibility_reviews reviewed/);
