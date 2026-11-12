@@ -2,6 +2,8 @@
 
 const { pool } = require("./db");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
+const {explicitGeneralFollowupConsent,GENERAL_SCOPE,GENERAL_SERVICE,SENTENCES}=
+ require("../utils/neutroGeneralFollowupConsent");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const clinicConfig = require("../config/clinicConfig");
 
@@ -25,7 +27,7 @@ async function recordFromInbound({
   try {
     await client.query("BEGIN");
     const contact = (await client.query(
-      `SELECT id, channel, whatsapp_opt_in_at, whatsapp_opt_out_at,
+      `SELECT id, channel, whatsapp_sender_id, whatsapp_opt_in_at, whatsapp_opt_out_at,
               whatsapp_marketing_opt_out_at
          FROM contacts WHERE id=$1 FOR UPDATE`, [contactId]
     )).rows[0];
@@ -40,11 +42,48 @@ async function recordFromInbound({
          FROM messages WHERE id=$1 AND contact_id=$2`,
       [messageId, contactId]
     )).rows[0];
-    const explicit = message?.role === "user" &&
+    const signedCustomerText = message?.role === "user" &&
       Boolean(String(message.whatsapp_message_id || "").trim()) &&
-      !message.media_mime_type && message.is_forwarded !== true
-      ? explicitPromotionConsent(message.content, { businessName })
-      : null;
+      !message.media_mime_type && message.is_forwarded !== true;
+    const treatmentExplicit=signedCustomerText
+      ? explicitPromotionConsent(message.content,{businessName}):null;
+    // The general consent request is separate from treatment-specific
+    // marketing permission. Only an affirmative customer-authored reply
+    // AFTER a delivered sender-bound 20h invitation can grant this scope.
+    // A Meta ad prefill, unsupported placeholder or unrelated 'yes' cannot.
+    const offeredGeneral=signedCustomerText && !isClickToWhatsApp &&
+      explicitGeneralFollowupConsent(message.content);
+    let generalExplicit=null;
+    if(offeredGeneral){
+      const verified=await client.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM messages prompt
+           JOIN whatsapp_sender_message_context prompt_ctx
+             ON prompt_ctx.message_id=prompt.id
+           JOIN whatsapp_sender_conversations sc
+             ON sc.id=prompt_ctx.conversation_id
+             AND sc.contact_id=$1 AND sc.sender_id=$2
+             AND sc.state='bound'
+           JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id
+             AND sa.sender_key='neutro_secondary' AND sa.state='active'
+           WHERE prompt.contact_id=$1 AND prompt.role='assistant'
+             AND prompt.is_automated_follow_up=TRUE
+             AND prompt.whatsapp_message_id IS NOT NULL
+             AND prompt.delivery_status IN ('sent','delivered','read')
+             AND prompt.content LIKE '%' || $3::text || '%'
+             AND prompt.created_at < $4::timestamptz
+             AND prompt.created_at >= $4::timestamptz-INTERVAL '7 days'
+             AND NOT EXISTS (
+               SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+               WHERE imported.sender_id=sa.id AND imported.message_id=prompt.id
+             )
+         ) AS verified`,
+        [contactId,contact.whatsapp_sender_id,
+         SENTENCES[offeredGeneral.language],message.sent_at]
+      );
+      if(verified.rows?.[0]?.verified===true)generalExplicit=offeredGeneral;
+    }
+    const explicit=treatmentExplicit||generalExplicit;
     if (!explicit) {
       await client.query("ROLLBACK");
       return { recorded: false, reason: "not_explicit" };
@@ -89,9 +128,9 @@ async function recordFromInbound({
        VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT DO NOTHING RETURNING id`,
       [contactId,leadId,source,messageId,message.whatsapp_message_id,
-        message.content,businessName,explicit.scope,explicit.category,
+        message.content,businessName,generalExplicit?GENERAL_SCOPE:explicit.scope,explicit.category,
         sentAt.toISOString(),explicit.method,
-        inferConfiguredServiceFromText(message.content, config) || null]
+        generalExplicit?GENERAL_SERVICE:(inferConfiguredServiceFromText(message.content, config) || null)]
     );
     if (inserted.rowCount !== 1) {
       await client.query("ROLLBACK");
