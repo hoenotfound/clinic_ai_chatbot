@@ -140,8 +140,18 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "VALUES($1,48,TRUE,'old_treatment_template','en_US',$2,TRUE)",
     [sender,"a".repeat(64)]);
   const activation=new Date(Date.now()-6*86400000).toISOString();
+  // Candidate simulation follows the same allowed sending hours as the
+  // production scheduler, irrespective of the time the CI job starts.
+  const candidateAt=new Date();
+  const candidateMinute=(candidateAt.getUTCHours()*60+
+    candidateAt.getUTCMinutes()+480)%1440;
+  if(candidateMinute<7*60){
+    candidateAt.setTime(candidateAt.getTime()+
+      (7*60-candidateMinute)*60000-candidateAt.getUTCSeconds()*1000-
+      candidateAt.getUTCMilliseconds());
+  }
   const p=["neutro_secondary","100000000011111","200000000011111",
-    new Date(),5,activation,"ads_only",activation,activation];
+    candidateAt,5,activation,"ads_only",activation,activation];
   const bareWhere=general.CANDIDATES_SQL.indexOf("\n WHERE rule.enabled=TRUE");
   const order=general.CANDIDATES_SQL.lastIndexOf("\n ORDER BY inbound.created_at");
   assert.ok(bareWhere>0&&order>bareWhere);
