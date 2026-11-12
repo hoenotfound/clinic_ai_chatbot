@@ -108,6 +108,8 @@ test("genuine re-engagement carries only verified prior accepted stages, never d
    /uncertain_between.status IN\('unknown','blocked'\)/,
    /changed.source_message_id>earlier.anchor_message_id/,
    /changed.source_message_id<=inbound.id/,
+   /previous_outbound.whatsapp_template->>'treatmentInterest'/,
+   /changed.status IS DISTINCT FROM 'selected'/,
    /ORDER BY preceding.slot_hours DESC LIMIT 1/,
  ]) assert.match(sql,proof);
  assert.doesNotMatch(sql,/earlier.status IN\('claimed','unknown'\)/);
@@ -156,6 +158,7 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
   assert.equal(send.send.contact.whatsapp_sender_key,"ariel");
   assert.equal(save.save[8].isAutomatedFollowUp,true);
   assert.equal(save.save[8].whatsappTemplate.automatedSecondaryFollowup,true);
+  assert.equal(save.save[8].whatsappTemplate.treatmentInterest,"骨盆调理");
   assert.deepEqual(provider.persist,[912,"wamid.ariel-followup",{
     preserveVerifiedSecondaryReceipt:true,
   }]);
