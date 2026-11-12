@@ -84,7 +84,10 @@ async function sendSecondaryStaffText({
        !validRecoveryTreatmentButtons(interactiveButtons) ||
        typeof text !== "string" ||
        !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") || text.length>1024)) {
-    return block("secondary_interactive_followup_invalid");
+    const looksLikeRecovery=origin==="system_fallback" ||
+      (Array.isArray(interactiveButtons) && interactiveButtons.length===3);
+    return block(looksLikeRecovery
+      ?"secondary_131060_recovery_menu_invalid":"secondary_interactive_followup_invalid");
   }
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
