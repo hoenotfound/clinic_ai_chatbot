@@ -187,7 +187,7 @@ const SECONDARY_GENERIC_MARKETING_CONSENT_SQL =
   " AND e.consent_category='MARKETING'"+
   " AND e.consent_scope='general_clinic_followups_and_related_offers'"+
   " AND e.consent_service='neutro_general_tcm_care'"+
-  " AND e.consent_method='customer_whatsapp_text'"+
+  " AND e.consent_method IN('customer_whatsapp_text','customer_whatsapp_interactive_button')"+
   " AND e.consented_at=$3::timestamptz"+
   " AND DATE_TRUNC('milliseconds',e.consented_at)=DATE_TRUNC('milliseconds',COALESCE(m.source_created_at,m.created_at))"+
   " AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages h"+
