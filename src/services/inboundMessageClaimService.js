@@ -12,6 +12,7 @@ const firstAdProofRepo = require("../db/whatsapp131060FirstAdRepo");
 const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
 const whatsappConsentPromptRepo = require("../db/whatsappConsentPromptRepo");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
+const {explicitGeneralFollowupConsent}=require("../utils/neutroGeneralFollowupConsent");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -207,9 +208,9 @@ function createInboundMessageClaimService({
     // Existing 24-hour replies must continue if consent storage is unavailable;
     // in that case extended promotional templates stay blocked (fail closed).
     if (channel === "whatsapp" && incoming?.mediaType == null && lead?.id &&
-        explicitPromotionConsent(incoming?.text, {
+        (explicitPromotionConsent(incoming?.text, {
           businessName: config.clinicName || config.businessName,
-        })) {
+        }) || explicitGeneralFollowupConsent(incoming?.text))) {
       try {
         await inboundConsent.recordFromInbound({
           contactId: contact.id,
