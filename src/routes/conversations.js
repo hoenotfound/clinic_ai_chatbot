@@ -376,7 +376,7 @@ async function finishInboxMediaSend(saved, sendResult, contact, username, timing
     await timedMediaStage(timings, "pipelineMs", () => markLeadContacted(contact.id, username, sendResult), true);
   } else {
     await flagInboxMediaAttention(contact.id,
-      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`, timings, saved.id);
+      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText, saved.media_mime_type)}`, timings, saved.id);
   }
   return finalMessage;
 }
@@ -2673,7 +2673,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         sendContact.id,
-        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText, message.media_mime_type)}`,
         message.id
       );
     }
@@ -2681,7 +2681,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     res.json({
       ...updated,
       accepted: !!sendResult.success,
-      retry_error: sendResult.success ? null : publicDeliveryError(errorText),
+      retry_error: sendResult.success ? null : publicDeliveryError(errorText, message.media_mime_type),
     });
   } catch (err) {
     console.error("Failed to retry message:", err);
@@ -3733,7 +3733,7 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       transcoded: preparedVideo.transcoded === true,
       original_bytes: preparedVideo.originalBytes,
       stored_bytes: preparedVideo.storedBytes,
-      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivery_error: publicDeliveryError(finalMessage.delivery_error, finalMessage.media_mime_type),
       delivered: sendResult.success,
       delivery_unknown: sendResult.unknown === true || sendResult.ambiguous === true,
     });
