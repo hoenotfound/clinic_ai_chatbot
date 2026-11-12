@@ -463,7 +463,8 @@ const CANDIDATES_SQL=`
    ${repeatSlotCooldownSql('$4::timestamptz')}
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
-   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2
+      OR ${RECOVERY_NO_SELECTION_SQL})
    AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -578,7 +579,8 @@ const RECHECK_SQL=`
    ${repeatSlotCooldownSql('NOW()')}
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
-   AND (NOT first_reply.staff_question OR rule.slot_hours=2)
+   AND (NOT first_reply.staff_question OR rule.slot_hours=2
+      OR ${RECOVERY_NO_SELECTION_SQL})
    AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -699,10 +701,10 @@ async function runOnce({
       forceGeneral:generalOnly,
     });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
-    const safeText=candidate.staff_reply && candidate.staff_question
-      ? gentleStaffQuestionNudge(replyLanguage)
-      : candidate.recovery_no_selection
-        ? recoveryNoSelectionReminderText(slot,replyLanguage) : localized;
+    const safeText=candidate.recovery_no_selection
+      ? recoveryNoSelectionReminderText(slot,replyLanguage)
+      : candidate.staff_reply && candidate.staff_question
+        ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
