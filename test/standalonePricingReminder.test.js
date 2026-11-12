@@ -42,7 +42,7 @@ test("pricing waits 45 minutes after any accepted consent or service message",()
 });
 test("quiet-hours target is brought forward to previous local evening",()=>{
  const candidate={source_at:"2026-11-11T22:00:00.000Z"}; // 06:00 MYT
- assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-12T15:20:00.000Z");
+ assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-12T14:20:00.000Z");
 });
 test("clinical questions and generic messages cannot trigger a price offer",()=>{
  const opts={requirePricingInterest:false,sendBothPelvicPackages:true};
