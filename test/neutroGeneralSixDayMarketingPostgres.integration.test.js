@@ -143,6 +143,27 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const p=["neutro_secondary","100000000011111","200000000011111",
     new Date(),5,activation,"ads_only",activation,activation];
   const eligible=(await db.query(general.CANDIDATES_SQL,p)).rows;
+  if(!eligible.length){
+    const row=(await db.query(
+      "SELECT c.mode,c.takeover_by,c.whatsapp_opt_in_at,c.whatsapp_opt_out_at,c.whatsapp_marketing_opt_out_at,"+
+      " l.marketing_consent,l.is_closed,l.appointment_status,"+
+      " e.consent_method,e.consent_scope,e.consented_at,"+
+      " cm.created_at AS cm_at,cm.source_created_at AS cm_source_at "+
+      "FROM contacts c JOIN leads l ON l.contact_id=c.id "+
+      "JOIN whatsapp_marketing_consent_events e ON e.lead_id=l.id "+
+      "JOIN messages cm ON cm.id=e.message_id WHERE c.id=$1",[contact])).rows;
+    const {adsOnlyEligibleSql,secondaryAutomationEligibleSql}=
+      require("../src/services/whatsappSecondaryAdsOnlyEligibility");
+    const ads=(await db.query(
+      "SELECT "+adsOnlyEligibleSql("c","$2")+" AS eligible FROM contacts c WHERE c.id=$1",
+      [contact,activation])).rows[0];
+    const audience=(await db.query(
+      "SELECT "+secondaryAutomationEligibleSql("c","$2","inbound","$3","$4")+
+      " AS eligible FROM contacts c JOIN messages inbound ON inbound.id=$5 AND inbound.contact_id=c.id WHERE c.id=$1",
+      [contact,activation,"ads_only",activation,ad])).rows[0];
+    console.error("Generic candidate diagnostic",JSON.stringify({rows:row,ads,audience,
+      args:p.map(x=>x instanceof Date?x.toISOString():x)}));
+  }
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
   assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
   assert.equal(eligible[0].language_code,"en_US");
