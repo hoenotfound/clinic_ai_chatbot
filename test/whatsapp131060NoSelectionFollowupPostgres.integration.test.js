@@ -161,7 +161,13 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "INSERT INTO whatsapp_sender_followup_rules(sender_id,slot_hours,enabled,message_text) "+
     "VALUES($1,6,TRUE,'Do not send this generic text'),($1,20,TRUE,'Do not send this generic text')",[sender]);
   for(const slot of [2,6,20]){
-    const hoursAgo=slot+1;
+    // The 20h stage must remain inside the 24h service window even when
+    // overnight CI has advanced its simulated candidate clock to 07:00 MYT.
+    // Only that fixture's age changes; the actual provider recheck remains
+    // controlled by real NOW() and must still block overnight.
+    const candidateShiftHours=Math.ceil(Math.max(0,
+      candidateAt.getTime()-Date.now())/3600000);
+    const hoursAgo=slot===20 ? slot+1-candidateShiftHours : slot+1;
     const customerWa="60122201"+String(600+slot);
     const c=(await db.query(
       "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
