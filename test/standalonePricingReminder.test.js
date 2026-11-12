@@ -58,6 +58,8 @@ test("clinical questions and generic messages cannot trigger a price offer",()=>
  assert.deepEqual(feature.select({recent_customer_messages:["Hello"]},opts).offers,[]);
  const clinical=feature.select({recent_customer_messages:["I just had surgery. Can I do 3D?"]},opts);
  assert.deepEqual(clinical.offers,[]);
+ assert.equal(feature.select({recent_customer_messages:["骨盆调理","不要了"]},opts).reason,
+   "customer_declined");
 });
 test("query is independent of third follow-up, sender-bound and uses fresh inbound evidence",()=>{
  const sql=repo.ELIGIBLE_SQL;
