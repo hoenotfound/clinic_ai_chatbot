@@ -115,6 +115,11 @@ test("approved secondary marketing billing requires one claimed attempt for each
     new Date(),10,"2026-11-01T00:00:00Z","ads_only",
     "2026-11-01T00:00:00Z",
   ]);
+  await db.query("EXPLAIN "+marketing.POTENTIAL_DUE_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
   // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
   // example; no historical attempts are opened or replayed.
   const due=await db.query(
@@ -362,6 +367,52 @@ test("approved secondary marketing billing requires one claimed attempt for each
   assert.equal(Number((await prerequisite(20)).slot_hours),6);
   assert.ok((await prerequisite(20)).completed_at,
    "20h can follow a verified 6h reminder across a genuine new inbound");
+
+  // Run the *production due-time SQL expression* against migrated Postgres,
+  // rather than just recreating it in JS. A verified reply at hour 60
+  // should allow a 66h reminder at hour 84, after 24h of inactivity.
+  const firstSessionReply="2026-11-10T00:00:00Z";
+  const delayedDueSql=`
+    WITH first_reply(at) AS (SELECT $1::timestamptz),
+      inbound(created_at) AS (SELECT $2::timestamptz),
+      rule(slot_hours) AS (SELECT $3::integer),
+      sa(id) AS (SELECT $4::integer),
+      c(id) AS (SELECT $5::integer)
+    SELECT ${marketing.ORDINARY_MARKETING_DUE_SQL} AS due_at
+    FROM first_reply,inbound,rule,sa,c
+  `;
+  const marketingDue=async (latestInboundAt,slot)=>(await db.query(
+    delayedDueSql,[firstSessionReply,latestInboundAt,slot,sender,returningContact]
+  )).rows[0].due_at.toISOString();
+  assert.equal(await marketingDue("2026-11-12T12:00:00Z",66),
+    "2026-11-13T12:00:00.000Z",
+    "60h reply -> 66h offer at 84h, not the expired 66h cutoff");
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",48),
+    "2026-11-12T16:00:00.000Z",
+    "40h reply -> 48h FAQ at 64h, after 24h silence");
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",66),
+    "2026-11-12T18:00:00.000Z",
+    "without a 48h send the 66h invitation retains its nominal timing");
+
+  await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
+    "VALUES($1,$2,$3,48,'accepted',$4::timestamptz,$4::timestamptz)",
+    [sender,returningContact,earlierInbound,"2026-11-12T16:00:00Z"]);
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",66),
+    "2026-11-13T10:00:00.000Z",
+    "accepted 48h reminder at 64h -> 66h invitation no sooner than 82h");
+  assert.equal(await marketingDue("2026-11-12T12:00:00Z",66),
+    "2026-11-13T12:00:00.000Z",
+    "a later customer message must push 66h further than 48h+18h");
+  // A reply at hour 80 makes 66h due at 104h, later than Day4.
+  // The ordinary marketing predicate expressly expires 66h at 96h.
+  assert.equal(await marketingDue("2026-11-13T08:00:00Z",66),
+    "2026-11-14T08:00:00.000Z");
+  assert.match(marketing.CANDIDATES_SQL,
+    /rule.slot_hours=48 THEN INTERVAL '66 hours'/);
+  assert.match(marketing.CANDIDATES_SQL,
+    /ELSE INTERVAL '96 hours'/);
 
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
