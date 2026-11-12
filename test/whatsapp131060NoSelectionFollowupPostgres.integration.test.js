@@ -205,7 +205,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     await db.query("UPDATE messages SET delivery_status='failed' WHERE id=$1",[verifiedMenu]);
     assert.equal(await check(),false,"failed menu must block "+slot+"h send");
     await db.query("UPDATE messages SET delivery_status='delivered' WHERE id=$1",[verifiedMenu]);
-    await db.query("UPDATE contacts SET mode='staff' WHERE id=$1",[c]);
+    await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[c]);
     assert.equal(await check(),false,"staff takeover must block "+slot+"h send");
     await db.query("UPDATE contacts SET mode='ai' WHERE id=$1",[c]);
     await db.query("UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[c]);
