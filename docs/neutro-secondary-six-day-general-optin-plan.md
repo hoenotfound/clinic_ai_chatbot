@@ -10,9 +10,9 @@ Increase eligible follow-up coverage for verified Meta ad leads and Meta error 1
 
 1. **0h:** Standard AI reply, or a fixed Meta 131060 recovery menu. No fabricated treatment.
 2. **2h and 6h:** Existing customer-service reminders, only in a live WhatsApp 24-hour window, respecting consent/opt-out/staff takeover/bookings.
-3. **20h:** Existing final service reminder, with an *optional* written invitation for genuine fresh ad enquiries or verified 131060 recoveries whose lead has no marketing permission. It explicitly describes up to six days of TCM information and related offers. Do not send another extra message merely to ask consent.
+3. **6h and 20h:** Offer the *optional* written marketing invitation to verified fresh ad enquiries or 131060 recoveries whose lead has no marketing consent. At 6h append it only to text-only reminders (never video captions); at 20h offer it again if still unconsented. Do not send extra standalone messages merely to request consent.
 4. **Consent:** The customer must reply with the complete affirmative sentence in Chinese, English or Malay after a delivered, sender-bound invitation. The verified inbound is stored as a new generic marketing consent event tied to the current contact/lead/provider WAMID. Pre-filled ads, generic 'yes', and silent contacts do not qualify.
-5. **48h, 66h, Day4 and Day6:** The existing billable marketing sender now selects the pinned approved generic template only with separate, signed generic consent linked to the secondary contact and lead. Recheck consent, sender, status, signature, billing, staff ownership and due window before each provider call. One-shot attempt ledger is shared with treatment-specific marketing to prevent duplicate slots. No backfills.
+5. **48h, 66h, Day4 and Day6:** The existing billable marketing sender now selects the pinned approved generic template only with separate, signed generic consent linked to the secondary contact and lead. Recheck consent, sender, status, signature, billing, staff ownership and due window before each provider call. A verified new customer message in the previous 24 hours pauses that slot; if the fixed eight-hour grace period expires, skip the slot rather than interrupt an active conversation or extend beyond Day6. One-shot attempt ledger is shared with treatment-specific marketing to prevent duplicate slots. No backfills.
 6. **Unconsented/silent customers:** No paid marketing templates after the WhatsApp service window. Keep them in the staff Inbox for manual assessment without any automatic message.
 
 ## Approved generic static marketing templates
@@ -34,6 +34,50 @@ Each stage is an **APPROVED MARKETING** template with a completely static body, 
 - Duplicate-suppression across generic and treatment-specific attempts for the same contact/session.
 - Uses the existing reviewed, quiet-hours-aware marketing scheduler, durable one-shot send ledger and conservative unknown state.
 - Cutoff at activation timestamp excludes older customer enquiries and consent. No retroactive customer messaging or promotional blasts.
+
+## Read-only coverage checks
+
+Run the following read-only query on Neutro's own Neon database to measure
+actual opt-in coverage and delivered optional invitations for the preceding
+seven days. Results include no customer identifiers and require no background
+polling. Recheck after enabling the campaign from a **fresh activation UTC
+timestamp**. A delivered invitation is not itself marketing consent.
+
+```sql
+WITH secondary AS (
+  SELECT id FROM whatsapp_sender_accounts
+  WHERE sender_key='neutro_secondary'
+), invitation AS (
+  SELECT DISTINCT m.id, m.contact_id
+  FROM messages m
+  JOIN whatsapp_sender_message_context ctx ON ctx.message_id=m.id
+  JOIN whatsapp_sender_conversations sc ON sc.id=ctx.conversation_id
+  JOIN secondary sa ON sa.id=sc.sender_id
+  WHERE m.role='assistant' AND m.is_automated_follow_up=TRUE
+    AND m.delivery_status IN ('sent','delivered','read')
+    AND m.created_at >= NOW()-INTERVAL '7 days'
+    AND (
+      m.content LIKE '%我同意通过 WhatsApp 接收 Neutro Sense%'
+      OR m.content LIKE '%I agree to receive WhatsApp follow-ups%'
+      OR m.content LIKE '%Saya setuju menerima susulan WhatsApp%'
+    )
+), opted AS (
+  SELECT DISTINCT e.contact_id
+  FROM whatsapp_marketing_consent_events e
+  JOIN contacts c ON c.id=e.contact_id
+  JOIN secondary sa ON sa.id=c.whatsapp_sender_id
+  WHERE e.consent_scope='general_clinic_followups_and_related_offers'
+    AND e.consented_at>=NOW()-INTERVAL '7 days'
+)
+SELECT (SELECT COUNT(*) FROM invitation) AS delivered_invitations,
+       (SELECT COUNT(DISTINCT contact_id) FROM invitation)
+         AS invited_contacts,
+       (SELECT COUNT(*) FROM opted) AS opted_in_contacts;
+```
+
+Existing global and promotional STOP handling remains active even though
+outbound invitation and marketing template text no longer contains the
+standalone unsubscribe sentence.
 
 ## Meta template submission record (12 November 2026)
 
