@@ -396,14 +396,46 @@ async function resumeDeferred(candidate,offer,database=pool){
   return result.rows?.[0]||null;
 }
 
+
+// Only staff-outbound images are considered. The SQL never returns R2 media
+// keys or downloads image bytes. Failed/cancelled media are not duplicates.
+// A 7-day search finds a prior manual price graphic from the same enquiry;
+// the classifier only puts unrelated/uncaptioned images on hold if they belong
+// to the current 24-hour session.
+async function listRecentStaffImages(candidate,database=pool){
+  if(!candidate?.contact_id||!candidate?.inbound_id)return[];
+  const result=await database.query(
+    `SELECT m.id,m.content,m.media_url,m.media_mime_type,m.delivery_status,
+            m.whatsapp_message_id,m.whatsapp_accepted_at,m.created_at,
+            m.sent_by_username
+     FROM messages m
+     JOIN messages inbound ON inbound.id=$2 AND inbound.contact_id=m.contact_id
+     WHERE m.contact_id=$1 AND m.role='assistant'
+       AND m.pricing_reminder_anchor_id IS NULL
+       AND m.is_automated_follow_up IS DISTINCT FROM TRUE
+       AND m.sent_by_username IS NOT NULL
+       AND (m.media_key IS NOT NULL OR NULLIF(m.media_url,'') IS NOT NULL)
+       AND (m.media_mime_type LIKE 'image/%' OR
+            (m.media_mime_type IS NULL AND m.media_key IS NOT NULL))
+       AND m.created_at>=GREATEST(NOW()-INTERVAL '7 days',
+                                  inbound.created_at-INTERVAL '24 hours')
+       AND m.delivery_status IS DISTINCT FROM 'cancelled'
+       AND m.delivery_status IS DISTINCT FROM 'failed'
+     ORDER BY m.created_at DESC,m.id DESC LIMIT 40`,
+    [candidate.contact_id,candidate.inbound_id]
+  );
+  return result.rows||[];
+}
+
 async function recordDecision(candidate,reason,database=pool){
   if(!candidate?.contact_id||!candidate?.inbound_id)return;
   const safe=String(reason||"unknown").slice(0,145);
   await database.query(
     `INSERT INTO standalone_pricing_reminder_decisions
       (contact_id,inbound_message_id,reason)
-     VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+     VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,
     [candidate.contact_id,candidate.inbound_id,"standalone:"+safe]
   );
+  return result.rows?.length===1;
 }
-module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision};
+module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision,listRecentStaffImages};
