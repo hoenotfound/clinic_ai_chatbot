@@ -7,6 +7,8 @@
 // Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
+const {secondaryLegacyStaffCutoff,secondaryLegacyStaffAudienceSql} =
+  require("./whatsappSecondaryLegacyStaffPolicy");
 
 function originalAdsOnlyCutoff(env = process.env) {
   const raw = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
@@ -228,6 +230,10 @@ function secondaryAllContactReplyActivation(env = process.env) {
       env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
       env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return null;
+  // A misconfigured staff-mode rollout must fail closed, not accidentally
+  // re-enable the broad old-contact audience.
+  if(env.WHATSAPP_SECONDARY_LEGACY_STAFF_MODE_ENABLED==="true" &&
+     !secondaryLegacyStaffCutoff(env))return null;
   const raw = String(env.WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT || "");
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) return null;
   const d = new Date(raw);
@@ -316,6 +322,7 @@ async function isSecondaryAiReplyEligible(contactId, {
       !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID)
     return false;
   try {
+    const legacyAudience=secondaryLegacyStaffAudienceSql("c",mid==null?null:"inbound",env);
     const proof = mid == null ? "" : `
       AND EXISTS (
         SELECT 1 FROM messages inbound
@@ -327,6 +334,7 @@ async function isSecondaryAiReplyEligible(contactId, {
           AND inbound.whatsapp_message_id IS NOT NULL
           AND inbound.created_at >= $4::timestamptz
           AND inbound.source_created_at >= $4::timestamptz
+          AND ${legacyAudience}
       )`;
     const result = await database.query(
       `SELECT EXISTS (
@@ -343,6 +351,7 @@ async function isSecondaryAiReplyEligible(contactId, {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
            })}
            AND c.whatsapp_opt_out_at IS NULL
+           ${mid==null ? "AND "+legacyAudience : ""}
            ${proof}
        ) AS eligible`,
       mid == null ? [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
@@ -380,7 +389,8 @@ async function eligibleSecondaryAiReplyContactIds(ids, {
          AND sa.sender_key='neutro_secondary' AND sa.state='active'
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
          AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c")}
-         AND c.whatsapp_opt_out_at IS NULL`,
+         AND c.whatsapp_opt_out_at IS NULL
+         AND ${secondaryLegacyStaffAudienceSql("c",null,env)}`,
       [valid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]
     );
@@ -427,6 +437,7 @@ function secondaryAutomationEligibleSql(
       AND ${adsOnlyEligibleSql(contactSql,cutoffSql)})
     OR
     (${audienceSql}::text='all_contacts'
+      AND ${secondaryLegacyStaffAudienceSql(contactSql,anchorSql)}
       AND (${adsOnlyEligibleSql(contactSql,legacyCutoffSql)}
       OR (
       ${contactSql}.channel='whatsapp'
@@ -492,4 +503,5 @@ module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyElig
   eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
   secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
   secondaryReplyAttentionAllowedSql, secondaryAutomationAttentionAllowedSql,
-  verified131060InformationReviewSql, originalAdsOnlyCutoff };
+  verified131060InformationReviewSql, originalAdsOnlyCutoff,
+  secondaryLegacyStaffCutoff, secondaryLegacyStaffAudienceSql };
