@@ -18,6 +18,7 @@ const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
 const {resultSupersessionSql}=require("../utils/resultMediaSupersessionSql");
 const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
+const {followUpAttentionAllowedSql}=require("../utils/aiReviewPolicy");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
   isSecondaryAutomationEligible,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql } = require("./whatsappSecondaryAdsOnlyEligibility");
 
@@ -84,6 +85,15 @@ const NEWER_CUSTOMER_SUPERSESSION_SQL=`(
 // Only recent customer-triggered images qualify for this overnight exemption.
 // All existing sender, conversation, clinical, opt-out, billing and service
 // window checks apply at send time; old campaigns never use this exemption.
+// Informational AI reviews (not clinical, booking or delivery incidents)
+// may continue to receive a previously authorized image. Reuse the strict
+// category, appointment and cancellation checks from the follow-up gate.
+const SECONDARY_MEDIA_ATTENTION_SQL=`(
+  ${secondaryAutomationAttentionAllowedSql("c")}
+  OR (c.mode='ai' AND c.needs_attention IS TRUE
+      AND c.attention_reason LIKE 'AI review requested:%'
+      AND ${followUpAttentionAllowedSql("c")})
+)`;
 const VERIFIED_ACTIVE_REPLY_HOURS_SQL=`(
   EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
   OR (
@@ -176,7 +186,7 @@ async function enqueue({
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
           AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
-          AND ${secondaryAutomationAttentionAllowedSql("c")}
+          AND ${SECONDARY_MEDIA_ATTENTION_SQL}
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
@@ -238,7 +248,7 @@ const READY_SQL=`
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
    AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND job.expires_at>NOW() AND c.mode='ai' AND ${SECONDARY_MEDIA_ATTENTION_SQL}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND ${VERIFIED_ACTIVE_REPLY_HOURS_SQL}
@@ -277,7 +287,7 @@ const STILL_VALID_SQL=`
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
      AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+     AND job.expires_at>NOW() AND c.mode='ai' AND ${SECONDARY_MEDIA_ATTENTION_SQL}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND ${VERIFIED_ACTIVE_REPLY_HOURS_SQL}
@@ -357,7 +367,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
          AND (
            job.expires_at<=NOW() OR
-           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c")}) OR
+           c.mode<>'ai' OR NOT (${SECONDARY_MEDIA_ATTENTION_SQL}) OR
            c.whatsapp_opt_out_at IS NOT NULL OR
            c.whatsapp_marketing_opt_out_at IS NOT NULL OR
            NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6","$7")}) OR
