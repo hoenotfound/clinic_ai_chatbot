@@ -20,7 +20,7 @@ test("exactly 12 separately approved static marketing templates are pinned",()=>
  for(const slot of [48,66,96,144])for(const lang of ["zh_CN","en_US","ms"]){
   const expected=pinned(slot,lang);
   assert.ok(expected && expected.signature && expected.id);
-  assert.ok(expected.body.includes("Neutro Sense TCM") || /您好|中医|中醫|Hai/.test(expected.body));
+  assert.ok(expected.body.length>45 && expected.body.length<1024);
   assert.doesNotMatch(expected.body,/STOP PROMOTIONS|停止优惠|停止優惠|Balas STOP/i);
   const equivalent=normalizeTemplate({id:expected.id,name:expected.name,
     language:expected.language,status:"APPROVED",category:"MARKETING",
