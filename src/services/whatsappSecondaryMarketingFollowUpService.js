@@ -102,6 +102,28 @@ const LEGACY_AD_PROOF_SQL=adsOnlyEligibleSql("c","$8");
 const MARKETING_AUTOMATION_ELIGIBLE_SQL=
  secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")
  .replace(LEGACY_AD_PROOF_SQL,"recent_contact.legacy_ads_eligible");
+// Schedule ordinary marketing templates only after a genuine 24-hour
+// inactivity period following the latest verified customer reply. A 66h
+// invitation also waits 18h after any accepted 48h from the same session.
+// These dynamic timings MUST NOT apply to the Day4/Day6 verified ad path.
+function ordinaryMarketingDueSql(slotAlias){
+ return `GREATEST(
+   first_reply.at+${slotAlias}.slot_hours*INTERVAL '1 hour',
+   inbound.created_at+INTERVAL '24 hours',
+   CASE WHEN ${slotAlias}.slot_hours=66 THEN
+     COALESCE((
+       SELECT MAX(prior48.completed_at)+INTERVAL '18 hours'
+       FROM whatsapp_sender_marketing_followup_attempts prior48
+       WHERE prior48.sender_id=sa.id AND prior48.contact_id=c.id
+         AND prior48.slot_hours=48 AND prior48.status='accepted'
+         AND prior48.claimed_at>=first_reply.at
+         AND prior48.claimed_at<first_reply.at+INTERVAL '167 hours'
+     ),first_reply.at+INTERVAL '66 hours')
+   ELSE first_reply.at+${slotAlias}.slot_hours*INTERVAL '1 hour' END
+ )`;
+}
+const ORDINARY_MARKETING_DUE_SQL=ordinaryMarketingDueSql("rule");
+const ORDINARY_NEWER_DUE_SQL=ordinaryMarketingDueSql("newer");
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -169,18 +191,31 @@ const CANDIDATES_SQL=`
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON TRUE
  ${FIRST_REPLY_SQL}
+ -- A signed sender-owned customer choice outranks an older ad-inferred
+ -- CRM treatment. This is NOT consent: the independently recorded MARKETING
+ -- consent below must still match the effective treatment exactly. A stopped
+ -- or ambiguous choice continues to block the entire marketing sequence.
+ LEFT JOIN whatsapp_sender_followup_treatment_state verified_choice
+   ON verified_choice.sender_id=sa.id
+  AND verified_choice.contact_id=c.id
+  AND verified_choice.source_message_id<=inbound.id
  JOIN LATERAL(
-   SELECT l.marketing_consent,l.treatment_interest,l.is_closed,l.appointment_status,
-     stage.system_key AS stage_key
+   SELECT l.marketing_consent,
+     CASE WHEN verified_choice.status='selected' AND
+        NULLIF(BTRIM(verified_choice.treatment_name),'') IS NOT NULL
+       THEN verified_choice.treatment_name
+       ELSE l.treatment_interest END AS treatment_interest,
+     l.is_closed,l.appointment_status,stage.system_key AS stage_key
    FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
    WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
    AND ${MARKETING_AUTOMATION_ELIGIBLE_SQL}
-   -- The latest verified choice must agree with the lead's service AND
-   -- its existing, treatment-scoped marketing consent. An unrelated consent
-   -- for 3D cannot authorize a 9D template after the customer switches.
+   -- Refuse stopped or ambiguous customer choices. For a verified change
+   -- from 3D to 9D, the effective service above becomes 9D, but only a
+   -- separate 9D-scoped MARKETING consent below can authorize any reminder.
+   -- Neither the ad name nor an old 3D consent is sufficient.
    AND NOT EXISTS(
      SELECT 1 FROM whatsapp_sender_followup_treatment_state decision_hold
      WHERE decision_hold.sender_id=sa.id AND decision_hold.contact_id=c.id
@@ -249,7 +284,45 @@ const CANDIDATES_SQL=`
          WHERE imported_engagement.sender_id=sa.id
            AND imported_engagement.message_id=engaged.id
        )
+   ) OR (
+     $7::text='all_contacts' AND recent_contact.legacy_ads_eligible=FALSE
+     AND EXISTS (
+       SELECT 1 FROM messages earlier_ai
+       JOIN whatsapp_sender_message_context earlier_ai_context
+         ON earlier_ai_context.message_id=earlier_ai.id
+         AND earlier_ai_context.conversation_id=sc.id
+       WHERE earlier_ai.contact_id=c.id AND earlier_ai.role='assistant'
+         AND earlier_ai.whatsapp_message_id IS NOT NULL
+         AND earlier_ai.sent_by_username IS NULL
+         AND earlier_ai.is_automated_follow_up IS DISTINCT FROM TRUE
+         AND earlier_ai.created_at<inbound.created_at
+         AND earlier_ai.created_at>=inbound.created_at-INTERVAL '7 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages earlier_imported
+           WHERE earlier_imported.sender_id=sa.id AND earlier_imported.message_id=earlier_ai.id
+         )
+         AND EXISTS (
+           SELECT 1 FROM messages earlier_customer
+           JOIN whatsapp_sender_message_context earlier_customer_context
+             ON earlier_customer_context.message_id=earlier_customer.id
+             AND earlier_customer_context.conversation_id=sc.id
+           WHERE earlier_customer.contact_id=c.id AND earlier_customer.role='user'
+             AND earlier_customer.whatsapp_message_id IS NOT NULL
+             AND earlier_customer.created_at<=earlier_ai.created_at
+             AND earlier_customer.created_at>earlier_ai.created_at-INTERVAL '24 hours'
+             AND NOT EXISTS (
+               SELECT 1 FROM whatsapp_sender_coexistence_history_messages earlier_history
+               WHERE earlier_history.sender_id=sa.id
+                 AND earlier_history.message_id=earlier_customer.id
+             )
+         )
+     )
    ))
+   -- For ad-originated sessions first_reply is the original AI response.
+   -- For all_contacts non-ad conversations it is instead anchored to the
+   -- latest inbound; that cannot prove re-engagement by itself. Require a
+   -- genuine earlier inbound + normal, sender-owned AI reply in the SAME
+   -- bound conversation before the latest customer response.
    -- Five accepted follow-ups is the maximum across the 2/6/20h service
    -- steps AND all marketing templates for a completely silent customer.
    -- An actual later sender-owned customer reply resets the silence guard;
@@ -286,10 +359,18 @@ const CANDIDATES_SQL=`
           AND marketing_sent.claimed_at<first_reply.at+INTERVAL '167 hours')
      ) < 5
    )
+   -- Late replies may delay a template, but cannot make the 48h
+   -- message overtake 66h or the 66h message overtake Day4.
+   AND (rule.slot_hours NOT IN(48,66) OR
+     ${ORDINARY_MARKETING_DUE_SQL} <
+       first_reply.at+
+       (CASE WHEN rule.slot_hours=48 THEN INTERVAL '66 hours'
+             ELSE INTERVAL '96 hours' END))
+   AND $4::timestamptz < first_reply.at+INTERVAL '167 hours'
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
      BETWEEN 7 AND 23
-   AND first_reply.at+rule.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
-   AND first_reply.at+rule.slot_hours*INTERVAL '1 hour'
+   AND ${ORDINARY_MARKETING_DUE_SQL}<=$4::timestamptz
+   AND ${ORDINARY_MARKETING_DUE_SQL}
      >$4::timestamptz-INTERVAL '8 hours'
    AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'
    AND inbound.created_at<=$4::timestamptz-INTERVAL '24 hours'
@@ -298,7 +379,7 @@ const CANDIDATES_SQL=`
      WHERE newer.sender_id=rule.sender_id AND newer.enabled=TRUE
        AND newer.language_code=rule.language_code
        AND newer.slot_hours>rule.slot_hours
-       AND first_reply.at+newer.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
+       AND ${ORDINARY_NEWER_DUE_SQL}<=$4::timestamptz
    )
    AND NOT EXISTS (
      SELECT 1 FROM messages human WHERE human.contact_id=c.id
@@ -311,6 +392,18 @@ const CANDIDATES_SQL=`
        AND bad.anchor_message_id=inbound.id
        AND bad.status IN('unknown','blocked')
    )
+   -- An actual customer reply changes the anchor, not the marketing
+   -- session. A previous claimed or ambiguous slot must never be replayed.
+   AND (rule.slot_hours NOT IN(48,66) OR NOT EXISTS (
+     SELECT 1 FROM whatsapp_sender_marketing_followup_attempts same_session
+     WHERE same_session.sender_id=sa.id
+       AND same_session.contact_id=c.id
+       AND same_session.slot_hours=rule.slot_hours
+       AND same_session.anchor_message_id<>inbound.id
+       AND same_session.claimed_at>=first_reply.at
+       AND same_session.claimed_at<first_reply.at+INTERVAL '167 hours'
+       AND same_session.status IN('claimed','accepted','unknown','blocked')
+   ))
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
@@ -324,7 +417,7 @@ const CANDIDATES_SQL=`
 // and pre-send policy recheck still exclusively authorize messages.
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
- dueExpression:"first_reply.at+rule.slot_hours*INTERVAL '1 hour'",
+ dueExpression:ORDINARY_MARKETING_DUE_SQL,
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
 // Day4/Day6 must be anchored to the first verified reply in the seven-day
@@ -375,6 +468,9 @@ const EXTENDED_SESSION_SQL=`
  ) qualified_session ON TRUE
 `;
 const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
+ // Preserve the independent fixed Day4/Day6 ad-session deadlines.
+ .replaceAll(ORDINARY_MARKETING_DUE_SQL,"first_reply.at+rule.slot_hours*INTERVAL '1 hour'")
+ .replaceAll(ORDINARY_NEWER_DUE_SQL,"first_reply.at+newer.slot_hours*INTERVAL '1 hour'")
  // The verified ad session below is its own complete first-reply proof.
  // The 48/66h first-reply join anchors to contact creation for legacy leads
  // and would incorrectly exclude returning contacts who clicked a new ad.
@@ -623,6 +719,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
+ ORDINARY_MARKETING_DUE_SQL,ORDINARY_NEWER_DUE_SQL,
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,

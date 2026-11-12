@@ -8,6 +8,23 @@ const PROCESSING_STALE_MINUTES = 10;
 const FAILED_RETRY_MINUTES = 2;
 const MAX_ATTEMPTS = 3;
 
+// AI lead scoring must never replace a treatment explicitly selected by
+// a provider-verified customer of the secondary WhatsApp sender. The
+// sender-specific choice is reconciled separately with stricter CRM guards;
+// this scoring guard only preserves the existing CRM treatment label.
+const PRESERVE_VERIFIED_SECONDARY_TREATMENT_SQL=`
+ EXISTS (
+   SELECT 1 FROM whatsapp_sender_followup_treatment_state verified
+   JOIN whatsapp_sender_accounts sender ON sender.id=verified.sender_id
+     AND sender.sender_key='neutro_secondary' AND sender.state='active'
+   JOIN contacts scoped ON scoped.id=verified.contact_id
+     AND scoped.whatsapp_sender_id=sender.id
+   WHERE verified.contact_id=leads.contact_id
+     AND verified.status='selected'
+     AND NULLIF(BTRIM(verified.treatment_name),'') IS NOT NULL
+ )
+`;
+
 async function withTransaction(work) {
   const client = await pool.connect();
   try {
@@ -372,7 +389,8 @@ async function completeScore({
       const updated = await client.query(
         `UPDATE leads
          SET temperature = $2, temperature_source = 'ai',
-             treatment_interest = COALESCE($4, treatment_interest),
+             treatment_interest = CASE WHEN ${PRESERVE_VERIFIED_SECONDARY_TREATMENT_SQL}
+               THEN leads.treatment_interest ELSE COALESCE($4, leads.treatment_interest) END,
              last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $3,
              updated_at = now()
@@ -389,7 +407,8 @@ async function completeScore({
     } else {
       const updated = await client.query(
         `UPDATE leads
-         SET treatment_interest = COALESCE($3, treatment_interest),
+         SET treatment_interest = CASE WHEN ${PRESERVE_VERIFIED_SECONDARY_TREATMENT_SQL}
+               THEN leads.treatment_interest ELSE COALESCE($3, leads.treatment_interest) END,
              last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $2,
              updated_at = now()

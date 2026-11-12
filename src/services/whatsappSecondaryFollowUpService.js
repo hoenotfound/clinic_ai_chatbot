@@ -88,27 +88,108 @@ const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
    + rule.slot_hours * INTERVAL '1 hour'`;
 // Resolve only the last enabled earlier slot. A later reminder must not jump
 // ahead of an unsent, failed or ambiguous previous reminder.
+// A fresh customer reply makes a new 24h service-window anchor. If the
+// previous 2h/6h step was accepted shortly before that reply, reuse that
+// verified delivery ONLY as a prerequisite for the next step. The cooldown
+// still prevents resending the same 2h/6h video. Do not bridge staff
+// intervention, unconfirmed sends, imported history, or a new treatment
+// choice/withdrawal. All sends remain bound to the new inbound and AI reply.
 const PREVIOUS_STEP_SQL=`
  LEFT JOIN LATERAL (
-   SELECT preceding.slot_hours, preceding_sent.completed_at
+   SELECT preceding.slot_hours,
+     COALESCE(
+       (SELECT preceding_sent.completed_at
+        FROM whatsapp_sender_followup_attempts preceding_sent
+        WHERE preceding_sent.sender_id=sa.id
+          AND preceding_sent.contact_id=c.id
+          AND preceding_sent.anchor_message_id=inbound.id
+          AND preceding_sent.slot_hours=preceding.slot_hours
+          AND preceding_sent.status='accepted'
+        ORDER BY preceding_sent.completed_at DESC LIMIT 1),
+       (SELECT earlier.completed_at
+        FROM whatsapp_sender_followup_attempts earlier
+        JOIN messages previous_inbound
+          ON previous_inbound.id=earlier.anchor_message_id
+         AND previous_inbound.contact_id=c.id
+         AND previous_inbound.role='user'
+         AND previous_inbound.whatsapp_message_id IS NOT NULL
+        LEFT JOIN messages previous_outbound
+          ON previous_outbound.id=earlier.message_id
+         AND previous_outbound.contact_id=c.id
+         AND previous_outbound.role='assistant'
+        JOIN whatsapp_sender_message_context previous_context
+          ON previous_context.message_id=previous_inbound.id
+         AND previous_context.conversation_id=sc.id
+        WHERE earlier.sender_id=sa.id AND earlier.contact_id=c.id
+          AND earlier.slot_hours=preceding.slot_hours
+          AND earlier.status='accepted'
+          AND earlier.completed_at IS NOT NULL
+          AND earlier.completed_at<inbound.created_at
+          AND earlier.completed_at>=inbound.created_at-INTERVAL '24 hours'
+          AND (previous_inbound.created_at,previous_inbound.id)
+              <(inbound.created_at,inbound.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+            WHERE imported.sender_id=sa.id
+              AND imported.message_id=previous_inbound.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM messages human_between
+            WHERE human_between.contact_id=c.id
+              AND human_between.role='assistant'
+              AND human_between.sent_by_username IS NOT NULL
+              AND human_between.is_automated_follow_up IS DISTINCT FROM TRUE
+              AND human_between.created_at>=earlier.completed_at
+              AND human_between.created_at<=inbound.created_at
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_followup_attempts uncertain_between
+            WHERE uncertain_between.sender_id=sa.id
+              AND uncertain_between.contact_id=c.id
+              AND uncertain_between.status IN('unknown','blocked')
+              AND uncertain_between.claimed_at>=earlier.completed_at
+              AND uncertain_between.claimed_at<=inbound.created_at
+          )
+          -- A new treatment selection must not inherit media for another
+          -- service. A newly repeated SAME treatment may continue only
+          -- when the accepted old outbound stored an exact service snapshot.
+          -- Legacy attempts without snapshots remain blocked on a new choice.
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_followup_treatment_state changed
+            WHERE changed.sender_id=sa.id AND changed.contact_id=c.id
+              AND changed.source_message_id>earlier.anchor_message_id
+              AND changed.source_message_id<=inbound.id
+              AND (changed.status IS DISTINCT FROM 'selected'
+                OR NULLIF(BTRIM(previous_outbound.whatsapp_template->>'treatmentInterest'),'') IS NULL
+                OR LOWER(BTRIM(changed.treatment_name))
+                   IS DISTINCT FROM LOWER(BTRIM(previous_outbound.whatsapp_template->>'treatmentInterest')))
+          )
+        ORDER BY earlier.completed_at DESC LIMIT 1)
+     ) AS completed_at
    FROM whatsapp_sender_followup_rules preceding
-   LEFT JOIN whatsapp_sender_followup_attempts preceding_sent
-     ON preceding_sent.sender_id=sa.id AND preceding_sent.contact_id=c.id
-    AND preceding_sent.anchor_message_id=inbound.id
-    AND preceding_sent.slot_hours=preceding.slot_hours
-    AND preceding_sent.status='accepted'
    WHERE preceding.sender_id=rule.sender_id AND preceding.enabled=TRUE
      AND preceding.slot_hours IN(2,6,20)
      AND preceding.slot_hours<rule.slot_hours
    ORDER BY preceding.slot_hours DESC LIMIT 1
  ) previous_step ON TRUE
-`;
-const SEQUENCE_DUE_SQL=`GREATEST(
-  ${FOLLOWUP_DUE_SQL},
-  COALESCE(previous_step.completed_at +
-    (rule.slot_hours - previous_step.slot_hours) * INTERVAL '1 hour',
-    ${FOLLOWUP_DUE_SQL})
-)`;
+`;// The 20h check-in must stay inside the customer's original 24h reply
+// window. Quiet hours may delay the 6h video until 07:00 MYT; adding
+// (20-6)=14 hours after its actual delivery can make 20h impossible.
+// Preserve accepted-step ordering, but require only a short spacing buffer
+// after a delayed video. Do not let downtime generate backdated messages.
+const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
+ THEN GREATEST(
+   ${FOLLOWUP_DUE_SQL},
+   COALESCE(previous_step.completed_at + INTERVAL '15 minutes',
+     ${FOLLOWUP_DUE_SQL})
+ )
+ ELSE GREATEST(
+   ${FOLLOWUP_DUE_SQL},
+   COALESCE(previous_step.completed_at +
+     (rule.slot_hours - previous_step.slot_hours) * INTERVAL '1 hour',
+     ${FOLLOWUP_DUE_SQL})
+ )
+ END)`;
 
 // A new inbound restarts a sequence, but does not mean the customer wants
 // another sales reminder after saying goodbye, asking only about a distant
@@ -282,6 +363,8 @@ const CANDIDATES_SQL=`
      NOT IN('appointment_set','visited','confirmed','booked','completed')
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
+   AND (rule.slot_hours<>20 OR
+       ${SEQUENCE_DUE_SQL} < inbound.created_at + INTERVAL '24 hours')
    AND ${SEQUENCE_DUE_SQL} <= $4::timestamptz
    -- Catch up after quiet hours or a worker interruption, but never send
    -- a stale follow-up more than eight hours after its original due time.
@@ -409,6 +492,8 @@ const RECHECK_SQL=`
        AND human.created_at>=inbound.created_at
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
+   AND (rule.slot_hours<>20 OR
+       ${SEQUENCE_DUE_SQL} < inbound.created_at + INTERVAL '24 hours')
    AND ${SEQUENCE_DUE_SQL} <= NOW()
    AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
@@ -609,7 +694,8 @@ async function runOnce({
         key?mediaMime:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
-            slotHours:slot,anchorMessageId:candidate.inbound_id},
+            slotHours:slot,anchorMessageId:candidate.inbound_id,
+            treatmentInterest:confirmedTreatment||null},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
           initialDeliveryStatus:"unknown",
@@ -686,7 +772,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
- CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,
+ CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
  serviceFollowupParityActivation,runOnce,
  nextPotentialDueAt,start,stop,
 };

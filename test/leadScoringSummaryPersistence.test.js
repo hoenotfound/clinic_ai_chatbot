@@ -76,7 +76,7 @@ test("completed scores persist the structured summary and include it in audit me
   assert.ok(leadUpdate);
   assert.match(
     leadUpdate.sql,
-    /treatment_interest = COALESCE\(\$4, treatment_interest\)/
+    /treatment_interest = CASE WHEN[\s\S]*?verified.status='selected'[\s\S]*?THEN leads.treatment_interest ELSE COALESCE\(\$4, leads.treatment_interest\) END/
   );
   assert.equal(leadUpdate.params[3], "HIFU Non-Surgical Facelift");
 

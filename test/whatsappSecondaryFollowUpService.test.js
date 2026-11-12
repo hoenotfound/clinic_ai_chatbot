@@ -93,6 +93,54 @@ test("secondary followups never inherit Neutro content or start by default",asyn
   assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
 });
 
+test("genuine re-engagement carries only verified prior accepted stages, never duplicate media",()=>{
+ const sql=worker.PREVIOUS_STEP_SQL;
+ for(const proof of [
+   /preceding_sent.anchor_message_id=inbound.id/,
+   /preceding_sent.status='accepted'/,
+   /earlier.status='accepted'/,
+   /earlier.completed_at<inbound.created_at/,
+   /earlier.completed_at>=inbound.created_at-INTERVAL '24 hours'/,
+   /previous_context.conversation_id=sc.id/,
+   /previous_inbound.whatsapp_message_id IS NOT NULL/,
+   /imported.message_id=previous_inbound.id/,
+   /human_between.sent_by_username IS NOT NULL/,
+   /uncertain_between.status IN\('unknown','blocked'\)/,
+   /changed.source_message_id>earlier.anchor_message_id/,
+   /changed.source_message_id<=inbound.id/,
+   /previous_outbound.whatsapp_template->>'treatmentInterest'/,
+   /changed.status IS DISTINCT FROM 'selected'/,
+   /ORDER BY preceding.slot_hours DESC LIMIT 1/,
+ ]) assert.match(sql,proof);
+ assert.doesNotMatch(sql,/earlier.status IN\('claimed','unknown'\)/);
+ // Each stage still has its own one-shot anchor, current opt-in, booking,
+ // consent, treatment and 24h policy checks before provider dispatch.
+ for(const query of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(query,/previous_step.completed_at IS NOT NULL/);
+   assert.match(query,/inbound.created_at \+ INTERVAL '24 hours'/);
+   assert.match(query,/whatsapp_marketing_opt_out_at IS NULL/);
+ }
+ assert.match(worker.CANDIDATES_SQL,/same_slot.status='accepted'/);
+ assert.match(worker.CANDIDATES_SQL,/INTERVAL '7 days'/);
+});
+
+test("quiet-hour-delayed 6h video cannot push the 20h check-in out of its 24h window",()=>{
+  const candidate=worker.CANDIDATES_SQL, recheck=worker.RECHECK_SQL;
+  const duePattern=/CASE WHEN rule\.slot_hours=20[\s\S]*?INTERVAL '15 minutes'/;
+  for(const sql of [candidate,recheck]){
+    assert.match(sql,duePattern,"20h must use a short post-video buffer, not the old fourteen-hour gap");
+    assert.match(sql,/rule\.slot_hours<>20 OR[\s\S]*?inbound\.created_at \+ INTERVAL '24 hours'/);
+    assert.match(sql,/previous_step\.completed_at IS NOT NULL/);
+    assert.match(sql,/previous\.status IN\('unknown','blocked'\)|prior_problem\.status IN\('unknown','blocked'\)/);
+  }
+  const inbound=Date.parse("2026-11-10T12:36:14.753Z");
+  const quietHourDelayedSix=Date.parse("2026-11-10T23:00:08Z");
+  const due=Math.max(inbound+20*3600000,quietHourDelayedSix+15*60000);
+  assert.equal(new Date(due).toISOString(),"2026-11-11T08:36:14.753Z",
+    "9D #8997 reminder becomes due 16:36 MYT, not 21:00 after the window");
+  assert.ok(due<inbound+24*3600000);
+});
+
 test("one eligible Ariel followup is durably claimed before sender-specific send",async()=>{
   const f=fake();
   const result=await worker.runOnce({...f,env});
@@ -110,11 +158,22 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
   assert.equal(send.send.contact.whatsapp_sender_key,"ariel");
   assert.equal(save.save[8].isAutomatedFollowUp,true);
   assert.equal(save.save[8].whatsappTemplate.automatedSecondaryFollowup,true);
+  assert.equal(save.save[8].whatsappTemplate.treatmentInterest,null,
+    "unverified/ambiguous service never gets a fabricated treatment snapshot");
   assert.deepEqual(provider.persist,[912,"wamid.ariel-followup",{
     preserveVerifiedSecondaryReceipt:true,
   }]);
   const audit=f.calls.find(x=>x.sql?.includes("status='accepted'"));
   assert.ok(audit);
+});
+
+test("verified service snapshot is written only from the confirmed treatment",()=>{
+ const source=worker.runOnce.toString();
+ assert.match(source,/treatmentInterest:confirmedTreatment\|\|null/);
+ assert.match(source,/const confirmedTreatment=choice.treatment/);
+ assert.match(source,/chooseSecondaryFollowUpTreatment/);
+ // A confirmed service is persisted with a new follow-up, but no text-only
+ // or uncertain choice may create a fabricated treatment classification.
 });
 
 test("duplicate one-shot slot cannot reach any provider or save a second message",async()=>{

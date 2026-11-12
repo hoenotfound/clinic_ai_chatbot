@@ -5,6 +5,7 @@ const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
+const service=require("../src/services/whatsappSecondaryFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -86,6 +87,49 @@ test("approved secondary marketing billing requires one claimed attempt for each
    "ariel","100000000000002","200000000000002",
    new Date(),"2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
   ]);
+
+  // Compile ALL changed secondary service and marketing selectors against
+  // the migrated PostgreSQL schema. EXPLAIN is read-only; no provider send.
+  await db.query("EXPLAIN "+service.CANDIDATES_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+service.RECHECK_SQL,[
+    contact,inbound,20,"ariel","100000000000002","200000000000002",
+    "1","2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+service.POTENTIAL_DUE_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",null,
+  ]);
+  await db.query("EXPLAIN "+marketing.CANDIDATES_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
+  await db.query("EXPLAIN "+marketing.RECHECK_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),10,"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
+  await db.query("EXPLAIN "+marketing.POTENTIAL_DUE_SQL,[
+    "ariel","100000000000002","200000000000002",
+    new Date(),"2026-11-01T00:00:00Z","ads_only",
+    "2026-11-01T00:00:00Z",
+  ]);
+  // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
+  // example; no historical attempts are opened or replayed.
+  const due=await db.query(
+    "SELECT GREATEST($1::timestamptz + INTERVAL '20 hours'," +
+    " $2::timestamptz + INTERVAL '15 minutes') AS due_at, " +
+    " ($1::timestamptz + INTERVAL '24 hours') AS expires_at",[
+      "2026-11-10T12:36:14.753Z","2026-11-10T23:00:08Z",
+    ]);
+  assert.equal(due.rows[0].due_at.toISOString(),"2026-11-11T08:36:14.753Z");
+  assert.ok(due.rows[0].due_at<due.rows[0].expires_at);
 
   const later=(await db.query(
    "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
@@ -205,6 +249,170 @@ test("approved secondary marketing billing requires one claimed attempt for each
     "WHERE message_id=$1",[nextMessage])).rows[0];
    assert.equal(auditSlot.billing_authorization_source,"operator_approved_marketing_template");
   }
+
+
+  // A customer replied after the 2h reminder. This creates a new verified
+  // inbound anchor, while its own 2h repeat stays blocked for seven days.
+  // The 6h reminder should inherit ONLY the accepted prior prerequisite.
+  // All data below lives in the disposable migrated test schema.
+  for(const slot of [2,6,20]){
+   await db.query(
+    "INSERT INTO whatsapp_sender_followup_rules "+
+    "(sender_id,slot_hours,enabled,message_text) VALUES($1,$2,TRUE,'Test')",
+    [sender,slot]);
+  }
+  const returningContact=(await db.query(
+    "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) "+
+    "VALUES('whatsapp','60125555533',$1) RETURNING id",[sender])).rows[0].id;
+  const returningConversation=(await db.query(
+    "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+    "VALUES($1,'60125555533',$2,'bound') RETURNING id",
+    [sender,returningContact])).rows[0].id;
+  const earlierInbound=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at) "+
+    "VALUES($1,'user','Interested in 3D','wamid.reengage.early',NOW()-INTERVAL '3 hours') RETURNING id",
+    [returningContact])).rows[0].id;
+  const latestInbound=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at) "+
+    "VALUES($1,'user','What is the treatment duration?','wamid.reengage.latest',NOW()-INTERVAL '30 minutes') RETURNING id",
+    [returningContact])).rows[0].id;
+  for(const id of [earlierInbound,latestInbound]){
+   await db.query(
+    "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [id,returningConversation]);
+  }
+  await db.query(
+    "INSERT INTO whatsapp_sender_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
+    "VALUES($1,$2,$3,2,'accepted',NOW()-INTERVAL '1 hour',NOW()-INTERVAL '1 hour')",
+    [sender,returningContact,earlierInbound]);
+  const firstServiceMessage=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,whatsapp_template,created_at) "+
+    "VALUES($1,'assistant','3D care information','wamid.reengage.2h',"+
+    "jsonb_build_object('automatedSecondaryFollowup',true,'treatmentInterest','3D 小颜术'),"+
+    "NOW()-INTERVAL '1 hour') RETURNING id",[returningContact])).rows[0].id;
+  await db.query(
+    "UPDATE whatsapp_sender_followup_attempts SET message_id=$2 "+
+    "WHERE sender_id=$1 AND contact_id=$3 AND anchor_message_id=$4 AND slot_hours=2",
+    [sender,firstServiceMessage,returningContact,earlierInbound]);
+  const priorStepSql=`
+    SELECT previous_step.slot_hours,previous_step.completed_at
+    FROM whatsapp_sender_followup_rules rule
+    JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
+    JOIN contacts c ON c.id=$2 AND c.whatsapp_sender_id=sa.id
+    JOIN whatsapp_sender_conversations sc ON sc.sender_id=sa.id
+      AND sc.contact_id=c.id AND sc.state='bound'
+    JOIN messages inbound ON inbound.id=$3 AND inbound.contact_id=c.id
+    ${service.PREVIOUS_STEP_SQL}
+    WHERE rule.sender_id=$1 AND rule.slot_hours=$4
+  `;
+  const prerequisite=async slot=>(await db.query(priorStepSql,
+    [sender,returningContact,latestInbound,slot])).rows[0];
+  assert.equal(Number((await prerequisite(6)).slot_hours),2,
+   "a genuine latest-inbound reply should retain the verified 2h stage");
+  assert.ok((await prerequisite(6)).completed_at,
+   "accepted previous 2h message can unlock the new 6h stage");
+  assert.equal((await prerequisite(20)).completed_at,null,
+   "20h cannot leapfrog an unaccepted 6h step");
+  assert.equal((await db.query(
+    "SELECT COUNT(*)::int n FROM whatsapp_sender_followup_attempts "+
+    "WHERE contact_id=$1 AND slot_hours=2",[returningContact])).rows[0].n,1,
+   "inheritance must never send a second 2h media message");
+
+  // Staff intervention between accepted 2h and the new customer inbound
+  // cannot be silently bypassed by inherited sequence history.
+  const staffId=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,sent_by_username,created_at) "+
+    "VALUES($1,'assistant','Please book with me','wamid.staff.reengagement','staff.test',"+
+    "NOW()-INTERVAL '45 minutes') RETURNING id",[returningContact])).rows[0].id;
+  assert.equal((await prerequisite(6)).completed_at,null,
+   "staff involvement stops inherited reminders");
+  await db.query("DELETE FROM messages WHERE id=$1",[staffId]);
+
+  // A different, unconfirmed attempt while the customer was absent must
+  // not authorize a stage via earlier accepted media.
+  const heldId=(await db.query(
+    "INSERT INTO whatsapp_sender_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
+    "VALUES($1,$2,$3,6,'unknown',NOW()-INTERVAL '50 minutes',NOW()-INTERVAL '50 minutes') "+
+    "RETURNING id",[sender,returningContact,earlierInbound])).rows[0].id;
+  assert.equal((await prerequisite(6)).completed_at,null,
+   "uncertain attempts block cross-anchor inheritance");
+  await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[heldId]);
+
+  // A new explicit selection of the SAME service is safe only if the
+  // accepted old reminder saved an exact, immutable treatment snapshot.
+  await db.query(
+    "INSERT INTO whatsapp_sender_followup_treatment_state "+
+    "(sender_id,contact_id,source_message_id,status,treatment_name) "+
+    "VALUES($1,$2,$3,'selected','3D 小颜术')",
+    [sender,returningContact,latestInbound]);
+  assert.ok((await prerequisite(6)).completed_at,
+   "same verified 3D service may continue after re-engagement");
+  await db.query(
+    "UPDATE whatsapp_sender_followup_treatment_state "+
+    "SET treatment_name='9D 逆龄抗衰' WHERE sender_id=$1 AND contact_id=$2",
+    [sender,returningContact]);
+  assert.equal((await prerequisite(6)).completed_at,null,
+   "new 9D selection prevents inheriting old 3D care media");
+  await db.query(
+    "DELETE FROM whatsapp_sender_followup_treatment_state "+
+    "WHERE sender_id=$1 AND contact_id=$2",[sender,returningContact]);
+
+  await db.query(
+    "INSERT INTO whatsapp_sender_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
+    "VALUES($1,$2,$3,6,'accepted',NOW()-INTERVAL '40 minutes',NOW()-INTERVAL '40 minutes')",
+    [sender,returningContact,earlierInbound]);
+  assert.equal(Number((await prerequisite(20)).slot_hours),6);
+  assert.ok((await prerequisite(20)).completed_at,
+   "20h can follow a verified 6h reminder across a genuine new inbound");
+
+  // Run the *production due-time SQL expression* against migrated Postgres,
+  // rather than just recreating it in JS. A verified reply at hour 60
+  // should allow a 66h reminder at hour 84, after 24h of inactivity.
+  const firstSessionReply="2026-11-10T00:00:00Z";
+  const delayedDueSql=`
+    WITH first_reply(at) AS (SELECT $1::timestamptz),
+      inbound(created_at) AS (SELECT $2::timestamptz),
+      rule(slot_hours) AS (SELECT $3::integer),
+      sa(id) AS (SELECT $4::integer),
+      c(id) AS (SELECT $5::integer)
+    SELECT ${marketing.ORDINARY_MARKETING_DUE_SQL} AS due_at
+    FROM first_reply,inbound,rule,sa,c
+  `;
+  const marketingDue=async (latestInboundAt,slot)=>(await db.query(
+    delayedDueSql,[firstSessionReply,latestInboundAt,slot,sender,returningContact]
+  )).rows[0].due_at.toISOString();
+  assert.equal(await marketingDue("2026-11-12T12:00:00Z",66),
+    "2026-11-13T12:00:00.000Z",
+    "60h reply -> 66h offer at 84h, not the expired 66h cutoff");
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",48),
+    "2026-11-12T16:00:00.000Z",
+    "40h reply -> 48h FAQ at 64h, after 24h silence");
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",66),
+    "2026-11-12T18:00:00.000Z",
+    "without a 48h send the 66h invitation retains its nominal timing");
+
+  await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
+    "VALUES($1,$2,$3,48,'accepted',$4::timestamptz,$4::timestamptz)",
+    [sender,returningContact,earlierInbound,"2026-11-12T16:00:00Z"]);
+  assert.equal(await marketingDue("2026-11-11T16:00:00Z",66),
+    "2026-11-13T10:00:00.000Z",
+    "accepted 48h reminder at 64h -> 66h invitation no sooner than 82h");
+  assert.equal(await marketingDue("2026-11-12T12:00:00Z",66),
+    "2026-11-13T12:00:00.000Z",
+    "a later customer message must push 66h further than 48h+18h");
+  // A reply at hour 80 makes 66h due at 104h, later than Day4.
+  // The ordinary marketing predicate expressly expires 66h at 96h.
+  assert.equal(await marketingDue("2026-11-13T08:00:00Z",66),
+    "2026-11-14T08:00:00.000Z");
+  assert.match(marketing.CANDIDATES_SQL,
+    /rule.slot_hours=48 THEN INTERVAL '66 hours'/);
+  assert.match(marketing.CANDIDATES_SQL,
+    /ELSE INTERVAL '96 hours'/);
 
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});

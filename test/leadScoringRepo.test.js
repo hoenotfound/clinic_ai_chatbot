@@ -199,6 +199,11 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
   assert.match(update.sql, /temperature_locked = false/);
   assert.match(update.sql, /temperature_source = 'ai'/);
+  assert.match(update.sql,/whatsapp_sender_followup_treatment_state verified/);
+  assert.match(update.sql,/sender.sender_key='neutro_secondary'/);
+  assert.match(update.sql,/verified.status='selected'/);
+  assert.match(update.sql,/THEN leads.treatment_interest ELSE COALESCE\(\$4, leads.treatment_interest\) END/);
+
   assert.doesNotMatch(update.sql, /stage_id/);
   const scoreUpdate = queries.find(({ sql }) => /SET status = 'completed'/.test(sql));
   assert.ok(scoreUpdate);
@@ -208,6 +213,18 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   assert.match(activity.sql, /'AI scoring'/);
   assert.equal(activity.params[2].applied, true);
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 8, reason: "lead_scored" } }]);
+});
+
+test("secondary verified-treatment protection also applies to ordinary AI-scoring summaries",()=>{
+ const fs=require("node:fs");
+ const path=require("node:path");
+ const source=fs.readFileSync(path.join(__dirname,"../src/db/leadScoringRepo.js"),"utf8");
+ // Two branches update lead scoring, depending on whether the temperature
+ // is changed. Both must protect customer-selected secondary treatments.
+ assert.match(source,/THEN leads.treatment_interest ELSE COALESCE\(\$4, leads.treatment_interest\) END/);
+ assert.match(source,/THEN leads.treatment_interest ELSE COALESCE\(\$3, leads.treatment_interest\) END/);
+ assert.match(source,/scoped.whatsapp_sender_id=sender.id/);
+ assert.match(source,/verified.contact_id=leads.contact_id/);
 });
 
 test("marking a score failed reports when the third attempt is terminal", async (t) => {
