@@ -43,14 +43,28 @@ test("production legacy 131060 48h/66h query compiles in migrated PostgreSQL",{
   await db.query("PREPARE old_contact_marketing_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz) AS "+svc.CANDIDATES_SQL);
   await db.query("PREPARE old_contact_marketing_recheck(text,text,text,timestamptz,integer,timestamptz,text,timestamptz) AS "+svc.RECHECK_SQL);
   await db.query("PREPARE old_contact_marketing_due(text,text,text,timestamptz,timestamptz,text,timestamptz) AS "+svc.POTENTIAL_DUE_SQL);
+  // Day4/Day6 builds a separate qualified-session query. Compile its
+  // candidate, claimed-send check and read-only scheduler hint with exactly
+  // the legacy and 131060 switches enabled in production.
+  await db.query("PREPARE active_day4_day6_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz) AS "+svc.EXTENDED_CANDIDATES_SQL);
+  await db.query("PREPARE active_day4_day6_recheck(text,text,text,timestamptz,integer,timestamptz,text,timestamptz) AS "+svc.EXTENDED_RECHECK_SQL);
+  await db.query("PREPARE active_day4_day6_due(text,text,text,timestamptz,timestamptz,text,timestamptz) AS "+svc.EXTENDED_POTENTIAL_DUE_SQL);
   assert.deepEqual((await db.query(
     "EXECUTE old_contact_marketing_candidates('neutro_secondary','123','456',NOW(),5,NOW(),'all_contacts',NOW())")).rows,[]);
   const due=(await db.query(
     "EXECUTE old_contact_marketing_due('neutro_secondary','123','456',NOW(),NOW(),'all_contacts',NOW())")).rows[0];
   assert.equal(due.next_due_at,null);
+  assert.deepEqual((await db.query(
+    "EXECUTE active_day4_day6_candidates('neutro_secondary','123','456',NOW(),5,NOW(),'all_contacts',NOW())")).rows,[]);
+  const extendedDue=(await db.query(
+    "EXECUTE active_day4_day6_due('neutro_secondary','123','456',NOW(),NOW(),'all_contacts',NOW())")).rows[0];
+  assert.equal(extendedDue.next_due_at,null);
   await db.query("DEALLOCATE old_contact_marketing_candidates");
   await db.query("DEALLOCATE old_contact_marketing_recheck");
   await db.query("DEALLOCATE old_contact_marketing_due");
+  await db.query("DEALLOCATE active_day4_day6_candidates");
+  await db.query("DEALLOCATE active_day4_day6_recheck");
+  await db.query("DEALLOCATE active_day4_day6_due");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
