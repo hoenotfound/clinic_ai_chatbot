@@ -51,7 +51,7 @@ test("generic marketing requires separately enabled switch and explicit billing 
  assert.match(general.CANDIDATES_SQL,/e\.consented_at>=\$9::timestamptz/);
  assert.match(general.CANDIDATES_SQL,/c\.takeover_by IS NULL/);
  assert.match(general.CANDIDATES_SQL,/whatsapp_marketing_opt_out_at IS NULL/);
- assert.match(general.CANDIDATES_SQL,/status='claimed'/);
+ assert.match(general.CANDIDATES_SQL,/whatsapp_sender_marketing_followup_attempts attempted/);
  assert.match(general.RECHECK_SQL,/attempted\.status='claimed'/);
  assert.match(secondaryPolicy.SECONDARY_GENERIC_MARKETING_CONSENT_SQL,/e\.consent_scope='general_clinic_followups_and_related_offers'/);
  assert.doesNotMatch(marketing.CANDIDATES_SQL,/general_campaign/);
