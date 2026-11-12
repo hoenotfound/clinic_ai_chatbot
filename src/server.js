@@ -1620,7 +1620,7 @@ async function processIncomingMessage(
     // price-recovery path inspect the signed conversation and pending reviews.
     // Never downgrade a booking, staff handoff, keyword or clinical symptom.
     if (flagged && reviewRequired && reviewType === "clinical" &&
-        /^(?:多少(?:钱|錢)?)[\\s?？!！。]*$/iu.test(String(text || "").trim()) &&
+        /^(?:多少(?:钱|錢)?)[\s?？!！。]*$/iu.test(String(text || "").trim()) &&
         !hasClinicalMediaRisk(text) && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         !bookingReady && !marketingStopQuestion) {
