@@ -88,22 +88,81 @@ const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
    + rule.slot_hours * INTERVAL '1 hour'`;
 // Resolve only the last enabled earlier slot. A later reminder must not jump
 // ahead of an unsent, failed or ambiguous previous reminder.
+// A fresh customer reply makes a new 24h service-window anchor. If the
+// previous 2h/6h step was accepted shortly before that reply, reuse that
+// verified delivery ONLY as a prerequisite for the next step. The cooldown
+// still prevents resending the same 2h/6h video. Do not bridge staff
+// intervention, unconfirmed sends, imported history, or a new treatment
+// choice/withdrawal. All sends remain bound to the new inbound and AI reply.
 const PREVIOUS_STEP_SQL=`
  LEFT JOIN LATERAL (
-   SELECT preceding.slot_hours, preceding_sent.completed_at
+   SELECT preceding.slot_hours,
+     COALESCE(
+       (SELECT preceding_sent.completed_at
+        FROM whatsapp_sender_followup_attempts preceding_sent
+        WHERE preceding_sent.sender_id=sa.id
+          AND preceding_sent.contact_id=c.id
+          AND preceding_sent.anchor_message_id=inbound.id
+          AND preceding_sent.slot_hours=preceding.slot_hours
+          AND preceding_sent.status='accepted'
+        ORDER BY preceding_sent.completed_at DESC LIMIT 1),
+       (SELECT earlier.completed_at
+        FROM whatsapp_sender_followup_attempts earlier
+        JOIN messages previous_inbound
+          ON previous_inbound.id=earlier.anchor_message_id
+         AND previous_inbound.contact_id=c.id
+         AND previous_inbound.role='user'
+         AND previous_inbound.whatsapp_message_id IS NOT NULL
+        JOIN whatsapp_sender_message_context previous_context
+          ON previous_context.message_id=previous_inbound.id
+         AND previous_context.conversation_id=sc.id
+        WHERE earlier.sender_id=sa.id AND earlier.contact_id=c.id
+          AND earlier.slot_hours=preceding.slot_hours
+          AND earlier.status='accepted'
+          AND earlier.completed_at IS NOT NULL
+          AND earlier.completed_at<inbound.created_at
+          AND earlier.completed_at>=inbound.created_at-INTERVAL '24 hours'
+          AND (previous_inbound.created_at,previous_inbound.id)
+              <(inbound.created_at,inbound.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+            WHERE imported.sender_id=sa.id
+              AND imported.message_id=previous_inbound.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM messages human_between
+            WHERE human_between.contact_id=c.id
+              AND human_between.role='assistant'
+              AND human_between.sent_by_username IS NOT NULL
+              AND human_between.is_automated_follow_up IS DISTINCT FROM TRUE
+              AND human_between.created_at>=earlier.completed_at
+              AND human_between.created_at<=inbound.created_at
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_followup_attempts uncertain_between
+            WHERE uncertain_between.sender_id=sa.id
+              AND uncertain_between.contact_id=c.id
+              AND uncertain_between.status IN('unknown','blocked')
+              AND uncertain_between.claimed_at>=earlier.completed_at
+              AND uncertain_between.claimed_at<=inbound.created_at
+          )
+          -- State is a single newest, verified decision. A new treatment
+          -- selection, deferral or refusal must not inherit old care media.
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_followup_treatment_state changed
+            WHERE changed.sender_id=sa.id AND changed.contact_id=c.id
+              AND changed.source_message_id>earlier.anchor_message_id
+              AND changed.source_message_id<=inbound.id
+          )
+        ORDER BY earlier.completed_at DESC LIMIT 1)
+     ) AS completed_at
    FROM whatsapp_sender_followup_rules preceding
-   LEFT JOIN whatsapp_sender_followup_attempts preceding_sent
-     ON preceding_sent.sender_id=sa.id AND preceding_sent.contact_id=c.id
-    AND preceding_sent.anchor_message_id=inbound.id
-    AND preceding_sent.slot_hours=preceding.slot_hours
-    AND preceding_sent.status='accepted'
    WHERE preceding.sender_id=rule.sender_id AND preceding.enabled=TRUE
      AND preceding.slot_hours IN(2,6,20)
      AND preceding.slot_hours<rule.slot_hours
    ORDER BY preceding.slot_hours DESC LIMIT 1
  ) previous_step ON TRUE
-`;
-// The 20h check-in must stay inside the customer's original 24h reply
+`;// The 20h check-in must stay inside the customer's original 24h reply
 // window. Quiet hours may delay the 6h video until 07:00 MYT; adding
 // (20-6)=14 hours after its actual delivery can make 20h impossible.
 // Preserve accepted-step ordering, but require only a short spacing buffer
