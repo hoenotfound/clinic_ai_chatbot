@@ -281,6 +281,15 @@ test("approved secondary marketing billing requires one claimed attempt for each
     "(sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at,completed_at) "+
     "VALUES($1,$2,$3,2,'accepted',NOW()-INTERVAL '1 hour',NOW()-INTERVAL '1 hour')",
     [sender,returningContact,earlierInbound]);
+  const firstServiceMessage=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,whatsapp_template,created_at) "+
+    "VALUES($1,'assistant','3D care information','wamid.reengage.2h',"+
+    "jsonb_build_object('automatedSecondaryFollowup',true,'treatmentInterest','3D 小颜术'),"+
+    "NOW()-INTERVAL '1 hour') RETURNING id",[returningContact])).rows[0].id;
+  await db.query(
+    "UPDATE whatsapp_sender_followup_attempts SET message_id=$2 "+
+    "WHERE sender_id=$1 AND contact_id=$3 AND anchor_message_id=$4 AND slot_hours=2",
+    [sender,firstServiceMessage,returningContact,earlierInbound]);
   const priorStepSql=`
     SELECT previous_step.slot_hours,previous_step.completed_at
     FROM whatsapp_sender_followup_rules rule
@@ -326,15 +335,21 @@ test("approved secondary marketing billing requires one claimed attempt for each
    "uncertain attempts block cross-anchor inheritance");
   await db.query("DELETE FROM whatsapp_sender_followup_attempts WHERE id=$1",[heldId]);
 
-  // A verified selection on the new inbound must start a fresh treatment
-  // chain, never borrow a prior 3D testimonial for an unrelated 9D request.
+  // A new explicit selection of the SAME service is safe only if the
+  // accepted old reminder saved an exact, immutable treatment snapshot.
   await db.query(
     "INSERT INTO whatsapp_sender_followup_treatment_state "+
     "(sender_id,contact_id,source_message_id,status,treatment_name) "+
-    "VALUES($1,$2,$3,'selected','9D 逆龄抗衰')",
+    "VALUES($1,$2,$3,'selected','3D 小颜术')",
     [sender,returningContact,latestInbound]);
+  assert.ok((await prerequisite(6)).completed_at,
+   "same verified 3D service may continue after re-engagement");
+  await db.query(
+    "UPDATE whatsapp_sender_followup_treatment_state "+
+    "SET treatment_name='9D 逆龄抗衰' WHERE sender_id=$1 AND contact_id=$2",
+    [sender,returningContact]);
   assert.equal((await prerequisite(6)).completed_at,null,
-   "new treatment decision prevents inheriting a prior treatment's media");
+   "new 9D selection prevents inheriting old 3D care media");
   await db.query(
     "DELETE FROM whatsapp_sender_followup_treatment_state "+
     "WHERE sender_id=$1 AND contact_id=$2",[sender,returningContact]);
