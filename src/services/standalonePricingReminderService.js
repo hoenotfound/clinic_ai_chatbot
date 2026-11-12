@@ -283,20 +283,25 @@ async function runOnce(now=new Date()){
     }
     // The selected package set is fixed for this pass, but final rechecks
     // still verify current promotions, recipient and follow-up state.
+    let sentForCandidate=0;
     for(const offer of selected.offers){
       if(!beforeEnd(candidate))break;
       const result=await sendOne(candidate,offer,options,selected.offers);
-      if(result.sent){sends++;continue;}
+      if(result.sent){sends++;sentForCandidate++;continue;}
       if(result.nextAt)track(result.nextAt);
-      if(result.waiting && candidate.has_accepted_package_a)
-        track(soon().toISOString());
+      if(result.waiting &&
+         (candidate.has_accepted_package_a || candidate.next_preflight_retry_at)){
+        const retry=Date.parse(candidate.next_preflight_retry_at||"");
+        track(Number.isFinite(retry)&&retry>new Date(now).getTime()
+          ?new Date(retry).toISOString():soon().toISOString());
+      }
       if(result.review)await repo.recordDecision(candidate,"staff_review:"+offer.packageName).catch(()=>{});
       break;
     }
     // After accepting A on secondary, B cannot be sent until the signed Meta
     // receipt has released the sender-specific billing gate. Wake again later.
     if(candidate.whatsapp_sender_key===SECONDARY && selected.offers.length>1 &&
-       sends>0)track(soon().toISOString());
+       sentForCandidate>0)track(soon().toISOString());
   }
   return nextDue?.toISOString()||null;
 }
