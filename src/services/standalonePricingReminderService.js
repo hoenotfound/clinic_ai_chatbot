@@ -41,7 +41,7 @@ function settings(env=process.env,config=clinicConfig){
 }
 
 // Price is due near closing. If 22h lands in 00:00-07:00 MYT, bring it
-// forward to 23:20 MYT the previous evening rather than sending overnight.
+// forward to 22:20 MYT the previous evening to avoid the late 20h follow-up.
 // Malaysia has no daylight-saving clock changes.
 function dueAt(candidate){
   const source=new Date(candidate.source_at).getTime();
@@ -51,7 +51,7 @@ function dueAt(candidate){
   if(localHour<7){
     const local=new Date(due+8*3600000);
     local.setUTCHours(0,0,0,0);
-    due=local.getTime()-40*60000-8*3600000;
+    due=local.getTime()-100*60000-8*3600000;
   }
   // Existing service and opt-in messages always get right of way.
   // Give the customer at least 45 minutes before another automatic offer.
