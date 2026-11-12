@@ -168,10 +168,20 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     const diagnosticWhere="\n WHERE $6::timestamptz IS NOT NULL AND $7::text IS NOT NULL"+
       " AND $8::timestamptz IS NOT NULL AND $9::timestamptz IS NOT NULL";
     const cross=(await db.query(from+diagnosticWhere+tail,p)).rows;
+    const parts=from.slice(from.indexOf("\n FROM whatsapp_sender_marketing_followup_rules rule")).split(/\n(?= JOIN )/);
+    const stages=[];
+    for(let i=0;i<parts.length;i++){
+      const allArgsWhere="\n WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL"+
+        " AND $3::text IS NOT NULL AND $4::timestamptz IS NOT NULL"+
+        " AND $5::integer IS NOT NULL AND $6::timestamptz IS NOT NULL"+
+        " AND $7::text IS NOT NULL AND $8::timestamptz IS NOT NULL"+
+        " AND $9::timestamptz IS NOT NULL";
+      const q="SELECT COUNT(*)::int AS n "+parts.slice(0,i+1).join("\n")+allArgsWhere;
+      const rr=await db.query(q,p);
+      stages.push({i,join:parts[i].slice(0,78).trim(),n:rr.rows[0].n});
+    }
     console.error("Generic candidate base joins",JSON.stringify({
-      joined:cross.length,baseRows:cross.map(x=>({contact_id:x.contact_id,
-        inbound_id:x.inbound_id,slot_hours:x.slot_hours,
-        language_code:x.language_code,consent_id:x.consent_id})),
+      joined:cross.length,stages,
     }));
     console.error("Generic candidate diagnostic",JSON.stringify({rows:row,ads,audience,
       args:p.map(x=>x instanceof Date?x.toISOString():x)}));
