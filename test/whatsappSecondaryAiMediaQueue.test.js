@@ -483,7 +483,7 @@ test("Before & After results stay queued after ordinary customer questions",asyn
   // instead survive new location, price, and treatment-detail messages.
   for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
     assert.match(sql,/job\.media_kind='result' AND/);
-    assert.match(sql,/job\.media_kind<>'result' AND NOT/);
+    assert.match(sql,/job\.media_kind='promotion' AND/);
     assert.match(sql,/successor\.media_kind='result'/);
     assert.match(sql,/stop\|unsubscribe\|opt/);
     assert.match(sql,/c\.whatsapp_opt_out_at IS NULL/);
@@ -498,7 +498,7 @@ test("Before & After results stay queued after ordinary customer questions",asyn
   await worker.cancelObsoletePending({database:db,env:approved});
   assert.equal(statements.length,1);
   assert.match(statements[0],/job\.media_kind='result' AND/);
-  assert.match(statements[0],/job\.media_kind<>'result' AND NOT/);
+  assert.match(statements[0],/job\.media_kind='promotion' AND/);
   assert.match(statements[0],/successor\.media_kind='result'/);
   assert.match(statements[0],/job\.expires_at<=NOW\(\)/);
 });
@@ -522,5 +522,5 @@ test("a customer acknowledgement does not cancel selected promotion art while re
   assert.match(sql, /NOT \(.*BTRIM\(newer\.content\)/s);
   assert.match(sql, /不要了/);
   assert.match(sql, /RESULT_MEDIA_SUPERSESSION_SQL|停止发送/);
-  assert.doesNotMatch(sql, /job\.media_kind<>'result' AND NOT/);
+  assert.doesNotMatch(sql, /job\.media_kind='promotion' AND/);
 });
