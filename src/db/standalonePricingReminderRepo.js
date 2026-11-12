@@ -294,7 +294,20 @@ async function claimAdditional(candidate,offer,database=pool){
         AND previous.contact_id=$1 AND previous.whatsapp_message_id IS NOT NULL
         AND (previous.delivery_status IN ('sent','delivered','read') OR
              (previous.delivery_status='pending' AND previous.whatsapp_accepted_at IS NOT NULL))
-        AND previous.pricing_reminder_package_key='Package A')
+        AND previous.pricing_reminder_package_key='Package A'
+        AND (
+          EXISTS(SELECT 1 FROM whatsapp_sender_accounts own
+                 WHERE own.id=$7 AND own.sender_key<>'neutro_secondary')
+          OR EXISTS (
+            SELECT 1 FROM whatsapp_sender_billing_attempts att
+            JOIN whatsapp_sender_status_receipts receipt
+              ON receipt.sender_id=att.sender_id
+              AND receipt.reservation_id=att.reservation_id
+              AND receipt.wamid=previous.whatsapp_message_id
+            WHERE att.sender_id=$7 AND att.message_id=previous.id
+              AND receipt.matched=TRUE
+              AND receipt.delivery_status IN ('sent','delivered','read')
+          )))
       AND EXISTS (
         SELECT 1 FROM contacts c
         JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
