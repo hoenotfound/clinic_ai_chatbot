@@ -186,10 +186,52 @@ const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
 // another sales reminder after saying goodbye, asking only about a distant
 // branch, or pitching a business partnership. Apply the same fail-closed SQL
 // at discovery and immediately before dispatch.
+
+// The fixed Meta 131060 recovery greeting may be followed up without a
+// customer treatment selection. It must be provider-accepted, tied to the
+// original sender-bound unavailable message and never treated as a treatment
+// enquiry, ad click, marketing opt-in or permission to send media/templates.
+const RECOVERY_NO_SELECTION_SQL=String.raw`(
+  inbound.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+  AND first_reply.staff_reply=FALSE
+  AND first_reply.text LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
+  AND first_reply.text LIKE '%可以点下面的选项%'
+  AND EXISTS (
+    SELECT 1 FROM messages verified_recovery
+    JOIN outbound_message_evidence recovery_evidence
+      ON recovery_evidence.message_id=verified_recovery.id
+      AND recovery_evidence.contact_id=c.id
+      AND recovery_evidence.channel='whatsapp'
+      AND recovery_evidence.origin='system_fallback'
+      AND recovery_evidence.accepted=TRUE
+      AND recovery_evidence.provider_message_id=verified_recovery.whatsapp_message_id
+    WHERE verified_recovery.id=first_reply.id
+      AND verified_recovery.contact_id=c.id
+      AND verified_recovery.role='assistant'
+      AND verified_recovery.whatsapp_message_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_menu
+        WHERE old_menu.sender_id=sa.id AND old_menu.message_id=verified_recovery.id
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM messages newer_customer
+    WHERE newer_customer.contact_id=c.id AND newer_customer.role='user'
+      AND (newer_customer.created_at,newer_customer.id)
+          >(inbound.created_at,inbound.id)
+  )
+)`;
+const RECOVERY_REMINDER_TEXT=Object.freeze({
+  2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
+  6:"您好 😊 如果还不确定适合什么护理，也可以简单说说您的需求，我们会先了解情况，再安排适合的评估哦。",
+  20:"Hi dear 😊 再轻轻跟进一下～如果想了解护理或预约中医师评估，随时回复我们就好 ❤️",
+});
+
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  -- An unreadable Meta 131060 first message is not a genuine service enquiry.
  -- An automatic request to resend must never start the 2h/6h/20h sequence.
- AND COALESCE(inbound.content,'') NOT LIKE '📎 [%sent a WhatsApp message that could not be displayed]'
+ AND (COALESCE(inbound.content,'') NOT LIKE '📎 [%sent a WhatsApp message that could not be displayed]'
+      OR ${RECOVERY_NO_SELECTION_SQL})
  AND COALESCE(inbound.content,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
  AND COALESCE(inbound.content,'') !~* '${DISTANCE_OBJECTION_SQL}'
  AND COALESCE(inbound.content,'') !~* '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
@@ -245,6 +287,7 @@ const CANDIDATES_SQL=`
    rule.media_type,rule.media_mime_type,rule.media_filename,
    first_reply.text AS first_reply_text,
    first_reply.staff_reply,first_reply.staff_question,
+   ${RECOVERY_NO_SELECTION_SQL} AS recovery_no_selection,
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
@@ -568,13 +611,16 @@ async function runOnce({
       forceGeneral:generalOnly,
     });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
-    const safeText=candidate.staff_reply && candidate.staff_question
-      ? gentleStaffQuestionNudge(replyLanguage) : localized;
+    const safeText=candidate.recovery_no_selection
+      ? RECOVERY_REMINDER_TEXT[slot]
+      : (candidate.staff_reply && candidate.staff_question
+        ? gentleStaffQuestionNudge(replyLanguage) : localized);
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
     if(candidate.media_key && !generalOnly && !candidate.staff_reply &&
+       !candidate.recovery_no_selection &&
        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
@@ -617,13 +663,15 @@ async function runOnce({
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
-      const selectedVideo=!candidate.staff_reply && !generalOnly &&
+      const selectedVideo=!candidate.recovery_no_selection &&
+        !candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=(generalOnly || candidate.staff_reply) ? null
+      const key=(generalOnly || candidate.staff_reply ||
+        candidate.recovery_no_selection) ? null
         : candidate.media_key || selectedVideo?.mediaKey || null;
       const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
       const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
@@ -666,7 +714,7 @@ async function runOnce({
       let outboundText=safeText;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !generalOnly &&
+      if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
          env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
@@ -691,7 +739,8 @@ async function runOnce({
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             slotHours:slot,anchorMessageId:candidate.inbound_id,
-            treatmentInterest:confirmedTreatment||null},
+            treatmentInterest:confirmedTreatment||null,
+            recoveryNoSelection:candidate.recovery_no_selection===true},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
           initialDeliveryStatus:"unknown",
