@@ -93,7 +93,7 @@ async function enforceConversationsPolicy(req, res, user) {
   }
 
   const isConversationManagement =
-    (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
+    (req.method === "POST" && ["takeover", "return-to-ai", "enable-secondary-ai"].includes(action)) ||
     (req.method === "PATCH" && (
       ["attention", "follow-up"].includes(action) ||
       (action === "reviews" && positiveId(subAction) != null && fourth === "resolve" && parts.length === 4)
