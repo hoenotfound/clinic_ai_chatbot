@@ -1,7 +1,7 @@
 "use strict";
 // Only provider-verified customer text may set sender-specific follow-up context.
 // This never grants marketing consent or bypasses a follow-up's normal eligibility.
-const {resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+const {resolveFollowUpTreatment,isBarePostpartumConcernAnswer}=require("./whatsappSecondaryFollowUpLanguage");
 
 // A clear withdrawal pauses reminders even when the customer does not repeat
 // a treatment name. Do not interpret questions such as "I don't know how" or
@@ -42,6 +42,9 @@ function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
  }
  if(DISTANCE_OBJECTION.test(value) || DEFERRED.test(value))
    return {status:"deferred",treatment:null};
+ // "产后" by itself describes a concern, not a verified switch to the
+ // separately named postpartum treatment. Keep the earlier signed choice.
+ if(isBarePostpartumConcernAnswer(value))return null;
  const service=resolveFollowUpTreatment({clinicConfig,customerTexts:[value]});
  if(service)return {status:"selected",treatment:service};
  // A comparison between distinct treatments is evidence that the older choice
@@ -53,6 +56,21 @@ function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
    return {status:"ambiguous",treatment:null};
  return null;
 }
+// Old data may already have stored 产后调理 from a bare answer even when
+// the customer explicitly chose pelvic care before it. Do not send a
+// treatment-specific reminder off that suspect historical classification.
+// This fails closed to a general message until the signed state is repaired.
+function isSuspectStoredPostpartumChoice({customerTexts,storedTreatment,clinicConfig}={}) {
+ if(storedTreatment!=="产后调理")return false;
+ const texts=Array.isArray(customerTexts)?customerTexts:[];
+ if(!texts.some(isBarePostpartumConcernAnswer))return false;
+ const explicitPostpartum=texts.some(value=>
+   !isBarePostpartumConcernAnswer(value) &&
+   classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.treatment==="产后调理");
+ if(explicitPostpartum)return false;
+ return texts.some(value=>
+   classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.treatment==="骨盆调理");
+}
 function isStoppedDecision(status){
  return status==="declined" || status==="deferred";
 }
@@ -63,10 +81,21 @@ function chooseSecondaryFollowUpTreatment({
  candidate={},clinicConfig,adFollowUpPolicy=null,latestDecision=null,
 }={}){
  const services=(clinicConfig?.services||[]).map(x=>x?.name).filter(Boolean);
+ if(latestDecision?.status!=="selected" && isSuspectStoredPostpartumChoice({
+  customerTexts:candidate.customer_texts,
+  storedTreatment:candidate.verified_treatment_name,
+  clinicConfig,
+ }))return{treatment:null,generalOnly:true,customerSelected:false};
  // New uncertainty overrides a prior selection even before its async state
  // write finishes. Never send media for an unresolved either/or question.
  if(latestDecision?.status==="ambiguous")
    return{treatment:null,generalOnly:true,customerSelected:false};
+ // A bare postpartum response does not authorize an ad/CRM fallback to
+ // an unrelated treatment. A previously signed pelvic choice may continue.
+ if(isBarePostpartumConcernAnswer(candidate.customer_texts?.[0]) &&
+    !(candidate.verified_treatment_status==="selected" &&
+      candidate.verified_treatment_name==="骨盆调理"))
+   return {treatment:null,generalOnly:true,customerSelected:false};
  const selectedLatest=latestDecision?.status==="selected" ? latestDecision.treatment : null;
  const selectedStored=candidate.verified_treatment_status==="selected"
    ? candidate.verified_treatment_name : null;
@@ -93,8 +122,14 @@ function chooseSecondaryFollowUpTreatment({
 // Marketing must not rely on a lagging database snapshot when the latest
 // sender-owned customer message explicitly chooses a different treatment.
 function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinicConfig}={}){
+ if(isSuspectStoredPostpartumChoice({
+  customerTexts:customerMessages,storedTreatment:treatmentInterest,clinicConfig,
+ }))return false;
+ const latestText=Array.isArray(customerMessages)?customerMessages[0]:null;
+ if(isBarePostpartumConcernAnswer(latestText) &&
+    treatmentInterest!=="骨盆调理") return false;
  const latest=classifyVerifiedTreatmentTurn({
-   text:Array.isArray(customerMessages)?customerMessages[0]:null,
+   text:latestText,
    clinicConfig,
  });
  return !latest || (latest.status==="selected" && latest.treatment===treatmentInterest);

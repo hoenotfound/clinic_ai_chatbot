@@ -75,7 +75,7 @@ const RECONCILE_CRM_SQL=`
  UPDATE leads l SET treatment_interest=chosen.treatment_name,updated_at=NOW()
  FROM chosen,latest
  WHERE l.id=latest.id AND l.contact_id=chosen.contact_id
-   AND l.created_by='Automation' AND l.source='meta_ads'
+   AND l.created_by='Automation' AND l.source IN ('meta_ads','whatsapp_unattributed')
    AND l.owner_username IS NULL AND l.is_closed IS DISTINCT FROM TRUE
    AND NOT EXISTS (
      SELECT 1 FROM lead_activities human_activity
