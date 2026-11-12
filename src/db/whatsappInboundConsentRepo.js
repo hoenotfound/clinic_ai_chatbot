@@ -2,7 +2,8 @@
 
 const { pool } = require("./db");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
-const {explicitGeneralFollowupConsent,GENERAL_SCOPE,GENERAL_SERVICE,SENTENCES}=
+const {explicitGeneralFollowupConsent,parseConsentButton,BUTTON_TITLES,
+ GENERAL_SCOPE,GENERAL_SERVICE,SENTENCES}=
  require("../utils/neutroGeneralFollowupConsent");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const clinicConfig = require("../config/clinicConfig");
@@ -18,6 +19,7 @@ const clinicConfig = require("../config/clinicConfig");
  */
 async function recordFromInbound({
   contactId, messageId, leadId, businessName, isClickToWhatsApp = false,
+  interactiveReplyId = null,
 }, { database = pool, config = clinicConfig } = {}) {
   if (![contactId, messageId, leadId].every((value) =>
     Number.isSafeInteger(Number(value)) && Number(value) > 0) ||
@@ -45,19 +47,18 @@ async function recordFromInbound({
     const signedCustomerText = message?.role === "user" &&
       Boolean(String(message.whatsapp_message_id || "").trim()) &&
       !message.media_mime_type && message.is_forwarded !== true;
-    // The general opt-in sentence must NOT fall through to the
-    // treatment-specific free-text classifier, including when the generic
-    // invitation was absent or Meta has not confirmed its delivery.
-    const generalPhrase=signedCustomerText &&
+    // A typed Yes, an ad prefill, or an unrelated button is not marketing
+    // permission. Only a provider-sourced button ID matching a delivered
+    // sender-bound consent invitation can authorize this separate scope.
+    const button=signedCustomerText?parseConsentButton(interactiveReplyId):null;
+    const generalPhrase=signedCustomerText && !button &&
       explicitGeneralFollowupConsent(message.content);
-    const treatmentExplicit=signedCustomerText && !generalPhrase
+    const treatmentExplicit=signedCustomerText && !button && !generalPhrase
       ? explicitPromotionConsent(message.content,{businessName}):null;
-    // Only an affirmative customer-authored reply AFTER a delivered,
-    // sender-bound 20h invitation can grant this independent consent.
-    // A Meta ad prefill, 131060 placeholder or unrelated 'yes' cannot.
-    const offeredGeneral=generalPhrase && !isClickToWhatsApp;
+    const offeredGeneral=!isClickToWhatsApp && (generalPhrase||button);
     let generalExplicit=null;
-    if(offeredGeneral){
+    if(offeredGeneral && (!button || message.content===BUTTON_TITLES[button.language])){
+      const lang=offeredGeneral.language;
       const verified=await client.query(
         `SELECT EXISTS (
            SELECT 1 FROM messages prompt
@@ -78,14 +79,26 @@ async function recordFromInbound({
              AND prompt.content LIKE '%' || $2::text || '%'
              AND prompt.created_at < $3::timestamptz
              AND prompt.created_at >= $3::timestamptz-INTERVAL '7 days'
+             AND ($4::bigint IS NULL OR (
+               prompt.id=$4
+               AND prompt.whatsapp_template->>'generalConsentButton'='true'
+               AND prompt.whatsapp_template->>'generalConsentLanguage'=$5::text
+               AND prompt.whatsapp_accepted_at IS NOT NULL
+               AND prompt.whatsapp_accepted_at <= $3::timestamptz
+             ))
              AND NOT EXISTS (
                SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
                WHERE imported.sender_id=sa.id AND imported.message_id=prompt.id
              )
          ) AS verified`,
-        [contactId,SENTENCES[offeredGeneral.language],message.sent_at]
+        [contactId,SENTENCES[lang],message.sent_at,
+         button?button.promptId:null,lang]
       );
-      if(verified.rows?.[0]?.verified===true)generalExplicit=offeredGeneral;
+      if(verified.rows?.[0]?.verified===true)
+        generalExplicit=button?{
+          language:lang,category:"MARKETING",scope:GENERAL_SCOPE,
+          service:GENERAL_SERVICE,method:"customer_whatsapp_interactive_button",
+        }:generalPhrase;
     }
     const explicit=generalExplicit||treatmentExplicit;
     if (!explicit) {
@@ -122,8 +135,10 @@ async function recordFromInbound({
       return { recorded: false, reason: "outdated_or_opted_out" };
     }
 
-    const source = isClickToWhatsApp
-      ? "ctwa_explicit_customer_message" : "explicit_customer_message";
+    const source = button && generalExplicit
+      ? "customer_whatsapp_button"
+      : isClickToWhatsApp
+        ? "ctwa_explicit_customer_message" : "explicit_customer_message";
     const inserted = await client.query(
       `INSERT INTO whatsapp_marketing_consent_events
        (contact_id,lead_id,source,recorded_by,message_id,
