@@ -121,6 +121,11 @@ async function dispatch(candidate,offer,options,row,allOffers){
       return false;
     const fresh=await safeContact(candidate);
     if(!fresh || fresh.whatsapp_number!==originalRecipient)return false;
+    // Preserve the secondary AI media review/approval hold used by normal
+    // promotional media. Text permission alone never authorizes images.
+    if(candidate.whatsapp_sender_key===SECONDARY &&
+       !(await contactsRepo.canSendAutomaticReviewMedia(candidate.contact_id)))
+      return false;
     const still=await repo.stillEligible(candidate,row.id,options);
     if(!still)return false;
     const selected=select(candidate,options);
