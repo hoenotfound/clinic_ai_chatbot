@@ -53,12 +53,29 @@ test("all contact automation adds legacy staff guard without weakening provider 
  // can only narrow an existing eligible candidate, never grant consent.
  assert.match(sql,/whatsapp_free_entry_referrals/);
 });
-test("131060 recovery only promotes an old contact with verified current ad proof",()=>{
- const source=recovery.canSend131060Recovery.toString();
- assert.match(source,/current_ad.origin_message_id=inbound.id/);
- assert.match(source,/job.incoming_payload->'attribution'->>'adId'/);
- assert.match(source,/job.incoming_payload->'attribution'->>'ctwaClid'/);
- assert.match(source,/current_ad.source_type='ad'/);
- assert.match(source,/job.incoming_payload->'unsupportedErrors'/);
- assert.match(source,/older.contact_id=c.id/);
+test("131060 recovery does not invent ad attribution but restores AI after accepted menu and a readable reply",()=>{
+ const {secondary131060RecoveryAudienceSql}=
+   require("../src/services/whatsappSecondaryLegacyStaffPolicy");
+ const enabled={...env,
+   WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"true",
+   WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT:"2026-11-12T02:36:00Z",
+ };
+ const sql=secondary131060RecoveryAudienceSql("c","inbound",enabled);
+ assert.match(sql,/inbound\.id>recovery_menu\.id/);
+ assert.match(sql,/outbound_message_evidence accepted_menu/);
+ assert.match(sql,/accepted_menu\.accepted=TRUE/);
+ assert.match(sql,/accepted_menu\.provider_message_id=recovery_menu\.whatsapp_message_id/);
+ assert.match(sql,/unavailable131060\.content LIKE/);
+ assert.match(sql,/inbound\.content NOT LIKE/);
+ assert.match(sql,/inbound\.created_at<recovery_menu\.created_at\+INTERVAL '7 days'/);
+ assert.match(sql,/recorded131060\.incoming_payload->'unsupportedErrors'/);
+ assert.doesNotMatch(sql,/whatsapp_free_entry_referrals/);
+ assert.equal(secondary131060RecoveryAudienceSql("c","inbound",env),"FALSE");
+ assert.equal(secondary131060RecoveryAudienceSql("c","inbound",{
+  ...enabled, WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT:"invalid"
+ }),"FALSE");
+ const first=require("../src/services/whatsapp131060Recovery").canSend131060Recovery.toString();
+ assert.match(first,/prior_evidence/);
+ assert.match(first,/job\.incoming_payload->'unsupportedErrors'/);
+ assert.doesNotMatch(first,/current_ad\.source_type='ad'/);
 });
