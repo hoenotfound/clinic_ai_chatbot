@@ -220,6 +220,25 @@ async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
   }
 }
 
+// The original video is already private in R2. A server-side copy makes a
+// disposable Meta-facing URL without uploading its bytes through Render again.
+async function withTemporaryStoredMediaUrl(contact, mediaKey, mimeType, deliver) {
+  const channel = channelOf(contact);
+  let temporary = null;
+  try {
+    temporary = await mediaStorage.copyStoredMediaToTemporary(mediaKey, mimeType, {
+      contactId: contact?.id || channel,
+    });
+    return await deliver(temporary.url);
+  } catch (err) {
+    return temporaryMediaFailure(channel, err);
+  } finally {
+    if (temporary?.key) {
+      mediaStorage.scheduleTemporaryMediaDelete(temporary.key);
+    }
+  }
+}
+
 function storedPromoImageId(imageUrl) {
   const raw = typeof imageUrl === "string" ? imageUrl.trim() : "";
   if (!raw) return null;
@@ -1033,7 +1052,7 @@ async function sendVideoByStoredKey(
         [500, 502, 503, 504].includes(result.uploadHttpStatus)) {
       console.warn("[Messenger video] Attachment upload failed with HTTP", result.uploadHttpStatus,
         "; trying the private URL transport once.");
-      result = await withTemporaryMediaUrl(contact, buffer, videoMimeType, async (mediaUrl) => {
+      result = await withTemporaryStoredMediaUrl(contact, videoKey, videoMimeType, async (mediaUrl) => {
         // Recheck the service window and message ownership: uploads can take
         // time, and a subsequent staff handoff must cancel the fallback send.
         const retryGuard = await freeformGuard(
