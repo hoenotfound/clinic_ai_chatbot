@@ -601,7 +601,7 @@ test("verified WhatsApp Business App replies are permitted only as safe service 
    assert.match(sql,/c.takeover_by IS NULL/);
    assert.match(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
    assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
-   assert.match(sql,/CASE WHEN first_reply.staff_reply THEN first_reply.at\+INTERVAL '2 hours'/);
+   assert.match(sql,/CASE WHEN first_reply.staff_reply AND NOT/);
  }
 });
 test("manual unanswered staff question sends one gentle text reminder instead of media",async()=>{
@@ -639,6 +639,8 @@ test("verified 131060 recovery keeps neutral 2h, 6h and 20h messages after an or
 
 test("131060 no-selection follow-ups require accepted recovery evidence in candidate and final recheck",()=>{
  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(sql,/recovery_menu\.id IS NOT NULL/);
+   assert.match(sql,/recovery_menu\.at/);
    assert.match(sql,/recovery_evidence\.accepted=TRUE/);
    assert.match(sql,/recovery_evidence\.origin='system_fallback'/);
    assert.match(sql,/recovery_evidence\.provider_message_id=verified_recovery\.whatsapp_message_id/);
@@ -654,6 +656,8 @@ test("131060 no-selection follow-ups require accepted recovery evidence in candi
    assert.match(sql,/BETWEEN 7 AND 23/);
  }
  assert.match(worker.POTENTIAL_DUE_SQL,/recovery_evidence\.accepted=TRUE/);
+ assert.match(worker.POTENTIAL_DUE_SQL,/recovery_menu\.at/);
+ assert.match(worker.RECHECK_SQL,/recovery_menu\.id IS NOT NULL/);
  assert.match(worker.CANDIDATES_SQL,/readable_later\.content NOT LIKE/);
  assert.match(worker.CANDIDATES_SQL,/prior_recovery\.delivery_status IN/);
  assert.match(worker.RECHECK_SQL,/newer\.content NOT LIKE/);
