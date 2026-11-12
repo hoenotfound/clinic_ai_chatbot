@@ -28,7 +28,7 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
   CRM-only treatment labels are excluded.
 - Normally due ~22h after latest customer message, before a 23h30 safety
   cutoff. When 22h falls inside 00:00-07:00 MYT quiet hours, send earlier at
-  23:20 MYT the previous evening if still inside the current service window.
+  22:20 MYT the previous evening if still inside the current service window.
 - Verified pricing media already delivered, pricing text already quoted,
   ambiguous service/package, clinical risk, staff ownership, pending review,
   confirmed appointment, opt-out, expired reply window or a changed promotion
