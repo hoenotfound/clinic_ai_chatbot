@@ -156,7 +156,7 @@ function resolveRecentPriceSelection({
 function pelvicPostpartumConcernIndex(turns, services, serviceAliases) {
   for (let i = 1; i < turns.length - 1; i++) {
     if (turns[i]?.role !== "user" ||
-        !/^(?:产后|產後)(?:的?(?:体态|體態|身材))?[。.!！\\s]*$/u.test(
+        !/^(?:产后|產後)(?:的?(?:体态|體態|身材))?[。.!！\s]*$/u.test(
           pricingMessageText(turns[i]).trim())) continue;
     const priorCustomer = turns.slice(0, i).findLastIndex(t => t.role === "user");
     if (priorCustomer < 0 ||
@@ -191,11 +191,11 @@ function pelvicPostpartumAdviceOnly(turn, index, concernIndex, candidates) {
       /(?:还是|還是|或者|主要|哪一|哪种|哪種)/u.test(text) &&
       /(?:产后|產後).{0,24}(?:体态|體態|身材|恢复|恢復)/u.test(text) &&
       /[?？呢]/u.test(text) &&
-      !/(?:另外|另一个|另一项|还有|也有|推荐|推薦|套餐|配套|收费|收費|价格|價格|\\b(?:RM|MYR)\\s*\\d+)/iu.test(text))
+      !/(?:另外|另一个|另一项|还有|也有|推荐|推薦|套餐|配套|收费|收費|价格|價格|\b(?:RM|MYR)\s*\d+)/iu.test(text))
     return true;
   if (index === concernIndex) return false;
   if (!/(?:产后|產後)/u.test(text) ||
-      /(?:另外|另一个|另一项|還有|还有|也有|推荐|推薦|可选|可選|套餐|配套|优惠|優惠|收费|收費|价格|價格|价钱|價錢|\\b(?:RM|MYR)\\s*\\d+)/iu.test(text) ||
+      /(?:另外|另一个|另一项|還有|还有|也有|推荐|推薦|可选|可選|套餐|配套|优惠|優惠|收费|收費|价格|價格|价钱|價錢|\b(?:RM|MYR)\s*\d+)/iu.test(text) ||
       /(?:产后|產後)(?:调理|調理)/u.test(text)) return false;
   const postpartumServicePhrase =
     /(?:产后|產後)(?:体态|體態)(?:调理|調理)/u.test(text);
