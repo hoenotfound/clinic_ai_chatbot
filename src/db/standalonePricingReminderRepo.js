@@ -156,6 +156,17 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},databa
             AND withdrawal.status IN ('declined','deferred')
             AND withdrawal.source_message_id<=inbound.id)
         AND NOT ${temporaryStaffConversationSql("c","inbound")}
+        -- A follow-up or opt-in prompt could have been accepted between
+        -- the scheduled candidate scan and this provider send.
+        AND NOT EXISTS (
+          SELECT 1 FROM messages busy WHERE busy.contact_id=c.id
+            AND busy.id<>outbound.id AND busy.role='assistant'
+            AND busy.created_at>NOW()-INTERVAL '45 minutes'
+            AND busy.whatsapp_message_id IS NOT NULL
+            AND (busy.delivery_status IS NULL OR busy.delivery_status IN
+                ('pending','sent','delivered','read'))
+            AND (busy.is_automated_follow_up=TRUE OR
+                 busy.sent_by_username='Consent request automation'))
         AND NOT EXISTS(
           SELECT 1 FROM messages quote WHERE quote.contact_id=c.id AND quote.role='assistant'
             AND quote.pricing_reminder_anchor_id IS NULL
