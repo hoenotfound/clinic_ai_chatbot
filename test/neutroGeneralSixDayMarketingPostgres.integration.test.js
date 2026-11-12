@@ -182,6 +182,19 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
       if(test===general.CANDIDATES_SQL)console.error("missing token",token);
     }
   }
+  // Active customers must not receive a paid reminder moments after asking
+  // a new question. The same selector is used for final send rechecks.
+  const active=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user','Can I ask about the assessment?','wamid.generic-active',"+
+    "NOW()-INTERVAL '2 minutes',NOW()-INTERVAL '2 minutes') RETURNING id",
+    [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [active,conversation]);
+  assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,0,
+    "a newly active customer holds the 48h generic template");
+  await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[active]);
+  await db.query("DELETE FROM messages WHERE id=$1",[active]);
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
   assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
   assert.equal(eligible[0].language_code,"en_US");
