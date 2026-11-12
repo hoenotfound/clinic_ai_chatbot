@@ -11,6 +11,8 @@ const configRepo=require("../db/configRepo");
 const {latestMarketingIntentMatches,DISTANCE_OBJECTION_SQL}=require("./whatsappSecondaryFollowUpDecision");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
+const generalSql=require("./neutroSecondaryGeneralMarketingSql");
+const {pinned:pinnedGeneralTemplate}=require("./neutroSecondaryGeneralMarketingTemplates");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
@@ -560,6 +562,11 @@ async function runOnce({
    now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env)];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
+ if(generalSql.enabled(env)){
+   const generic=(await database.query(generalSql.CANDIDATES_SQL,
+     [...params,generalSql.activation(env)])).rows||[];
+   candidates.push(...generic);
+ }
  if(extendedEnabled(env)){
    const extra=(await database.query(EXTENDED_CANDIDATES_SQL,params)).rows||[];
    candidates.push(...extra);
@@ -573,10 +580,18 @@ async function runOnce({
  for(const candidate of candidates){
   if(attempted>=maxAttempts)break;
   const slot=Number(candidate.slot_hours);
+  const isGeneral=candidate.general_campaign===true;
+  const approvedGeneral=isGeneral?pinnedGeneralTemplate(slot,candidate.language_code):null;
   if(!SLOTS.has(slot) ||
-     (EXTENDED_SLOTS.has(slot) && !extendedEnabled(env)) ||
-     (customerTemplateLocale(candidate.customer_messages)!==candidate.language_code ||
-      !intentMatches(candidate)))continue;
+     (EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env)) ||
+     (isGeneral && (!generalSql.enabled(env) || !approvedGeneral ||
+       approvedGeneral.name!==candidate.template_name ||
+       !Number.isSafeInteger(Number(candidate.consent_id)) ||
+       Number(candidate.consent_id)<=0)) ||
+     (!isGeneral &&
+       (customerTemplateLocale(candidate.customer_messages)!==candidate.language_code ||
+        !intentMatches(candidate))))continue;
+  const expectedSignature=isGeneral?approvedGeneral.signature:candidate.template_signature;
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
      (sender_id,contact_id,anchor_message_id,slot_hours)
@@ -589,21 +604,28 @@ async function runOnce({
    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   const current=async()=>{
-   if(EXTENDED_SLOTS.has(slot) && !extendedEnabled(env))return false;
-   const result=await database.query(EXTENDED_SLOTS.has(slot)?
-     EXTENDED_RECHECK_SQL:RECHECK_SQL,[
-    params[0],params[1],params[2],new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
-      originalAdsOnlyCutoff(env)]);
+   if(EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env))return false;
+   if(isGeneral && !generalSql.enabled(env))return false;
+   const query=isGeneral?generalSql.RECHECK_SQL:
+     EXTENDED_SLOTS.has(slot)?EXTENDED_RECHECK_SQL:RECHECK_SQL;
+   const queryParams=[params[0],params[1],params[2],
+     new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+     originalAdsOnlyCutoff(env),...(isGeneral?[generalSql.activation(env)]:[])];
+   const result=await database.query(query,queryParams);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
     Number(x.inbound_id)===Number(candidate.inbound_id) &&
     Number(x.slot_hours)===slot &&
     String(x.rule_updated_at)===String(candidate.rule_updated_at) &&
-    x.template_signature===candidate.template_signature &&
+    (isGeneral
+      ? x.general_campaign===true &&
+        Number(x.consent_id)===Number(candidate.consent_id) &&
+        pinnedGeneralTemplate(slot,x.language_code)?.signature===expectedSignature
+      : x.template_signature===expectedSignature &&
+        customerTemplateLocale(x.customer_messages)===candidate.language_code &&
+        intentMatches(x)) &&
     x.template_name===candidate.template_name &&
-    x.language_code===candidate.language_code &&
-    customerTemplateLocale(x.customer_messages)===candidate.language_code &&
-    intentMatches(x))===true;
+    x.language_code===candidate.language_code)===true;
   };
   try{
    if(!await current()){await fail("secondary_marketing_policy_changed");continue;}
@@ -615,13 +637,13 @@ async function runOnce({
    const validateTemplate=async()=>{
     const result=await templatePolicy.previewSecondaryTemplatePolicy(contact,{
      name:candidate.template_name,languageCode:candidate.language_code,
-     treatmentInterest:candidate.treatment_interest,
+     treatmentInterest:isGeneral?null:candidate.treatment_interest,
      env,database,fetchImpl,now:new Date(),
     });
     if(result.policyAllowed!==true || result.template?.category!=="MARKETING")
       return null;
     return approvedStaticMarketingTemplate(
-      result.template.definition,candidate.template_signature);
+      result.template.definition,expectedSignature);
    };
    const template=await validateTemplate();
    if(!template){await fail("secondary_marketing_template_or_consent_unverified");continue;}
@@ -632,7 +654,9 @@ async function runOnce({
       automatedSecondaryMarketingFollowup:true,
       senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,slotHours:slot,
       anchorMessageId:candidate.inbound_id,
-      templateSignature:candidate.template_signature,
+      templateSignature:expectedSignature,
+      generalCampaign:isGeneral,
+      consentId:isGeneral?candidate.consent_id:null,
       name:template.name,language:template.language,
      },
      isAutomatedFollowUp:true,initialDeliveryStatus:"unknown",
@@ -646,8 +670,8 @@ async function runOnce({
      origin:"marketing_followup",anchorMessageId:candidate.inbound_id,
      templateRequest:{
       name:template.name,languageCode:template.language,
-      treatmentInterest:candidate.treatment_interest,
-      expectedSignature:candidate.template_signature,
+      treatmentInterest:isGeneral?null:candidate.treatment_interest,
+      expectedSignature,
       billingConfirmed:true,automatedMarketingApproved:true,
      },
      preSendCheck:async()=>await current() && Boolean(await validateTemplate()),
@@ -681,14 +705,18 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    originalAdsOnlyCutoff(env),
  ];
  const ordinary=(await database.query(POTENTIAL_DUE_SQL,params)).rows?.[0]||null;
- if(!extendedEnabled(env))return ordinary;
- const extended=(await database.query(EXTENDED_POTENTIAL_DUE_SQL,params)).rows?.[0]||null;
- const dueTimes=[ordinary?.next_due_at,extended?.next_due_at]
+ const extended=extendedEnabled(env)
+   ?(await database.query(EXTENDED_POTENTIAL_DUE_SQL,params)).rows?.[0]||null:null;
+ const generic=generalSql.enabled(env)
+   ?(await database.query(generalSql.POTENTIAL_DUE_SQL,
+     [...params,generalSql.activation(env)])).rows?.[0]||null:null;
+ const dueTimes=[ordinary?.next_due_at,extended?.next_due_at,generic?.next_due_at]
    .filter(Boolean).map(value=>new Date(value).getTime())
    .filter(Number.isFinite);
  return {
    next_due_at:dueTimes.length?new Date(Math.min(...dueTimes)):null,
-   has_overdue:ordinary?.has_overdue===true||extended?.has_overdue===true,
+   has_overdue:ordinary?.has_overdue===true||extended?.has_overdue===true||
+     generic?.has_overdue===true,
  };
 }
 
