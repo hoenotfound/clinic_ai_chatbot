@@ -47,3 +47,10 @@ A staff reply through the WhatsApp Business App must not by itself change an AI-
 ## Integration verification after PR #602
 
 PR #602 updates pelvic/postpartum treatment selection and manual promotion-image duplicate detection. This UI and legacy-ad re-entry change does not widen treatment-specific marketing consent, change those pricing paths, or replay historical follow-ups. Re-run PR checks against the updated main branch before production deployment.
+
+## Additional safety review
+
+- The historical-ad re-entry path requires nonempty readable text and rejects all system-created attachment/unsupported-message placeholders. Imported history, other sender conversations and expired ad evidence cannot enable the new path.
+- AI-created, unclaimed handoffs display **Needs review** while attention is open and **AI paused** after it is cleared. Neither state falsely implies staff took over or AI has resumed.
+- **Ad source unverified** is an evidence-status hint, never proof of an ad click. Only matching retained inbound processing records can confirm Meta 131060; when provider evidence has been pruned the error code itself remains unverified.
+- No retrospective messages, marketing-consent changes, bulk ownership resets, or deployment are included.

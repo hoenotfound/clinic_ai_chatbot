@@ -53,7 +53,8 @@ test("verified pre-cutover ads require a fresh readable, sender-bound inbound be
   /inbound.created_at>='2026-11-12T02:36:00.000Z'::timestamptz/,
   /inbound.source_created_at>='2026-11-12T02:36:00.000Z'::timestamptz/,
   /inbound.id>ad_inbound.id/,
-  /inbound.content NOT LIKE/,
+  /NULLIF\(BTRIM\(inbound.content\),''\) IS NOT NULL/,
+  /inbound.content NOT LIKE '📎 \[%'/,
   /renewed_context.message_id=inbound.id/,
   /renewed_history.message_id=inbound.id/,
   /prior_context.message_id=ad_inbound.id/,
@@ -62,7 +63,8 @@ test("verified pre-cutover ads require a fresh readable, sender-bound inbound be
  const listing=secondaryLegacyStaffAudienceSql("c",null,env);
  assert.match(listing,/FROM messages renewed_inbound/);
  assert.match(listing,/renewed_inbound.id>ad_inbound.id/);
- assert.match(listing,/renewed_inbound.content NOT LIKE/);
+ assert.match(listing,/renewed_inbound.content NOT LIKE '📎 \[%'/);
+ assert.match(listing,/NULLIF\(BTRIM\(renewed_inbound.content\),''\) IS NOT NULL/);
  assert.match(listing,/renewed_context.message_id=renewed_inbound.id/);
  assert.doesNotMatch(secondaryLegacyStaffAudienceSql("c","inbound",{}),/prior_ad/);
 });

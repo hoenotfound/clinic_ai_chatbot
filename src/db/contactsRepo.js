@@ -831,10 +831,22 @@ ${senderAwareInboxReadsEnabled() ? `
           AND c.updated_at >= NOW()-INTERVAL '14 days'
           AND EXISTS (
             SELECT 1 FROM messages unsupported
+            JOIN whatsapp_sender_message_context source_context
+              ON source_context.message_id=unsupported.id
+            JOIN whatsapp_sender_conversations source_conversation
+              ON source_conversation.id=source_context.conversation_id
+             AND source_conversation.sender_id=c.whatsapp_sender_id
+             AND source_conversation.contact_id=c.id
+             AND source_conversation.customer_wa_id=c.whatsapp_number
+             AND source_conversation.state='bound'
             WHERE unsupported.contact_id=c.id
               AND unsupported.role='user'
               AND unsupported.source_created_at >= NOW()-INTERVAL '14 days'
               AND unsupported.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+              AND NOT EXISTS (
+                SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+                WHERE historical.message_id=unsupported.id
+              )
           )
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_free_entry_referrals identified_ad
@@ -843,7 +855,34 @@ ${senderAwareInboxReadsEnabled() ? `
               AND (NULLIF(BTRIM(identified_ad.meta_ad_id),'') IS NOT NULL
                    OR NULLIF(BTRIM(identified_ad.ctwa_clid),'') IS NOT NULL)
           )
-        THEN 'meta_131060_unverified'
+        THEN CASE WHEN EXISTS (
+          SELECT 1 FROM inbound_processing_jobs confirmed_error
+          JOIN messages confirmed_message ON confirmed_message.id=confirmed_error.message_id
+          JOIN whatsapp_sender_message_context confirmed_context
+            ON confirmed_context.message_id=confirmed_message.id
+          JOIN whatsapp_sender_conversations confirmed_conversation
+            ON confirmed_conversation.id=confirmed_context.conversation_id
+           AND confirmed_conversation.sender_id=c.whatsapp_sender_id
+           AND confirmed_conversation.contact_id=c.id
+           AND confirmed_conversation.customer_wa_id=c.whatsapp_number
+           AND confirmed_conversation.state='bound'
+          WHERE confirmed_error.contact_id=c.id
+            AND confirmed_error.channel='whatsapp'
+            AND confirmed_message.contact_id=c.id
+            AND confirmed_message.role='user'
+            AND confirmed_message.source_created_at >= NOW()-INTERVAL '14 days'
+            AND confirmed_message.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+            AND confirmed_error.incoming_payload->>'unsupportedType'='unsupported'
+            AND confirmed_error.incoming_payload->'unsupportedErrors'
+                @> '[{"code":131060}]'::jsonb
+            AND NOT EXISTS (
+              SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+              WHERE historical.message_id=confirmed_message.id
+            )
+        ) THEN 'meta_131060_unverified'
+          -- The processing evidence may have expired or been pruned.
+          ELSE 'unreadable_origin_unverified'
+        END
         ELSE NULL
       END AS whatsapp_ad_evidence_status,
       ` : "NULL::text AS whatsapp_ad_evidence_status,"}

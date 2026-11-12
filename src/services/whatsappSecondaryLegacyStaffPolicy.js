@@ -28,7 +28,10 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
        AND ${alias}.source_created_at IS NOT NULL
        AND ${alias}.created_at>=${at}
        AND ${alias}.source_created_at>=${at}
-       AND ${alias}.content NOT LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+       -- Never restart AI from an empty or system-generated unsupported
+       -- message. All inbound unsupported/attachment notices use this prefix.
+       AND NULLIF(BTRIM(${alias}.content),'') IS NOT NULL
+       AND ${alias}.content NOT LIKE '📎 [%'
        AND ${alias}.id>ad_inbound.id
        AND ${alias}.created_at>=ad_inbound.created_at
        AND ${alias}.created_at<ad_inbound.created_at+INTERVAL '7 days'`;

@@ -358,23 +358,32 @@ test("Inbox distinguishes policy pause, genuine staff ownership, AI review and v
     conversation(203, "Actual Staff Contact", { mode: "human", takeover_by: "staff" }),
     conversation(204, "Review Contact", { mode: "ai", needs_attention: true, attention_reason: "AI review requested:" }),
     conversation(205, "Pending AI Handoff", { mode: "human", takeover_by: "AI handoff", needs_attention: true }),
+    conversation(206, "Cleared AI Handoff", { mode: "human", takeover_by: "AI handoff", needs_attention: false }),
+    conversation(207, "Unflagged Pending Review", { mode: "ai", needs_attention: false, pending_review_count: 1 }),
+    conversation(208, "Unverified Error Code", { mode: "ai", whatsapp_ad_evidence_status: "unreadable_origin_unverified" }),
   ]);
   await page.goto("/inbox");
   const { inbox } = await openFilters(page);
   const status = inbox.getByRole("combobox", { name: "AI handling" });
   await expect(status.locator("option[value='paused']")).toHaveText("AI paused");
   await expect(status.locator("option[value='review']")).toHaveText("Needs review");
-  await expect(inbox.getByText("Ad source unknown", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Ad source unverified", { exact: true })).toHaveCount(2);
+  await expect(inbox.getByTitle("Meta error 131060 confirmed; no verified ad referral is stored.")).toBeVisible();
+  await expect(inbox.getByTitle("WhatsApp message unavailable; the Meta error code and ad origin are unverified.")).toBeVisible();
   await status.selectOption("human");
   await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
   await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("Cleared AI Handoff", { exact: true })).toHaveCount(0);
   await status.selectOption("paused");
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Cleared AI Handoff", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toHaveCount(0);
   await status.selectOption("review");
   await expect(inbox.getByText("Review Contact", { exact: true })).toBeVisible();
   await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Unflagged Pending Review", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Cleared AI Handoff", { exact: true })).toHaveCount(0);
   await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
   await status.selectOption("ai");
   await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toBeVisible();
