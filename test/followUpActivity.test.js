@@ -126,6 +126,10 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
         id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
         reason TEXT NOT NULL
       );
+      CREATE TABLE standalone_pricing_reminder_decisions (
+        id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
+        reason TEXT NOT NULL
+      );
       CREATE TABLE follow_up_ai_decisions (
         id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL,
         follow_up_step INTEGER, created_at TIMESTAMPTZ DEFAULT now(),
