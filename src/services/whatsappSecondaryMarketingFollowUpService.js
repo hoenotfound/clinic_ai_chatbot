@@ -156,7 +156,7 @@ const CANDIDATES_SQL=`
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
    SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role,
-     m.content AS last_customer_text, ARRAY(
+     m.content,m.content AS last_customer_text, ARRAY(
      SELECT LEFT(recent.content,500) FROM messages recent
      JOIN whatsapp_sender_message_context recent_ctx
        ON recent_ctx.message_id=recent.id AND recent_ctx.conversation_id=sc.id
