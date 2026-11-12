@@ -65,7 +65,7 @@ test("Inbox keeps AI handling separate from lead assignment with a clear filter 
   assert.match(inbox, /assignment: "all"/);
   assert.match(inbox, /label="Lead owner"/);
   assert.match(inbox, /label="Channel"/);
-  assert.match(inbox, /label="Handled by"/);
+  assert.match(inbox, /label="AI status"/);
   assert.match(inbox, /\["all", "Any"\]/);
   assert.match(inbox, /matchesLeadAssignment/);
   assert.match(inbox, /lead_owner_display_name/);
@@ -100,12 +100,12 @@ test("Inbox keeps advanced filters collapsed behind one compact control", () => 
   assert.doesNotMatch(inbox, /Narrow the Inbox only when you need to/);
 });
 
-test("Inbox keeps normal states quiet and emphasizes actionable exceptions", () => {
+test("Inbox distinguishes active AI, pauses, reviews and actual staff ownership", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
   const styles = source("portal-frontend/src/index.css");
 
-  assert.match(inbox, /function ControlIndicator\(\{ mode \}\) \{\s*if \(mode !== "human"\) return null/);
-  assert.match(inbox, /title="Handled by staff"/);
+  assert.match(inbox, /function ControlIndicator\(\{ status \}\)/);
+  assert.match(inbox, /title=\{INBOX_CONTROL_TITLES\[status\]\}/);
   assert.doesNotMatch(inbox, /last_message_role === "assistant" \? "You: "/);
   assert.doesNotMatch(inbox, /function ChannelBadge/);
   assert.doesNotMatch(inbox, /function ModeBadge/);
@@ -134,7 +134,7 @@ test("Inbox thread header stays compact while keeping owner and channel context"
   assert.match(inbox, /`Message this \$\{customerSingular\}`/);
   assert.match(inbox, /"Reply…"/);
   assert.match(inbox, /"Reply manually while AI stays on"/);
-  assert.match(inbox, /effectiveStaff \? "Staff" : "AI"/);
+  assert.match(inbox, /\{INBOX_CONTROL_LABELS\[controlStatus\]\}/);
   assert.match(inbox, /replyWindowCompactLabel\} left/);
   assert.match(inbox, /h-11 w-11 shrink-0 touch-manipulation/);
   assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
