@@ -169,18 +169,31 @@ const CANDIDATES_SQL=`
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON TRUE
  ${FIRST_REPLY_SQL}
+ -- A signed sender-owned customer choice outranks an older ad-inferred
+ -- CRM treatment. This is NOT consent: the independently recorded MARKETING
+ -- consent below must still match the effective treatment exactly. A stopped
+ -- or ambiguous choice continues to block the entire marketing sequence.
+ LEFT JOIN whatsapp_sender_followup_treatment_state verified_choice
+   ON verified_choice.sender_id=sa.id
+  AND verified_choice.contact_id=c.id
+  AND verified_choice.source_message_id<=inbound.id
  JOIN LATERAL(
-   SELECT l.marketing_consent,l.treatment_interest,l.is_closed,l.appointment_status,
-     stage.system_key AS stage_key
+   SELECT l.marketing_consent,
+     CASE WHEN verified_choice.status='selected' AND
+        NULLIF(BTRIM(verified_choice.treatment_name),'') IS NOT NULL
+       THEN verified_choice.treatment_name
+       ELSE l.treatment_interest END AS treatment_interest,
+     l.is_closed,l.appointment_status,stage.system_key AS stage_key
    FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
    WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
    AND ${MARKETING_AUTOMATION_ELIGIBLE_SQL}
-   -- The latest verified choice must agree with the lead's service AND
-   -- its existing, treatment-scoped marketing consent. An unrelated consent
-   -- for 3D cannot authorize a 9D template after the customer switches.
+   -- Refuse stopped or ambiguous customer choices. For a verified change
+   -- from 3D to 9D, the effective service above becomes 9D, but only a
+   -- separate 9D-scoped MARKETING consent below can authorize any reminder.
+   -- Neither the ad name nor an old 3D consent is sufficient.
    AND NOT EXISTS(
      SELECT 1 FROM whatsapp_sender_followup_treatment_state decision_hold
      WHERE decision_hold.sender_id=sa.id AND decision_hold.contact_id=c.id
