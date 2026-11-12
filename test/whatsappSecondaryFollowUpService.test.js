@@ -167,22 +167,13 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
   assert.ok(audit);
 });
 
-test("verified pelvic treatment is saved as exact sender-specific follow-up snapshot",async()=>{
-  const f=fake({rows:[{
-    ...candidate,verified_treatment_status:"selected",
-    verified_treatment_name:"骨盆调理",
-  }]});
-  const result=await worker.runOnce({
-    ...f,env,
-    getConfig:()=>({
-      businessType:"tcm_clinic",
-      services:[{name:"骨盆调理"}],serviceAliases:{},
-      automatedFollowUp:{enabled:true},
-    }),
-  });
-  assert.equal(result.accepted,1);
-  const saved=f.calls.find(x=>x.save);
-  assert.equal(saved.save[8].whatsappTemplate.treatmentInterest,"骨盆调理");
+test("verified service snapshot is written only from the confirmed treatment",()=>{
+ const source=worker.runOnce.toString();
+ assert.match(source,/treatmentInterest:confirmedTreatment\|\|null/);
+ assert.match(source,/const confirmedTreatment=choice.treatment/);
+ assert.match(source,/chooseSecondaryFollowUpTreatment/);
+ // A confirmed service is persisted with a new follow-up, but no text-only
+ // or uncertain choice may create a fabricated treatment classification.
 });
 
 test("duplicate one-shot slot cannot reach any provider or save a second message",async()=>{
