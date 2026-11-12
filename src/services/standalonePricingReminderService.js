@@ -116,8 +116,10 @@ async function safeContact(candidate){
 async function dispatch(candidate,offer,options,row,allOffers){
   const originalRecipient=candidate.whatsapp_number;
   const preSendCheck=async()=>{
-    if(!settings() || !settings().senderKeys.includes(candidate.whatsapp_sender_key) ||
-       !beforeEnd(candidate) || quietHoursStatus(new Date(),options.quietHours).active)
+    const live=settings();
+    if(!live || live.activatedAt!==options.activatedAt ||
+       !live.senderKeys.includes(candidate.whatsapp_sender_key) ||
+       !beforeEnd(candidate) || quietHoursStatus(new Date(),live.quietHours).active)
       return false;
     const fresh=await safeContact(candidate);
     if(!fresh || fresh.whatsapp_number!==originalRecipient)return false;
