@@ -13,6 +13,15 @@ const translated=Object.freeze({
     ms:"Kalau masih nak tahu tentang rawatan tadi, boleh tanya ya 😊 Nak tahu apa yang berlaku semasa sesi atau apa yang perlu disediakan sebelum datang?",
   }),
 });
+// A one-word postpartum answer commonly responds to an existing pelvic
+// body-concern question. It is not an independent choice of the clinic's
+// distinct 产后调理 paid service. A complete treatment name or affirmative
+// intent (e.g. "想了解产后调理") remains a valid explicit selection.
+function isBarePostpartumConcernAnswer(text) {
+  return /^(?:产后|產後)(?:的?(?:体态|體態|身材|恢复|恢復))?[。.!！\s]*$/u.test(
+    String(text || "").normalize("NFKC").trim()
+  );
+}
 function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}={}){
  const services=(Array.isArray(clinicConfig?.services)?clinicConfig.services:[])
    .map(x=>String(x?.name||"").trim()).filter(Boolean);
@@ -30,6 +39,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const declined=/(?:\b(?:don't want|do not want|not interested|no longer interested|rather not|not for me|stop (?:the )?treatment|cancel (?:the )?treatment)\b|不想(?:做|要|考虑|考慮)|不要(?:做|安排|这个|這個|骨盆|3D|9D)|没兴趣|沒興趣|不考虑|不考慮|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
+   if(isBarePostpartumConcernAnswer(msg))continue;
    const named=services.filter(service=>{
      const terms=[service,...aliases.filter(a=>normalize(a?.officialService)===normalize(service))
        .map(a=>a.alias)].map(normalize).filter(t=>t.length>1);
@@ -94,4 +104,4 @@ function neutral20hFallbackText(language){
  return Object.prototype.hasOwnProperty.call(NEUTRAL_20H_FALLBACK,language)
    ? NEUTRAL_20H_FALLBACK[language] : null;
 }
-module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText};
+module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,isBarePostpartumConcernAnswer};
