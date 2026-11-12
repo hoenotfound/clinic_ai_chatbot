@@ -4,7 +4,7 @@ const assert=require("node:assert/strict");
 const {imageReview}=require("../src/utils/standalonePricingManualMedia");
 
 const anchor="2026-11-13T08:00:00Z";
-const caption="骨盆调理优惠套餐 Package A 体验价 RM388，原价 RM488，欢迎来店做一对一体态评估。";
+const caption="骨盆调理体验套餐 Package A 体验价 RM388，原价 RM488，内容包括一对一体态评估以及专业顾问说明骨盆调理护理流程，现场会先了解您的情况，再安排适合的体验时间和护理项目。";
 const offer={serviceName:"骨盆调理",packageName:"Package A",caption,
   identities:["/promo-images/40"],imageUrl:"/promo-images/40"};
 const confirmed=(overrides={})=>({
