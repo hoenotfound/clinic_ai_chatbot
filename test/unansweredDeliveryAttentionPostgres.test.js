@@ -100,7 +100,12 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
       UPDATE messages SET whatsapp_message_id='wamid.staff1544'
       WHERE id=1544
     `);
-    const resolved = await contacts.clearDeliveryAttentionIfNoFailedMessages(397);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(
+      397, "Delivery failed: unrelated reason"
+    ), null, "a newer or different delivery alert must not be silently cleared");
+    const resolved = await contacts.clearDeliveryAttentionIfNoFailedMessages(
+      397, "Delivery failed: strict free-entry"
+    );
     assert.equal(resolved.needs_attention, false);
     assert.equal(resolved.attention_reason, null);
     const failures = await client.query(`
