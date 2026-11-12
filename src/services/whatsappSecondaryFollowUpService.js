@@ -761,7 +761,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
- CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,
+ CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
  serviceFollowupParityActivation,runOnce,
  nextPotentialDueAt,start,stop,
 };
