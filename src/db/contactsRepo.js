@@ -1011,7 +1011,7 @@ async function takeOver(id, staffUsername) {
 
 
 /** Admin-approved, time-limited AI access for a legacy secondary contact. */
-async function approveSecondaryManualAi(id, username, expectedUpdatedAt, env = process.env) {
+async function approveSecondaryManualAi(id, username, expectedUpdatedAt, env = process.env, database = pool) {
   if (!secondaryLegacyStaffCutoff(env) ||
       env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts" ||
       env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "all_contacts" ||
@@ -1019,7 +1019,7 @@ async function approveSecondaryManualAi(id, username, expectedUpdatedAt, env = p
       env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
       !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID ||
       !username || !expectedUpdatedAt) return null;
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE contacts c
      SET whatsapp_secondary_manual_ai_approved_at = now(),
          whatsapp_secondary_manual_ai_approved_until = now() + INTERVAL '7 days',
