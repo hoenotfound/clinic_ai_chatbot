@@ -64,6 +64,7 @@ function secondaryLegacyStaffAudienceSql(contact="c",anchor=null,env=process.env
         AND ${anchorTime}>=ad_inbound.created_at
         ${ordering}
     )
+    OR ${secondary131060RecoveryAudienceSql(contact,anchor,env)}
   )`;
 }
 
@@ -131,13 +132,23 @@ function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.
        SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
        WHERE imported.message_id=unavailable131060.id
      )
-     AND EXISTS (
-       SELECT 1 FROM inbound_processing_jobs recorded131060
-       WHERE recorded131060.message_id=unavailable131060.id
-         AND recorded131060.channel='whatsapp'
-         AND recorded131060.incoming_payload->>'unsupportedType'='unsupported'
-         AND recorded131060.incoming_payload->'unsupportedErrors'
-             @> '[{"code":131060}]'::jsonb
+     AND (
+       EXISTS (
+         SELECT 1 FROM inbound_processing_jobs recorded131060
+         WHERE recorded131060.message_id=unavailable131060.id
+           AND recorded131060.channel='whatsapp'
+           AND recorded131060.incoming_payload->>'unsupportedType'='unsupported'
+           AND recorded131060.incoming_payload->'unsupportedErrors'
+               @> '[{"code":131060}]'::jsonb
+       )
+       OR (
+         NOT EXISTS (
+           SELECT 1 FROM inbound_processing_jobs pruned_job
+           WHERE pruned_job.message_id=unavailable131060.id
+         )
+         -- The exact accepted recovery menu supplies durable evidence after
+         -- inbound processing jobs and provider webhook payloads are pruned.
+       )
      )
      ${afterMenu}
  )`;
