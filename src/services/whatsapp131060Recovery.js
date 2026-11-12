@@ -251,8 +251,21 @@ async function canSend131060Recovery({
       " AND job.incoming_payload->'unsupportedErrors' @> '[{\"code\":131060}]'::jsonb",
       " AND job.incoming_payload->>'businessPhoneNumberId'=$4",
       " AND job.incoming_payload->>'businessAccountId'=$5",
-      " AND NOT EXISTS (SELECT 1 FROM messages older",
-      "  WHERE older.contact_id=c.id AND older.id<inbound.id)",
+      // A genuine, new signed Meta 131060 event gets one neutral menu even
+      // for an old customer; the missing content is never treated as an ad.
+      // Only the newest customer turn qualifies. Prevent menu loops for a
+      // patient who has already received a confirmed recovery this week.
+      " AND NOT EXISTS (",
+      "  SELECT 1 FROM outbound_message_evidence prior_evidence",
+      "  JOIN messages prior_menu ON prior_menu.id=prior_evidence.message_id",
+      "  WHERE prior_evidence.contact_id=c.id",
+      "    AND prior_evidence.channel='whatsapp'",
+      "    AND prior_evidence.origin='system_fallback'",
+      "    AND prior_evidence.accepted=TRUE",
+      "    AND prior_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'",
+      "    AND prior_menu.content LIKE '%可以点下面的选项%'",
+      "    AND prior_menu.created_at>=inbound.created_at-INTERVAL '7 days'",
+      " )",
       " AND NOT EXISTS (SELECT 1 FROM messages newer",
       "  WHERE newer.contact_id=c.id AND newer.id>inbound.id",
       "   AND ($3::integer IS NULL OR newer.id<>$3::integer))",

@@ -412,3 +412,16 @@ test("extended Day 4/6 due-time hint checks both workers without an extra poll w
  assert.equal(new Date(hint.next_due_at).toISOString(),"2026-11-11T15:00:00.000Z");
  assert.equal(hint.has_overdue,true);
 });
+
+
+test("secondary marketing requires silence after staff reply and retains exact consent",()=>{
+ for(const sql of [svc.CANDIDATES_SQL,svc.RECHECK_SQL]){
+   assert.match(sql,/reply.sent_by_username IS NOT NULL/);
+   assert.match(sql,/staff.created_at>\$4::timestamptz-INTERVAL '24 hours'/);
+   assert.match(sql,/last_staff WHERE/);
+   assert.match(sql,/whatsapp_marketing_consent_events consent/);
+   assert.match(sql,/consent.consent_service/);
+   assert.match(sql,/c.takeover_by IS NULL/);
+   assert.match(sql,/whatsapp_sender_coexistence_history_messages imported_staff/);
+ }
+});

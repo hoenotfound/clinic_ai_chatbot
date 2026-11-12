@@ -3,6 +3,7 @@
 // Exact one-shot sender, contact, inbound and template authorization required.
 const {pool}=require("../db/db");
 const {temporaryStaffConversationSql}=require("../utils/temporaryStaffConversation");
+const {marketingReplyAnchorSql,latestUnresolvedStaffSql,recentStaffReplySql}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const contactsRepo=require("../db/contactsRepo");
 const messagesRepo=require("../db/messagesRepo");
@@ -64,25 +65,7 @@ function enabled(env=process.env){
 
  // Anchor 48h/66h to the first verified sender-owned business reply,
  // matching the primary WhatsApp session, not a later customer message.
-const FIRST_REPLY_SQL=`
- JOIN LATERAL (
-   SELECT reply.created_at AS at FROM messages reply
-   JOIN whatsapp_sender_message_context reply_context
-     ON reply_context.message_id=reply.id
-    AND reply_context.conversation_id=sc.id
-   WHERE reply.contact_id=c.id AND reply.role='assistant'
-     AND reply.whatsapp_message_id IS NOT NULL
-     AND reply.sent_by_username IS NULL
-     AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-     AND reply.created_at>=CASE WHEN $7::text='all_contacts'
-        AND NOT recent_contact.legacy_ads_eligible
-      THEN inbound.created_at ELSE c.created_at END
-     AND reply.created_at<(CASE WHEN $7::text='all_contacts'
-        AND NOT recent_contact.legacy_ads_eligible
-      THEN inbound.created_at ELSE c.created_at END)+INTERVAL '24 hours'
-   ORDER BY reply.created_at,reply.id LIMIT 1
- ) first_reply ON TRUE
-`;
+const FIRST_REPLY_SQL=marketingReplyAnchorSql();
 
 // Guard current message intent at discovery AND at the last provider recheck.
 // The same SQL is inherited by the separately disabled Day4/Day6 path.
@@ -241,7 +224,8 @@ const CANDIDATES_SQL=`
    ${MARKETING_CUSTOMER_INTENT_SQL}
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
-   AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND c.mode='ai' AND c.takeover_by IS NULL
+   AND ${secondaryAutomationAttentionAllowedSql("c")}
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -381,11 +365,12 @@ const CANDIDATES_SQL=`
        AND newer.slot_hours>rule.slot_hours
        AND ${ORDINARY_NEWER_DUE_SQL}<=$4::timestamptz
    )
-   AND NOT EXISTS (
-     SELECT 1 FROM messages human WHERE human.contact_id=c.id
-       AND human.role='assistant' AND human.sent_by_username IS NOT NULL
-       AND human.created_at>=inbound.created_at
-   )
+   -- A staff answer is not a permanent marketing ban. Wait until staff
+   -- have been inactive for 24h and refuse any unresolved staff question
+   -- or promised action. The original signed, treatment-scoped consent
+   -- and sender-specific template restrictions remain mandatory.
+   AND NOT ${recentStaffReplySql()}
+   AND NOT ${latestUnresolvedStaffSql()}
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts bad
      WHERE bad.sender_id=sa.id AND bad.contact_id=c.id

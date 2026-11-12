@@ -100,7 +100,7 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentButtons, readableHistoryForRecoverySelection,
+  recoveryTreatmentButtons, validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
 const {
@@ -240,8 +240,20 @@ async function sendTrackedText(
     Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
     Number(reviewReplyToInboundMessageId) > 0
       ? Number(reviewReplyToInboundMessageId) : null;
+  // Only the signed Meta 131060 recovery path may bypass an old contact's
+  // ordinary AI audience, and only to send the one fixed treatment menu.
+  const recoveryAnchor=origin==="system_fallback" &&
+    interactiveButtons != null &&
+    validRecoveryTreatmentButtons(interactiveButtons) &&
+    Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
+    Number(reviewReplyToInboundMessageId)>0
+      ? Number(reviewReplyToInboundMessageId) : null;
   if (secondaryAutomatedText) {
-    const audienceEligible = await isSecondaryAiReplyEligible(contact.id,
+    const recoveredMenuAllowed=recoveryAnchor!=null &&
+      await canSend131060Recovery({
+        contactId:contact.id,inboundMessageId:recoveryAnchor,
+      });
+    const audienceEligible = recoveredMenuAllowed || await isSecondaryAiReplyEligible(contact.id,
       reviewContinuationAnchor == null ? undefined : {
         inboundMessageId: reviewContinuationAnchor,
         allowReviewContinuation: true,
@@ -327,7 +339,7 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
-          interactiveButtons, anchorMessageId: reviewContinuationAnchor,
+          interactiveButtons, anchorMessageId: reviewContinuationAnchor || recoveryAnchor,
           preSendCheck: guarded ? async () =>
             canSend() === true &&
             (typeof latePreSendCheck !== "function" ||
@@ -707,7 +719,20 @@ async function processIncomingMessage(
         (!mediaType && !unsupportedType &&
          typeof incoming.text === "string" && incoming.text.trim().length > 0 &&
          await isSecondarySupervisedAiTextTestEligible(contact.id))) : false;
-    const secondaryAiConversation = secondaryAiReady && secondaryAudienceEligible;
+    // A genuine current 131060 webhook contains no readable text. Give only
+    // its fixed recovery menu, even to an old contact otherwise staff-managed.
+    // This check does NOT authorize AI inference or a follow-up from the
+    // unreadable placeholder; the patient must first respond.
+    const secondary131060RecoveryEligible = secondaryAiReady &&
+      incoming.unsupportedType === "unsupported" &&
+      Array.isArray(incoming.unsupportedErrors) &&
+      incoming.unsupportedErrors.some(error => Number(error?.code)===131060) &&
+      is131060Message(incoming) && Boolean(recoveryActivation(process.env)) &&
+      await canSend131060Recovery({
+        contactId:contact.id,inboundMessageId:savedInbound.id,
+      });
+    const secondaryAiConversation = secondaryAiReady &&
+      (secondaryAudienceEligible || secondary131060RecoveryEligible);
     // Ineligible or staff-owned secondary conversations stay manual even if
     // the global AI setting is enabled.
     secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
@@ -770,6 +795,7 @@ async function processIncomingMessage(
                 canSend: canSendAutomatedReply,
                 processingJobId,
                 interactiveButtons: recoveryTreatmentButtons(),
+                reviewReplyToInboundMessageId: savedInbound.id,
                 latePreSendCheck: (reservedMessageId) =>
                   canSend131060Recovery({
                     contactId: contact.id,

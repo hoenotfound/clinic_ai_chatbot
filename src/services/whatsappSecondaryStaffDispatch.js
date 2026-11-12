@@ -16,7 +16,7 @@ const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
   isSecondaryAutomationEligible} =
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
-const {validRecoveryTreatmentButtons, recoveryActivation} = require("./whatsapp131060Recovery");
+const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery} = require("./whatsapp131060Recovery");
 
 function block(code) {
   return {
@@ -179,6 +179,14 @@ async function sendSecondaryStaffText({
   const allContactAutomation = !allContactText &&
     automatedOrigin && env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "all_contacts";
   const stillEligible=async()=>!automatedOrigin ||
+    // One signed, sender-bound 131060 selection menu may be sent to an old
+    // contact; no ordinary AI, media or follow-up receives this exception.
+    (recoveryMenu && origin==="system_fallback" &&
+      Number.isSafeInteger(Number(anchorMessageId)) && Number(anchorMessageId)>0 &&
+      await canSend131060Recovery({
+        contactId:cid,inboundMessageId:Number(anchorMessageId),
+        ignoreOutboundMessageId:mid,database,env,
+      })) ||
     (allContactText
       ? await replyAudienceEligible(cid,{
           database,env,

@@ -587,3 +587,31 @@ test("secondary 3D ad cannot replace a persisted 9D choice in video or caption",
   assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,"approved-9d-"+slot);
  }
 });
+
+
+test("verified WhatsApp Business App replies are permitted only as safe service anchors",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(sql,/reply.sent_by_username IS NOT NULL/);
+   assert.match(sql,/reply.whatsapp_customer_mutation/);
+   assert.match(sql,/reply.content NOT LIKE '🗑️ %'/);
+   assert.match(sql,/reply.content NOT LIKE '\[media_placeholder%'/);
+   assert.match(sql,/whatsapp_sender_coexistence_history_messages imported_staff/);
+   assert.match(sql,/first_reply.staff_pending_action/);
+   assert.match(sql,/first_reply.staff_question OR rule.slot_hours=2/);
+   assert.match(sql,/c.takeover_by IS NULL/);
+   assert.match(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
+   assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
+   assert.match(sql,/CASE WHEN first_reply.staff_reply THEN first_reply.at\+INTERVAL '2 hours'/);
+ }
+});
+test("manual unanswered staff question sends one gentle text reminder instead of media",async()=>{
+ const manual={...candidate,staff_reply:true,staff_question:true,
+   first_reply_text:"请问您是顺产还是剖腹产呢？",customer_texts:["超过6周"]};
+ const f=fake({rows:[manual]});
+ const result=await worker.runOnce({...f,env});
+ assert.equal(result.accepted,1);
+ const saved=f.calls.find(x=>x.save)?.save;
+ assert.match(saved[2],/刚才的问题/);
+ assert.equal(saved[8].mediaKey,null);
+ assert.equal(saved[8].isAutomatedFollowUp,true);
+});

@@ -319,3 +319,24 @@ test("Inbox list hides WhatsApp sender badges while opened chat keeps its number
   await inbox.getByRole("button", { name: /Filters/ }).click();
   await expect(inbox.getByRole("combobox", { name: "WhatsApp business number" })).toBeVisible();
 });
+
+
+test("secondary old contacts show effective Staff mode without mutating takeover state", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(201, "Old Staff Contact", {
+      whatsapp_is_secondary:true, whatsapp_secondary_ai_enabled:false, mode:"ai",
+    }),
+    conversation(202, "Verified Ad Contact", {
+      whatsapp_is_secondary:true, whatsapp_secondary_ai_enabled:true, mode:"ai",
+    }),
+  ]);
+  await page.goto("/inbox");
+  const { inbox } = await openFilters(page);
+  const handled = inbox.getByRole("combobox", { name: "Handled by" });
+  await handled.selectOption("human");
+  await expect(inbox.getByText("Old Staff Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toHaveCount(0);
+  await handled.selectOption("ai");
+  await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Old Staff Contact", { exact: true })).toHaveCount(0);
+});
