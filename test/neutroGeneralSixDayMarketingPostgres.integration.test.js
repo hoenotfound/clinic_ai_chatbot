@@ -193,6 +193,14 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     [active,conversation]);
   assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,0,
     "a newly active customer holds the 48h generic template");
+  // Unlike the previous fixed eight-hour cutoff, a fresh customer reply
+  // shifts the due time rather than silently losing the whole sequence.
+  const nextDay=[...p];
+  nextDay[3]=new Date(Date.now()+25*3600000);
+  const resumed=(await db.query(general.CANDIDATES_SQL,nextDay)).rows;
+  assert.equal(resumed.length,1,
+    "a postponed 48h stage becomes eligible after 24 hours of inactivity");
+  assert.equal(resumed[0].slot_hours,48);
   await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[active]);
   await db.query("DELETE FROM messages WHERE id=$1",[active]);
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
