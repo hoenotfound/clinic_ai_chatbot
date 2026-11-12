@@ -56,8 +56,8 @@ test("service candidate and hint only scan recent inbound contacts before the or
   assert.match(sql,/recent\.role='user'/);
   assert.match(sql,/recent\.whatsapp_message_id IS NOT NULL/);
   assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
-  assert.match(sql,/ORDER BY m\.created_at DESC,m\.id DESC LIMIT 1/,
-   "sender-bound latest inbound still decides eligibility; shortlist is not an authorizer");
+  assert.match(sql,/ORDER BY CASE WHEN[\s\S]*?m\.created_at DESC,m\.id DESC LIMIT 1/,
+   "normally the latest sender-bound inbound wins, except a repeated unreadable event may retain its verified recovery anchor");
   assert.match(sql,/whatsapp_sender_coexistence_history_messages/);
   assert.match(sql,/whatsapp_opt_out_at IS NULL/);
   assert.match(sql,/appointment_status/);
