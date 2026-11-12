@@ -113,6 +113,10 @@ const PREVIOUS_STEP_SQL=`
          AND previous_inbound.contact_id=c.id
          AND previous_inbound.role='user'
          AND previous_inbound.whatsapp_message_id IS NOT NULL
+        LEFT JOIN messages previous_outbound
+          ON previous_outbound.id=earlier.message_id
+         AND previous_outbound.contact_id=c.id
+         AND previous_outbound.role='assistant'
         JOIN whatsapp_sender_message_context previous_context
           ON previous_context.message_id=previous_inbound.id
          AND previous_context.conversation_id=sc.id
@@ -146,13 +150,19 @@ const PREVIOUS_STEP_SQL=`
               AND uncertain_between.claimed_at>=earlier.completed_at
               AND uncertain_between.claimed_at<=inbound.created_at
           )
-          -- State is a single newest, verified decision. A new treatment
-          -- selection, deferral or refusal must not inherit old care media.
+          -- A new treatment selection must not inherit media for another
+          -- service. A newly repeated SAME treatment may continue only
+          -- when the accepted old outbound stored an exact service snapshot.
+          -- Legacy attempts without snapshots remain blocked on a new choice.
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_sender_followup_treatment_state changed
             WHERE changed.sender_id=sa.id AND changed.contact_id=c.id
               AND changed.source_message_id>earlier.anchor_message_id
               AND changed.source_message_id<=inbound.id
+              AND (changed.status IS DISTINCT FROM 'selected'
+                OR NULLIF(BTRIM(previous_outbound.whatsapp_template->>'treatmentInterest'),'') IS NULL
+                OR LOWER(BTRIM(changed.treatment_name))
+                   IS DISTINCT FROM LOWER(BTRIM(previous_outbound.whatsapp_template->>'treatmentInterest')))
           )
         ORDER BY earlier.completed_at DESC LIMIT 1)
      ) AS completed_at
@@ -684,7 +694,8 @@ async function runOnce({
         key?mediaMime:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
-            slotHours:slot,anchorMessageId:candidate.inbound_id},
+            slotHours:slot,anchorMessageId:candidate.inbound_id,
+            treatmentInterest:confirmedTreatment||null},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
           initialDeliveryStatus:"unknown",
