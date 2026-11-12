@@ -451,7 +451,7 @@ test("20h secondary follow-up invokes existing personalized generator and saves 
 
 test("20h AI skip sends one reviewed neutral reminder in the customer's language",async()=>{
  const samples=[
-  ["en","I would like to know about my first visit",/first assessment/],
+  ["en","Can you explain how the first visit works?",/first assessment/],
   ["zh","我想了解骨盆调理的流程",/一对一评估流程/],
   ["ms","Saya nak tahu tentang rawatan dan penilaian",/penilaian pertama/],
  ];
@@ -471,7 +471,7 @@ test("20h AI skip sends one reviewed neutral reminder in the customer's language
   assert.equal(f.sends,1,language);
   const saved=f.calls.find(x=>x.save)?.save;
   assert.match(saved[2],copy,language);
-  assert.doesNotMatch(saved[2],/RM\\s*\\d+|骨盆调理|9D逆龄|9D 逆龄/,language);
+  assert.doesNotMatch(saved[2],/RM ?[0-9]+|骨盆调理|9D逆龄|9D 逆龄/,language);
   assert.equal(saved[8].isAutomatedFollowUp,true);
   assert.equal(f.calls.filter(x=>x.sql?.includes("status='accepted'")).length,1);
  }
@@ -492,7 +492,7 @@ test("20h AI unavailable still offers consent only for new verified ads",async()
   [true,"2026-11-12T07:59:59Z",false],
  ]){
   const row={...candidate,slot_hours:20,media_key:null,
-   customer_texts:["I would like to arrange an assessment"],
+   customer_texts:["Can you explain how the assessment works?"],
    verified_meta_ad:isAd,lead_marketing_consent:"unknown",inbound_at:inboundAt};
   const f=fake({rows:[row]});
   const result=await worker.runOnce({...f,env:campaignEnv,getConfig:reminderConfig,
