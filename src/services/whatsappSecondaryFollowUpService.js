@@ -234,10 +234,25 @@ const RECOVERY_NO_SELECTION_SQL=String.raw`(
   )
 )`;
 const RECOVERY_REMINDER_TEXT=Object.freeze({
-  2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
-  6:"您好 😊 如果还不确定适合什么护理，也可以简单说说您的需求，我们会先了解情况，再安排适合的评估哦。",
-  20:"Hi dear 😊 再轻轻跟进一下～如果想了解护理或预约中医师评估，随时回复我们就好 ❤️",
+  zh:Object.freeze({
+    2:"Hi dear 😊 想跟进一下，您想了解哪方面的护理呢？可以点上面的选项，或直接告诉我们想改善的情况哦。",
+    6:"您好 😊 如果还不确定适合什么护理，也可以简单说说您的需求，我们会先了解情况，再安排适合的评估哦。",
+    20:"Hi dear 😊 再轻轻跟进一下～如果想了解护理或预约中医师评估，随时回复我们就好 ❤️",
+  }),
+  en:Object.freeze({
+    2:"Hi 😊 Just following up. What would you like to know about our treatments? You can choose an option above or tell us what concerns you.",
+    6:"Hello 😊 If you are unsure which treatment is suitable, feel free to share your concerns. We can understand your needs before arranging an assessment.",
+    20:"Hi 😊 A gentle final follow-up. If you have questions or would like to arrange an assessment, you are welcome to reply anytime.",
+  }),
+  ms:Object.freeze({
+    2:"Hai 😊 Kami nak susuli pertanyaan anda. Boleh pilih pilihan di atas atau beritahu apa yang anda ingin tahu tentang rawatan kami.",
+    6:"Hai 😊 Jika belum pasti rawatan yang sesuai, boleh ceritakan keperluan anda. Kami boleh fahamkan keadaan dahulu sebelum cadangkan penilaian.",
+    20:"Hai 😊 Sekadar susulan terakhir. Jika ada soalan atau ingin aturkan penilaian, boleh balas mesej ini bila-bila masa.",
+  }),
 });
+function recoveryNoSelectionReminderText(slot,language){
+  return (RECOVERY_REMINDER_TEXT[["zh","en","ms"].includes(language)?language:"zh"]||{})[slot]||null;
+}
 
 const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
  -- An unreadable Meta 131060 first message is not a genuine service enquiry.
@@ -663,7 +678,7 @@ async function runOnce({
     const safeText=candidate.staff_reply && candidate.staff_question
       ? gentleStaffQuestionNudge(replyLanguage)
       : candidate.recovery_no_selection
-        ? RECOVERY_REMINDER_TEXT[slot] : localized;
+        ? recoveryNoSelectionReminderText(slot,replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
