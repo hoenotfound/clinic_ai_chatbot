@@ -103,12 +103,24 @@ const PREVIOUS_STEP_SQL=`
    ORDER BY preceding.slot_hours DESC LIMIT 1
  ) previous_step ON TRUE
 `;
-const SEQUENCE_DUE_SQL=`GREATEST(
-  ${FOLLOWUP_DUE_SQL},
-  COALESCE(previous_step.completed_at +
-    (rule.slot_hours - previous_step.slot_hours) * INTERVAL '1 hour',
-    ${FOLLOWUP_DUE_SQL})
-)`;
+// The 20h check-in must stay inside the customer's original 24h reply
+// window. Quiet hours may delay the 6h video until 07:00 MYT; adding
+// (20-6)=14 hours after its actual delivery can make 20h impossible.
+// Preserve accepted-step ordering, but require only a short spacing buffer
+// after a delayed video. Do not let downtime generate backdated messages.
+const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
+ THEN GREATEST(
+   ${FOLLOWUP_DUE_SQL},
+   COALESCE(previous_step.completed_at + INTERVAL '15 minutes',
+     ${FOLLOWUP_DUE_SQL})
+ )
+ ELSE GREATEST(
+   ${FOLLOWUP_DUE_SQL},
+   COALESCE(previous_step.completed_at +
+     (rule.slot_hours - previous_step.slot_hours) * INTERVAL '1 hour',
+     ${FOLLOWUP_DUE_SQL})
+ )
+ END)`;
 
 // A new inbound restarts a sequence, but does not mean the customer wants
 // another sales reminder after saying goodbye, asking only about a distant
@@ -282,6 +294,8 @@ const CANDIDATES_SQL=`
      NOT IN('appointment_set','visited','confirmed','booked','completed')
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
+   AND (rule.slot_hours<>20 OR
+       ${SEQUENCE_DUE_SQL} < inbound.created_at + INTERVAL '24 hours')
    AND ${SEQUENCE_DUE_SQL} <= $4::timestamptz
    -- Catch up after quiet hours or a worker interruption, but never send
    -- a stale follow-up more than eight hours after its original due time.
@@ -409,6 +423,8 @@ const RECHECK_SQL=`
        AND human.created_at>=inbound.created_at
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
+   AND (rule.slot_hours<>20 OR
+       ${SEQUENCE_DUE_SQL} < inbound.created_at + INTERVAL '24 hours')
    AND ${SEQUENCE_DUE_SQL} <= NOW()
    AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
