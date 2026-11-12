@@ -181,9 +181,19 @@ function pelvicPostpartumConcernIndex(turns, services, serviceAliases) {
 // competing recommendations remain hard stops. This exception applies only
 // after the independently verified pelvic concern answer above.
 function pelvicPostpartumAdviceOnly(turn, index, concernIndex, candidates) {
-  if (concernIndex < 0 || index <= concernIndex || turn?.role !== "assistant" ||
+  if (concernIndex < 0 || turn?.role !== "assistant" ||
       isVerifiedStaffTurn(turn)) return false;
   const text = pricingMessageText(turn);
+  // The original pelvic reply may itself contain the question that the
+  // customer answered with "产后". A prompted concern is not a new sale.
+  if (index < concernIndex &&
+      /(?:骨盆|盆骨)/u.test(text) &&
+      /(?:还是|還是|或者|主要|哪一|哪种|哪種)/u.test(text) &&
+      /(?:产后|產後).{0,24}(?:体态|體態|身材|恢复|恢復)/u.test(text) &&
+      /[?？呢]/u.test(text) &&
+      !/(?:另外|另一个|另一项|还有|也有|推荐|推薦|套餐|配套|收费|收費|价格|價格|\\b(?:RM|MYR)\\s*\\d+)/iu.test(text))
+    return true;
+  if (index === concernIndex) return false;
   if (!/(?:产后|產後)/u.test(text) ||
       /(?:另外|另一个|另一项|還有|还有|也有|推荐|推薦|可选|可選|套餐|配套|优惠|優惠|收费|收費|价格|價格|价钱|價錢|\\b(?:RM|MYR)\\s*\\d+)/iu.test(text) ||
       /(?:产后|產後)(?:调理|調理)/u.test(text)) return false;
