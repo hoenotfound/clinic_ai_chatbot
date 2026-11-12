@@ -145,7 +145,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   // Prior stages are explicitly accepted for later-stage fixtures.
   await db.query(
     "INSERT INTO whatsapp_sender_followup_rules(sender_id,slot_hours,enabled,message_text) "+
-    "VALUES($1,6,TRUE,'6h'),($1,20,TRUE,'20h')",[sender]);
+    "VALUES($1,6,TRUE,'Do not send this generic text'),($1,20,TRUE,'Do not send this generic text')",[sender]);
   for(const slot of [2,6,20]){
     const hoursAgo=slot+1;
     const customerWa="60122201"+String(600+slot);
