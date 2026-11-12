@@ -49,7 +49,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
     "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [inbound,conversation]);
 
-  const activation=new Date(Date.now()-5*3600000).toISOString();
+  const activation=new Date(Date.now()-25*3600000).toISOString();
   const params=[senderName,phoneId,waba,new Date(),10,activation,"all_contacts",
     new Date(Date.now()-7*3600000).toISOString(),activation];
   const candidates=async()=> (await db.query(worker.CANDIDATES_SQL,params)).rows;
