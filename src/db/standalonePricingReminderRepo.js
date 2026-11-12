@@ -331,7 +331,7 @@ async function claimAdditional(candidate,offer,database=pool){
   return result.rows?.[0]||null;
 }
 
-const { notePreflightFailure }=require("./pricingReminderRepo");
+
 
 // No Meta reservation, accepted provider ID or unresolved delivery may be
 // present when a preflight rejection becomes safely retryable.
@@ -350,11 +350,23 @@ async function deferUnsent(candidate,row,code,database=pool){
     [row.id,candidate.contact_id,String(code||"preflight").slice(0,80),candidate.inbound_id]
   );
   if(result.rows?.length!==1)return null;
-  const retry=await notePreflightFailure({
-    contactId:candidate.contact_id,anchorId:candidate.inbound_id,
-    packageKey:row.pricing_reminder_package_key||"unknown",
-    reason:"standalone:"+String(code||"blocked").slice(0,180),
-  });
+  const retryRows=await database.query(
+    `INSERT INTO pricing_reminder_preflight_retries
+       (anchor_id,contact_id,package_key,attempts,retry_after,last_error)
+     VALUES($1,$2,$3,1,NOW()+INTERVAL '30 seconds',$4)
+     ON CONFLICT (anchor_id,package_key) DO UPDATE
+       SET attempts=LEAST(pricing_reminder_preflight_retries.attempts+1,3),
+           retry_after=NOW()+
+             CASE pricing_reminder_preflight_retries.attempts
+               WHEN 1 THEN INTERVAL '1 minute'
+               ELSE INTERVAL '2 minutes' END,
+           last_error=EXCLUDED.last_error,updated_at=NOW()
+     RETURNING attempts,retry_after`,
+    [candidate.inbound_id,candidate.contact_id,
+     result.rows[0].pricing_reminder_package_key,
+     "standalone:"+String(code||"blocked").slice(0,160)]
+  );
+  const retry=retryRows.rows?.[0]||null;
   return {row:result.rows[0],retry};
 }
 
