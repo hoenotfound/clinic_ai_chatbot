@@ -53,3 +53,12 @@ Submitted for review only. These templates are not connected to an enabled Day 2
 | day6 | zh_CN | `2101944657185777` | PENDING |
 | day6 | en_US | `29784962131111986` | PENDING |
 | day6 | ms | `1675055354240049` | PENDING |
+
+## Post-merge verification
+
+The review branch incorporates later Inbox, Messenger and secondary-number
+ownership improvements from `main`. Verify the combined commit with a fresh
+full CI run before merging, rather than relying on earlier successful tests.
+The new paid campaign must remain off until the combined deployment has passed
+its startup checks. Activate with a new timestamp so no historical consent or
+old ad conversation enters the new campaign.
