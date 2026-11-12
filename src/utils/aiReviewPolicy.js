@@ -128,7 +128,7 @@ function categorizeAiReview(customerText, proposedCategory) {
   // suitability question, even if the model marked it clinical. Existing
   // clinical review rows are checked independently at every media boundary.
   // This does not grant an amount, treatment identity or image permission.
-  const plainPrice = /^(?:多少(?:钱|錢)?|多少钱|多少錢|价钱|價錢|价格|價格|how much|price|harga|berapa)[\\s?？!！。]*$/iu.test(
+  const plainPrice = /^(?:多少(?:钱|錢)?|多少钱|多少錢|价钱|價錢|价格|價格|how much|price|harga|berapa)[\s?？!！。]*$/iu.test(
     String(customerText || "").normalize("NFKC").trim()
   );
   if (plainPrice && !hasClinicalMediaRisk(customerText)) return "information";
