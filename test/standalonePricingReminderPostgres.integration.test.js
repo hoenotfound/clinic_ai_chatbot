@@ -94,6 +94,15 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     [contact]);
   assert.equal(await repo.stillEligible(c,second.id,opts,b,db),false,
     "captionless existing image must prevent a duplicate");
+  await db.query(
+    "INSERT INTO messages(contact_id,role,content,media_key,media_mime_type,"+
+    "sent_by_username,whatsapp_message_id,delivery_status) "+
+    "VALUES($1,'assistant','','messages/price-graphic-renamed.jpg','image/jpeg',"+
+    "'WhatsApp Business App','wamid.staff.manual.image','delivered')",[contact]);
+  const staffImages=await repo.listRecentStaffImages(c,db);
+  assert.equal(staffImages.length,1,"manual image must be checked even with a new R2 key");
+  assert.equal(staffImages[0].sent_by_username,"WhatsApp Business App");
+  assert.equal(Object.hasOwn(staffImages[0],"media_key"),false,"do not expose R2 keys to review query");
   await repo.recordDecision(c,"staff_review:Package B",db);
   await repo.recordDecision(c,"staff_review:Package B",db);
   const audit=(await db.query("SELECT reason FROM standalone_pricing_reminder_decisions WHERE contact_id=$1",[contact])).rows;
