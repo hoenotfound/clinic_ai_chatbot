@@ -73,6 +73,12 @@ function beforeEnd(candidate,now=new Date()){
 function select(candidate,options){
   const customerTexts=Array.isArray(candidate.recent_customer_messages)
     ?candidate.recent_customer_messages:[];
+  // A declined offer anywhere in this service session overrides older
+  // treatment labels, even if the latest inbound was only "Hi".
+  if(customerTexts.some(text=>
+      /(不要了|不需要|没兴趣|沒興趣|停止优惠|停止優惠|停止跟进|停止跟進|not interested|no thanks|stop promotions|unsubscribe|tak berminat)/iu
+        .test(String(text||""))))
+    return {offers:[],reason:"customer_declined"};
   // An old CRM label or unverified ad guess must not authorize unsolicited
   // pricing. Require exactly one service in real, recent customer wording.
   if(!customerTexts.length || customerTexts.some(hasClinicalMediaRisk))
