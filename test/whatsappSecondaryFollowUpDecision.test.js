@@ -118,7 +118,7 @@ test("record only from verified secondary sender and no raw history, consent or 
  assert.match(repo.RECONCILE_CRM_SQL,/l.owner_username IS NULL/);
  assert.match(repo.RECONCILE_CRM_SQL,/NOT EXISTS \([\s\S]*?FROM lead_activities human_activity/);
  assert.match(repo.RECONCILE_CRM_SQL,/human_activity.actor/);
- assert.match(repo.RECONCILE_CRM_SQL,/l.source='meta_ads'/);
+ assert.match(repo.RECONCILE_CRM_SQL,/l.source IN \('meta_ads','whatsapp_unattributed'\)/);
  assert.match(repo.RECONCILE_CRM_SQL,/l.is_closed IS DISTINCT FROM TRUE/);
  assert.doesNotMatch(repo.RECONCILE_CRM_SQL,/SET[^;]*marketing_consent=/);
 });
