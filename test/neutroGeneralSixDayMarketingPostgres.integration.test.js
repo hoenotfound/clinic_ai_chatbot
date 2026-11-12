@@ -88,6 +88,82 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const hint=(await db.query("EXECUTE generic_due('neutro_secondary','123','456',NOW(),NOW(),'all_contacts',NOW(),NOW())")).rows[0];
   assert.equal(hint.next_due_at,null);
   assert.equal(hint.has_overdue,false);
+  // A full sender-bound, consented Meta-ad journey must actually produce
+  // a generic template candidate. Compilation-only tests cannot detect an
+  // accidentally unsatisfiable marketing rule.
+  const sender=(await db.query(
+    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+    "VALUES('neutro_secondary','100000000011111','200000000011111','Test secondary','active') RETURNING id"
+  )).rows[0].id;
+  const contact=(await db.query(
+    "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) "+
+    "VALUES('whatsapp','60125111999',$1) RETURNING id",[sender])).rows[0].id;
+  const conversation=(await db.query(
+    "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) "+
+    "VALUES($1,'60125111999',$2,'bound') RETURNING id",
+    [sender,contact])).rows[0].id;
+  const ad=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user','Hi, I am interested in Neutro Sense','wamid.generic-ad',"+
+    "NOW()-INTERVAL '49 hours',NOW()-INTERVAL '49 hours') RETURNING id",
+    [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [ad,conversation]);
+  await db.query(
+    "INSERT INTO whatsapp_free_entry_referrals(origin_message_id,contact_id,meta_ad_id,source_type) VALUES($1,$2,'test-ad-901','ad')",
+    [ad,contact]);
+  const lead=(await db.query(
+    "INSERT INTO leads(contact_id,marketing_consent) VALUES($1,'opted_in') RETURNING id",
+    [contact])).rows[0].id;
+  const affirmation="I agree to receive WhatsApp follow-ups and related offers about TCM care from Neutro Sense TCM";
+  const consent=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
+    "VALUES($1,'user',$2,'wamid.generic-consent',"+
+    "NOW()-INTERVAL '28 hours',NOW()-INTERVAL '28 hours') "+
+    "RETURNING id,source_created_at",
+    [contact,affirmation])).rows[0];
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [consent.id,conversation]);
+  await db.query(
+    "UPDATE contacts SET whatsapp_opt_in_at=$2,whatsapp_opt_in_source='explicit_customer_message' WHERE id=$1",
+    [contact,consent.source_created_at]);
+  await db.query(
+    "INSERT INTO whatsapp_marketing_consent_events"+
+    "(contact_id,lead_id,source,message_id,provider_message_id,message_text,business_name,"+
+    "consent_scope,consent_category,consented_at,consent_method,consent_service) "+
+    "VALUES($1,$2,'explicit_customer_message',$3,'wamid.generic-consent',$4,'Neutro Sense TCM Centre',"+
+    "'general_clinic_followups_and_related_offers','MARKETING',$5,'customer_whatsapp_text','neutro_general_tcm_care')",
+    [contact,lead,consent.id,affirmation,consent.source_created_at]);
+  await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_rules"+
+    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+    "VALUES($1,48,TRUE,'old_treatment_template','en_US',$2,TRUE)",
+    [sender,"a".repeat(64)]);
+  const activation=new Date(Date.now()-6*86400000).toISOString();
+  const p=["neutro_secondary","100000000011111","200000000011111",
+    new Date(),5,activation,"ads_only",activation,activation];
+  const eligible=(await db.query(general.CANDIDATES_SQL,p)).rows;
+  assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
+  assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
+  assert.equal(eligible[0].language_code,"en_US");
+  assert.equal(Number(eligible[0].inbound_id),Number(ad));
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
+    "a template without an atomic one-shot claim cannot send");
+  const attempt=(await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts"+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,status) "+
+    "VALUES($1,$2,$3,48,'claimed') RETURNING id",
+    [sender,contact,ad])).rows[0].id;
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
+    "claimed generic marketing follow-up survives independent final consent check");
+  await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
+    "fresh marketing opt-out cancels the claimed generic send");
+  await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=$1",[contact]);
+  await db.query("UPDATE contacts SET mode='staff' WHERE id=$1",[contact]);
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
+    "manual Staff mode cancels the generic send");
+  await db.query("DELETE FROM whatsapp_sender_marketing_followup_attempts WHERE id=$1",[attempt]);
   await db.query("DEALLOCATE ALL");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
