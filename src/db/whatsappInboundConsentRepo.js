@@ -45,14 +45,17 @@ async function recordFromInbound({
     const signedCustomerText = message?.role === "user" &&
       Boolean(String(message.whatsapp_message_id || "").trim()) &&
       !message.media_mime_type && message.is_forwarded !== true;
-    const treatmentExplicit=signedCustomerText
-      ? explicitPromotionConsent(message.content,{businessName}):null;
-    // The general consent request is separate from treatment-specific
-    // marketing permission. Only an affirmative customer-authored reply
-    // AFTER a delivered sender-bound 20h invitation can grant this scope.
-    // A Meta ad prefill, unsupported placeholder or unrelated 'yes' cannot.
-    const offeredGeneral=signedCustomerText && !isClickToWhatsApp &&
+    // The general opt-in sentence must NOT fall through to the
+    // treatment-specific free-text classifier, including when the generic
+    // invitation was absent or Meta has not confirmed its delivery.
+    const generalPhrase=signedCustomerText &&
       explicitGeneralFollowupConsent(message.content);
+    const treatmentExplicit=signedCustomerText && !generalPhrase
+      ? explicitPromotionConsent(message.content,{businessName}):null;
+    // Only an affirmative customer-authored reply AFTER a delivered,
+    // sender-bound 20h invitation can grant this independent consent.
+    // A Meta ad prefill, 131060 placeholder or unrelated 'yes' cannot.
+    const offeredGeneral=generalPhrase && !isClickToWhatsApp;
     let generalExplicit=null;
     if(offeredGeneral){
       const verified=await client.query(
@@ -84,7 +87,7 @@ async function recordFromInbound({
       );
       if(verified.rows?.[0]?.verified===true)generalExplicit=offeredGeneral;
     }
-    const explicit=treatmentExplicit||generalExplicit;
+    const explicit=generalExplicit||treatmentExplicit;
     if (!explicit) {
       await client.query("ROLLBACK");
       return { recorded: false, reason: "not_explicit" };
