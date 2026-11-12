@@ -37,6 +37,20 @@ function extractErrorText(data, fallback) {
   return data?.error?.error_user_msg || data?.error?.message || data?.message || fallback;
 }
 
+// An unsuccessful response from the customer-facing Send API is not evidence
+// that an outbound video was rejected. Preserve the uncertainty so Inbox cannot
+// offer an unsafe blind retry.
+function unknownVideoSend(label, reason) {
+  return {
+    success: false,
+    unknown: true,
+    ambiguous: true,
+    wamid: null,
+    externalMessageId: null,
+    error: `${label} video delivery is unconfirmed ${reason}. Check Meta delivery before retrying.`,
+  };
+}
+
 async function uploadAttachment(channel, type, buffer, mimeType, filename, options = {}) {
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
@@ -77,7 +91,7 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename, optio
         raw || `${label} attachment upload returned HTTP ${response.status}.`
       );
       console.error(`${label} attachment upload failed:`, response.status, error);
-      return { success: false, attachmentId: null, error };
+      return { success: false, attachmentId: null, error, uploadHttpStatus: response.status };
     }
 
     return { success: true, attachmentId: data.attachment_id, error: null };
@@ -151,9 +165,12 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
     if (!response.ok) {
       const error = extractErrorText(data, raw || `${label} returned HTTP ${response.status}.`);
       console.error(`${label} ${logLabel} failed:`, response.status, error);
-      // A 5xx response from the message-send endpoint is not proof that
-      // Meta rejected the message. Do not label automated voice as definitely
-      // failed or encourage an unsafe duplicate recording.
+      // /messages can succeed server-side even after returning a 5xx.
+      // Never classify an uncertain video as failed or permit a blind retry.
+      if (type === "video" && response.status >= 500) {
+        return unknownVideoSend(label, `after Meta HTTP ${response.status}`);
+      }
+      // Preserve the existing safety rule for automated voice recordings.
       if (options.autoFollowUp === true && type === "audio" && response.status >= 500) {
         return { success: false, unknown: true, ambiguous: true,
           wamid: null, externalMessageId: null,
@@ -165,6 +182,10 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
     }
 
     const externalMessageId = data?.message_id || data?.id || null;
+    if (type === "video" &&
+        (typeof externalMessageId !== "string" || !externalMessageId.trim())) {
+      return unknownVideoSend(label, "because Meta returned no valid message ID");
+    }
     if (!externalMessageId && options.autoFollowUp === true && type === "audio") {
       return { success: false, unknown: true, ambiguous: true,
         wamid: null, externalMessageId: null,
@@ -178,6 +199,9 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
     };
   } catch (err) {
     console.error(`${label} ${logLabel} threw an error:`, err);
+    if (type === "video") {
+      return unknownVideoSend(label, "after a network or response error");
+    }
     if (options.autoFollowUp === true && type === "audio") {
       return { success: false, unknown: true, ambiguous: true,
         wamid: null, externalMessageId: null,
@@ -234,6 +258,10 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
       externalMessageId: null,
       ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: uploaded.error,
+      // Only upload failures are safe to fall back from. No customer-facing
+      // Send API request has happened yet.
+      uploadRejected: true,
+      uploadHttpStatus: uploaded.uploadHttpStatus || null,
     };
   }
   // Upload alone does not contact the customer. Recheck immediately before
