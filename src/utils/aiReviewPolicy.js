@@ -124,6 +124,14 @@ function categorizeAiReview(customerText, proposedCategory) {
   if(isSimpleVisitTimingQuestion(customerText)||
      (isDefiniteAppointmentCancellation(customerText)&&
       !hasClinicalMediaRisk(customerText)))return 'information';
+  // A bare price clarification such as "多少" is not itself a medical
+  // suitability question, even if the model marked it clinical. Existing
+  // clinical review rows are checked independently at every media boundary.
+  // This does not grant an amount, treatment identity or image permission.
+  const plainPrice = /^(?:多少(?:钱|錢)?|多少钱|多少錢|价钱|價錢|价格|價格|how much|price|harga|berapa)[\\s?？!！。]*$/iu.test(
+    String(customerText || "").normalize("NFKC").trim()
+  );
+  if (plainPrice && !hasClinicalMediaRisk(customerText)) return "information";
   if (proposedCategory !== "information") return "clinical";
   const text = String(customerText || "");
   if ((!ADMINISTRATIVE_QUESTION.test(text) && !TECHNICAL_DEVICE_QUESTION.test(text)) ||
