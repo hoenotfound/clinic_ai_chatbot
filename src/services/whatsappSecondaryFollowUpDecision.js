@@ -81,7 +81,7 @@ function chooseSecondaryFollowUpTreatment({
  candidate={},clinicConfig,adFollowUpPolicy=null,latestDecision=null,
 }={}){
  const services=(clinicConfig?.services||[]).map(x=>x?.name).filter(Boolean);
- if(isSuspectStoredPostpartumChoice({
+ if(latestDecision?.status!=="selected" && isSuspectStoredPostpartumChoice({
   customerTexts:candidate.customer_texts,
   storedTreatment:candidate.verified_treatment_name,
   clinicConfig,
