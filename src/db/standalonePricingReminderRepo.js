@@ -386,15 +386,12 @@ async function resumeDeferred(candidate,offer,database=pool){
 
 async function recordDecision(candidate,reason,database=pool){
   if(!candidate?.contact_id||!candidate?.inbound_id)return;
-  const safe=String(reason||"unknown").slice(0,150);
+  const safe=String(reason||"unknown").slice(0,145);
   await database.query(
-    `INSERT INTO pricing_reminder_decisions (contact_id,anchor_id,reason)
-     SELECT $1,$2,$3 WHERE NOT EXISTS (
-       SELECT 1 FROM pricing_reminder_decisions prior
-       WHERE prior.contact_id=$1 AND prior.anchor_id=$2
-         AND prior.reason=$3 AND prior.created_at>NOW()-INTERVAL '1 hour')`,
+    `INSERT INTO standalone_pricing_reminder_decisions
+      (contact_id,inbound_message_id,reason)
+     VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
     [candidate.contact_id,candidate.inbound_id,"standalone:"+safe]
   );
 }
-
 module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision};
