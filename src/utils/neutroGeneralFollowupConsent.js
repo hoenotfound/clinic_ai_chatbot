@@ -13,13 +13,13 @@ const SENTENCES=Object.freeze({
 const INVITATIONS=Object.freeze({
  zh:`若希望之后6天内继续收到 Neutro Sense TCM 的 WhatsApp 中医护理资讯及相关优惠，请完整回复：
 「${SENTENCES.zh}」
-不想接收可忽略；随时回复「停止优惠」即可退订。`,
+不想接收可忽略。`,
  en:`If you want WhatsApp TCM care follow-ups and related offers from Neutro Sense TCM over the next 6 days, please reply with this full sentence:
 "${SENTENCES.en}"
-This is optional. Reply STOP PROMOTIONS anytime to unsubscribe.`,
+This is optional; no reply is needed.`,
  ms:`Jika mahu terima susulan penjagaan TCM dan tawaran berkaitan daripada Neutro Sense TCM melalui WhatsApp untuk 6 hari seterusnya, sila balas dengan ayat penuh ini:
 "${SENTENCES.ms}"
-Ini pilihan anda. Balas STOP PROMOTIONS untuk berhenti.`,
+Ini pilihan anda; tidak perlu balas jika tidak berminat.`,
 });
 function normalize(value){
  return String(value||"").normalize("NFKC").replace(/[’‘]/g,"'")
