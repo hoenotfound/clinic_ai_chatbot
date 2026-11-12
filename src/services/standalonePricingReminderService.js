@@ -202,7 +202,7 @@ async function sendOne(candidate,offer,options,allOffers){
     result={success:false,unknown:true,ambiguous:true};
   }
   const accepted=result?.success===true &&
-    result?.unknown!==true && /^wamid\\./.test(String(result.wamid||""));
+    result?.unknown!==true && /^wamid\./.test(String(result.wamid||""));
   if(accepted){
     try{
       const saved=await messagesRepo.setWhatsappMessageId(row.id,result.wamid,
