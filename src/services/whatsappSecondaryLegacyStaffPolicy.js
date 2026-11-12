@@ -89,10 +89,19 @@ function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.
    `AND ${anchor}.role='user'
        AND ${anchor}.whatsapp_message_id IS NOT NULL
        AND ${anchor}.source_created_at IS NOT NULL
-       AND ${anchor}.id>recovery_menu.id
-       AND ${anchor}.created_at>=recovery_menu.created_at
-       AND ${anchor}.created_at<recovery_menu.created_at+INTERVAL '7 days'
-       AND ${anchor}.content NOT LIKE '📎 [% sent a WhatsApp message that could not be displayed]'`:
+       AND (
+         (${anchor}.id>recovery_menu.id
+          AND ${anchor}.created_at>=recovery_menu.created_at
+          AND ${anchor}.created_at<recovery_menu.created_at+INTERVAL '7 days'
+          AND ${anchor}.content NOT LIKE '📎 [% sent a WhatsApp message that could not be displayed]')
+         OR
+         -- The original unreadable inbound can anchor only its verified,
+         -- provider-accepted text-only recovery reminders. No treatment,
+         -- ad attribution, marketing consent or artificial customer turn.
+         (${anchor}.id=unavailable131060.id
+          AND ${anchor}.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
+          AND recovery_menu.created_at<${anchor}.created_at+INTERVAL '24 hours')
+       )`:
    `AND NOW()>=recovery_menu.created_at
        AND NOW()<recovery_menu.created_at+INTERVAL '7 days'`;
  return `EXISTS (
@@ -128,6 +137,17 @@ function secondary131060RecoveryAudienceSql(contact="c",anchor=null,env=process.
      AND unavailable131060.content LIKE '📎 [% sent a WhatsApp message that could not be displayed]'
      AND unavailable131060.source_created_at>=${since}
      AND unavailable131060.created_at>=${since}
+     -- An unrelated accepted menu after an older unsupported message
+     -- must not turn that message into a reminder anchor.
+     AND NOT EXISTS (
+       SELECT 1 FROM messages intervening
+       WHERE intervening.contact_id=${contact}.id
+         AND intervening.id>unavailable131060.id
+         AND intervening.id<recovery_menu.id
+         AND (intervening.role='user' OR
+              (intervening.role='assistant'
+               AND intervening.sent_by_username IS NOT NULL))
+     )
      AND NOT EXISTS(
        SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
        WHERE imported.message_id=unavailable131060.id

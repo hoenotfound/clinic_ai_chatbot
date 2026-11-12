@@ -106,7 +106,14 @@ test("migrated Postgres: older contact stays staff-only until a fresh verified s
     [recoveryMenu,recoveryOld]);
   assert.equal(await isSecondaryAutomationEligible(recoveryOld,{
     database:db,env,inboundMessageId:recoveryMissing
-  }),false,"unsupported placeholder never triggers follow-up even after recovery menu");
+  }),true,"after provider acceptance, the unavailable inbound can anchor safe recovery reminders");
+  assert.equal(await isSecondaryAiReplyEligible(recoveryOld,{
+    database:db,env,inboundMessageId:recoveryMissing
+  }),true,"accepted 131060 recovery also keeps the initial conversation eligible for a neutral reminder");
+  // The unreadable turn still has no treatment, advertisement or marketing consent.
+  assert.equal((await db.query(
+    "SELECT COUNT(*)::int AS n FROM whatsapp_free_entry_referrals WHERE contact_id=$1",
+    [recoveryOld])).rows[0].n,0);
   const readable=await inbound(recoveryOld,recoveryConv,"骨盆调理");
   assert.equal(await isSecondaryAiReplyEligible(recoveryOld,{
     database:db,env,inboundMessageId:readable

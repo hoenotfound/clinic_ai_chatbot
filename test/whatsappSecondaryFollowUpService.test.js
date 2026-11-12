@@ -170,7 +170,7 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
 test("verified service snapshot is written only from the confirmed treatment",()=>{
  const source=worker.runOnce.toString();
  assert.match(source,/treatmentInterest:confirmedTreatment\|\|null/);
- assert.match(source,/const confirmedTreatment=choice.treatment/);
+ assert.match(source,/const confirmedTreatment=candidate\.recovery_no_selection\?null:choice.treatment/);
  assert.match(source,/chooseSecondaryFollowUpTreatment/);
  // A confirmed service is persisted with a new follow-up, but no text-only
  // or uncertain choice may create a fabricated treatment classification.
@@ -614,4 +614,51 @@ test("manual unanswered staff question sends one gentle text reminder instead of
  assert.match(saved[2],/刚才的问题/);
  assert.equal(saved[8].mediaKey,null);
  assert.equal(saved[8].isAutomatedFollowUp,true);
+});
+
+
+test("131060 no-selection follow-ups require accepted recovery evidence in candidate and final recheck",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+   assert.match(sql,/recovery_evidence\.accepted=TRUE/);
+   assert.match(sql,/recovery_evidence\.origin='system_fallback'/);
+   assert.match(sql,/recovery_evidence\.provider_message_id=verified_recovery\.whatsapp_message_id/);
+   assert.match(sql,/first_reply\.text LIKE 'Hi～欢迎来到 Neutro Sense/);
+   assert.match(sql,/newer_customer\.role='user'/);
+   assert.match(sql,/inbound\.content LIKE '📎 \[% sent a WhatsApp message that could not be displayed\]'/);
+   assert.match(sql,/whatsapp_opt_out_at IS NULL/);
+   assert.match(sql,/c\.takeover_by IS NULL/);
+   assert.match(sql,/latest_lead\.appointment_status|lead\.appointment_status/);
+   assert.match(sql,/inbound\.created_at \+ INTERVAL '24 hours'/);
+   assert.match(sql,/BETWEEN 7 AND 23/);
+ }
+ assert.match(worker.POTENTIAL_DUE_SQL,/recovery_evidence\.accepted=TRUE/);
+});
+
+test("a silent 131060 customer receives the text-only 2h, 6h and 20h reminders, never media or personalized sales",async()=>{
+ const source="📎 [Customer sent a WhatsApp message that could not be displayed]";
+ for(const slot of [2,6,20]){
+   const recovery={...candidate,slot_hours:slot,recovery_no_selection:true,
+     treatment_interest:"9D 逆龄抗衰",verified_treatment_name:"9D 逆龄抗衰",
+     customer_texts:[source],first_reply_text:"Hi～欢迎来到 Neutro Sense 😊",
+     media_key:"should-not-send.mp4",media_type:"video",media_mime_type:"video/mp4",
+     media_filename:"should-not-send.mp4"};
+   const f=fake({rows:[recovery]});
+   const result=await worker.runOnce({...f,
+     env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+       WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+     storage:{downloadMedia:async()=>assert.fail("No recovery media")},
+     videoSelection:()=>assert.fail("No recovery video selection"),
+     personalize20h:()=>assert.fail("No 20h AI sales personalization"),
+   });
+   assert.equal(result.accepted,1,"slot "+slot);
+   const save=f.calls.find(x=>x.save)?.save;
+   const send=f.calls.find(x=>x.send)?.send;
+   assert.ok(save && send);
+   assert.match(save[2],/护理|评估/);
+   assert.equal(save[8].mediaKey,null);
+   assert.equal(save[8].whatsappTemplate.treatmentInterest,null,
+     "old CRM treatment never becomes consent from an unreadable message");
+   assert.equal(save[8].whatsappTemplate.recoveryNoSelection,true);
+   assert.equal(send.dispatchTransport,undefined);
+ }
 });
