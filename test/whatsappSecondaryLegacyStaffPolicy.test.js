@@ -57,7 +57,7 @@ test("all contact automation adds legacy staff guard without weakening provider 
 test("manual AI approval expires in seven days and cannot authorize pre-approval follow-up anchors",()=>{
  const sql=secondaryLegacyStaffAudienceSql("c","inbound",env);
  assert.match(sql,/c.whatsapp_secondary_manual_ai_approved_until > NOW\(\)/);
- assert.match(sql,/inbound.source_created_at >= c.whatsapp_secondary_manual_ai_approved_at/);
+ assert.match(sql,/inbound.source_created_at >= date_trunc\('second', c.whatsapp_secondary_manual_ai_approved_at\)/);
  assert.match(sql,/inbound.created_at >= c.whatsapp_secondary_manual_ai_approved_at/);
  assert.match(sql,/inbound.created_at < c.whatsapp_secondary_manual_ai_approved_until/);
  assert.match(sql,/inbound.role='user'/);
