@@ -31,7 +31,7 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   // Putting pg_catalog explicitly AFTER this schema lets now() resolve to the
   // fixture clock in sender SQL, while other built-in functions stay usable.
   await db.query("CREATE FUNCTION "+schema+".now() RETURNS timestamptz "+
-    "LANGUAGE SQL STABLE AS $ SELECT '"+fixtureNow.toISOString()+"'::timestamptz $");
+    "LANGUAGE SQL STABLE AS 'SELECT ''"+fixtureNow.toISOString()+"''::timestamptz'");
   await db.query("SET search_path TO "+schema+", pg_catalog");
   assert.equal((await db.query("SELECT now() AS value")).rows[0].value.toISOString(),
     fixtureNow.toISOString());
