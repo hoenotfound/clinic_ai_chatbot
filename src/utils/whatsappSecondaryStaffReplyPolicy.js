@@ -30,7 +30,7 @@ function staffQuestionSql(alias){
 }
 
 function staffPendingSql(alias){
- return `COALESCE(${alias}.content,'') ~* '(我(再|会|會|帮|幫)(去)?(查|确认|確認|回复|回覆|联系|聯繫)|等我(们|們)?(查|确认|確認|回复|回覆)|稍后(回复|回覆)|查好(再|后|後)|let me (check|confirm|verify)|i( will|.ll) (check|confirm|get back)|we( will|.ll) (check|confirm|get back)|waiting for (staff|doctor)|saya (semak|akan semak)|kami (semak|akan semak))'`;
+ return `COALESCE(${alias}.content,'') ~* '(我(再|会|會|帮|幫)(去)?(查|确认|確認|回复|回覆|联系|聯繫)|等我(们|們)?(查|确认|確認|回复|回覆)|稍后(回复|回覆)|查好(再|后|後)|let me (check|confirm|verify)|i( will|.ll) (check|confirm|get back)|we( will|.ll) (check|confirm|get back)|waiting for (staff|doctor)|saya (semak|akan semak)|kami (semak|akan semak)|booking confirmed|appointment confirmed|booked for|confirmed for|deposit (paid|received)|payment received|已预约|已預約|预约成功|預約成功|已安排时间|已安排時間|确认预约|確認預約|已收订金|已收訂金|投诉|投訴|complaint|refund request|medical emergency)'`;
 }
 
 function serviceReplyAnchorSql(){
