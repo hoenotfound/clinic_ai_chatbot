@@ -144,6 +144,16 @@ function matchesInboxTreatment(conversation, treatment) {
     : current === normalizeInboxTreatment(treatment);
 }
 
+// Keep old secondary contacts visibly staff-managed without rewriting thousands
+// of explicit takeover records. The server's sender-scoped eligibility is
+// authoritative; the original mode still controls intentional handoffs.
+function effectiveInboxControlMode(conversation) {
+  return conversation?.mode === "human" ||
+    (conversation?.whatsapp_is_secondary === true &&
+     conversation?.whatsapp_secondary_ai_enabled === false)
+    ? "human" : "ai";
+}
+
 // Use one matching rule for the Inbox list and all contextual filter counts.
 function matchesInboxFilters(conversation, filters, { exclude = null, now, canViewAllLeads, currentUsername }) {
   // Archived is a separate Status choice. Other statuses exclude archived
@@ -165,7 +175,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
       conversation.whatsapp_sender_key !== filters.sender) return false;
   if (exclude !== "control" && filters.control !== "all" &&
-      conversation.mode !== filters.control) return false;
+      effectiveInboxControlMode(conversation) !== filters.control) return false;
   if (exclude !== "assignment" && canViewAllLeads &&
       !matchesLeadAssignment(conversation, filters.assignment, currentUsername)) return false;
   if (exclude !== "replyWindow" && filters.replyWindow !== "all" &&
@@ -2614,7 +2624,7 @@ function ConversationList({
                       compact
                       showUnassigned={showUnassignedAssignment}
                     />
-                    <ControlIndicator mode={conversation.mode} />
+                    <ControlIndicator mode={effectiveInboxControlMode(conversation)} />
                     {conversation.whatsapp_is_secondary === true &&
                       conversation.whatsapp_secondary_connection_state !== "connected" && (
                       <span role="status" title="Secondary number disconnected; outgoing messages paused"
@@ -2989,13 +2999,14 @@ function ThreadView({
         .replace(/^Reply available\s*·\s*/i, "")
         .replace(/\s+remaining$/i, "")
     : "";
+  const effectiveStaff = effectiveInboxControlMode(contact) === "human";
   const composerPlaceholder = secondarySenderSuspended
     ? "Secondary WhatsApp disconnected. Sending paused."
     : policyBlocksComposer
     ? "Reply unavailable"
     : imageFile || attachmentFile
     ? "Add a caption…"
-    : contact?.mode === "human"
+    : effectiveStaff
     ? "Message…"
     : "Reply…";
   const composerLabel = secondarySenderSuspended
@@ -3004,7 +3015,7 @@ function ThreadView({
     ? `${messagingPolicy.channelLabel} reply unavailable`
     : imageFile || attachmentFile
     ? "Add a caption to the selected attachment"
-    : contact?.mode === "human"
+    : effectiveStaff
     ? `Message this ${customerSingular}`
     : "Reply manually while AI stays on";
   const hasComposerPayload = Boolean(draft.trim() || imageFile || attachmentFile);
@@ -3888,13 +3899,15 @@ function ThreadView({
                 )}
                 <span
                   className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
-                    contact.mode === "human"
+                    effectiveStaff
                       ? "bg-[var(--color-accent-light)] text-[var(--color-accent-text)]"
                       : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                   }`}
-                  title={contact.mode === "human" ? "Handled by staff" : "Handled by AI"}
+                  title={contact.mode === "human" ? "Handled by staff" : effectiveStaff
+                    ? "AI paused for this contact under the secondary-number audience policy"
+                    : "Handled by AI"}
                 >
-                  {contact.mode === "human" ? "Staff" : "AI"}
+                  {effectiveStaff ? "Staff" : "AI"}
                 </span>
                 {quietReplyAvailable && replyWindowCompactLabel && (
                   <span
