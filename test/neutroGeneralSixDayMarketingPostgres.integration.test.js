@@ -61,6 +61,13 @@ const cs=process.env.TEST_DATABASE_URL;
 test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile against migrated PostgreSQL",{
  skip:!cs,
 },async()=>{
+ // Evaluate synthetic lifecycle times at 20:00 MYT. Tests must not fail
+ // simply because GitHub CI happens to execute during Malaysia quiet hours.
+ const wallNow=new Date();
+ const malaysia=new Date(wallNow.getTime()+8*3600000);
+ malaysia.setUTCHours(20,0,0,0);
+ let fixtureNow=new Date(malaysia.getTime()-8*3600000);
+ if(fixtureNow>wallNow)fixtureNow=new Date(fixtureNow.getTime()-86400000);
  const db=new Client({connectionString:cs});
  const schema="neutro_generic_six_day_"+process.pid+"_"+Date.now();
  await db.connect();
@@ -105,8 +112,8 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const ad=(await db.query(
     "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
     "VALUES($1,'user','Hi, I am interested in Neutro Sense','wamid.generic-ad',"+
-    "NOW()-INTERVAL '49 hours',NOW()-INTERVAL '49 hours') RETURNING id",
-    [contact])).rows[0].id;
+    "$2::timestamptz-INTERVAL '49 hours',$2::timestamptz-INTERVAL '49 hours') RETURNING id",
+    [contact,fixtureNow])).rows[0].id;
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [ad,conversation]);
   await db.query(
@@ -119,9 +126,9 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const consent=(await db.query(
     "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
     "VALUES($1,'user',$2,'wamid.generic-consent',"+
-    "NOW()-INTERVAL '28 hours',NOW()-INTERVAL '28 hours') "+
+    "$3::timestamptz-INTERVAL '28 hours',$3::timestamptz-INTERVAL '28 hours') "+
     "RETURNING id,source_created_at",
-    [contact,affirmation])).rows[0];
+    [contact,affirmation,fixtureNow])).rows[0];
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [consent.id,conversation]);
   await db.query(
@@ -139,9 +146,9 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
     "VALUES($1,48,TRUE,'old_treatment_template','en_US',$2,TRUE)",
     [sender,"a".repeat(64)]);
-  const activation=new Date(Date.now()-6*86400000).toISOString();
+  const activation=new Date(fixtureNow.getTime()-6*86400000).toISOString();
   const p=["neutro_secondary","100000000011111","200000000011111",
-    new Date(),5,activation,"ads_only",activation,activation];
+    fixtureNow,5,activation,"ads_only",activation,activation];
   const bareWhere=general.CANDIDATES_SQL.indexOf("\n WHERE rule.enabled=TRUE");
   const order=general.CANDIDATES_SQL.lastIndexOf("\n ORDER BY inbound.created_at");
   assert.ok(bareWhere>0&&order>bareWhere);
@@ -187,8 +194,8 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const active=(await db.query(
     "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
     "VALUES($1,'user','Can I ask about the assessment?','wamid.generic-active',"+
-    "NOW()-INTERVAL '2 minutes',NOW()-INTERVAL '2 minutes') RETURNING id",
-    [contact])).rows[0].id;
+    "$2::timestamptz-INTERVAL '2 minutes',$2::timestamptz-INTERVAL '2 minutes') RETURNING id",
+    [contact,fixtureNow])).rows[0].id;
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [active,conversation]);
   assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,0,
@@ -196,7 +203,7 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   // Unlike the previous fixed eight-hour cutoff, a fresh customer reply
   // shifts the due time rather than silently losing the whole sequence.
   const nextDay=[...p];
-  nextDay[3]=new Date(Date.now()+25*3600000);
+  nextDay[3]=new Date(fixtureNow.getTime()+25*3600000);
   const resumed=(await db.query(general.CANDIDATES_SQL,nextDay)).rows;
   assert.equal(resumed.length,1,
     "a postponed 48h stage becomes eligible after 24 hours of inactivity");
@@ -221,8 +228,8 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const justReplied=(await db.query(
     "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) "+
     "VALUES($1,'user','One more question','wamid.generic-recheck-activity',"+
-    "NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute') RETURNING id",
-    [contact])).rows[0].id;
+    "$2::timestamptz-INTERVAL '1 minute',$2::timestamptz-INTERVAL '1 minute') RETURNING id",
+    [contact,fixtureNow])).rows[0].id;
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
     [justReplied,conversation]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
