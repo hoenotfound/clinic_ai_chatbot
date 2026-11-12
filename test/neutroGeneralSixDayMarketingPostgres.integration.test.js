@@ -143,49 +143,6 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const p=["neutro_secondary","100000000011111","200000000011111",
     new Date(),5,activation,"ads_only",activation,activation];
   const eligible=(await db.query(general.CANDIDATES_SQL,p)).rows;
-  if(!eligible.length){
-    const row=(await db.query(
-      "SELECT c.mode,c.takeover_by,c.whatsapp_opt_in_at,c.whatsapp_opt_out_at,c.whatsapp_marketing_opt_out_at,"+
-      " l.marketing_consent,l.is_closed,l.appointment_status,"+
-      " e.consent_method,e.consent_scope,e.consented_at,"+
-      " cm.created_at AS cm_at,cm.source_created_at AS cm_source_at "+
-      "FROM contacts c JOIN leads l ON l.contact_id=c.id "+
-      "JOIN whatsapp_marketing_consent_events e ON e.lead_id=l.id "+
-      "JOIN messages cm ON cm.id=e.message_id WHERE c.id=$1",[contact])).rows;
-    const {adsOnlyEligibleSql,secondaryAutomationEligibleSql}=
-      require("../src/services/whatsappSecondaryAdsOnlyEligibility");
-    const ads=(await db.query(
-      "SELECT "+adsOnlyEligibleSql("c","$2")+" AS eligible FROM contacts c WHERE c.id=$1",
-      [contact,activation])).rows[0];
-    const audience=(await db.query(
-      "SELECT "+secondaryAutomationEligibleSql("c","$2","inbound","$3","$4")+
-      " AS eligible FROM contacts c JOIN messages inbound ON inbound.id=$5 AND inbound.contact_id=c.id WHERE c.id=$1",
-      [contact,activation,"ads_only",activation,ad])).rows[0];
-    const q=general.CANDIDATES_SQL;
-    const whereAt=q.indexOf("\n WHERE rule.enabled=TRUE");
-    const orderAt=q.lastIndexOf("\n ORDER BY inbound.created_at");
-    const from=q.slice(0,whereAt),tail=q.slice(orderAt);
-    const diagnosticWhere="\n WHERE $6::timestamptz IS NOT NULL AND $7::text IS NOT NULL"+
-      " AND $8::timestamptz IS NOT NULL AND $9::timestamptz IS NOT NULL";
-    const cross=(await db.query(from+diagnosticWhere+tail,p)).rows;
-    const parts=from.slice(from.indexOf("\n FROM whatsapp_sender_marketing_followup_rules rule")).split(/\n(?= JOIN )/);
-    const stages=[];
-    for(let i=0;i<parts.length;i++){
-      const allArgsWhere="\n WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL"+
-        " AND $3::text IS NOT NULL AND $4::timestamptz IS NOT NULL"+
-        " AND $5::integer IS NOT NULL AND $6::timestamptz IS NOT NULL"+
-        " AND $7::text IS NOT NULL AND $8::timestamptz IS NOT NULL"+
-        " AND $9::timestamptz IS NOT NULL";
-      const q="SELECT COUNT(*)::int AS n "+parts.slice(0,i+1).join("\n")+allArgsWhere;
-      const rr=await db.query(q,p);
-      stages.push({i,join:parts[i].slice(0,78).trim(),n:rr.rows[0].n});
-    }
-    console.error("Generic candidate base joins",JSON.stringify({
-      joined:cross.length,stages,
-    }));
-    console.error("Generic candidate diagnostic",JSON.stringify({rows:row,ads,audience,
-      args:p.map(x=>x instanceof Date?x.toISOString():x)}));
-  }
   assert.equal(eligible.length,1,"signed Meta ad + fresh generic consent selects exactly one template");
   assert.equal(eligible[0].template_name,"ns_general_48h_optin_v1");
   assert.equal(eligible[0].language_code,"en_US");
