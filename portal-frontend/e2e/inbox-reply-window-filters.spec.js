@@ -237,7 +237,7 @@ test("Inbox advanced filters share a balanced, touch-friendly grid with single-r
   const channel = inbox.getByRole("combobox", { name: "Channel" });
   const owner = inbox.getByRole("combobox", { name: "Lead owner" });
   const treatment = inbox.getByRole("combobox", { name: "Treatment" });
-  const handled = inbox.getByRole("combobox", { name: "Handled by" });
+  const handled = inbox.getByRole("combobox", { name: "AI handling" });
 
   for (const control of [status, channel, owner, treatment, handled, reply]) {
     await expect(control).toBeVisible();
@@ -346,24 +346,39 @@ test("Inbox list hides WhatsApp sender badges while opened chat keeps its number
 });
 
 
-test("secondary old contacts show effective Staff mode without mutating takeover state", async ({ page }) => {
+test("Inbox distinguishes policy pause, genuine staff ownership, AI review and verified AI", async ({ page }) => {
   await mockInbox(page, [
-    conversation(201, "Old Staff Contact", {
-      whatsapp_is_secondary:true, whatsapp_secondary_ai_enabled:false, mode:"ai",
+    conversation(201, "Old Paused Contact", {
+      whatsapp_is_secondary: true, whatsapp_secondary_ai_enabled: false, mode: "ai",
+      whatsapp_ad_evidence_status: "meta_131060_unverified",
     }),
     conversation(202, "Verified Ad Contact", {
-      whatsapp_is_secondary:true, whatsapp_secondary_ai_enabled:true, mode:"ai",
+      whatsapp_is_secondary: true, whatsapp_secondary_ai_enabled: true, mode: "ai",
     }),
+    conversation(203, "Actual Staff Contact", { mode: "human", takeover_by: "staff" }),
+    conversation(204, "Review Contact", { mode: "ai", needs_attention: true, attention_reason: "AI review requested:" }),
+    conversation(205, "Pending AI Handoff", { mode: "human", takeover_by: "AI handoff", needs_attention: true }),
   ]);
   await page.goto("/inbox");
   const { inbox } = await openFilters(page);
-  const handled = inbox.getByRole("combobox", { name: "Handled by" });
-  await handled.selectOption("human");
-  await expect(inbox.getByText("Old Staff Contact", { exact: true })).toBeVisible();
-  await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toHaveCount(0);
-  await handled.selectOption("ai");
+  const status = inbox.getByRole("combobox", { name: "AI handling" });
+  await expect(status.locator("option[value='paused']")).toHaveText("AI paused");
+  await expect(status.locator("option[value='review']")).toHaveText("Needs review");
+  await expect(inbox.getByText("Ad source unknown", { exact: true })).toBeVisible();
+  await status.selectOption("human");
+  await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toHaveCount(0);
+  await status.selectOption("paused");
+  await expect(inbox.getByText("Old Paused Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Actual Staff Contact", { exact: true })).toHaveCount(0);
+  await status.selectOption("review");
+  await expect(inbox.getByText("Review Contact", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Pending AI Handoff", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
+  await status.selectOption("ai");
   await expect(inbox.getByText("Verified Ad Contact", { exact: true })).toBeVisible();
-  await expect(inbox.getByText("Old Staff Contact", { exact: true })).toHaveCount(0);
+  await expect(inbox.getByText("Old Paused Contact", { exact: true })).toHaveCount(0);
 });
 
 test("paused secondary chats can still be taken over by ordinary staff", async ({ page }) => {
