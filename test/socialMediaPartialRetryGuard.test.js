@@ -55,3 +55,19 @@ test("successful sends preserve the null delivery-error API contract", () => {
   );
   assert.equal(publicDeliveryError(null), null);
 });
+
+test("video partial caption alerts identify video without changing image wording", () => {
+  const error = "partial_caption_sent|An unknown error occurred";
+  assert.equal(
+    publicDeliveryError(error, "video/mp4"),
+    "The caption was sent, but the video failed to send. An unknown error occurred"
+  );
+  assert.equal(
+    publicDeliveryError(error, "image/jpeg"),
+    "The caption was sent, but the image failed to send. An unknown error occurred"
+  );
+  assert.equal(
+    publicDeliveryError(error),
+    "The caption was sent, but the image failed to send. An unknown error occurred"
+  );
+});
