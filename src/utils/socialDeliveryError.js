@@ -13,14 +13,16 @@ function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
   return base;
 }
 
-function publicDeliveryError(errorText) {
+function publicDeliveryError(errorText, mediaMimeType = "") {
   if (errorText == null) return null;
   const raw = String(errorText).trim();
   if (!hasPartialCaptionMarker(raw)) return raw;
   const detail = raw.slice(PARTIAL_CAPTION_ERROR_PREFIX.length).trim();
+  const kind = String(mediaMimeType).toLowerCase().startsWith("video/")
+    ? "video" : "image";
   return detail
-    ? `The caption was sent, but the image failed to send. ${detail}`
-    : "The caption was sent, but the image failed to send.";
+    ? `The caption was sent, but the ${kind} failed to send. ${detail}`
+    : `The caption was sent, but the ${kind} failed to send.`;
 }
 
 module.exports = {

@@ -588,3 +588,54 @@ test("social follow-up rejection is failed with the correct channel name and hum
   assert.equal(attention.contactId, 103);
   assert.match(attention.reason, /Instagram did not accept this automated follow-up/);
 });
+test("Messenger follow-up records an uncertain video as unknown while preserving sent text", async () => {
+  clinicConfig.services = [{ name: "Pelvic Care" }];
+  clinicConfig.serviceAliases = [];
+  clinicConfig.promotions = [];
+  clinicConfig.automatedFollowUp.serviceOverrides = [{
+    serviceName: "Pelvic Care",
+    message: "Here is the Pelvic Care video.",
+    translations: { en: "Here is the Pelvic Care video." },
+    videoKey: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+    videoFilename: "pelvis.mp4",
+  }];
+  const persisted = [];
+  const attention = [];
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 106, channel: "facebook", whatsapp_number: "+facebook:106",
+    channel_user_id: "psid-106", trigger_message_id: 750,
+    recent_inbound_messages: ["Pelvic Care"], treatment_interest: "Pelvic Care",
+  }];
+  followUpRepo.saveIfStillEligible = async () => ({
+    id: 751, contact_id: 106, delivery_status: null,
+  });
+  followUpRepo.saveSocialVideoCompanion = async () => ({
+    id: 752, contact_id: 106, media_mime_type: "video/mp4", delivery_status: null,
+  });
+  followUpRepo.isClaimStillEligible = async () => true;
+  channelMessaging.sendText = async () => ({
+    success: true, externalMessageId: "mid-text-751",
+  });
+  channelMessaging.sendVideoByStoredKey = async () => ({
+    success: false, unknown: true, ambiguous: true,
+    error: "Meta response unconfirmed", externalMessageId: null,
+  });
+  messagesRepo.setDeliveryStatusById = async (id, status, error) => {
+    persisted.push({ id, status, error });
+    return { id, contact_id: 106, delivery_status: status, delivery_error: error };
+  };
+  contactsRepo.setDeliveryAttention = async (contactId, reason, messageId) => {
+    attention.push({ contactId, reason, messageId });
+  };
+
+  await runAutomatedFollowUps();
+
+  assert.ok(persisted.some(row => row.id === 751 && row.status === "sent"));
+  const media = persisted.find(row => row.id === 752);
+  assert.equal(media.status, "unknown");
+  assert.match(media.error, /unconfirmed/);
+  assert.equal(attention.length, 1);
+  assert.equal(attention[0].contactId, 106);
+  assert.equal(attention[0].messageId, 752);
+  assert.match(attention[0].reason, /^Delivery unconfirmed:/);
+});

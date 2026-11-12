@@ -103,6 +103,7 @@ const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
 const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
+const { sameStaffVideoOwner } = require("../utils/staffVideoOwnership");
 const {
   hasPartialCaptionMarker,
   deliveryErrorForSend,
@@ -392,7 +393,7 @@ async function finishInboxMediaSend(saved, sendResult, contact, username, timing
     await timedMediaStage(timings, "pipelineMs", () => markLeadContacted(contact.id, username, sendResult), true);
   } else {
     await flagInboxMediaAttention(contact.id,
-      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`, timings, saved.id);
+      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText, saved.media_mime_type)}`, timings, saved.id);
   }
   return finalMessage;
 }
@@ -705,6 +706,23 @@ function socialProviderSendOptions(message, contact, options = {}) {
   );
   // This adapter is invoked only from authenticated staff Inbox routes.
   const withCurrentMessage = { ...options, currentMessageId: message?.id, staffMedia: true };
+  // A staff video can take seconds to upload. Re-check the *persisted* owner
+  // before caption, after upload, and again before a URL fallback. This also
+  // covers saved video Retry and Forward through the common staff adapter.
+  if (["facebook", "instagram"].includes(contact?.channel) &&
+      String(message?.media_mime_type || "").toLowerCase().startsWith("video/")) {
+    const priorCheck = withCurrentMessage.preSendCheck;
+    withCurrentMessage.preSendCheck = async () => {
+      try {
+        const latest = await contactsRepo.getContactById(contact.id);
+        if (!sameStaffVideoOwner(contact, latest)) return false;
+        return typeof priorCheck !== "function" || await priorCheck() === true;
+      } catch (error) {
+        console.warn("[Staff video] Could not confirm conversation ownership before send:", error?.message);
+        return false;
+      }
+    };
+  }
   return recorder
     ? { ...withCurrentMessage, onProviderMessageId: recorder }
     : withCurrentMessage;
@@ -2566,6 +2584,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
+    // An unknown video send may already have reached Meta even without a
+    // message ID. Block generic Retry for both staff and automated videos.
+    if (message.delivery_status === "unknown" &&
+        String(message.media_mime_type || "").toLowerCase().startsWith("video/")) {
+      return res.status(409).json({
+        code: "video_delivery_unconfirmed_retry_requires_review",
+        error: "This video may already have reached the customer. Verify Meta delivery before composing a new staff video; direct Retry is blocked.",
+      });
+    }
+
     // An unknown automated follow-up (including text created from an
     // explicitly rejected social voice attachment) might already have reached
     // the customer. Generic Retry cannot establish non-delivery or opt-in.
@@ -2716,7 +2744,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         sendContact.id,
-        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText, message.media_mime_type)}`,
         message.id
       );
     }
@@ -2724,7 +2752,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     res.json({
       ...updated,
       accepted: !!sendResult.success,
-      retry_error: sendResult.success ? null : publicDeliveryError(errorText),
+      retry_error: sendResult.success ? null : publicDeliveryError(errorText, message.media_mime_type),
     });
   } catch (err) {
     console.error("Failed to retry message:", err);
@@ -3776,7 +3804,7 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       transcoded: preparedVideo.transcoded === true,
       original_bytes: preparedVideo.originalBytes,
       stored_bytes: preparedVideo.storedBytes,
-      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivery_error: publicDeliveryError(finalMessage.delivery_error, finalMessage.media_mime_type),
       delivered: sendResult.success,
       delivery_unknown: sendResult.unknown === true || sendResult.ambiguous === true,
     });
