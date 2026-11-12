@@ -18,6 +18,18 @@ The patch:
 - On **new** verified treatment selections only, reconciles the latest **Automation-created, Meta-attributed, not staff-owned, open** CRM lead to the saved choice. It does **not** modify marketing consent, ad attribution, staff-owned or closed leads. An unavailable CRM sync does not authorize a send.
 - Does not mass-update historical leads. Existing verified choices can be considered by the revised marketing selector but previously missed or blocked attempts remain one-shot and must not be resent.
 
+## Symptom B2: re-engaged customer is stranded after the 2h cooldown
+
+Each verified customer reply correctly starts a new 24-hour service-window sequence, but the 2h reminder is protected against duplicate videos for seven days. The old worker required an accepted 2h attempt **on the newest inbound anchor** before it would allow 6h, leaving follow-ups stuck after the customer replied to the first 2h video.
+
+The amended worker may use a recently accepted previous 2h or 6h step as a **prerequisite only**, without sending that stage again. This proof must belong to the same sender-bound conversation, have been accepted within 24h before the new inbound, and have no intervening staff message, uncertain/blocked send, imported message or newer verified treatment decision. The latest inbound and its normal AI reply still define the new due time. All existing 7-day media cooldowns, sender-specific one-shot claims, reply windows, booking and opt-out holds remain.
+
+An explicit new treatment selection, even if it names the same service, starts a fresh treatment chain conservatively. The worker will not reuse media from a prior choice without a durable same-treatment proof. This may skip some otherwise valid 6h/20h reminders, but cannot send cross-treatment videos.
+
+## Symptom B3: AI lead-scoring summaries can overwrite the saved customer choice
+
+After the verified treatment choice is reconciled to an automation-owned lead, the separate AI scoring process can still update `leads.treatment_interest` from its model summary. Both scoring update branches now preserve the existing CRM treatment label when an active, sender-bound verified secondary customer selection exists. Scoring can continue to update temperature and its audit metadata. No consent or staff-controlled CRM field is changed.
+
 ## Symptom C: unreadable Meta error 131060
 
 An unsupported secondary incoming message (internal contact 9008) contained Meta code 131060, with **no text, referral, or advertising attribution** in the signed inbox job. The existing system correctly sent three selectable treatment buttons, and no later customer selection was recorded.
