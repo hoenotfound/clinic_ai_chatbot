@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { secondaryLegacyStaffCutoff } = require("../services/whatsappSecondaryLegacyStaffPolicy");
 const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -1008,6 +1009,48 @@ async function takeOver(id, staffUsername) {
   return updated;
 }
 
+
+/** Admin-approved, time-limited AI access for a legacy secondary contact. */
+async function approveSecondaryManualAi(id, username, expectedUpdatedAt, env = process.env) {
+  if (!secondaryLegacyStaffCutoff(env) ||
+      env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts" ||
+      env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "all_contacts" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true" ||
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
+      !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID ||
+      !username || !expectedUpdatedAt) return null;
+  const result = await pool.query(
+    `UPDATE contacts c
+     SET whatsapp_secondary_manual_ai_approved_at = now(),
+         whatsapp_secondary_manual_ai_approved_until = now() + INTERVAL '7 days',
+         whatsapp_secondary_manual_ai_approved_by = $4,
+         updated_at = now()
+     FROM whatsapp_sender_accounts sa, whatsapp_sender_conversations sc
+     WHERE c.id = $1 AND c.channel = 'whatsapp'
+       AND c.mode = 'ai' AND c.needs_attention IS NOT TRUE
+       AND c.whatsapp_opt_out_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM ai_review_items review
+         WHERE review.contact_id = c.id AND review.status = 'pending'
+       )
+       AND (c.whatsapp_secondary_manual_ai_approved_until IS NULL
+            OR c.whatsapp_secondary_manual_ai_approved_until <= now())
+       AND sa.id = c.whatsapp_sender_id
+       AND sa.sender_key = 'neutro_secondary'
+       AND sa.state = 'active' AND sa.coexistence_enabled = TRUE
+       AND sa.meta_phone_number_id = $2 AND sa.meta_account_id = $3
+       AND sc.sender_id = sa.id AND sc.contact_id = c.id
+       AND sc.customer_wa_id = c.whatsapp_number AND sc.state = 'bound'
+       AND date_trunc('milliseconds', c.updated_at) = $5::timestamptz
+     RETURNING c.*`,
+    [id, env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID, env.WHATSAPP_SECONDARY_WABA_ID,
+      username, expectedUpdatedAt]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id, { contact: updated });
+  return updated;
+}
+
 async function returnToAi(id, expectedUpdatedAt = null) {
   // An old synthetic handoff can leave the AI-owned conversation permanently
   // excluded from follow-ups. An explicit Return to AI may clear only that
@@ -1765,6 +1808,7 @@ module.exports = {
   presentPortalContact,
   takeOver,
   returnToAi,
+  approveSecondaryManualAi,
   clearStaffAssistStateIfUnchanged,
   setAttention,
   setAiReviewAttention,
