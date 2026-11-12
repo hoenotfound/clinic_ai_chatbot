@@ -358,12 +358,14 @@ function createApp({
       void notifyWhatsAppSenderQuarantine(isolated.quarantined);
     }
 
-    if (req.whatsappIngressTrace) ingressDiagnostics.markPhase(req, "sender_routed");
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
     const customerMutationEvents = whatsapp.parseCustomerMessageMutations(webhookBody);
     const identityRotations=incomingMessages.filter(item=>item.identityRotationOnly===true);
     const customerMessages=incomingMessages.filter(item=>item.identityRotationOnly!==true);
+    if (req.whatsappIngressTrace) {
+      ingressDiagnostics.markRouting(req, isolated, customerMessages.length);
+    }
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
       event.businessPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
