@@ -168,7 +168,11 @@ function inboxControlStatus(conversation) {
   return "ai";
 }
 function effectiveInboxControlMode(conversation) {
-  return inboxControlStatus(conversation) === "ai" ? "ai" : "human";
+  // Composer behavior remains unchanged for existing primary conversations.
+  return conversation?.mode === "human" ||
+    (conversation?.whatsapp_is_secondary === true &&
+     conversation?.whatsapp_secondary_ai_enabled === false)
+    ? "human" : "ai";
 }
 
 // Use one matching rule for the Inbox list and all contextual filter counts.
