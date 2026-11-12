@@ -448,6 +448,109 @@ test("20h secondary follow-up invokes existing personalized generator and saves 
   assert.equal(f.calls.filter(x=>x.sql?.startsWith("UPDATE whatsapp_sender_followup_attempts SET status='accepted'")).length,1);
 });
 
+
+test("20h AI skip sends one reviewed neutral reminder in the customer's language",async()=>{
+ const samples=[
+  ["en","I would like to know about my first visit",/first assessment/],
+  ["zh","我想了解骨盆调理的流程",/一对一评估流程/],
+  ["ms","Saya nak tahu tentang rawatan dan penilaian",/penilaian pertama/],
+ ];
+ for(const [language,customerText,copy] of samples){
+  const f=fake({rows:[{...candidate,slot_hours:20,media_key:null,
+    customer_texts:[customerText],first_reply_text:customerText}]});
+  const result=await worker.runOnce({
+   ...f,env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+   getConfig:()=>({automatedFollowUp:{
+    message:"2h service reminder",translations:{en:"2h",zh:"2h",ms:"2h"},
+    additionalSteps:[{message:"6h service reminder"},
+      {message:"20h review",translations:{en:"20h",zh:"20h",ms:"20h"}}],
+   }}),
+   personalize20h:async()=>({ok:false,code:"secondary_20h_ai_skipped"}),
+  });
+  assert.deepEqual(result,{disabled:false,attempted:1,accepted:1},language);
+  assert.equal(f.sends,1,language);
+  const saved=f.calls.find(x=>x.save)?.save;
+  assert.match(saved[2],copy,language);
+  assert.doesNotMatch(saved[2],/RM\\s*\\d+|骨盆调理|9D逆龄|9D 逆龄/,language);
+  assert.equal(saved[8].isAutomatedFollowUp,true);
+  assert.equal(f.calls.filter(x=>x.sql?.includes("status='accepted'")).length,1);
+ }
+});
+
+test("20h AI unavailable still offers consent only for new verified ads",async()=>{
+ const reminderConfig=()=>({automatedFollowUp:{
+  message:"2h",additionalSteps:[{message:"6h"},
+    {message:"20h",translations:{en:"20h English"}}],
+ }});
+ const campaignEnv={...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-12T08:00:00Z"};
+ for(const [isAd,inboundAt,shouldInvite] of [
+  [true,"2026-11-12T08:30:00Z",true],
+  [false,"2026-11-12T08:30:00Z",false],
+  [true,"2026-11-12T07:59:59Z",false],
+ ]){
+  const row={...candidate,slot_hours:20,media_key:null,
+   customer_texts:["I would like to arrange an assessment"],
+   verified_meta_ad:isAd,lead_marketing_consent:"unknown",inbound_at:inboundAt};
+  const f=fake({rows:[row]});
+  const result=await worker.runOnce({...f,env:campaignEnv,getConfig:reminderConfig,
+   personalize20h:async()=>({ok:false,code:"secondary_20h_ai_unavailable"})});
+  assert.equal(result.accepted,1);
+  const saved=f.calls.find(x=>x.save)?.save;
+  assert.match(saved[2],/first assessment/);
+  assert.equal(saved[2].includes("I agree to receive WhatsApp follow-ups"),shouldInvite);
+  assert.equal(f.calls.filter(x=>x.save).length,1);
+  assert.equal(f.sends,1);
+ }
+});
+
+test("20h does not fallback for customer replies, missing proof or revoked policy",async()=>{
+ for(const code of ["secondary_20h_customer_replied",
+   "secondary_20h_anchor_missing","secondary_20h_context_unavailable",
+   "secondary_20h_context_invalid","secondary_20h_ai_disabled"]){
+  const f=fake({rows:[{...candidate,slot_hours:20,media_key:null}]});
+  const result=await worker.runOnce({...f,
+   env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+   getConfig:()=>({automatedFollowUp:{message:"2h",additionalSteps:[
+    {message:"6h"},{message:"20h"}]}}),
+   personalize20h:async()=>({ok:false,code})});
+  assert.equal(result.attempted,1,code);
+  assert.equal(result.accepted,0,code);
+  assert.equal(f.sends,0,code);
+  assert.equal(f.calls.some(x=>x.save),false,code);
+  const blocked=f.calls.find(x=>x.sql?.includes("status='blocked'"));
+  assert.equal(blocked?.args?.[1],code);
+ }
+ const f=fake({rows:[{...candidate,slot_hours:20}],fresh:false});
+ const result=await worker.runOnce({...f,
+  env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+  personalize20h:async()=>({ok:false,code:"secondary_20h_ai_skipped"})});
+ assert.equal(result.accepted,0);
+ assert.equal(f.sends,0);
+ assert.equal(f.calls.some(x=>x.save),false);
+});
+
+test("20h fallback respects one-shot claim and never retries ambiguous sends",async()=>{
+ const row={...candidate,slot_hours:20,customer_texts:["Can I arrange an assessment?"]};
+ const personalize20h=async()=>({ok:false,code:"secondary_20h_ai_skipped"});
+ const options={env:{...env,WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+  personalize20h,getConfig:()=>({automatedFollowUp:{message:"2h",additionalSteps:[
+   {message:"6h"},{message:"20h",translations:{en:"20h"}}]}})};
+ const noClaim=fake({rows:[row],claim:false});
+ const first=await worker.runOnce({...noClaim,...options});
+ assert.equal(first.accepted,0);
+ assert.equal(first.attempted,0);
+ assert.equal(noClaim.sends,0);
+ const unknown=fake({rows:[row],sendResult:{success:false,unknown:true,code:"provider_unconfirmed"}});
+ const second=await worker.runOnce({...unknown,...options});
+ assert.equal(second.attempted,1);
+ assert.equal(second.accepted,0);
+ assert.equal(unknown.sends,1);
+ assert.equal(unknown.calls.filter(x=>x.sql?.includes("status='unknown'")).length,1);
+});
+
 test("20h pre-save AI exception records fixed phase and never sends or retries",async()=>{
   const f=fake({rows:[{...candidate,slot_hours:20,media_key:null}]});
   const phases=[];
