@@ -149,11 +149,39 @@ async function releaseReviewedSecondaryUnknownHold({
         "AND status IN ('claimed','accepted')",
         [senderId,attempt.contact_id,attempt.message_id]);
     }
+    // The two reviewers resolved this EXACT delivery-related attention,
+    // not an unrelated staff, booking or clinical task. Preserve pending
+    // AI-review work and never change the staff/AI takeover mode.
+    const attention=await client.query(
+      `UPDATE contacts c SET
+         needs_attention=EXISTS(
+           SELECT 1 FROM ai_review_items r WHERE r.contact_id=c.id
+             AND r.status='pending'),
+         attention_reason=CASE WHEN EXISTS(
+           SELECT 1 FROM ai_review_items r WHERE r.contact_id=c.id
+             AND r.status='pending')
+           THEN 'AI review requested: ' || COALESCE((
+             SELECT STRING_AGG('[#'||r.inbound_message_id::text||'] '||
+                 LEFT(r.summary,200),CHR(10) ORDER BY r.created_at,r.id)
+             FROM ai_review_items r
+             WHERE r.contact_id=c.id AND r.status='pending'
+           ),'') ELSE NULL END,
+         delivery_attention_message_id=NULL,updated_at=NOW()
+       WHERE c.id=$1 AND c.whatsapp_sender_id=$2
+         AND c.delivery_attention_message_id=$3 AND c.needs_attention=TRUE
+         AND (c.attention_reason LIKE 'Delivery failed:%'
+              OR c.attention_reason LIKE 'Delivery unconfirmed:%')
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_billing_gates other
+           WHERE other.sender_id=$2 AND other.owner_contact_id=c.id
+             AND other.state<>'idle')`,
+      [attempt.contact_id,senderId,attempt.message_id]);
     // The original billing attempt intentionally stays UNKNOWN. Late
     // signed provider receipts can still be matched and investigated.
     await client.query("COMMIT");tx=false;
     return {gateReleased:true,sendAuthorized:false,oldMessageRetryAllowed:false,
-      originalAttemptStillUnknown:true};
+      originalAttemptStillUnknown:true,
+      deliveryAttentionResolved:attention.rowCount===1};
   }catch{
     if(tx&&client)await client.query("ROLLBACK").catch(()=>{});
     return denied("secondary_unknown_review_database_or_audit_failed");
