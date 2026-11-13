@@ -860,3 +860,19 @@ test("Neutro 6h approved treatment video keeps its media without an opt-in capti
  assert.equal(saved[8].whatsappTemplate.generalConsentButton,undefined);
  assert.doesNotMatch(saved[2],/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
 });
+
+test("remote goodbye is respected at discovery and immediately before sending",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+  assert.match(sql,/closing_reply\.whatsapp_message_id IS NOT NULL/);
+  assert.match(sql,/closing_reply\.delivery_status IN \('sent','delivered','read'\)/);
+  assert.match(sql,/closing_reply\.sent_by_username IS NULL/);
+  assert.match(sql,/closing_context\.conversation_id=sc\.id/);
+  assert.match(sql,/柔佛\|新山\|johor/);
+  assert.match(sql,/祝\(你\|您\)/);
+  assert.match(sql,/closing_reply\.created_at,closing_reply\.id/);
+  assert.match(sql,/NOT EXISTS\(\s*SELECT 1 FROM messages closing_reply/);
+ }
+ // Thanks alone and explicit distance objections remain separate hard stops.
+ assert.match(worker.CANDIDATES_SQL,/谢谢\|謝謝/);
+ assert.match(worker.RECHECK_SQL,/too\[\[:space:\]\]\+far/);
+});

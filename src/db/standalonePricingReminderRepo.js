@@ -527,6 +527,7 @@ async function listRecentStaffImages(candidate,database=pool){
 async function listUnresolvedSecondaryBillingHolds(database=pool){
   const result=await database.query(`
     SELECT g.owner_contact_id AS contact_id,g.message_id,
+      outbound.delivery_error AS verified_delivery_error,
       EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts signed
         WHERE signed.sender_id=g.sender_id
           AND signed.reservation_id=g.reservation_id
@@ -537,6 +538,8 @@ async function listUnresolvedSecondaryBillingHolds(database=pool){
       AND sa.sender_key='neutro_secondary' AND sa.state='active'
     JOIN contacts c ON c.id=g.owner_contact_id
       AND c.whatsapp_sender_id=sa.id AND c.channel='whatsapp'
+    JOIN messages outbound ON outbound.id=g.message_id
+      AND outbound.contact_id=c.id AND outbound.role='assistant'
     JOIN whatsapp_sender_billing_attempts attempt
       ON attempt.sender_id=g.sender_id
       AND attempt.reservation_id=g.reservation_id

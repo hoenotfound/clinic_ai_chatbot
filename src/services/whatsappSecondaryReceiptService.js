@@ -46,6 +46,25 @@ function validateMetaSignature(rawBody, signatureHeader, secret) {
 }
 
 function digest(input) { return crypto.createHash("sha256").update(input).digest("hex"); }
+// Keep only Meta's numeric failure code from a signed status. Freeform
+// titles/details can contain customer data and must never enter logs or Inbox.
+function safeMetaFailureCode(errors) {
+  if (!Array.isArray(errors)) return null;
+  for (const item of errors.slice(0,4)) {
+    const raw=item?.code;
+    if ((typeof raw==="number" && Number.isSafeInteger(raw) && raw>0 && raw<=2147483647) ||
+        (typeof raw==="string" && /^[1-9][0-9]{0,9}$/.test(raw) &&
+          Number(raw)<=2147483647)) return Number(raw);
+  }
+  return null;
+}
+function safeMetaDeliveryError(event) {
+  const code=event?.deliveryStatus==="failed" ? event?.failureCode : null;
+  return code
+    ? "Verified Meta delivery failure (code "+code+"); staff review required."
+    : "Verified Meta delivery failure; staff review required.";
+}
+
 
 // A signed Meta callback can carry an opaque recipient. A masked recipient
 // is NEVER a verified customer ID: retain hashed unmatched evidence only.
@@ -170,6 +189,7 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           recipientVerified: recipient.verified,
           recipientCandidates: recipients,
           deliveryStatus: item.status,
+          failureCode: item.status === "failed" ? safeMetaFailureCode(item.errors) : null,
           pricingType, pricingBillable, pricingCategory,
           phoneId: env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
           accountId: env.WHATSAPP_SECONDARY_WABA_ID,
@@ -477,7 +497,7 @@ async function recordSignedSecondaryStatusBatch({
            delivery_error=CASE
              WHEN $4='failed' AND COALESCE(delivery_status,'')
                   NOT IN('read','delivered')
-               THEN 'Verified Meta delivery failure; staff review required.'
+               THEN $5::text
              WHEN $4 IN('read','delivered','sent')
                THEN NULL
              ELSE delivery_error
@@ -489,12 +509,30 @@ async function recordSignedSecondaryStatusBatch({
              AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}$'
            THEN (whatsapp_template->>'anchorMessageId')::bigint ELSE NULL END
              AS secondary_media_inbound_id`,
-        [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
+        [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus,
+         safeMetaDeliveryError(event)]
       );
       if (delivery.rowCount !== 1) {
         throw new Error("Secondary status had no verified, saved message.");
       }
       changedMessages.push(delivery.rows[0]);
+      // A provider-accepted follow-up can fail after its scheduler wrote
+      // "accepted". Treat the signed terminal failure as an uncertain
+      // one-shot attempt, never a successful prerequisite for later slots.
+      // Preserve a confirmed delivered/read message against a late failure.
+      if (event.deliveryStatus === "failed" &&
+          delivery.rows[0].delivery_status === "failed") {
+        for (const ledger of ["whatsapp_sender_followup_attempts",
+                              "whatsapp_sender_marketing_followup_attempts"]) {
+          await client.query(
+            "UPDATE "+ledger+" SET status='unknown', "+
+            "error_code='secondary_signed_meta_delivery_failed' "+
+            "WHERE sender_id=$1 AND contact_id=$2 AND message_id=$3 "+
+            "AND status='accepted'",
+            [attempt.sender_id,attempt.contact_id,attempt.message_id]
+          );
+        }
+      }
       const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
@@ -770,6 +808,8 @@ module.exports = {
   normalizeStatusRecipient,
   normalizedSignedEvents,
   normalizedSecondarySubsetEvents,
+  safeMetaFailureCode,
+  safeMetaDeliveryError,
   MATCH_SECONDARY_ATTEMPT_SQL,
   recordSignedSecondaryStatusBatch,
   inspectSecondaryRetryHold,

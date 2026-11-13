@@ -329,8 +329,15 @@ async function reviewUnknownSecondaryBillingHoldsOnce(){
   if(reviewedUnknownBillingHolds)return;
   const holds=await repo.listUnresolvedSecondaryBillingHolds();
   for(const hold of holds){
+    // The error code comes only from the saved HMAC-verified Meta failure.
+    // Never include raw provider error titles, media URLs or customer data.
+    const savedCode=/\(code ([1-9][0-9]{0,9})\)/.exec(
+      String(hold.verified_delivery_error||""));
+    const code=savedCode && Number(savedCode[1])<=2147483647
+      ? " Meta code "+savedCode[1]+"." : "";
     const reason=hold.signed_failed===true
-      ? "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold. Staff must reconcile the exact send; do not retry."
+      ? "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold."+
+        code+" Staff must reconcile the exact send; do not retry."
       : "Delivery unconfirmed: Secondary WhatsApp send has no verified receipt. Staff must inspect the billing hold; do not retry.";
     await contactsRepo.setDeliveryAttention(
       hold.contact_id,reason,hold.message_id||null);
