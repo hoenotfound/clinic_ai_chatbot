@@ -7,6 +7,7 @@
 // Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
+const {reviewedDeliveryAttentionSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const {secondaryLegacyStaffCutoff,secondaryLegacyStaffAudienceSql} =
   require("./whatsappSecondaryLegacyStaffPolicy");
 
@@ -277,7 +278,8 @@ function verified131060InformationReviewSql(alias = "c") {
 // appointment, opt-in, window, staff and billing checks.
 function secondaryAutomationAttentionAllowedSql(alias = "c") {
   return `(${alias}.needs_attention=FALSE
-    OR ${verified131060InformationReviewSql(alias)})`;
+    OR ${verified131060InformationReviewSql(alias)}
+    OR ${reviewedDeliveryAttentionSql(alias)})`;
 }
 // A prior outbound AI text can be rejected BEFORE any Meta call because the
 // preceding accepted send is still awaiting a signed billing receipt. Once
@@ -339,6 +341,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
     )
     OR ${verified131060InformationReviewSql(alias)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
+    OR ${reviewedDeliveryAttentionSql(alias)}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
