@@ -261,6 +261,8 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
             ORDER BY latest_lead.created_at DESC,latest_lead.id DESC LIMIT 1)
             AND opted_out_lead.marketing_consent='opted_out')
         AND NULLIF(BTRIM($8::text),'') IS NOT NULL
+        AND LOWER(BTRIM($8::text))=
+            LOWER(BTRIM(outbound.automated_follow_up_target_service))
         AND ${followUpAttentionAllowedSql("c")}
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
         AND NOT EXISTS (
