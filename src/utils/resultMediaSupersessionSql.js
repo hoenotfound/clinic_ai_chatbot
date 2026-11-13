@@ -34,5 +34,36 @@ function resultSupersessionSql(originalAlias="inbound", newerAlias="newer"){
   )`;
 }
 
-module.exports={resultSupersessionSql,STOP_REQUEST_PATTERN,
-  CLINICAL_REVIEW_PATTERN,FACE_PATTERN,PELVIC_PATTERN,PULSE_PATTERN};
+// A confirmed price enquiry selects the promotional picture. A later ordinary
+// treatment question must not cancel that picture while the sender is quiet.
+// Compare treatment switches with the *selected caption*, because "how much?"
+// is frequently the entire inbound question and names no service.
+const PROMOTION_DECLINE_PATTERN =
+  "(不用了|不需要了|不用发|不必发|不要发|别发|不想要|不考虑了|暂时不考虑|沒興趣|没兴趣|不要这个套餐|不要這個套餐|不要这个配套|不要這個配套|取消优惠|取消優惠|no thanks|no thank you|not interested|don't send|do not send|no more pictures|tak nak|tidak berminat)";
+const DIFFERENT_TOPIC_PATTERN =
+  "(其他疗程|其他療程|别的疗程|別的療程|其他项目|其他項目|换个疗程|換個療程|another treatment|different treatment|other treatment|rawatan lain)";
+const BREAST_PATTERN = "(胸部护理|胸部護理|丰胸|豐胸|breast care|bust treatment|payudara)";
+
+function promotionSupersessionSql(jobAlias="job",newerAlias="newer") {
+  const prior=`COALESCE(${jobAlias}.caption,'')`;
+  const next=`COALESCE(${newerAlias}.content,'')`;
+  const treatmentPatterns=[
+    FACE_3D_PATTERN,FACE_9D_PATTERN,PELVIC_PATTERN,PULSE_PATTERN,BREAST_PATTERN,
+  ];
+  const changedTreatment=treatmentPatterns.map(pattern =>
+    `(${next} ~* '${pattern}' AND ${prior} !~* '${pattern}')`
+  ).join(" OR ");
+  return `(
+    ${newerAlias}.media_url IS NOT NULL
+    OR ${newerAlias}.media_mime_type IS NOT NULL
+    OR ${next} ~* '${STOP_REQUEST_PATTERN}'
+    OR ${next} ~* '${CLINICAL_REVIEW_PATTERN}'
+    OR ${next} ~* '${PROMOTION_DECLINE_PATTERN}'
+    OR ${next} ~* '${DIFFERENT_TOPIC_PATTERN}'
+    OR (${changedTreatment})
+  )`;
+}
+
+module.exports={resultSupersessionSql,promotionSupersessionSql,
+  STOP_REQUEST_PATTERN,CLINICAL_REVIEW_PATTERN,FACE_PATTERN,PELVIC_PATTERN,
+  PULSE_PATTERN,PROMOTION_DECLINE_PATTERN,DIFFERENT_TOPIC_PATTERN};
