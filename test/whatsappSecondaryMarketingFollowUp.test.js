@@ -426,3 +426,14 @@ test("secondary marketing requires silence after staff reply and retains exact c
    assert.match(sql,/whatsapp_sender_coexistence_history_messages imported_staff/);
  }
 });
+
+test("Day4/Day6 refuses unreviewed UNKNOWN holds before any one-shot claim",()=>{
+ for(const sql of [svc.CANDIDATES_SQL,svc.EXTENDED_CANDIDATES_SQL,
+   svc.EXTENDED_RECHECK_SQL,svc.EXTENDED_POTENTIAL_DUE_SQL]){
+  assert.match(sql,/preflight_gate\.state='unknown'/);
+  assert.match(sql,/held_attempt\.state='unknown'/);
+  assert.match(sql,/signed_failure\.matched=TRUE/);
+  assert.match(sql,/previous\.reopened_at>NOW\(\)-INTERVAL '30 days'/);
+ }
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/gate\.state IN \('reserved','awaiting_pricing'\)/);
+});
