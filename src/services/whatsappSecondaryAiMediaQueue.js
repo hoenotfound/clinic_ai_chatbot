@@ -15,7 +15,7 @@ const configRepo=require("../db/configRepo");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
-const {resultSupersessionSql}=require("../utils/resultMediaSupersessionSql");
+const {resultSupersessionSql,promotionSupersessionSql}=require("../utils/resultMediaSupersessionSql");
 const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
@@ -69,12 +69,16 @@ const HARMLESS_CONTINUATION_SQL=`(
 )`;
 
 
-// Customer replies preserve result images unless consent, clinical safety
-// or treatment interest genuinely changed. Price graphics retain old rules.
+// Already-approved pricing graphics, like result images, survive ordinary
+// same-treatment questions during quiet hours. Their original price question
+// can be short ("多少钱呢一次"), so compare treatment changes with the
+// selected caption rather than the bare inbound text. This predicate is
+// shared by READY, STILL_VALID, and pre-send retirement.
 const RESULT_MEDIA_SUPERSESSION_SQL=resultSupersessionSql("inbound","newer");
+const PROMOTION_MEDIA_SUPERSESSION_SQL=promotionSupersessionSql("job","newer");
 const NEWER_CUSTOMER_SUPERSESSION_SQL=`(
   (job.media_kind='result' AND ${RESULT_MEDIA_SUPERSESSION_SQL})
-  OR (job.media_kind<>'result' AND NOT ${HARMLESS_CONTINUATION_SQL})
+  OR (job.media_kind='promotion' AND ${PROMOTION_MEDIA_SUPERSESSION_SQL})
 )`;
 const NEWER_MEDIA_PLAN_SQL=`EXISTS(
   SELECT 1 FROM whatsapp_sender_ai_media_jobs successor
@@ -691,4 +695,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,PROMOTION_MEDIA_SUPERSESSION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
