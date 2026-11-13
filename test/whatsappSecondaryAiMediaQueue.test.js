@@ -457,7 +457,7 @@ test("receipt wake includes already-due images but remains contact-bound and bil
   assert.equal(calls.length,1);
   assert.doesNotMatch(calls[0].sql,/job\.next_attempt_at>NOW\(\)/);
   assert.match(calls[0].sql,/job\.state='pending'/);
-  assert.match(calls[0].sql,/gate\.state='idle'/);
+  assert.doesNotMatch(calls[0].sql,/gate\.state='idle'/);
   assert.match(calls[0].sql,/job\.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/job\.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].args.slice(-1),[[42]]);
