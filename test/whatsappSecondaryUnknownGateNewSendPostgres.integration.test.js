@@ -161,3 +161,50 @@ test("new-send bypass never ignores fresh, accepted, contradictory or globally-a
     )).rows[0].count,0);
   });
 });
+
+test("signed failed original video can be bypassed for one fresh media message",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    const wamid="wamid.verifiedFailureABC";
+    const accepted=await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,acceptedWamid:wamid,
+    },{database,env});
+    assert.equal(accepted.state,"awaiting_pricing");
+    await db.query(
+      "UPDATE messages SET whatsapp_message_id=$2,delivery_status='failed' "+
+      "WHERE id=$1",[s.messages[0],wamid]
+    );
+    await db.query(
+      "UPDATE whatsapp_sender_billing_attempts SET state='unknown' "+
+      "WHERE reservation_id=$1",[s.original.reservationId]
+    );
+    await db.query(
+      "UPDATE whatsapp_sender_billing_gates SET state='unknown',"+
+      "updated_at=NOW()-INTERVAL '40 minutes' "+
+      "WHERE sender_id=$1",[s.sender]
+    );
+    await db.query(
+      "INSERT INTO whatsapp_sender_status_receipts("+
+      "fingerprint,sender_id,reservation_id,wamid,wamid_hash,"+
+      "delivery_status,meta_phone_number_id,meta_account_id,matched) "+
+      "VALUES($1,$2,$3,$4,$5,'failed',$6,$7,TRUE)",
+      ["a".repeat(64),s.sender,s.original.reservationId,wamid,
+        "b".repeat(64),env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID]
+    );
+    const fresh=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env});
+    assert.equal(fresh.reserved,true);
+    const audit=(await db.query(
+      "SELECT basis FROM whatsapp_sender_unknown_gate_new_sends "+
+      "WHERE old_reservation_id=$1",[s.original.reservationId]
+    )).rows[0];
+    assert.equal(audit.basis,"signed_failed");
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [s.original.reservationId]
+    )).rows[0].state,"unknown");
+  });
+});
