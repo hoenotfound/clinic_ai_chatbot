@@ -4,10 +4,10 @@
 SET LOCAL lock_timeout = '3s';
 CREATE TABLE IF NOT EXISTS whatsapp_sender_unknown_hold_releases (
   reservation_id UUID PRIMARY KEY
-    REFERENCES whatsapp_sender_billing_attempts(reservation_id) ON DELETE RESTRICT,
+    REFERENCES whatsapp_sender_billing_attempts(reservation_id) ON DELETE CASCADE,
   sender_id BIGINT NOT NULL REFERENCES whatsapp_sender_accounts(id) ON DELETE RESTRICT,
-  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
-  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   release_basis TEXT NOT NULL CHECK (release_basis IN ('signed_failed','unconfirmed_no_wamid')),
   billing_hub_no_charge_checked BOOLEAN NOT NULL CHECK (billing_hub_no_charge_checked=TRUE),
   business_app_reviewed BOOLEAN NOT NULL CHECK (business_app_reviewed=TRUE),
