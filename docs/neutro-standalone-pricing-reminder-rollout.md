@@ -13,7 +13,7 @@ Set on the Neutro Render service only. All default to off.
 - `NEUTRO_STANDALONE_PRICING_SECONDARY_ENABLED=true` (optional)
 
 Do **not** enable before CI, a read-only live cohort query, a supervised
-test of a single fresh, consenting contact on EACH sender and signed Meta
+test of a single new customer-initiated enquiry on EACH sender and signed Meta
 receipt/billing reconciliation. Messenger and Instagram are deliberately
 excluded; Messenger image delivery remains unverified. Switch any flag to
 false to stop NEW claims. Already attempted/unknown messages must be reconciled
@@ -30,13 +30,24 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
   latest lead's exact treatment may supply the fallback. Generic hellos with
   no recent evidence, unsupported messages, comparison enquiries, conflicting
   ad treatments and stale CRM-only treatment labels remain excluded.
-- A current lead marked opted-in with customer-authored, WhatsApp provider-verified,
-  **treatment-specific marketing consent bound to that exact sender** is required.
-  A CTWA click, prefilling an enquiry, or simply staying inside 24 hours does
-  not grant permission to send an unsolicited pricing promotion. The latest
-  selected service must also match the consenting current lead; absent or
-  conflicting proof skips the graphic. Both the initial scan and final
-  pre-send check enforce this rule.
+- **Customer-initiated in-window replies:** No separate treatment-specific
+  marketing-consent event or opted-in lead status is required to provide
+  relevant pricing for an authentic customer enquiry within the current
+  24-hour customer-service window. The latest provider-identified customer
+  message must belong to the correct sender and have an accepted business
+  reply. This does **not** authorize cold messages, older contacts without
+  a new enquiry, or broadcasts outside the customer-service window.
+  Both WhatsApp-level and lead-level recorded marketing opt-outs remain
+  hard blocks for this automated pricing lane.
+- Treatment is selected from the latest genuine customer wording, then
+  a recent verified ad on the same number, then a recent verified customer
+  treatment preference. A stale CRM field alone does not choose an offer.
+  No verified or clear treatment, conflicting topics, unsupported messages,
+  and clinical concerns are not sent automated pricing graphics.
+- Meta's 24-hour free-form reply rule is distinct from its general permission
+  and anti-spam obligations. Do not present the change as permission for
+  unsolicited marketing. Messages must relate to the current enquiry and
+  opt-outs must always be honored.
 - Normally due ~22h after the latest customer message, before a 23h30 safety
   cutoff. If 22h falls in 00:00-07:00 MYT quiet hours, use 23:20 MYT the
   previous evening only if at least 20h has elapsed since the customer message.
