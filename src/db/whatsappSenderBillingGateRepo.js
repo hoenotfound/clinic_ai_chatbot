@@ -7,6 +7,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("./db");
 const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
+const {reviewedReservationIds}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
@@ -220,6 +221,14 @@ async function reserveSecondaryBillingAttempt({
         await client.query("ROLLBACK"); inTransaction = false;
         return deny("secondary_billing_previous_send_unresolved");
       }
+      // Staff review must identify this exact historical reservation.
+      // Requiring an explicit operator-provided allowlist means no unrelated
+      // unknown Meta outcome can become a blanket automatic bypass.
+      if (!reviewedReservationIds(env).includes(
+            String(gate.rows[0].reservation_id||"").toLowerCase())) {
+        await client.query("ROLLBACK"); inTransaction = false;
+        return deny("secondary_billing_unknown_hold_not_reviewed");
+      }
       const proof = await client.query(`
         SELECT a.reservation_id,
           CASE WHEN a.wamid IS NULL AND old.whatsapp_message_id IS NULL
@@ -252,6 +261,13 @@ async function reserveSecondaryBillingAttempt({
           AND a.contact_id=$3 AND a.message_id=$4
           AND a.state='unknown' AND a.message_id<>$7
           AND g.updated_at<=NOW()-INTERVAL '30 minutes'
+          -- One reviewed bypass maximum per contact in a rolling 30 days.
+          -- The old reservation's primary-key audit already blocks replay.
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends prior
+            WHERE prior.sender_id=a.sender_id AND prior.contact_id=a.contact_id
+              AND prior.reopened_at>NOW()-INTERVAL '30 days'
+          )
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_sender_status_receipts r
             WHERE r.sender_id=a.sender_id AND r.reservation_id=a.reservation_id
