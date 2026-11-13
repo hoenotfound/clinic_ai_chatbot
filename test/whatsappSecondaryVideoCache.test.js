@@ -317,7 +317,7 @@ test("extended outbound counters count only known API request sizes and coarse 5
 });
 
 test("MP4 preflight checks the container before attempting any provider upload",async()=>{
-  const valid=Buffer.from("00000018ftypisom00000000","ascii");
+  const valid=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000","ascii")]);
   assert.equal(validMp4Container(valid),true);
   assert.equal(validMp4Container(Buffer.from("not an mp4 file")),false);
   const f=setup({env:{...enabled,
