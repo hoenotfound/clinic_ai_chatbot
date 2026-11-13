@@ -43,6 +43,8 @@ const PROMOTION_DECLINE_PATTERN =
 const DIFFERENT_TOPIC_PATTERN =
   "(其他疗程|其他療程|别的疗程|別的療程|其他项目|其他項目|换个疗程|換個療程|another treatment|different treatment|other treatment|rawatan lain)";
 const BREAST_PATTERN = "(胸部护理|胸部護理|丰胸|豐胸|breast care|bust treatment|payudara)";
+const COURTESY_CLOSING_PATTERN =
+  "^[[:space:]]*((好的?|ok(ay)?|明白了|了解了)[[:space:][:punct:]，。]*)?(谢谢|謝謝|thx|thanks|thank you|terima kasih|tq)[[:space:][:punct:]，。！🙏😊]*$";
 
 function promotionSupersessionSql(jobAlias="job",newerAlias="newer") {
   const prior=`COALESCE(${jobAlias}.caption,'')`;
@@ -60,10 +62,12 @@ function promotionSupersessionSql(jobAlias="job",newerAlias="newer") {
     OR ${next} ~* '${CLINICAL_REVIEW_PATTERN}'
     OR ${next} ~* '${PROMOTION_DECLINE_PATTERN}'
     OR ${next} ~* '${DIFFERENT_TOPIC_PATTERN}'
+    OR ${next} ~* '${COURTESY_CLOSING_PATTERN}'
     OR (${changedTreatment})
   )`;
 }
 
 module.exports={resultSupersessionSql,promotionSupersessionSql,
   STOP_REQUEST_PATTERN,CLINICAL_REVIEW_PATTERN,FACE_PATTERN,PELVIC_PATTERN,
-  PULSE_PATTERN,PROMOTION_DECLINE_PATTERN,DIFFERENT_TOPIC_PATTERN};
+  PULSE_PATTERN,PROMOTION_DECLINE_PATTERN,DIFFERENT_TOPIC_PATTERN,
+  COURTESY_CLOSING_PATTERN};
