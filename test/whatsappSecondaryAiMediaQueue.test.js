@@ -421,8 +421,8 @@ test("location and treatment-method questions preserve media, while price and cl
     assert.equal(worker.isHarmlessContinuationQuestion(text),false,text);
   }
   for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
-    assert.match(sql,/AND NOT \(/);
-    assert.match(sql,/BTRIM\(newer\.content\)/);
+    assert.match(sql,/job\.media_kind='promotion' AND/);
+    assert.match(sql,/COALESCE\(newer\.content/);
     assert.match(sql,/newer\.role='user'/);
     assert.match(sql,/(staff|human)\.sent_by_username IS NOT NULL/);
     assert.match(sql,/successor\.sender_id=job\.sender_id/);
@@ -440,8 +440,8 @@ test("location and treatment-method questions preserve media, while price and cl
     return {rows:[{retired:0,messages_cancelled:0,inbound_ids:[],changed_messages:[]}],rowCount:1};
   }};
   await worker.cancelObsoletePending({database,env:approved});
-  assert.match(calls[0].sql,/AND NOT \(/);
-  assert.match(calls[0].sql,/BTRIM\(newer\.content\)/);
+  assert.match(calls[0].sql,/job\.media_kind='promotion' AND/);
+  assert.match(calls[0].sql,/COALESCE\(newer\.content/);
   assert.match(calls[0].sql,/job.state='pending'/);
   assert.match(calls[0].sql,/successor\.sender_id=job\.sender_id/);
   assert.match(calls[0].sql,/successor_inbound\.created_at/);
@@ -478,12 +478,15 @@ test("accepted image wakes after its state transition when the verified receipt 
   assert.equal(args.calls.filter(c=>c.send).length,1,"Meta is never retried");
 });
 
-test("Before & After results stay queued after ordinary customer questions",async()=>{
-  // Promotion media is still superseded by most new messages. Result images
-  // instead survive new location, price, and treatment-detail messages.
+test("Before & After results and price graphics survive ordinary customer questions",async()=>{
+  // A same-treatment follow-up must not discard an approved promo during
+  // quiet hours. New service, opt-out, clinical review and staff takeover do.
   for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
     assert.match(sql,/job\.media_kind='result' AND/);
-    assert.match(sql,/job\.media_kind<>'result' AND NOT/);
+    assert.match(sql,/job\.media_kind='promotion' AND/);
+    assert.match(sql,/COALESCE\(job\.caption/);
+    assert.match(sql,/newer\.media_url IS NOT NULL/);
+    assert.doesNotMatch(sql,/job\.media_kind<>'result' AND NOT/);
     assert.match(sql,/successor\.media_kind='result'/);
     assert.match(sql,/stop\|unsubscribe\|opt/);
     assert.match(sql,/c\.whatsapp_opt_out_at IS NULL/);
@@ -498,7 +501,32 @@ test("Before & After results stay queued after ordinary customer questions",asyn
   await worker.cancelObsoletePending({database:db,env:approved});
   assert.equal(statements.length,1);
   assert.match(statements[0],/job\.media_kind='result' AND/);
-  assert.match(statements[0],/job\.media_kind<>'result' AND NOT/);
+  assert.match(statements[0],/job\.media_kind='promotion' AND/);
   assert.match(statements[0],/successor\.media_kind='result'/);
   assert.match(statements[0],/job\.expires_at<=NOW\(\)/);
+});
+
+test("promotion supersession distinguishes continued pelvis questions from real safety changes",()=>{
+  // The customer's actual follow-up was "一次调理就够了还是更多".
+  // It must not be treated as a cancellation of Package A and Package B.
+  const promo=worker.PROMOTION_MEDIA_SUPERSESSION_SQL;
+  assert.match(promo,/COALESCE\(job\.caption/);
+  assert.match(promo,/COALESCE\(newer\.content/);
+  assert.match(promo,/骨盆/);
+  assert.match(promo,/3\[\[:space:\]\]\*d|小颜/);
+  assert.match(promo,/出血|pregnant/);
+  assert.match(promo,/stop\|unsubscribe\|opt/);
+  assert.match(promo,/不用了|不需要了/);
+  assert.match(promo,/其他疗程|another treatment/);
+  assert.match(promo,/谢谢|thank you|terima kasih/);
+  assert.match(promo,/newer\.media_url IS NOT NULL/);
+  assert.match(promo,/newer\.media_mime_type IS NOT NULL/);
+  // Keep the result and promotion predicates identical across all three
+  // pre-send checks, so cleanup cannot discard what READY would send.
+  for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+    assert.ok(sql.includes(promo));
+    assert.match(sql,/BETWEEN 7 AND 23/);
+    assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
+  }
+  assert.match(worker.PROMOTION_MEDIA_SUPERSESSION_SQL,/job\.caption/);
 });
