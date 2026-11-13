@@ -8,6 +8,7 @@ const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
 const webPushNotifications = require("./webPushNotificationService");
 const whatsappOutboundRetry = require("./whatsappOutboundRetryService");
+const {invalidateFailedSecondaryVideo}=require("./whatsappSecondaryFailedVideoCache");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
@@ -101,6 +102,8 @@ function createWhatsAppDeliveryStatusService({
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
   queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
+  invalidateSecondaryVideoCache = repo === repository
+    ? invalidateFailedSecondaryVideo : async()=>({invalidated:false}),
   reconcileQueuedMediaDelivery = repo === repository
     ? whatsappResultMediaQueue.reconcileProviderDelivery : async () => [],
   isQueuedImageMessage = repo === repository
@@ -270,6 +273,18 @@ function createWhatsAppDeliveryStatusService({
     // Only the durable delivery callback proves delivery, not Meta's API
     // acceptance response. Update optional-image audit idempotently here.
     await reconcileQueuedMediaDelivery(job.wamid);
+    if(job.delivery_status==="failed" && updatedMessage.delivery_status==="failed" &&
+       senderVerification?.matched===true){
+      // Revoke only the exact sender/content upload ID after a VERIFIED
+      // media-specific Meta delivery failure. No replay is permitted.
+      try{
+        await invalidateSecondaryVideoCache({
+          job,messageId:updatedMessage.id,verifiedSender:senderVerification,
+        },{env});
+      }catch(error){
+        logger.warn("[Secondary WhatsApp video cache] Verified failure invalidation unavailable");
+      }
+    }
 
     // Post-acceptance recovery: if Inbox cleanup failed after the original
     // staff/AI send, a subsequent provider callback can resolve its delivery
