@@ -516,6 +516,23 @@ async function recordSignedSecondaryStatusBatch({
         throw new Error("Secondary status had no verified, saved message.");
       }
       changedMessages.push(delivery.rows[0]);
+      // A provider-accepted follow-up can fail after its scheduler wrote
+      // "accepted". Treat the signed terminal failure as an uncertain
+      // one-shot attempt, never a successful prerequisite for later slots.
+      // Preserve a confirmed delivered/read message against a late failure.
+      if (event.deliveryStatus === "failed" &&
+          delivery.rows[0].delivery_status === "failed") {
+        for (const ledger of ["whatsapp_sender_followup_attempts",
+                              "whatsapp_sender_marketing_followup_attempts"]) {
+          await client.query(
+            "UPDATE "+ledger+" SET status='unknown', "+
+            "error_code='secondary_signed_meta_delivery_failed' "+
+            "WHERE sender_id=$1 AND contact_id=$2 AND message_id=$3 "+
+            "AND status='accepted'",
+            [attempt.sender_id,attempt.contact_id,attempt.message_id]
+          );
+        }
+      }
       const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
