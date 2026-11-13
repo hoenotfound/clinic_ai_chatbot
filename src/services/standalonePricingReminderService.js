@@ -331,7 +331,7 @@ async function reviewUnknownSecondaryBillingHoldsOnce(){
   for(const hold of holds){
     // The error code comes only from the saved HMAC-verified Meta failure.
     // Never include raw provider error titles, media URLs or customer data.
-    const savedCode=/\\(code ([1-9][0-9]{0,9})\\)/.exec(
+    const savedCode=/\(code ([1-9][0-9]{0,9})\)/.exec(
       String(hold.verified_delivery_error||""));
     const code=savedCode && Number(savedCode[1])<=2147483647
       ? " Meta code "+savedCode[1]+"." : "";
