@@ -61,6 +61,37 @@ test("clinical questions and generic messages cannot trigger a price offer",()=>
  assert.equal(feature.select({recent_customer_messages:["骨盆调理","不要了"]},opts).reason,
    "customer_declined");
 });
+
+test("vague follow-up uses only verified recent same-sender evidence, not old CRM guesses",()=>{
+ const config={services:[
+  {name:"骨盆调理"},{name:"3D 小颜术"},{name:"9D 逆龄抗衰"},
+ ],serviceAliases:[
+  {officialService:"骨盆调理",alias:"骨盆"},
+  {officialService:"3D 小颜术",alias:"3D"},
+  {officialService:"9D 逆龄抗衰",alias:"9D"},
+ ]};
+ const choose=(data,texts=["想了解更多"]) =>
+   feature.resolveRecentPricingTreatment(data,texts,config);
+ const lead={treatment_interest:"骨盆调理"};
+ assert.equal(choose(lead).service,null,
+   "historical CRM treatment alone is never permission for a new price");
+ assert.equal(choose({...lead,recent_verified_treatment_consent:true}).service,"骨盆调理");
+ assert.equal(choose({...lead,ad_treatment_interest:"骨盆调理"}).service,"骨盆调理",
+   "SQL supplies only current sender-bound, recent provider-authenticated referrals");
+ assert.equal(choose({...lead,ad_name:"骨盆调理体验"}).service,"骨盆调理");
+ assert.equal(choose({...lead,ad_treatment_interest:"9D 逆龄抗衰"}).service,null);
+ assert.equal(choose({...lead,ad_name:"骨盆调理",ad_treatment_interest:"9D 逆龄抗衰"}).service,null);
+ assert.equal(choose({...lead,recent_verified_treatment_consent:true},
+   ["3D or 9D?"]).service,null,"comparison is not a treatment choice");
+ assert.equal(choose({...lead,recent_verified_treatment_consent:true},
+   ["3D"]).service,null,"latest stated interest overrides stale CRM interest");
+ assert.equal(choose({...lead,recent_verified_treatment_consent:true},
+   ["骨盆调理"]).service,"骨盆调理");
+ const ambiguous=feature.select({...lead,recent_customer_messages:["你好"]},
+   {requirePricingInterest:false,sendBothPelvicPackages:true});
+ assert.deepEqual(ambiguous.offers,[],"no ad or consent proof means no promotion");
+});
+
 test("query is independent of third follow-up, sender-bound and uses fresh inbound evidence",()=>{
  const sql=repo.ELIGIBLE_SQL;
  assert.doesNotMatch(sql,/automated_follow_up_step\s*=\s*3/i);
