@@ -303,7 +303,7 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
   }),true);
   assert.equal(calls.length,1);
   assert.match(calls[0].sql,/job.state='pending'/);
-  assert.match(calls[0].sql,/gate.state='idle'/);
+  assert.doesNotMatch(calls[0].sql,/gate.state='idle'/);
   assert.match(calls[0].sql,/gate.owner_contact_id=job.contact_id/);
   assert.match(calls[0].sql,/job.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
@@ -457,7 +457,7 @@ test("receipt wake includes already-due images but remains contact-bound and bil
   assert.equal(calls.length,1);
   assert.doesNotMatch(calls[0].sql,/job\.next_attempt_at>NOW\(\)/);
   assert.match(calls[0].sql,/job\.state='pending'/);
-  assert.match(calls[0].sql,/gate\.state='idle'/);
+  assert.doesNotMatch(calls[0].sql,/gate\.state='idle'/);
   assert.match(calls[0].sql,/job\.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/job\.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].args.slice(-1),[[42]]);
@@ -470,7 +470,7 @@ test("accepted image wakes after its state transition when the verified receipt 
   const accepted=args.calls.find(c=>c.sql?.includes("state='accepted'") &&
     c.sql.includes("accepted_wamid"));
   const wake=args.calls.find(c=>c.sql?.includes("UPDATE whatsapp_sender_ai_media_jobs AS job") &&
-    c.sql.includes("gate.state='idle'"));
+    c.sql.includes("gate.owner_contact_id=job.contact_id"));
   assert.ok(accepted);
   assert.ok(wake);
   assert.ok(args.calls.indexOf(wake)>args.calls.indexOf(accepted));

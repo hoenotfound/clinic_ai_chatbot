@@ -141,7 +141,7 @@ test("Package B is gated behind a verified A, and prevents resending uncertain r
  const dbFunctions=[repo.claimAdditional.toString(),repo.stillEligible.toString(),repo.deferUnsent.toString(),
    repo.resumeDeferred.toString()].join("\n");
  assert.match(dbFunctions,/previous\.pricing_reminder_package_key='Package A'/);
- assert.match(dbFunctions,/gate\.state='idle'/);
+ assert.doesNotMatch(dbFunctions,/gate\.state='idle'/);
  assert.match(dbFunctions,/media\.delivery_status IS DISTINCT FROM 'cancelled'/);
  assert.match(dbFunctions,/attempt\.state<>'rejected'/);
  assert.match(dbFunctions,/retry\.attempts<3/);

@@ -411,7 +411,7 @@ async function claimAdditional(candidate,offer,database=pool){
             sa.sender_key<>'neutro_secondary' OR EXISTS(
               SELECT 1 FROM whatsapp_sender_billing_gates gate
               WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
-                AND gate.state='idle'
+                -- Final reservation enforces idle/strict new-send override.
                 AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
                                WHERE alarm.sender_id=sa.id)
             ))

@@ -190,15 +190,15 @@ async function reserveSecondaryBillingAttempt({
       [senderId,cid]
     );
     const gate = await client.query(
-      "SELECT state FROM whatsapp_sender_billing_gates " +
+      "SELECT state,reservation_id,message_id FROM whatsapp_sender_billing_gates " +
       "WHERE sender_id=$1 AND owner_contact_id=$2 FOR UPDATE", [senderId,cid]
     );
-    if (gate.rows?.length !== 1 || gate.rows[0].state !== "idle") {
+    if (gate.rows?.length !== 1) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_previous_send_unresolved");
     }
-    // A late billable/failed receipt may arrive after an earlier reservation
-    // was manually reconciled. A latched sender alarm overrides idle state.
+    // A latched sender-wide alarm always overrides a per-contact gate, even
+    // when an earlier failed/uncertain send is eligible for a *new* send.
     const alarm = await client.query(
       "SELECT 1 FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
       [senderId]
@@ -206,6 +206,87 @@ async function reserveSecondaryBillingAttempt({
     if (alarm.rows?.length) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_sender_alarm");
+    }
+    if (gate.rows[0].state !== "idle") {
+      // Neutro-only opt-in: replace an aged UNKNOWN hold when a different,
+      // newly persisted message is being sent. Preserve the historical
+      // unknown attempt; NEVER retry the original message or overwrite its
+      // Meta WAMID/receipt. Reserved and awaiting_pricing gates still block.
+      // This bypass is deliberately limited to exact signed failures, or
+      // no-WAMID sends with absolutely no receipts. No charge is *inferred*.
+      if (gate.rows[0].state !== "unknown" ||
+          env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
+          env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED !== "true") {
+        await client.query("ROLLBACK"); inTransaction = false;
+        return deny("secondary_billing_previous_send_unresolved");
+      }
+      const proof = await client.query(`
+        SELECT a.reservation_id,
+          CASE WHEN a.wamid IS NULL AND old.whatsapp_message_id IS NULL
+              AND old.delivery_status='unknown'
+              AND NOT EXISTS (
+                SELECT 1 FROM whatsapp_sender_status_receipts r
+                WHERE r.sender_id=a.sender_id
+                  AND r.reservation_id=a.reservation_id
+              ) THEN 'unconfirmed_no_wamid'
+            WHEN a.wamid IS NOT NULL AND old.whatsapp_message_id=a.wamid
+              AND old.delivery_status='failed'
+              AND EXISTS (
+                SELECT 1 FROM whatsapp_sender_status_receipts r
+                WHERE r.sender_id=a.sender_id
+                  AND r.reservation_id=a.reservation_id
+                  AND r.matched=TRUE AND r.wamid=a.wamid
+                  AND r.meta_phone_number_id=$5
+                  AND r.meta_account_id=$6
+                  AND r.delivery_status='failed'
+              ) THEN 'signed_failed'
+            ELSE NULL END AS release_basis
+        FROM whatsapp_sender_billing_attempts a
+        JOIN messages old ON old.id=a.message_id
+          AND old.contact_id=a.contact_id AND old.role='assistant'
+        JOIN whatsapp_sender_billing_gates g
+          ON g.sender_id=a.sender_id AND g.owner_contact_id=a.contact_id
+          AND g.reservation_id=a.reservation_id
+          AND g.message_id=a.message_id AND g.state='unknown'
+        WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
+          AND a.contact_id=$3 AND a.message_id=$4
+          AND a.state='unknown' AND a.message_id<>$7
+          AND g.updated_at<=NOW()-INTERVAL '30 minutes'
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_sender_status_receipts r
+            WHERE r.sender_id=a.sender_id AND r.reservation_id=a.reservation_id
+              AND (r.delivery_status IN ('delivered','read')
+                   OR r.pricing_billable=TRUE)
+          )
+      `,[gate.rows[0].reservation_id,senderId,cid,gate.rows[0].message_id,
+         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+         env.WHATSAPP_SECONDARY_WABA_ID,mid]);
+      const approved = proof.rows?.[0];
+      if (!approved?.release_basis) {
+        await client.query("ROLLBACK"); inTransaction = false;
+        return deny("secondary_billing_previous_send_unresolved");
+      }
+      // Preserve a separate, permanent record of which original UNKNOWN gate
+      // was bypassed for which new message. Both writes occur in the same
+      // transaction under the sender and contact locks.
+      await client.query(
+        "INSERT INTO whatsapp_sender_unknown_gate_new_sends "+
+        "(old_reservation_id,sender_id,contact_id,old_message_id,new_message_id,basis) "+
+        "VALUES($1,$2,$3,$4,$5,$6)",
+        [approved.reservation_id,senderId,cid,gate.rows[0].message_id,mid,
+         approved.release_basis]
+      );
+      const reopened = await client.query(
+        "UPDATE whatsapp_sender_billing_gates SET "+
+        "state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,"+
+        "wamid=NULL,updated_at=NOW() "+
+        "WHERE sender_id=$1 AND owner_contact_id=$2 "+
+        "AND state='unknown' AND reservation_id=$3::uuid",
+        [senderId,cid,approved.reservation_id]
+      );
+      if (reopened.rowCount !== 1) {
+        throw Error("Secondary UNKNOWN gate changed during new-send review");
+      }
     }
     const reservationId = crypto.randomUUID();
     await client.query(
