@@ -20,6 +20,7 @@ const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAccepted
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
+const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
  require("../utils/secondaryDueTimeScheduler");
 
@@ -71,6 +72,7 @@ const FIRST_REPLY_SQL=marketingReplyAnchorSql();
 
 // Guard current message intent at discovery AND at the last provider recheck.
 // The same SQL is inherited by the separately disabled Day4/Day6 path.
+const CLOSED_REMOTE_CONVERSATION_SQL=remoteConversationGoodbyeSql();
 const MARKETING_CUSTOMER_INTENT_SQL=String.raw`
  AND COALESCE(inbound.last_customer_text,'') !~* '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
  AND COALESCE(inbound.last_customer_text,'') !~* '${DISTANCE_OBJECTION_SQL}'
@@ -79,6 +81,7 @@ const MARKETING_CUSTOMER_INTENT_SQL=String.raw`
   COALESCE(inbound.last_customer_text,'') ~* '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
   AND COALESCE(inbound.last_customer_text,'') !~* '(petaling jaya|[[:<:]]pj[[:>:]]|kuala lumpur|[[:<:]]kl[[:>:]])'
  )
+ ${CLOSED_REMOTE_CONVERSATION_SQL}
 `;
 // Legacy ads-only proof includes historical and cross-number safety checks.
 // Calculate that unchanged predicate once per recent contact instead of
