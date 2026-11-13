@@ -625,3 +625,32 @@ test("Meta direct Cloud API recipient_user_id is parsed, including paired recipi
     "whatsapp_last_customer_address=$2"),false,
     "changing a contact's last inbound must not retarget an earlier receipt");
 });
+
+
+test("verified secondary failures retain numeric Meta code without private error text",()=>{
+ const err={code:131052,title:"private title +60123456789",
+   message:"Contains phone and message",error_data:{details:"private media URL"}};
+ const events=receipt.normalizedSignedEvents(signed(body([status({
+   status:"failed",errors:[err]
+ })])).rawBody,env);
+ assert.equal(events.length,1);
+ assert.equal(events[0].failureCode,131052);
+ const reason=receipt.safeMetaDeliveryError(events[0]);
+ assert.equal(reason,"Verified Meta delivery failure (code 131052); staff review required.");
+ assert.equal(JSON.stringify(events).includes("private"),false);
+ assert.equal(reason.includes("+60123456789"),false);
+ const normal=receipt.normalizedSignedEvents(signed(body([status({
+   status:"delivered",errors:[err]
+ })])).rawBody,env);
+ assert.equal(normal[0].failureCode,null);
+});
+test("secondary failure code extraction rejects unsafe and oversized values",()=>{
+ for(const invalid of ["private",0,-5,2147483648,"2147483648",null,{},1.5]){
+  assert.equal(receipt.safeMetaFailureCode([{code:invalid}]),null);
+ }
+ assert.equal(receipt.safeMetaFailureCode([{code:"131052"}]),131052);
+ assert.equal(receipt.safeMetaDeliveryError({deliveryStatus:"failed",failureCode:null}),
+   "Verified Meta delivery failure; staff review required.");
+ assert.equal(receipt.safeMetaDeliveryError({deliveryStatus:"read",failureCode:131052}),
+   "Verified Meta delivery failure; staff review required.");
+});
