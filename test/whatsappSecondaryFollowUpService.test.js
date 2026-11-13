@@ -937,3 +937,39 @@ test("a late staff video receipt blocks automatic video before outbound send",as
  assert.equal(f.calls.some(x=>x.sql===worker.RECENT_STAFF_VIDEO_SQL),true);
  assert.equal(f.calls.some(x=>x.save),false);
 });
+
+test("definitive video preparation rejection is blocked and failed, not unknown delivery",async()=>{
+ const f=fake({rows:[{...candidate,
+  media_key:"approved-video",media_type:"video",
+  media_mime_type:"video/mp4",media_filename:"clip.mp4"}],
+  sendResult:{success:false,definitivelyRejected:true,unknown:false,
+    ambiguous:false,wamid:null,providerFailureKind:"media_preflight_rejected",
+    code:"secondary_provider_definitively_rejected"}});
+ const result=await worker.runOnce({...f,env:{
+   ...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"
+ },videoApproved:()=>true,storage:{
+   downloadMedia:async()=>Buffer.from("saved video"),
+ }});
+ assert.equal(result.attempted,1);
+ assert.equal(result.accepted,0);
+ assert.equal(f.sends,1);
+ const savedFailed=f.calls.find(x=>x.sql?.includes("UPDATE messages SET delivery_status='failed'"));
+ assert.ok(savedFailed,"do not leave a fake unknown-delivery message after pre-provider rejection");
+ assert.equal(savedFailed.args[0],912);
+ const blocked=f.calls.find(x=>x.sql?.includes("UPDATE whatsapp_sender_followup_attempts SET status='blocked'"));
+ assert.ok(blocked,"one-shot attempt is blocked without pretending Meta accepted it");
+ assert.equal(blocked.args[1],"sender_followup_video_preflight_rejected");
+ assert.equal(f.calls.some(x=>x.sql?.includes("SET status='unknown'")),false);
+});
+test("definitive video upload HTTP rejection is separately recorded as blocked",async()=>{
+ const f=fake({rows:[{...candidate,
+   media_key:"approved-video",media_type:"video",
+   media_mime_type:"video/mp4",media_filename:"clip.mp4"}],
+   sendResult:{success:false,definitivelyRejected:true,unknown:false,
+    ambiguous:false,wamid:null,providerFailureKind:"http_rejection",
+    code:"secondary_provider_definitively_rejected"}});
+ await worker.runOnce({...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+   videoApproved:()=>true,storage:{downloadMedia:async()=>Buffer.from("video")}});
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='blocked'") &&
+   x.args?.[1]==="sender_followup_video_upload_rejected"));
+});
