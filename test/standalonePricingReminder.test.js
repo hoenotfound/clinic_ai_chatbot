@@ -119,6 +119,10 @@ test("query is independent of third follow-up, sender-bound and uses fresh inbou
  assert.match(sql,/lead.treatment_interest/);
  assert.match(repo.stillEligible.toString(),/offer\?\.serviceName\|\|""/);
  assert.match(repo.stillEligible.toString(),/outbound\.automated_follow_up_target_service/);
+ assert.match(sql,/lead\.id AS lead_id/);
+ assert.match(repo.stillEligible.toString(),/candidate\.lead_id\?\?null/);
+ assert.match(repo.stillEligible.toString(),/candidate\.treatment_interest\?\?null/);
+ assert.match(repo.stillEligible.toString(),/JSON\.stringify\(candidate\.recent_customer_messages\|\|\[\]\)/);
  assert.match(sql,/appointment_set/);
 });
 
@@ -153,4 +157,9 @@ test("standalone sender checks keep existing stages and never enable messenger",
  assert.match(src,/await repo\.resumeDeferred/);
  assert.match(src,/await repo\.claimAdditional/);
  assert.match(src,/repo\.recordDecision/);
+ assert.match(src,/reviewUnknownSecondaryBillingHoldsOnce/);
+ assert.match(src,/contactsRepo\.setDeliveryAttention/);
+ assert.match(src,/do not retry/);
+ assert.match(repo.listUnresolvedSecondaryBillingHolds.toString(),/g\.state='unknown'/);
+ assert.match(repo.listUnresolvedSecondaryBillingHolds.toString(),/c\.needs_attention IS DISTINCT FROM TRUE/);
 });
