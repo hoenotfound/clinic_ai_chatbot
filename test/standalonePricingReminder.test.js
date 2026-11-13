@@ -114,9 +114,9 @@ test("query is independent of third follow-up, sender-bound and uses fresh inbou
  assert.doesNotMatch(sql,/consent_lead.marketing_consent='opted_in'/);
  assert.match(sql,/COALESCE\(lead.marketing_consent,'unknown'\) <> 'opted_out'/);
  assert.doesNotMatch(sql,/VERIFIED_PRICING_CONSENT_SQL/);
- assert.match(sql,/consent_conversation.sender_id=sa.id/);
- assert.match(sql,/consent_proof.whatsapp_message_id=permission.provider_message_id/);
- assert.match(sql,/consent_lead.treatment_interest/);
+ assert.match(sql,/proof_sender.sender_id=sa.id/);
+ assert.match(sql,/proof.whatsapp_message_id=permission.provider_message_id/);
+ assert.match(sql,/lead.treatment_interest/);
  assert.match(repo.stillEligible.toString(),/offer\?\.serviceName\|\|""/);
  assert.match(repo.stillEligible.toString(),/outbound\.automated_follow_up_target_service/);
  assert.match(sql,/appointment_set/);
@@ -129,7 +129,8 @@ test("customer-initiated follow-up does not require recorded marketing consent",
  assert.match(src,/c\.whatsapp_opt_out_at IS NULL AND c\.whatsapp_marketing_opt_out_at IS NULL/);
  assert.doesNotMatch(src,/AND \$\{VERIFIED_PRICING_CONSENT_SQL\}/);
  assert.match(repo.stillEligible.toString(),/opted_out_lead/);
- assert.match(src,/acceptedNormalOutboundSql/);
+ assert.match(src,/FROM messages reply/);
+ assert.match(src,/e.origin='system_fallback'/);
 });
 
 test("Package B is gated behind a verified A, and prevents resending uncertain results",()=>{
