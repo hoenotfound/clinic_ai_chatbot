@@ -31,7 +31,7 @@ test("only exact reservation IDs permit a fresh sender-owned enquiry past delive
  for(const proof of [
   "held_attempt.reservation_id IN",a,b,
   "old_outbound.id=c.delivery_attention_message_id",
-  "held_gate.state='unknown'",
+  "current_gate.state='unknown'",
   "customer.source_created_at>old_outbound.created_at",
   "customer.whatsapp_message_id IS NOT NULL",
   "sender_conversations", // checked below as sender_conversations substring
