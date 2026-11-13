@@ -276,10 +276,10 @@ function verified131060InformationReviewSql(alias = "c") {
 // Unlike the text reply rule below, secondary media and follow-ups must NEVER
 // gain the Booking ready exception. This narrow path preserves all downstream
 // appointment, opt-in, window, staff and billing checks.
-function secondaryAutomationAttentionAllowedSql(alias = "c") {
+function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null) {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias)})`;
+    OR ${reviewedDeliveryAttentionSql(alias,process.env,anchorSql)})`;
 }
 // A prior outbound AI text can be rejected BEFORE any Meta call because the
 // preceding accepted send is still awaiting a signed billing receipt. Once
@@ -326,7 +326,7 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
   )`;
 }
 
-function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false } = {}) {
+function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
     ${alias}.needs_attention IS NOT TRUE
@@ -341,7 +341,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
     )
     OR ${verified131060InformationReviewSql(alias)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias)}
+    OR ${reviewedDeliveryAttentionSql(alias,process.env,inboundMessageSql)}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
@@ -398,6 +398,7 @@ async function isSecondaryAiReplyEligible(contactId, {
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
            AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c", {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
+              inboundMessageSql: mid != null ? "$5" : null,
            })}
            AND c.whatsapp_opt_out_at IS NULL
            ${mid==null ? "AND "+legacyAudience : ""}
@@ -534,7 +535,7 @@ async function isSecondaryAutomationEligible(contactId, {
       `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
-        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
           AND c.whatsapp_opt_out_at IS NULL`,
       [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
         originalAdsOnlyCutoff(env)]
