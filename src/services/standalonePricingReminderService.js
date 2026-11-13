@@ -321,9 +321,32 @@ async function sendOne(candidate,offer,options,allOffers){
   await reportUncertain(candidate,row.id);
   return {sent:false,review:true};
 }
+// This is a one-time-per-process staff alert, NOT an automatic billing
+// settlement or send retry. Unknown/failed Meta outcomes stay latched until
+// their exact sender reservation is manually reconciled.
+let reviewedUnknownBillingHolds=false;
+async function reviewUnknownSecondaryBillingHoldsOnce(){
+  if(reviewedUnknownBillingHolds)return;
+  const holds=await repo.listUnresolvedSecondaryBillingHolds();
+  for(const hold of holds){
+    const reason=hold.signed_failed===true
+      ? "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold. Staff must reconcile the exact send; do not retry."
+      : "Delivery unconfirmed: Secondary WhatsApp send has no verified receipt. Staff must inspect the billing hold; do not retry.";
+    await contactsRepo.setDeliveryAttention(
+      hold.contact_id,reason,hold.message_id||null);
+  }
+  reviewedUnknownBillingHolds=true;
+  if(holds.length)console.warn(
+    "[Standalone pricing] Flagged "+holds.length+
+    " unresolved secondary billing holds for staff review; no automatic billing release or resend.");
+}
 async function runOnce(now=new Date()){
   const options=settings();
   if(!options)return null;
+  // Surface existing unknown billing states even while quiet hours prevent
+  // customer sends. Failures here must not suppress the normal scheduler.
+  try{await reviewUnknownSecondaryBillingHoldsOnce();}
+  catch(error){console.warn("[Standalone pricing] Billing hold alert check failed:",error?.message);}
   if(quietHoursStatus(now,options.quietHours).active)return null;
   const candidates=await repo.listCandidates(options);
   let sends=0,nextDue=null;
