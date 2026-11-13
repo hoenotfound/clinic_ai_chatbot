@@ -46,6 +46,26 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     [msg,conversation]);
   const activatedAt=new Date(Date.now()-23*3600000).toISOString();
   const opts={senderKeys:["neutro_secondary"],activatedAt};
+  assert.equal((await repo.listCandidates(opts,db)).length,0,
+    "no unsolicited promotional price without verified marketing permission");
+  const lead=(await db.query(
+    "INSERT INTO leads(contact_id,treatment_interest,marketing_consent) "+
+    "VALUES($1,'骨盆调理','opted_in') RETURNING id",[contact])).rows[0].id;
+  await db.query(
+    "UPDATE contacts SET whatsapp_opt_in_at=NOW()-INTERVAL '23 hours', "+
+    "whatsapp_opt_in_source='customer_whatsapp_text' WHERE id=$1",[contact]);
+  const consent=(await db.query(
+    "INSERT INTO whatsapp_marketing_consent_events"+
+    "(contact_id,lead_id,source,message_id,provider_message_id,message_text,"+
+    "business_name,consent_scope,consent_service,consent_category,consented_at,consent_method) "+
+    "SELECT $1,$2,'ctwa_explicit_customer_message',$3,m.whatsapp_message_id,m.content,"+
+    "'Neutro Sense TCM Centre','treatment_followups_and_related_offers',"+
+    "'9D 逆龄抗衰','MARKETING',m.source_created_at,'customer_whatsapp_text' "+
+    "FROM messages m WHERE m.id=$3 RETURNING id",
+    [contact,lead,inbound])).rows[0].id;
+  assert.equal((await repo.listCandidates(opts,db)).length,0,
+    "wrong-service consent is not permission for pelvic prices");
+  await db.query("UPDATE whatsapp_marketing_consent_events SET consent_service='骨盆调理' WHERE id=$1",[consent]);
   const rows=await repo.listCandidates(opts,db);
   assert.equal(rows.length,1);
   const c=rows[0];
@@ -56,6 +76,8 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     packageName:"Package B",serviceName:"骨盆调理",identities:["/promo-images/41"]};
   const first=await repo.claim(c,a,db);
   assert.ok(first?.id,"one-shot A claim must be persisted");
+  assert.equal(await repo.stillEligible(c,first.id,opts,{...a,serviceName:"9D 逆龄抗衰"},db),false,
+    "a changed treatment cannot reuse old consent at send time");
   assert.equal(await repo.stillEligible(c,first.id,opts,a,db),true);
   const deferred=await repo.deferUnsent(c,first,"secondary_billing_previous_send_unresolved",db);
   assert.equal(deferred.row.id,first.id);
