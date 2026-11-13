@@ -281,10 +281,10 @@ test("verified customer return can resume AI only for exactly reviewed old deliv
       [s.contact,s.messages[0]]);
     const authorized={...env,
       WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId};
-    const clause=reviewedDeliveryAttentionSql("c",authorized);
-    const check=async()=> (await db.query(
+    const clause=reviewedDeliveryAttentionSql("c",authorized,"$2");
+    const check=async(anchor=null)=> (await db.query(
       "SELECT "+clause+" AS ok FROM contacts c WHERE c.id=$1",
-      [s.contact])).rows[0].ok;
+      [s.contact,anchor])).rows[0].ok;
     assert.equal(await check(),false,"a stale alert is not automatically ignored");
     const inbound=(await db.query(
       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,"+
@@ -297,11 +297,13 @@ test("verified customer return can resume AI only for exactly reviewed old deliv
     await db.query("INSERT INTO whatsapp_sender_message_context "+
       "(message_id,conversation_id) VALUES($1,$2)",
       [inbound,conversation]);
-    assert.equal(await check(),true,
+    assert.equal(await check(s.messages[0]),false,
+      "old outgoing video is never a valid fresh customer anchor");
+    assert.equal(await check(inbound),true,
       "a new signed same-sender enquiry may continue with staff alert retained");
     await db.query("UPDATE contacts SET attention_reason='AI review requested: pending' "+
       "WHERE id=$1",[s.contact]);
-    assert.equal(await check(),false,
+    assert.equal(await check(inbound),false,
       "an unrelated clinical or staff review is never bypassed");
     assert.equal(reviewedDeliveryAttentionSql("c",env),"FALSE",
       "unreviewed production configuration must fail closed");
