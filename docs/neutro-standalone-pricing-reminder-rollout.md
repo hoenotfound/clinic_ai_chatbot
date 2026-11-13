@@ -23,9 +23,16 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
 
 - Only Neutro Sense, and only actively enabled primary/secondary sender.
 - A new, provider-identified customer inbound after activation, sender-bound
-  history on secondary, a genuine business reply, and a verified *recent*
+  history, a genuine business reply, and a verified *recent*
   customer treatment mention. Generic hellos, unsupported messages and stale
   CRM-only treatment labels are excluded.
+- A current lead marked opted-in with customer-authored, WhatsApp provider-verified,
+  **treatment-specific marketing consent bound to that exact sender** is required.
+  A CTWA click, prefilling an enquiry, or simply staying inside 24 hours does
+  not grant permission to send an unsolicited pricing promotion. The latest
+  selected service must also match the consenting current lead; absent or
+  conflicting proof skips the graphic. Both the initial scan and final
+  pre-send check enforce this rule.
 - Normally due ~22h after the latest customer message, before a 23h30 safety
   cutoff. If 22h falls in 00:00-07:00 MYT quiet hours, use 23:20 MYT the
   previous evening only if at least 20h has elapsed since the customer message.
