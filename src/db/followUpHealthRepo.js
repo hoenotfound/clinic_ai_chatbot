@@ -63,6 +63,26 @@ const HEALTH_SQL = `WITH evidence AS (
     AND ($2::text = 'all' OR c.channel = $2)
     AND ($3::integer[] IS NULL OR d.contact_id = ANY($3::integer[]))
   UNION ALL
+  SELECT ('standalone_pricing:' || d.id::text), d.contact_id, c.channel,
+    d.created_at, 4, 'Unspecified (not recorded)',
+    'pricing', 'decision',
+    CASE
+      WHEN d.reason LIKE 'standalone:review:%'
+        OR d.reason LIKE 'standalone:staff_review:%'
+        OR d.reason LIKE 'standalone:preflight_exhausted:%'
+        OR d.reason='standalone:provider_accepted_local_receipt_unconfirmed'
+        THEN 'attention'
+      WHEN d.reason LIKE 'standalone:deferred:%' THEN 'pending'
+      ELSE 'skipped'
+    END,
+    d.reason
+  FROM standalone_pricing_reminder_decisions d
+  JOIN contacts c ON c.id=d.contact_id
+  WHERE d.created_at >= now() - $1::integer * interval '1 day'
+    AND d.reason NOT LIKE 'standalone:provider_accepted:%'
+    AND ($2::text = 'all' OR c.channel = $2)
+    AND ($3::integer[] IS NULL OR d.contact_id = ANY($3::integer[]))
+  UNION ALL
   SELECT ('sequence_decision:' || d.id::text), d.contact_id, c.channel,
     d.created_at, d.follow_up_step, 'Unspecified (not recorded)',
     'follow_up', 'decision',

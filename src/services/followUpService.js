@@ -39,6 +39,7 @@ const { pool } = require("../db/db");
 const { previouslySentVideo, textOnlyVideoFallback } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const pricingReminderService = require("./pricingReminderService");
+const standalonePricingReminderService = require("./standalonePricingReminderService");
 const whatsappConsentPromptService = require("./whatsappConsentPromptService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
@@ -2169,6 +2170,14 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
     const pricingNextDueAt = await pricingReminderService.runPricingReminders(settings, now);
     const consentNextDueAt = await whatsappConsentPromptService.runFinalConsentPrompts(settings, now);
 
+    // Pricing is lowest priority. Never spend image-upload time ahead of the
+    // existing 2h / 6h / 20h and consent workers.
+    const standalonePricingNextDueAt = await standalonePricingReminderService
+      .runOnce(now).catch(error => {
+        console.error("[Standalone pricing] Isolated scheduler failed:", error);
+        return null;
+      });
+
     const liveSettings = getActiveSettings();
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
       ? await followUpRepo.getNextCandidateDueAt({
@@ -2190,7 +2199,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       progressedCount,
       recoveredCount,
       nextDueAt: (() => {
-        const times = [nextDueAt, pricingNextDueAt, consentNextDueAt]
+        const times = [nextDueAt, pricingNextDueAt, standalonePricingNextDueAt, consentNextDueAt]
           .filter(Boolean)
           .map((value) => new Date(value).getTime())
           .filter(Number.isFinite);

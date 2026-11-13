@@ -126,6 +126,10 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
         id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
         reason TEXT NOT NULL
       );
+      CREATE TABLE standalone_pricing_reminder_decisions (
+        id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
+        reason TEXT NOT NULL
+      );
       CREATE TABLE follow_up_ai_decisions (
         id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL,
         follow_up_step INTEGER, created_at TIMESTAMPTZ DEFAULT now(),
@@ -212,6 +216,17 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
     assert.equal(consent.items.find(x=>x.event_id==="consent:2").response_status,"declined");
     assert.equal(consent.items.find(x=>x.event_id==="consent:3").raw_status,"deferred");
     assert.ok(consent.items.every(x=>x.type==="consent"));
+    await client.query(`INSERT INTO standalone_pricing_reminder_decisions(id,contact_id,reason)
+      VALUES (801,1,'standalone:review:manual_image_identity_unverified'),
+             (802,2,'standalone:skipped:manual_pricing_confirmed'),
+             (803,1,'standalone:deferred:preflight')`);
+    const review=await repo.listActivity({type:"pricing",state:"attention"},[1],execute);
+    assert.equal(review.items.length,1);
+    assert.equal(review.items[0].event_id,"standalone_pricing:801");
+    const skip=await repo.listActivity({type:"pricing",state:"skipped"},[2],execute);
+    assert.ok(skip.items.some(item=>item.event_id==="standalone_pricing:802"));
+    const deferred=await repo.listActivity({type:"pricing",state:"pending"},[1],execute);
+    assert.ok(deferred.items.some(item=>item.event_id==="standalone_pricing:803"));
   } finally {
     await client.query("SET search_path TO public");
     await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE");

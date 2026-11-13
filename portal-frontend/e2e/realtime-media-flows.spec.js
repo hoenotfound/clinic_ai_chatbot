@@ -1169,7 +1169,11 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
   await expect(page.getByText("Photo · Caption optional", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Send message" }).click();
 
-  expect(apiState.mediaRequests).toHaveLength(1);
+  // Progressive JPEG normalization can complete after the Send click,
+  // particularly on the slower tablet worker. Wait for the real request.
+  await expect.poll(() => apiState.mediaRequests.length, {
+    timeout: 15000,
+  }).toBe(1);
 
   const uploaded = await page.evaluate(
     () => window.__realtimeMediaTest?.latestMediaUpload?.() || null
