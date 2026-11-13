@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
+const {reviewedDeliveryAttentionSql}=require("../src/utils/whatsappSecondaryReviewedUnknownSend");
 const connectionString=process.env.TEST_DATABASE_URL;
 const env={
   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -259,5 +260,50 @@ test("a second UNKNOWN attempt cannot get another bypass in the same 30-day peri
     assert.equal((await db.query(
       "SELECT COUNT(*)::int AS n FROM whatsapp_sender_unknown_gate_new_sends "+
       "WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].n,1);
+  });
+});
+
+test("verified customer return can resume AI only for exactly reviewed old delivery attention",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,
+    },{database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown',"+
+      "created_at=NOW()-INTERVAL '2 days' WHERE id=$1",[s.messages[0]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,"+
+      "attention_reason='Delivery unconfirmed: review original video',"+
+      "delivery_attention_message_id=$2 WHERE id=$1",
+      [s.contact,s.messages[0]]);
+    const authorized={...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId};
+    const clause=reviewedDeliveryAttentionSql("c",authorized);
+    const check=async()=> (await db.query(
+      "SELECT "+clause+" AS ok FROM contacts c WHERE c.id=$1",
+      [s.contact])).rows[0].ok;
+    assert.equal(await check(),false,"a stale alert is not automatically ignored");
+    const inbound=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,"+
+      "source_created_at) VALUES($1,'user','想了解新的疗程',"+
+      "'wamid.fresh-customer',NOW()) RETURNING id",
+      [s.contact])).rows[0].id;
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1"+
+      " AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context "+
+      "(message_id,conversation_id) VALUES($1,$2)",
+      [inbound,conversation]);
+    assert.equal(await check(),true,
+      "a new signed same-sender enquiry may continue with staff alert retained");
+    await db.query("UPDATE contacts SET attention_reason='AI review requested: pending' "+
+      "WHERE id=$1",[s.contact]);
+    assert.equal(await check(),false,
+      "an unrelated clinical or staff review is never bypassed");
+    assert.equal(reviewedDeliveryAttentionSql("c",env),"FALSE",
+      "unreviewed production configuration must fail closed");
   });
 });
