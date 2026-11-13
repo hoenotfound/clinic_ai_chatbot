@@ -118,5 +118,6 @@ test("all exact-ownership checks remain sender-bound and the release cannot repl
   assert.ok(review.EXACT_UNKNOWN_HOLD_SQL.includes(fragment));
  }
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.delivery_status='failed'"));
+ assert.ok(review.EXACT_UNKNOWN_HOLD_SQL.includes("a.wamid IS NULL AND m.whatsapp_message_id IS NULL"));
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.pricing_billable=TRUE"));
 });
