@@ -36,7 +36,7 @@ function staffPendingSql(alias){
 // Keep active staff appointment coordination separate from routine media.
 function staffBookingCoordinationSql(alias){
  return `(
-  COALESCE(${alias}.content,'') ~* '(appointment[[:space:]]+(confirmed|scheduled|at|on)|booking[[:space:]]+(confirmed|for|at|on)|reschedul(e|ing)|your[[:space:]]+slot|预约在|預約在|约在|約在|预约时间|預約時間|已安排时间|已安排時間|确认预约|確認預約|确认时段|確認時段)'
+  COALESCE(${alias}.content,'') ~* '(appointment[[:space:]]+(confirmed|scheduled|at|on)|booking[[:space:]]+(confirmed|for|at|on)|reschedul(e|ing)|your[[:space:]]+slot|please[[:space:]]+book[[:space:]]+with[[:space:]]+me|book[[:space:]]+with[[:space:]]+(me|us)|boleh[[:space:]]+buat[[:space:]]+tempahan|请跟我预约|請跟我預約|跟我预约|跟我預約|预约在|預約在|约在|約在|预约时间|預約時間|已安排时间|已安排時間|确认预约|確認預約|确认时段|確認時段)'
   OR (
     COALESCE(${alias}.content,'') ~* '(tomorrow|tmr|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天])'
     AND COALESCE(${alias}.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|([早上下午晚上]|上午|下午)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2})'
