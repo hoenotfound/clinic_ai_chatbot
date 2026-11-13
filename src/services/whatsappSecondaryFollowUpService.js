@@ -7,7 +7,8 @@
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
-const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
+const {serviceReplyAnchorSql,gentleStaffQuestionNudge,staffQuestionSql,
+ staffPendingSql,staffBookingCoordinationSql}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
@@ -184,6 +185,17 @@ const PREVIOUS_STEP_SQL=`
               AND human_between.role='assistant'
               AND human_between.sent_by_username IS NOT NULL
               AND human_between.is_automated_follow_up IS DISTINCT FROM TRUE
+              -- Forwarded photos and routine messages do not cancel previously
+              -- accepted follow-up stages across a fresh customer reply.
+              AND human_between.is_forwarded IS DISTINCT FROM TRUE
+              AND COALESCE(human_between.whatsapp_customer_mutation,'')=''
+              AND human_between.content NOT LIKE '🗑️ %'
+              AND (human_between.media_mime_type IS NULL
+                OR human_between.media_mime_type NOT LIKE 'image/%')
+              -- An actual staff question, pending action or booking still blocks.
+              AND (${staffQuestionSql("human_between")}
+                OR ${staffPendingSql("human_between")}
+                OR ${staffBookingCoordinationSql("human_between")})
               AND human_between.created_at>=earlier.completed_at
               AND human_between.created_at<=inbound.created_at
           )
