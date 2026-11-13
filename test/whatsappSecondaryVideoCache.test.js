@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { secondaryVideoCacheEligible, dispatchSecondaryFollowUpVideo } =
+const { validMp4Container, secondaryVideoCacheEligible, dispatchSecondaryFollowUpVideo } =
   require("../src/services/whatsappSecondaryVideoCache");
 const { recordOutboundPayload, recordOutboundRequest, recordHttp503,
   takeOutboundPayloadSnapshot } =
@@ -314,4 +314,75 @@ test("extended outbound counters count only known API request sizes and coarse 5
   assert.equal(snap.http503.find(x => x.category === "startup").count, 1);
   assert.equal(JSON.stringify(snap).includes("conversations"), false);
   assert.equal(JSON.stringify(snap).includes("secret"), false);
+});
+
+test("MP4 preflight checks the container before attempting any provider upload",async()=>{
+  const valid=Buffer.from("00000018ftypisom00000000","ascii");
+  assert.equal(validMp4Container(valid),true);
+  assert.equal(validMp4Container(Buffer.from("not an mp4 file")),false);
+  const f=setup({env:{...enabled,
+    WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED:"false",
+    WHATSAPP_SECONDARY_VIDEO_MP4_PREFLIGHT_ENABLED:"true"}});
+  const blocked=await dispatchSecondaryFollowUpVideo({
+    ...f.args,prefetchedBytes:Buffer.from("invalid video bytes"),
+  });
+  assert.equal(blocked.code,"sender_followup_video_invalid_mp4");
+  assert.equal(blocked.definitivelyRejected,true);
+  assert.equal(blocked.unknown,false);
+  assert.equal(f.calls.upload,0);
+  assert.equal(f.calls.send,0);
+  const sent=await dispatchSecondaryFollowUpVideo({
+    ...f.args,prefetchedBytes:valid,
+  });
+  assert.equal(sent.success,true);
+  assert.equal(f.calls.upload,1);
+  assert.equal(f.calls.send,1);
+});
+
+test("definitive /media upload rejection does not create an uncertain message outcome",async()=>{
+  const f=setup({env:{...enabled,
+    WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED:"false"}});
+  f.transport.uploadMedia=async()=>{
+    f.calls.upload++;
+    return {success:false,ambiguous:false,definitivelyRejected:true,
+      providerStatus:400,providerErrorCode:131053,
+      providerFailureKind:"http_rejection"};
+  };
+  const result=await dispatchSecondaryFollowUpVideo({...f.args});
+  assert.equal(result.code,"sender_followup_video_upload_rejected");
+  assert.equal(result.definitivelyRejected,true);
+  assert.equal(result.providerErrorCode,131053);
+  assert.equal(f.calls.upload,1);
+  assert.equal(f.calls.send,0);
+});
+
+test("cached upload rejection and malformed cached download remain distinct from unknown sends",async()=>{
+  const f=setup({env:{...enabled,WHATSAPP_SECONDARY_VIDEO_MP4_PREFLIGHT_ENABLED:"true"}});
+  f.transport.uploadMedia=async()=>({success:false,ambiguous:false,
+    definitivelyRejected:true,providerStatus:400,providerErrorCode:131053});
+  const rejected=await dispatchSecondaryFollowUpVideo({
+    ...f.args,
+    cacheFactory:({whatsappApi})=>({
+      resolveMediaId:async()=>{
+        await whatsappApi.uploadMedia(Buffer.from("00000018ftypisom00000000"),
+          "video/mp4","clip.mp4");
+        return{kind:"upload_failed"};
+      },
+    }),
+  });
+  assert.equal(rejected.code,"sender_followup_video_upload_rejected");
+  assert.equal(rejected.definitivelyRejected,true);
+  const invalid=await dispatchSecondaryFollowUpVideo({
+    ...f.args,
+    cacheFactory:({mediaStorage})=>({
+      resolveMediaId:async()=>{
+        try{await mediaStorage.downloadMedia(f.args.mediaKey);}
+        catch(error){return{kind:"download_failed",error};}
+        return{kind:"ready",mediaId:"unused"};
+      },
+    }),
+  });
+  assert.equal(invalid.code,"sender_followup_video_invalid_mp4");
+  assert.equal(invalid.definitivelyRejected,true);
+  assert.equal(f.calls.send,0);
 });
