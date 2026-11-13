@@ -101,6 +101,16 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
   assert.equal(await repo.stillEligible(c,first.id,opts,{...a,serviceName:"9D 逆龄抗衰"},db),false,
     "the final send check must match the exactly claimed treatment");
   assert.equal(await repo.stillEligible(c,first.id,opts,a,db),true);
+  await db.query("UPDATE leads SET treatment_interest='9D 逆龄抗衰' WHERE id=$1",[lead]);
+  assert.equal(await repo.stillEligible(c,first.id,opts,a,db),false,
+    "staff changing treatment after candidate scan invalidates an old pricing graphic");
+  await db.query("UPDATE leads SET treatment_interest='骨盆调理' WHERE id=$1",[lead]);
+  await db.query("UPDATE messages SET content='9D 逆龄抗衰' WHERE id=$1",[inbound]);
+  assert.equal(await repo.stillEligible(c,first.id,opts,a,db),false,
+    "an edited customer message invalidates the previously selected offer");
+  await db.query("UPDATE messages SET content='骨盆调理' WHERE id=$1",[inbound]);
+  assert.equal(await repo.stillEligible(c,first.id,opts,a,db),true,
+    "the original verified treatment remains sendable once its evidence is restored");
   const deferred=await repo.deferUnsent(c,first,"secondary_billing_previous_send_unresolved",db);
   assert.equal(deferred.row.id,first.id);
   assert.equal(Number(deferred.retry.attempts),1);
@@ -152,6 +162,28 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     "repeat review must not emit another staff alert");
   const audit=(await db.query("SELECT reason FROM standalone_pricing_reminder_decisions WHERE contact_id=$1",[contact])).rows;
   assert.deepEqual(audit.map(x=>x.reason),["standalone:staff_review:Package B"]);
+  await db.query(
+    "UPDATE whatsapp_sender_billing_attempts SET state='unknown' WHERE reservation_id=$1",
+    [reservation]);
+  await db.query(
+    "UPDATE whatsapp_sender_billing_gates SET state='unknown',"+
+    "reservation_id=$2,contact_id=$3,message_id=$4,wamid='wamid.synthetic.A' "+
+    "WHERE sender_id=$1 AND owner_contact_id=$3",
+    [sender,reservation,contact,first.id]);
+  let unknown=await repo.listUnresolvedSecondaryBillingHolds(db);
+  assert.equal(unknown.length,1,"unresolved sender billing must reach Inbox review");
+  assert.equal(Number(unknown[0].message_id),Number(first.id));
+  assert.equal(unknown[0].signed_failed,false);
+  await db.query(
+    "INSERT INTO whatsapp_sender_status_receipts "+
+    "(fingerprint,sender_id,reservation_id,wamid,wamid_hash,delivery_status,meta_phone_number_id,meta_account_id,matched) "+
+    "VALUES($1,$2,$3,'wamid.synthetic.A',$4,'failed','100000000070700','200000000070700',TRUE)",
+    ["c".repeat(64),sender,reservation,"b".repeat(64)]);
+  unknown=await repo.listUnresolvedSecondaryBillingHolds(db);
+  assert.equal(unknown[0].signed_failed,true,"signed Meta failures must be surfaced, never reset");
+  await db.query("UPDATE contacts SET needs_attention=TRUE WHERE id=$1",[contact]);
+  assert.equal((await repo.listUnresolvedSecondaryBillingHolds(db)).length,0,
+    "existing higher-priority staff attention is never overwritten");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
