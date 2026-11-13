@@ -84,6 +84,9 @@ test("a signed failed receipt can release only the exact gate after independent 
  assert.ok(f.calls.find(x=>x.sql==="COMMIT"));
  assert.equal(f.calls.some(x=>x.sql.includes("UPDATE whatsapp_sender_billing_attempts")),false,
   "preserve original UNKNOWN attempt for a future late receipt");
+ assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_followup_attempts")));
+ assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_marketing_followup_attempts")));
+ assert.ok(f.calls.find(x=>x.sql.includes("secondary_reviewed_unknown_billing_hold")));
  assert.equal(f.calls.some(x=>x.sql.includes("messages SET")),false);
 });
 test("an unconfirmed send with no WAMID requires separate human review",async()=>{
