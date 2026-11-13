@@ -66,10 +66,23 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
   assert.equal((await repo.listCandidates(opts,db)).length,0,
     "wrong-service consent is not permission for pelvic prices");
   await db.query("UPDATE whatsapp_marketing_consent_events SET consent_service='骨盆调理' WHERE id=$1",[consent]);
-  const rows=await repo.listCandidates(opts,db);
+  let rows=await repo.listCandidates(opts,db);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].recent_verified_treatment_consent,true,
+    "a recent consent event tied to the lead and exact sender supports a vague reply");
+  assert.equal(rows[0].ad_name,null,"no ad should be inferred from CRM only");
+  await db.query(
+    "INSERT INTO whatsapp_free_entry_referrals"+
+    "(origin_message_id,contact_id,meta_ad_id,ad_name,treatment_interest,source_type) "+
+    "VALUES($1,$2,'synthetic.neutro.pelvic','骨盆体验','骨盆调理','ad')",
+    [inbound,contact]);
+  rows=await repo.listCandidates(opts,db);
   assert.equal(rows.length,1);
   const c=rows[0];
   assert.equal(Number(c.contact_id),Number(contact));
+  assert.equal(c.ad_name,"骨盆体验");
+  assert.equal(c.ad_treatment_interest,"骨盆调理",
+    "recent sender-bound ad proof supplies the safe fallback treatment");
   const a={caption:"Package A RM388",imageUrl:"/promo-images/40",
     packageName:"Package A",serviceName:"骨盆调理",identities:["/promo-images/40"]};
   const b={caption:"Package B RM288",imageUrl:"/promo-images/41",
