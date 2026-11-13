@@ -13,7 +13,7 @@ const {getActivePromotions}=require("../utils/activePromotion");
 const {evaluatePricingReminder}=require("../utils/pricingReminderSelection");
 const {imageReview}=require("../utils/standalonePricingManualMedia");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
-const {inferConfiguredServiceFromText}=require("../utils/serviceInterest");
+const {inferConfiguredServiceFromText,normalizeServiceText}=require("../utils/serviceInterest");
 const {hasClinicalMediaRisk}=require("../utils/aiReviewPolicy");
 const {quietHoursStatus,normalizeQuietHours}=require("../utils/quietHours");
 const realtimeEvents=require("../utils/realtimeEvents");
@@ -71,6 +71,51 @@ function beforeEnd(candidate,now=new Date()){
   return Number.isFinite(start)&&Number.isFinite(at)&&
     at>=start && at<start+SAFE_END_MINUTES*60000;
 }
+// Resolve a vague reply to a single, supported treatment. Strongest evidence
+// is the customer's own recent wording, then a recent authenticated ad on
+// the exact sender, then recent provider-verified consent for the current
+// treatment. Never guess a treatment from a stale lead label alone.
+function resolveRecentPricingTreatment(candidate,customerTexts,config=clinicConfig){
+  const services=config.services||[];
+  const aliases=config.serviceAliases||[];
+  const lead=normalizeServiceText(candidate.treatment_interest);
+  const named=new Set(customerTexts.map(text=>
+    inferConfiguredServiceFromText(String(text||""),{
+      services,serviceAliases:aliases,
+    })).filter(Boolean).map(normalizeServiceText));
+  if(named.size>1)return {service:null,reason:"conflicting_customer_treatments"};
+
+  // A comparison such as "3D or 9D?" must not become a guessed price even
+  // when our generic service parser correctly returns no single service.
+  const simple=services.filter(service=>!String(service.name||"").includes("+"));
+  const individualMentions=new Set();
+  for(const text of customerTexts){
+    for(const service of simple){
+      const matched=inferConfiguredServiceFromText(String(text||""),{
+        services:[service],serviceAliases:aliases,
+      });
+      if(matched)individualMentions.add(normalizeServiceText(matched));
+    }
+  }
+  if(individualMentions.size>1 && (
+    named.size===0 || ![...named][0].includes("+")))
+    return {service:null,reason:"ambiguous_comparison"};
+
+  let chosen=named.size===1?[...named][0]:null;
+  if(!chosen){
+    const fromAd=new Set([
+      candidate.ad_treatment_interest,
+      inferConfiguredServiceFromText(candidate.ad_name,{services,serviceAliases:aliases}),
+    ].filter(Boolean).map(normalizeServiceText));
+    if(fromAd.size>1)return {service:null,reason:"conflicting_ad_treatment"};
+    if(fromAd.size===1)chosen=[...fromAd][0];
+    else if(candidate.recent_verified_treatment_consent===true)chosen=lead;
+  }
+  if(!chosen)return {service:null,reason:"ambiguous_or_missing_customer_treatment"};
+  if(!lead || chosen!==lead)
+    return {service:null,reason:"consent_treatment_mismatch"};
+  return {service:chosen,reason:null};
+}
 function select(candidate,options){
   const customerTexts=Array.isArray(candidate.recent_customer_messages)
     ?candidate.recent_customer_messages:[];
@@ -84,17 +129,8 @@ function select(candidate,options){
   // pricing. Require exactly one service in real, recent customer wording.
   if(!customerTexts.length || customerTexts.some(hasClinicalMediaRisk))
     return {offers:[],reason:"unverified_or_clinical_interest"};
-  const named=new Set(customerTexts.map(text=>
-    inferConfiguredServiceFromText(String(text||""),{
-      services:clinicConfig.services||[],
-      serviceAliases:clinicConfig.serviceAliases||[],
-    })).filter(Boolean).map(value=>String(value).normalize("NFKC").toLowerCase()));
-  if(named.size!==1)return {offers:[],reason:"ambiguous_or_missing_customer_treatment"};
-  // Refuse a different or stale CRM treatment even when an old marketing
-  // permission exists. Pricing must match the newly selected treatment AND
-  // the current lead carrying the customer-authored consent evidence.
-  if([...named][0]!==String(candidate.treatment_interest||"").normalize("NFKC").trim().toLowerCase())
-    return {offers:[],reason:"consent_treatment_mismatch"};
+  const matched=resolveRecentPricingTreatment(candidate,customerTexts);
+  if(!matched.service)return {offers:[],reason:matched.reason};
   const language=detectConversationLanguage(customerTexts,"zh");
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
@@ -110,7 +146,7 @@ function select(candidate,options){
     requirePricingInterest:options.requirePricingInterest,
     sendBothPelvicPackages:options.sendBothPelvicPackages,
   });
-  const only=[...named][0];
+  const only=matched.service;
   return result.offers?.every(offer=>
     String(offer.serviceName||"").normalize("NFKC").toLowerCase()===only)
     ?result:{offers:[],reason:"customer_treatment_changed"};
@@ -347,4 +383,4 @@ async function runOnce(now=new Date()){
   }
   return nextDue?.toISOString()||null;
 }
-module.exports={settings,dueAt,beforeEnd,select,runOnce};
+module.exports={settings,dueAt,beforeEnd,resolveRecentPricingTreatment,select,runOnce};
