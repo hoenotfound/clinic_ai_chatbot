@@ -106,3 +106,24 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
 **Known limitation:** Operator controls are Render flags, not yet shown in
 the Tools portal. The feature is intentionally disabled in live production
 until activation is explicitly approved.
+
+### Additional pre-send and billing checks
+
+- Every reminder claim captures the current lead ID/treatment and the recent
+  customer message wording. Immediately before Meta submission, the sending
+  check re-reads both. A lead reassignment/treatment edit or a newly edited
+  customer message invalidates the old offer; it never silently sends a
+  graphic selected before that change.
+- At the first enabled worker sweep per process, unresolved `unknown`
+  secondary sender billing holds with a verified owner are surfaced as Inbox
+  delivery attention if that contact does not already have a higher-priority
+  alert. A signed `failed` receipt is labelled as such; an attempt with no
+  receipt remains unconfirmed.
+- **Neither hold is automatically cleared or retried.** An operator must
+  reconcile the exact sender reservation and Meta/billing evidence using
+  existing reviewed procedures. Do not fabricate successful receipts, bypass
+  the billing gate, or replay any image from an unknown outcome.
+- Live delivery verification requires an actual eligible, due customer
+  message. A passing CI run or healthy Render startup is not evidence of
+  a Meta-accepted reminder. Check the saved reminder claim, provider WAMID,
+  signed receipt and duplicate limits separately for both numbers.
