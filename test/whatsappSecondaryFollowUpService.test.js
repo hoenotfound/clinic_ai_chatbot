@@ -476,7 +476,7 @@ test("20h AI skip sends one reviewed neutral reminder in the customer's language
  }
 });
 
-test("20h AI unavailable still offers consent only for new verified ads",async()=>{
+test("20h AI fallback does not request marketing consent even for verified ads",async()=>{
  const reminderConfig=()=>({automatedFollowUp:{
   message:"2h",additionalSteps:[{message:"6h"},
     {message:"20h",translations:{en:"20h English"}}],
@@ -485,10 +485,10 @@ test("20h AI unavailable still offers consent only for new verified ads",async()
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-12T08:00:00Z"};
- for(const [isAd,inboundAt,shouldInvite] of [
-  [true,"2026-11-12T08:30:00Z",true],
-  [false,"2026-11-12T08:30:00Z",false],
-  [true,"2026-11-12T07:59:59Z",false],
+ for(const [isAd,inboundAt] of [
+  [true,"2026-11-12T08:30:00Z"],
+  [false,"2026-11-12T08:30:00Z"],
+  [true,"2026-11-12T07:59:59Z"],
  ]){
   const row={...candidate,slot_hours:20,media_key:null,
    customer_texts:["Can you explain how the assessment works?"],
@@ -499,7 +499,8 @@ test("20h AI unavailable still offers consent only for new verified ads",async()
   assert.equal(result.accepted,1);
   const saved=f.calls.find(x=>x.save)?.save;
   assert.match(saved[2],/first assessment/);
-  assert.equal(saved[2].includes("I agree to receive WhatsApp follow-ups"),shouldInvite);
+  assert.doesNotMatch(saved[2],/I agree to receive WhatsApp follow-ups|若希望之后6天内继续收到/);
+  assert.equal(f.calls.find(x=>x.send)?.send?.interactiveButtons,undefined);
   assert.equal(f.calls.filter(x=>x.save).length,1);
   assert.equal(f.sends,1);
  }
@@ -794,8 +795,7 @@ test("a silent 131060 customer receives the text-only 2h, 6h and 20h reminders, 
  }
 });
 
-test("Neutro 20h text-only follow-up carries a sender-bound one-tap opt-in",async()=>{
- const consent=require("../src/utils/neutroGeneralFollowupConsent");
+test("Neutro 20h text-only follow-up does not request a six-day opt-in",async()=>{
  const envGeneral={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
@@ -811,16 +811,14 @@ test("Neutro 20h text-only follow-up carries a sender-bound one-tap opt-in",asyn
  assert.equal(result.accepted,1);
  const saved=f.calls.find(x=>x.save).save;
  const sent=f.calls.find(x=>x.send).send;
- assert.equal(saved[8].whatsappTemplate.generalConsentButton,true);
- const language=saved[8].whatsappTemplate.generalConsentLanguage;
- assert.ok(["zh","en","ms"].includes(language));
- assert.ok(saved[2].includes(consent.SENTENCES[language]));
- assert.deepEqual(sent.interactiveButtons,consent.consentButtons(912,language));
+ assert.equal(saved[8].whatsappTemplate.generalConsentButton,undefined);
+ assert.equal(saved[8].whatsappTemplate.generalConsentLanguage,undefined);
+ assert.doesNotMatch(saved[2],/我同意通过 WhatsApp 接收|I agree to receive WhatsApp follow-ups|若希望之后6天内继续收到/);
+ assert.equal(sent.interactiveButtons,undefined);
  assert.equal(sent.dispatchTransport,undefined);
 });
 
-test("Neutro 6h approved treatment video keeps its media and complete consent caption",async()=>{
- const consent=require("../src/utils/neutroGeneralFollowupConsent");
+test("Neutro 6h approved treatment video keeps its media without an opt-in caption",async()=>{
  const envGeneral={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
@@ -849,7 +847,7 @@ test("Neutro 6h approved treatment video keeps its media and complete consent ca
     sendMediaById:async(type,id,options)=>{
      mediaCalls++;
      assert.equal(type,"video");assert.equal(id,"557");
-     assert.match(options.caption,/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
+     assert.doesNotMatch(options.caption,/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
      assert.ok(Buffer.byteLength(options.caption,"utf8")<=1024);
      return{success:true,wamid:"wamid.secondary-consent-video"};
     },
@@ -859,6 +857,6 @@ test("Neutro 6h approved treatment video keeps its media and complete consent ca
  assert.equal(result.accepted,1);
  assert.equal(mediaCalls,1);
  const saved=f.calls.find(x=>x.save).save;
- assert.equal(saved[8].whatsappTemplate.generalConsentButton,false);
- assert.match(saved[2],/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
+ assert.equal(saved[8].whatsappTemplate.generalConsentButton,undefined);
+ assert.doesNotMatch(saved[2],/我同意通过 WhatsApp 接收 Neutro Sense TCM/);
 });
