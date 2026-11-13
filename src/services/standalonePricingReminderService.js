@@ -90,6 +90,11 @@ function select(candidate,options){
       serviceAliases:clinicConfig.serviceAliases||[],
     })).filter(Boolean).map(value=>String(value).normalize("NFKC").toLowerCase()));
   if(named.size!==1)return {offers:[],reason:"ambiguous_or_missing_customer_treatment"};
+  // Refuse a different or stale CRM treatment even when an old marketing
+  // permission exists. Pricing must match the newly selected treatment AND
+  // the current lead carrying the customer-authored consent evidence.
+  if([...named][0]!==String(candidate.treatment_interest||"").normalize("NFKC").trim().toLowerCase())
+    return {offers:[],reason:"consent_treatment_mismatch"};
   const language=detectConversationLanguage(customerTexts,"zh");
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
