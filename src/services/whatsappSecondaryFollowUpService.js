@@ -7,7 +7,8 @@
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
-const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
+const {serviceReplyAnchorSql,gentleStaffQuestionNudge,staffQuestionSql,
+ staffPendingSql,staffBookingCoordinationSql}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
@@ -184,6 +185,17 @@ const PREVIOUS_STEP_SQL=`
               AND human_between.role='assistant'
               AND human_between.sent_by_username IS NOT NULL
               AND human_between.is_automated_follow_up IS DISTINCT FROM TRUE
+              -- Forwarded photos and routine messages do not cancel previously
+              -- accepted follow-up stages across a fresh customer reply.
+              AND human_between.is_forwarded IS DISTINCT FROM TRUE
+              AND COALESCE(human_between.whatsapp_customer_mutation,'')=''
+              AND human_between.content NOT LIKE '🗑️ %'
+              AND (human_between.media_mime_type IS NULL
+                OR human_between.media_mime_type NOT LIKE 'image/%')
+              -- An actual staff question, pending action or booking still blocks.
+              AND (${staffQuestionSql("human_between")}
+                OR ${staffPendingSql("human_between")}
+                OR ${staffBookingCoordinationSql("human_between")})
               AND human_between.created_at>=earlier.completed_at
               AND human_between.created_at<=inbound.created_at
           )
@@ -381,6 +393,27 @@ const MANUAL_SERVICE_CONTINUATION_SQL=String.raw`
  )
 `;
 
+// A staff-delivered video makes the automatic service step text-only.
+// Forwarded Before & After photos do not suppress the follow-up.
+function deliveredStaffVideoSql(contactSql,conversationSql,afterSql){
+ return `EXISTS (
+   SELECT 1 FROM messages staff_video
+   JOIN whatsapp_sender_message_context staff_video_context
+     ON staff_video_context.message_id=staff_video.id
+     AND staff_video_context.conversation_id=${conversationSql}
+   WHERE staff_video.contact_id=${contactSql}
+     AND staff_video.role='assistant'
+     AND staff_video.sent_by_username IS NOT NULL
+     AND staff_video.sent_by_username<>'Follow-up automation'
+     AND staff_video.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff_video.whatsapp_message_id IS NOT NULL
+     AND staff_video.delivery_status IN ('sent','delivered','read')
+     AND staff_video.media_mime_type LIKE 'video/%'
+     AND staff_video.created_at>=${afterSql}
+ )`;
+}
+const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} AS allowed`;
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -397,6 +430,7 @@ const CANDIDATES_SQL=`
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
    lead.marketing_consent AS lead_marketing_consent,
+   ${deliveredStaffVideoSql('c.id','sc.id','inbound.created_at')} AS staff_video_sent,
    EXISTS (
      SELECT 1 FROM whatsapp_free_entry_referrals r
      JOIN messages ad ON ad.id=r.origin_message_id
@@ -576,14 +610,8 @@ const CANDIDATES_SQL=`
    -- sender-specific step to have been accepted, not merely scheduled.
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
-   AND NOT EXISTS (
-     SELECT 1 FROM messages human
-     WHERE human.contact_id=c.id AND human.role='assistant'
-       AND human.sent_by_username IS NOT NULL
-       AND (human.created_at,human.id)>(first_reply.at,first_reply.id)
-       AND COALESCE(human.whatsapp_customer_mutation,'')=''
-       AND human.content NOT LIKE '🗑️ %'
-   )
+   -- Routine staff information and forwards do not cancel AI-owned follow-ups.
+   -- Staff questions, pending bookings and explicit takeover remain gated above.
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts previous
      WHERE previous.sender_id=sa.id AND previous.contact_id=c.id
@@ -691,14 +719,8 @@ const RECHECK_SQL=`
          OR newer.content NOT LIKE
             '📎 [% sent a WhatsApp message that could not be displayed]')
    )
-   AND NOT EXISTS(
-     SELECT 1 FROM messages human
-     WHERE human.contact_id=c.id AND human.role='assistant'
-       AND human.sent_by_username IS NOT NULL
-       AND (human.created_at,human.id)>(first_reply.at,first_reply.id)
-       AND COALESCE(human.whatsapp_customer_mutation,'')=''
-       AND human.content NOT LIKE '🗑️ %'
-   )
+   -- Routine staff information and forwards do not cancel AI-owned follow-ups.
+   -- Staff questions, pending bookings and explicit takeover remain gated above.
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
    AND (rule.slot_hours<>20 OR
        ${SEQUENCE_DUE_SQL} < inbound.created_at + INTERVAL '24 hours')
@@ -791,9 +813,10 @@ async function runOnce({
         ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
+    const staffVideoSent=candidate.staff_video_sent===true;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && !generalOnly && !candidate.staff_reply &&
+    if(candidate.media_key && !staffVideoSent && !generalOnly && !candidate.staff_reply &&
        !candidate.recovery_no_selection &&
        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
@@ -808,6 +831,7 @@ async function runOnce({
     attempted++;
     let messageId=null;
     let phase="initial_recheck";
+    let checkingVideo=false;
     const fail=async(code)=>{
       // Before a message is saved, no provider send is attempted. Keep that
       // one-shot slot blocked without labelling it a possibly delivered
@@ -832,21 +856,27 @@ async function runOnce({
         originalAdsOnlyCutoff(env),
         serviceFollowupParityActivation(env),
       ]);
-      return result.rows?.[0]?.allowed===true;
+      if(result.rows?.[0]?.allowed!==true)return false;
+      if(!checkingVideo)return true;
+      const evidence=await database.query(RECENT_STAFF_VIDEO_SQL,[
+        candidate.contact_id,candidate.conversation_id,candidate.inbound_at,
+      ]);
+      return evidence.rows?.[0]?.allowed===true;
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
-      const selectedVideo=!candidate.recovery_no_selection &&
+      const selectedVideo=!staffVideoSent && !candidate.recovery_no_selection &&
         !candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=(generalOnly || candidate.staff_reply ||
+      const key=(staffVideoSent || generalOnly || candidate.staff_reply ||
         candidate.recovery_no_selection) ? null
         : candidate.media_key || selectedVideo?.mediaKey || null;
+      checkingVideo=Boolean(key);
       const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
       const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
       const mediaFilename=key ? (candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename) : null;
@@ -1002,7 +1032,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
- CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
+ CANDIDATES_SQL,RECHECK_SQL,RECENT_STAFF_VIDEO_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
  serviceFollowupParityActivation,runOnce,
  nextPotentialDueAt,start,stop,
 };

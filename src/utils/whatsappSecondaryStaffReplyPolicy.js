@@ -33,13 +33,26 @@ function staffPendingSql(alias){
  return `COALESCE(${alias}.content,'') ~* '(我(再|会|會|帮|幫)(去)?(查|确认|確認|回复|回覆|联系|聯繫)|等我(们|們)?(查|确认|確認|回复|回覆)|稍后(回复|回覆)|查好(再|后|後)|let me (check|confirm|verify)|i( will|.ll) (check|confirm|get back)|we( will|.ll) (check|confirm|get back)|waiting for (staff|doctor)|saya (semak|akan semak)|kami (semak|akan semak)|booking confirmed|appointment confirmed|booked for|confirmed for|deposit (paid|received)|payment received|已预约|已預約|预约成功|預約成功|已安排时间|已安排時間|确认预约|確認預約|已收订金|已收訂金|投诉|投訴|complaint|refund request|medical emergency)'`;
 }
 
+// Keep active staff appointment coordination separate from routine media.
+function staffBookingCoordinationSql(alias){
+ return `(
+  COALESCE(${alias}.content,'') ~* '(appointment[[:space:]]+(confirmed|scheduled|at|on)|booking[[:space:]]+(confirmed|for|at|on)|reschedul(e|ing)|your[[:space:]]+slot|please[[:space:]]+book[[:space:]]+with[[:space:]]+me|book[[:space:]]+with[[:space:]]+(me|us)|boleh[[:space:]]+buat[[:space:]]+tempahan|请跟我预约|請跟我預約|跟我预约|跟我預約|预约在|預約在|约在|約在|预约时间|預約時間|已安排时间|已安排時間|确认预约|確認預約|确认时段|確認時段)'
+  OR (
+    COALESCE(${alias}.content,'') ~* '(tomorrow|tmr|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|esok|明天|后天|後天|星期[一二三四五六日天]|[这這本下]?[周週][一二三四五六日天])'
+    AND COALESCE(${alias}.content,'') ~* '(([01]?[0-9]|2[0-3])[:.][0-5][0-9]|(0?[1-9]|1[0-2])[[:space:]]*(am|pm)|([早上下午晚上]|上午|下午)[[:space:]]*[0-9一二三四五六七八九十]{1,3}[点點]|pukul[[:space:]]*[0-9]{1,2})'
+    AND COALESCE(${alias}.content,'') ~* '(come|visit|available|booking|appointment|slot|boleh|datang|安排|预约|預約|可以|方便|能来|能來)'
+    AND COALESCE(${alias}.content,'') !~* '(promo|promotion|offer[[:space:]]+(ends?|expires?|valid)|营业|營業|优惠|優惠|促销|促銷|截止|到期)'
+  )
+ )`;
+}
+
 function serviceReplyAnchorSql(){
  return `
  JOIN LATERAL (
   SELECT reply.id,reply.created_at AS at,reply.content AS text,
     (reply.sent_by_username IS NOT NULL) AS staff_reply,
     (reply.sent_by_username IS NOT NULL AND ${staffQuestionSql("reply")}) AS staff_question,
-    (reply.sent_by_username IS NOT NULL AND ${staffPendingSql("reply")}) AS staff_pending_action
+    (reply.sent_by_username IS NOT NULL AND (${staffPendingSql("reply")} OR ${staffBookingCoordinationSql("reply")})) AS staff_pending_action
   FROM messages reply
   JOIN whatsapp_sender_message_context reply_context
     ON reply_context.message_id=reply.id AND reply_context.conversation_id=sc.id
@@ -51,10 +64,14 @@ function serviceReplyAnchorSql(){
       reply.sent_by_username IS NULL
       AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
     ) OR ${verifiedStaffReplySql("reply","sa")})
-  ORDER BY (reply.sent_by_username IS NOT NULL) DESC,
+  -- Preserve original AI timing for routine staff text; staff questions and
+  -- booking or pending actions still take priority.
+  ORDER BY
+    (reply.sent_by_username IS NOT NULL AND
+      (${staffQuestionSql("reply")} OR ${staffPendingSql("reply")} OR ${staffBookingCoordinationSql("reply")})) DESC,
+    (reply.sent_by_username IS NULL) DESC,
     CASE WHEN reply.sent_by_username IS NOT NULL THEN reply.created_at END DESC,
-    CASE WHEN reply.sent_by_username IS NULL THEN reply.created_at END ASC,
-    reply.id DESC LIMIT 1
+    reply.created_at ASC,reply.id DESC LIMIT 1
  ) first_reply ON TRUE
 `;
 }
@@ -125,5 +142,5 @@ function gentleStaffQuestionNudge(language){
 }
 
 module.exports={verifiedStaffReplySql,staffQuestionSql,staffPendingSql,
- serviceReplyAnchorSql,marketingReplyAnchorSql,latestUnresolvedStaffSql,
+ staffBookingCoordinationSql,serviceReplyAnchorSql,marketingReplyAnchorSql,latestUnresolvedStaffSql,
  recentStaffReplySql,gentleStaffQuestionNudge};
