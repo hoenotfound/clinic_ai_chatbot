@@ -6,8 +6,6 @@
 // A claimed slot is one-shot even after timeout, worker crash or uncertain
 // provider acceptance. Nothing sends while either flag or rules are disabled.
 const {pool}=require("../db/db");
-const {invitationText,consentButtons}=require("../utils/neutroGeneralFollowupConsent");
-const generalSixDay=require("./neutroSecondaryGeneralMarketingSql");
 const {temporaryStaffConversationSql}=require('../utils/temporaryStaffConversation');
 const {serviceReplyAnchorSql,gentleStaffQuestionNudge}=require("../utils/whatsappSecondaryStaffReplyPolicy");
 const {pendingCancellationFollowupAllowedSql}=require("../utils/appointmentCancellationSafety");
@@ -899,20 +897,8 @@ async function runOnce({
           aiMode=personalized.mode;
         }
       }
-      // Consent is never inferred from a Meta ad or a 131060 placeholder.
-      // Include the exact optional invitation in 6h text OR video captions,
-      // and at 20h for customers who have not opted in. A sender-bound,
-      // provider-confirmed interactive button is offered only for text sends.
-      const offerGeneralConsent=(slot===6 || slot===20) &&
-        generalSixDay.enabled(env) &&
-        new Date(candidate.inbound_at).getTime()>=
-          new Date(generalSixDay.activation(env)).getTime() &&
-        candidate.lead_marketing_consent!=="opted_in" &&
-        (candidate.recovery_no_selection===true || candidate.verified_meta_ad===true);
-      if(offerGeneralConsent){
-        outboundText=invitationText(outboundText,replyLanguage,{video:Boolean(key)});
-      }
-      const generalConsentButton=offerGeneralConsent && !key && outboundText.length<=1024;
+      // Keep service-window reminders focused on the customer's enquiry.
+      // The marketing sender must still verify consent separately.
       if(!await preSendCheck()){
         await fail("secondary_followup_policy_changed_after_ai");continue;
       }
@@ -931,8 +917,7 @@ async function runOnce({
             slotHours:slot,anchorMessageId:candidate.inbound_id,
             treatmentInterest:confirmedTreatment||null,
             recoveryNoSelection:candidate.recovery_no_selection===true,
-            generalConsentButton,
-            generalConsentLanguage:generalConsentButton?(replyLanguage||"zh"):null},
+},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
           initialDeliveryStatus:"unknown",
@@ -947,7 +932,6 @@ async function runOnce({
       const result=await sendText({
         contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
-        ...(generalConsentButton?{interactiveButtons:consentButtons(saved.id,replyLanguage||"zh")}:{}),
         ...(key?{dispatchTransport:async transport=>dispatchSecondaryFollowUpVideo({
           transport,mediaKey:key,mimeType:mediaMime,filename:mediaFilename,
           caption:outboundText,env,storage,preSendCheck,liveVideoApproval,
