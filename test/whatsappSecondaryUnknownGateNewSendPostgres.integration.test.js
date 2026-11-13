@@ -151,8 +151,10 @@ test("new-send bypass never ignores fresh, accepted, contradictory or globally-a
       "WHERE reservation_id=$1",[s.original.reservationId]);
     // The sender-wide alarm is an absolute stop even if this contact's
     // former unknown hold is otherwise eligible for a new message.
-    await db.query("INSERT INTO whatsapp_sender_billing_alarms(sender_id) VALUES($1)",
-      [s.sender]);
+    await db.query(
+      "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason,latest_wamid_hash) "+
+      "VALUES($1,'provider_delivery_failed',$2)",
+      [s.sender,"a".repeat(64)]);
     assert.equal((await request()).code,"secondary_billing_sender_alarm");
     assert.equal((await db.query(
       "SELECT COUNT(*)::int AS count FROM whatsapp_sender_unknown_gate_new_sends"
