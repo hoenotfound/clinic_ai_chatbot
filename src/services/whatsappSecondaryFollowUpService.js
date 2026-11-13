@@ -577,7 +577,7 @@ const CANDIDATES_SQL=`
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
       OR ${RECOVERY_NO_SELECTION_SQL})
-   AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -691,7 +691,7 @@ const RECHECK_SQL=`
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
       OR ${RECOVERY_NO_SELECTION_SQL})
-   AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
