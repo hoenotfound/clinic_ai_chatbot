@@ -46,14 +46,23 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     [msg,conversation]);
   const activatedAt=new Date(Date.now()-23*3600000).toISOString();
   const opts={senderKeys:["neutro_secondary"],activatedAt};
+  assert.equal((await repo.listCandidates(opts,db)).length,1,
+    "a genuine in-window enquiry and accepted business reply needs no extra marketing opt-in");
+  await db.query(
+    "UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await repo.listCandidates(opts,db)).length,0,
-    "no unsolicited promotional price without verified marketing permission");
+    "a recorded marketing opt-out always blocks automated pricing");
+  await db.query(
+    "UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=$1",[contact]);
   const lead=(await db.query(
     "INSERT INTO leads(contact_id,treatment_interest,marketing_consent) "+
     "VALUES($1,'骨盆调理','opted_in') RETURNING id",[contact])).rows[0].id;
   await db.query(
-    "UPDATE contacts SET whatsapp_opt_in_at=NOW()-INTERVAL '23 hours', "+
-    "whatsapp_opt_in_source='customer_whatsapp_text' WHERE id=$1",[contact]);
+    "UPDATE leads SET marketing_consent='opted_out' WHERE id=$1",[lead]);
+  assert.equal((await repo.listCandidates(opts,db)).length,0,
+    "a lead-specific opt-out blocks even without contact-level opt-out");
+  await db.query(
+    "UPDATE leads SET marketing_consent='opted_in' WHERE id=$1",[lead]);
   const consent=(await db.query(
     "INSERT INTO whatsapp_marketing_consent_events"+
     "(contact_id,lead_id,source,message_id,provider_message_id,message_text,"+
@@ -63,8 +72,8 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
     "'9D 逆龄抗衰','MARKETING',m.source_created_at,'customer_whatsapp_text' "+
     "FROM messages m WHERE m.id=$3 RETURNING id",
     [contact,lead,inbound])).rows[0].id;
-  assert.equal((await repo.listCandidates(opts,db)).length,0,
-    "wrong-service consent is not permission for pelvic prices");
+  assert.equal((await repo.listCandidates(opts,db)).length,1,
+    "unrelated consent records do not block a genuine current inquiry");
   await db.query("UPDATE whatsapp_marketing_consent_events SET consent_service='骨盆调理' WHERE id=$1",[consent]);
   let rows=await repo.listCandidates(opts,db);
   assert.equal(rows.length,1);
@@ -90,7 +99,7 @@ test("standalone pricing uses migrated sender receipts, safe retry and captionle
   const first=await repo.claim(c,a,db);
   assert.ok(first?.id,"one-shot A claim must be persisted");
   assert.equal(await repo.stillEligible(c,first.id,opts,{...a,serviceName:"9D 逆龄抗衰"},db),false,
-    "a changed treatment cannot reuse old consent at send time");
+    "the final send check must match the exactly claimed treatment");
   assert.equal(await repo.stillEligible(c,first.id,opts,a,db),true);
   const deferred=await repo.deferUnsent(c,first,"secondary_billing_previous_send_unresolved",db);
   assert.equal(deferred.row.id,first.id);
