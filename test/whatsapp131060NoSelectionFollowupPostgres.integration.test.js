@@ -103,7 +103,9 @@ test("migrated PostgreSQL permits neutral 131060 no-selection follow-ups only af
   const afterStaff=await candidates();
   assert.equal(afterStaff.length,1,"a sender-verified staff explanation keeps neutral follow-up eligible");
   assert.equal(afterStaff[0].recovery_no_selection,true);
-  assert.equal(afterStaff[0].staff_reply,true);
+  assert.equal(afterStaff[0].staff_reply,false,
+    "ordinary staff explanations preserve the original AI recovery anchor");
+  assert.match(afterStaff[0].first_reply_text,/Hi～欢迎来到 Neutro Sense/);
 
   await db.query("UPDATE messages SET content=$2 WHERE id=$1",
     [staff,"请问您想了解哪方面的护理呢？"]);

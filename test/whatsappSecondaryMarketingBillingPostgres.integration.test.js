@@ -319,6 +319,24 @@ test("approved secondary marketing billing requires one claimed attempt for each
     "WHERE contact_id=$1 AND slot_hours=2",[returningContact])).rows[0].n,1,
    "inheritance must never send a second 2h media message");
 
+  // Routine forwarded photos do not break previously accepted progress.
+  const photoId=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,sent_by_username,is_forwarded,media_mime_type,created_at) "+
+    "VALUES($1,'assistant','Before & After result','wamid.staff.photo','staff.test',TRUE,'image/jpeg',"+
+    "NOW()-INTERVAL '45 minutes') RETURNING id",[returningContact])).rows[0].id;
+  assert.ok((await prerequisite(6)).completed_at,
+    "forwarded result photos do not cancel the accepted earlier service stage");
+  await db.query("DELETE FROM messages WHERE id=$1",[photoId]);
+
+  // Routine staff information is also not a takeover or unresolved booking.
+  const infoId=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,sent_by_username,created_at) "+
+    "VALUES($1,'assistant','Our normal treatment takes around 90 minutes','wamid.staff.info','staff.test',"+
+    "NOW()-INTERVAL '45 minutes') RETURNING id",[returningContact])).rows[0].id;
+  assert.ok((await prerequisite(6)).completed_at,
+    "general staff information does not cancel the accepted earlier stage");
+  await db.query("DELETE FROM messages WHERE id=$1",[infoId]);
+
   // Staff intervention between accepted 2h and the new customer inbound
   // cannot be silently bypassed by inherited sequence history.
   const staffId=(await db.query(
