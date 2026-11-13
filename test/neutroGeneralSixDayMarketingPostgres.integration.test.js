@@ -233,13 +233,10 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "(sender_id,contact_id,anchor_message_id,slot_hours,status) "+
     "VALUES($1,$2,$3,48,'claimed') RETURNING id",
     [sender,contact,ad])).rows[0].id;
-  // The final recheck deliberately uses the actual server clock, unlike the
-  // synthetic future-time candidate search. Never expect a paid template send
-  // during Malaysia quiet hours.
-  const localHour=(new Date().getUTCHours()+8)%24;
-  const canSendNow=localHour>=7 && localHour<=23;
-  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,canSendNow?1:0,
-    "claimed generic marketing follow-up respects consent and current quiet hours");
+  // RECHECK_SQL uses the same explicit $4 clock as the candidate query,
+  // so both should agree at the simulated permitted sending time.
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
+    "claimed generic marketing follow-up preserves sender and consent checks");
   // A reply arriving between the one-shot claim and the provider call must
   // also cancel the template during the final sender-bound recheck.
   const justReplied=(await db.query(
@@ -253,8 +250,8 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "new customer question prevents send after the claim");
   await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[justReplied]);
   await db.query("DELETE FROM messages WHERE id=$1",[justReplied]);
-  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,canSendNow?1:0,
-    "ordinary eligibility returns except while current quiet hours block sending");
+  assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
+    "ordinary eligibility returns after the active-message fixture is removed");
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "fresh marketing opt-out cancels the claimed generic send");
