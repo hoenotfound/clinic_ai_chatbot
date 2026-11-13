@@ -87,6 +87,13 @@ test("a signed failed receipt can release only the exact gate after independent 
  assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_followup_attempts")));
  assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_marketing_followup_attempts")));
  assert.ok(f.calls.find(x=>x.sql.includes("secondary_reviewed_unknown_billing_hold")));
+ const cleared=f.calls.find(x=>x.sql.includes("UPDATE contacts c SET"));
+ assert.ok(cleared,"release attempts only exact-pinned delivery attention cleanup");
+ assert.ok(cleared.sql.includes("c.delivery_attention_message_id=$3"));
+ assert.ok(cleared.sql.includes("other.state<>'idle'"));
+ assert.ok(cleared.sql.includes("ai_review_items"));
+ assert.deepEqual(cleared.args,[9001,2,19111]);
+ assert.equal(result.deliveryAttentionResolved,true);
  assert.equal(f.calls.some(x=>x.sql.includes("messages SET")),false);
 });
 test("an unconfirmed send with no WAMID requires separate human review",async()=>{
