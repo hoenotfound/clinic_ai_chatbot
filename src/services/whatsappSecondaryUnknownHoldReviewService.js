@@ -146,7 +146,7 @@ async function releaseReviewedSecondaryUnknownHold({
         "UPDATE "+ledger+" SET status='unknown', "+
         "error_code='secondary_reviewed_unknown_billing_hold' "+
         "WHERE sender_id=$1 AND contact_id=$2 AND message_id=$3 "+
-        "AND status='accepted'",
+        "AND status IN ('claimed','accepted')",
         [senderId,attempt.contact_id,attempt.message_id]);
     }
     // The original billing attempt intentionally stays UNKNOWN. Late
