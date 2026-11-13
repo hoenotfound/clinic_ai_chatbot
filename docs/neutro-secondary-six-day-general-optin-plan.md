@@ -1,6 +1,6 @@
 # Neutro Sense secondary WhatsApp: six-day follow-up redesign
 
-**Status:** Implementation prepared under PR #596. All twelve secondary-account MARKETING templates are approved. A separately approved billing and activation switch remains required; no customer sends or retrospective backfills are part of the implementation.
+**Status (13 Nov 2026):** Service-window consent invitations removed. Existing six-day MARKETING templates still require independently verified opt-in. All twelve secondary-account MARKETING templates are approved. A separately approved billing and activation switch remains required; no customer sends or retrospective backfills are part of the implementation.
 
 ## Objective
 
@@ -10,8 +10,8 @@ Increase eligible follow-up coverage for verified Meta ad leads and Meta error 1
 
 1. **0h:** Standard AI reply, or a fixed Meta 131060 recovery menu. No fabricated treatment.
 2. **2h and 6h:** Existing customer-service reminders, only in a live WhatsApp 24-hour window, respecting consent/opt-out/staff takeover/bookings.
-3. **6h and 20h:** Offer the *optional* written marketing invitation to verified fresh ad enquiries or 131060 recoveries whose lead has no marketing consent. At 6h include it in the existing reminder text or approved video caption; offer a one-tap opt-in button with text reminders. At 20h offer it again if still unconsented. Do not send extra standalone messages merely to request consent.
-4. **Consent:** The customer must reply with the complete affirmative sentence in Chinese, English or Malay, or tap the genuine sender-bound opt-in button on an interactive text reminder, after a delivered invitation. The verified inbound is stored as a new generic marketing consent event tied to the current contact/lead/provider WAMID. Pre-filled ads, generic 'yes', and silent contacts do not qualify.
+3. **6h and 20h:** Send only the ordinary service follow-up text or approved video, without a generic six-day consent invitation or interactive opt-in button. These service reminders never imply marketing permission.
+4. **Consent:** No automatic invitation is now appended to the service reminders. Previously delivered, sender-bound opt-in invitations remain verifiable for authentic customer replies; existing independently verified marketing consent and staff-reviewed evidence retain their current rules. Pre-filled ads, generic 'yes', and silent contacts do not qualify.
 5. **48h, 66h, Day4 and Day6:** The existing billable marketing sender now selects the pinned approved generic template only with separate, signed generic consent linked to the secondary contact and lead. Recheck consent, sender, status, signature, billing, staff ownership and due window before each provider call. A verified new customer message moves the next due time to 24h after that reply; each later stage waits at least 18h after the previous accepted marketing stage. The original verified enquiry remains the anchor and the 167-hour hard cutoff is unchanged, so a late reply may still leave too little time for all four stages. One-shot attempt ledger is shared with treatment-specific marketing to prevent duplicate slots. No backfills.
 6. **Unconsented/silent customers:** No paid marketing templates after the WhatsApp service window. Keep them in the staff Inbox for manual assessment without any automatic message.
 
@@ -37,10 +37,10 @@ Each stage is an **APPROVED MARKETING** template with a completely static body, 
 
 ## Button and delivery safeguards
 
-- Interactive consent is offered only as an existing 6h or 20h text reminder, not an extra outbound message. The button ID includes its saved outbound message ID and the customer language.
+- New 6h and 20h reminders do not attach any general consent button. Previously delivered buttons still require verification of their original message ID and customer language.
 - A button tap is recorded only from Meta's signed `interactive.button_reply` payload when the exact prompt is verified as sent/delivered/read on the active secondary sender, bound contact, and current open lead.
 - Typing a button label, sending `Yes`, replying to an unrelated prompt, reusing an imported chat, or tapping after an opt-out does not grant consent.
-- The 6h video remains a single approved media message with a bounded caption containing the full opt-in sentence, without a separate button or extra send.
+- The 6h video remains a single approved media message with its normal caption and no generic opt-in wording or extra send.
 - A paid marketing stage waits until 24h after the latest verified customer reply and at least 18h after the previous accepted stage. Only the scheduled stage moves; the campaign never backfills beyond 167h.
 - Meta can charge for template deliveries. Production activation and billing approval are separate operator-controlled settings and must not be inferred from template approval.
 

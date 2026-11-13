@@ -37,17 +37,12 @@ test("ad prefills, unsupported messages and ordinary acknowledgements are NEVER 
   assert.equal(consent.explicitGeneralFollowupConsent(text),null,text);
  }
 });
-test("secondary 6h text and 20h customer service slots can invite consent without granting marketing permission",()=>{
+test("secondary 6h and 20h service follow-ups never request generic marketing consent",()=>{
  const src=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  const inboundClaim=fs.readFileSync(path.join(__dirname,"../src/services/inboundMessageClaimService.js"),"utf8");
  const repoSrc=fs.readFileSync(path.join(__dirname,"../src/db/whatsappInboundConsentRepo.js"),"utf8");
- assert.match(src,/slot===6 \|\| slot===20/);
- assert.match(src,/generalSixDay\.enabled\(env\)/);
- assert.match(src,/candidate\.lead_marketing_consent!=="opted_in"/);
- assert.match(src,/candidate\.recovery_no_selection===true \|\|/);
- assert.match(src,/candidate\.verified_meta_ad===true/);
- assert.match(src,/invitationText\(outboundText,replyLanguage/);
- assert.match(src,/verified_meta_ad/);
+ assert.doesNotMatch(src,/invitationText|offerGeneralConsent|consentButtons|generalConsentButton/);
+ assert.match(src,/slot_hours/);
  assert.match(inboundClaim,/explicitGeneralFollowupConsent\(incoming\?\.text\)/);
  assert.match(repoSrc,/!isClickToWhatsApp/);
  assert.match(repoSrc,/sender_key='neutro_secondary'/);
@@ -57,9 +52,8 @@ test("secondary 6h text and 20h customer service slots can invite consent withou
  assert.match(repoSrc,/generalExplicit\?GENERAL_SCOPE:explicit\.scope/);
  assert.match(repoSrc,/generalExplicit\?GENERAL_SERVICE/);
  assert.doesNotMatch(service.CANDIDATES_SQL,/general_clinic_followups_and_related_offers/,
-  "service follow-ups do not claim any marketing permission");
+  "service follow-ups do not claim marketing permission");
 });
-
 
 test("a generic opt-in records only after a delivered secondary invitation, never from a prefilled ad",async()=>{
  const phrase=consent.SENTENCES.en;
