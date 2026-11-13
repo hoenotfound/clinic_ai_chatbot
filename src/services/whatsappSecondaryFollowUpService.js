@@ -28,6 +28,7 @@ const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
+const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
 
@@ -297,23 +298,7 @@ const CUSTOMER_FOLLOWUP_GUARD_SQL=String.raw`
 // An AI closing a remote customer's enquiry is stronger evidence than an
 // earlier treatment mention. Do not start or continue sales reminders after
 // a verified closing reply. A fresh inbound after the goodbye is a new cycle.
-const CLOSED_REMOTE_CONVERSATION_SQL=String.raw`
- AND NOT EXISTS(
-   SELECT 1 FROM messages closing_reply
-   JOIN whatsapp_sender_message_context closing_context
-     ON closing_context.message_id=closing_reply.id
-     AND closing_context.conversation_id=sc.id
-   WHERE closing_reply.contact_id=c.id AND closing_reply.role='assistant'
-     AND closing_reply.sent_by_username IS NULL
-     AND closing_reply.whatsapp_message_id IS NOT NULL
-     AND closing_reply.delivery_status IN ('sent','delivered','read')
-     AND (closing_reply.created_at,closing_reply.id)>(inbound.created_at,inbound.id)
-     AND COALESCE(closing_reply.content,'') ~*
-       '(柔佛|新山|johor|[[:<:]]jb[[:>:]]|一段距离|一段距離|too[[:space:]]+far)'
-     AND COALESCE(closing_reply.content,'') ~*
-       '(祝(你|您)(顺心|順心|愉快)|take[[:space:]]+care|semoga[[:space:]]+)'
- )
-`;
+const CLOSED_REMOTE_CONVERSATION_SQL=remoteConversationGoodbyeSql();
 // An explicit, sender-verified withdrawal or deferral blocks every reminder.
 const SECONDARY_DECISION_HOLD_SQL=`
  AND NOT EXISTS(
