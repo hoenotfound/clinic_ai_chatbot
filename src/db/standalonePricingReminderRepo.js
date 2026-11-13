@@ -25,7 +25,7 @@ WITH latest_inbound AS (
 SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
        c.whatsapp_sender_id,sa.sender_key AS whatsapp_sender_key,
        inbound.id AS inbound_id,inbound.created_at AS inbound_at,
-       inbound.source_at,lead.treatment_interest,
+       inbound.source_at,lead.id AS lead_id,lead.treatment_interest,
        verified_ad.ad_name AS ad_name,
        verified_ad.treatment_interest AS ad_treatment_interest,
        EXISTS (
@@ -263,6 +263,29 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
         AND NULLIF(BTRIM($8::text),'') IS NOT NULL
         AND LOWER(BTRIM($8::text))=
             LOWER(BTRIM(outbound.automated_follow_up_target_service))
+        -- Freeze the latest lead and its treatment at the candidate scan.
+        -- A staff edit or newly created lead after that scan invalidates the
+        -- already-claimed graphic, even when the customer's older message
+        -- and Meta ad still mention the original treatment.
+        AND (SELECT latest_lead.id FROM leads latest_lead
+             WHERE latest_lead.contact_id=c.id
+             ORDER BY latest_lead.created_at DESC,latest_lead.id DESC
+             LIMIT 1) IS NOT DISTINCT FROM $9::bigint
+        AND COALESCE((
+          SELECT LOWER(BTRIM(latest_lead.treatment_interest))
+          FROM leads latest_lead WHERE latest_lead.contact_id=c.id
+          ORDER BY latest_lead.created_at DESC,latest_lead.id DESC LIMIT 1
+        ),'')=COALESCE(LOWER(BTRIM($10::text)),'')
+        -- Re-read the same 15 customer messages at the final send boundary.
+        -- Edits, removals or newer user text must never retain a stale offer.
+        AND (SELECT COALESCE(
+          jsonb_agg(recent.content ORDER BY recent.created_at DESC,recent.id DESC),
+          '[]'::jsonb)
+          FROM (SELECT u.id,u.content,u.created_at FROM messages u
+                WHERE u.contact_id=c.id AND u.role='user'
+                  AND u.created_at>=inbound.created_at-INTERVAL '24 hours'
+                ORDER BY u.created_at DESC,u.id DESC LIMIT 15) recent
+        )=$11::jsonb
         AND ${followUpAttentionAllowedSql("c")}
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
         AND NOT EXISTS (
@@ -313,7 +336,9 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
               OR COALESCE(s.system_key,'') IN ('appointment_set','visited')))
     ) AS allowed
   `,[messageId,candidate.inbound_id,candidate.contact_id,activatedAt,
-      candidate.whatsapp_sender_id,senderKeys,offer?.identities||[],offer?.serviceName||""]);
+      candidate.whatsapp_sender_id,senderKeys,offer?.identities||[],offer?.serviceName||"",
+      candidate.lead_id??null,candidate.treatment_interest??null,
+      JSON.stringify(candidate.recent_customer_messages||[])]);
   return result.rows?.[0]?.allowed===true;
 }
 
@@ -496,6 +521,33 @@ async function listRecentStaffImages(candidate,database=pool){
   return result.rows||[];
 }
 
+// Existing secondary unknown outcome holds must NEVER be cleared or retried
+// by this reminder. Surface only verified owner-bound holds that are not
+// already displayed as staff attention, with no phone/token data returned.
+async function listUnresolvedSecondaryBillingHolds(database=pool){
+  const result=await database.query(`
+    SELECT g.owner_contact_id AS contact_id,g.message_id,
+      EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts signed
+        WHERE signed.sender_id=g.sender_id
+          AND signed.reservation_id=g.reservation_id
+          AND signed.matched=TRUE AND signed.delivery_status='failed')
+          AS signed_failed
+    FROM whatsapp_sender_billing_gates g
+    JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
+      AND sa.sender_key='neutro_secondary' AND sa.state='active'
+    JOIN contacts c ON c.id=g.owner_contact_id
+      AND c.whatsapp_sender_id=sa.id AND c.channel='whatsapp'
+    JOIN whatsapp_sender_billing_attempts attempt
+      ON attempt.sender_id=g.sender_id
+      AND attempt.reservation_id=g.reservation_id
+      AND attempt.contact_id=c.id AND attempt.message_id=g.message_id
+      AND attempt.state='unknown'
+    WHERE g.state='unknown' AND g.contact_id=c.id
+      AND c.needs_attention IS DISTINCT FROM TRUE
+    ORDER BY g.updated_at ASC LIMIT 25`);
+  return result.rows||[];
+}
+
 async function recordDecision(candidate,reason,database=pool){
   if(!candidate?.contact_id||!candidate?.inbound_id)return;
   const safe=String(reason||"unknown").slice(0,145);
@@ -507,4 +559,4 @@ async function recordDecision(candidate,reason,database=pool){
   );
   return result.rows?.length===1;
 }
-module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision,listRecentStaffImages};
+module.exports={ELIGIBLE_SQL,listCandidates,stillEligible,claim,claimAdditional,deferUnsent,resumeDeferred,recordDecision,listRecentStaffImages,listUnresolvedSecondaryBillingHolds};
