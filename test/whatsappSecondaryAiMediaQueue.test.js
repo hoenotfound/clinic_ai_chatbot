@@ -518,6 +518,7 @@ test("promotion supersession distinguishes continued pelvis questions from real 
   assert.match(promo,/stop\|unsubscribe\|opt/);
   assert.match(promo,/不用了|不需要了/);
   assert.match(promo,/其他疗程|another treatment/);
+  assert.match(promo,/谢谢|thank you|terima kasih/);
   assert.match(promo,/newer\.media_url IS NOT NULL/);
   assert.match(promo,/newer\.media_mime_type IS NOT NULL/);
   // Keep the result and promotion predicates identical across all three
