@@ -406,3 +406,56 @@ test("missing R2 source is a known pre-provider rejection, not an unknown delive
   assert.equal(missing.definitivelyRejected,true);
   assert.equal(cached.calls.send,0);
 });
+
+test("legacy cached secondary media IDs are codec-checked before any customer send",async()=>{
+ const env={...enabled,WHATSAPP_SECONDARY_VIDEO_CODEC_PREFLIGHT_ENABLED:"true"};
+ const f=setup({env});
+ f.storage.downloadMedia=async()=>{
+   f.calls.download++;
+   return Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000")]);
+ };
+ const fp="d".repeat(64);
+ let inspected=0;
+ const accepted=await dispatchSecondaryFollowUpVideo({
+   ...f.args,
+   verifyVideoBytes:async(bytes)=>{inspected++;return{ok:true};},
+   cacheFactory:()=>({
+     resolveMediaId:async()=>({kind:"ready",mediaId:"223344",cacheHit:true,fingerprint:fp}),
+     invalidateIfRejected:async()=>false,
+   }),
+ });
+ assert.equal(accepted.success,true);
+ assert.equal(inspected,1);
+ assert.equal(f.calls.download,1);
+ assert.equal(f.calls.upload,0);
+ assert.equal(f.calls.send,1);
+ const denied=setup({env});
+ denied.storage.downloadMedia=f.storage.downloadMedia;
+ const blocked=await dispatchSecondaryFollowUpVideo({
+   ...denied.args,
+   verifyVideoBytes:async()=>({ok:false,code:"sender_followup_video_codec_unsupported"}),
+   cacheFactory:()=>({
+     resolveMediaId:async()=>({kind:"ready",mediaId:"223355",cacheHit:true,fingerprint:"e".repeat(64)}),
+     invalidateIfRejected:async()=>false,
+   }),
+ });
+ assert.equal(blocked.code,"sender_followup_video_codec_unsupported");
+ assert.equal(blocked.definitivelyRejected,true);
+ assert.equal(denied.calls.send,0);
+ assert.equal(denied.calls.upload,0);
+});
+test("video codec failure before upload is a conclusive pre-provider rejection",async()=>{
+ const env={...enabled,WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED:"false",
+   WHATSAPP_SECONDARY_VIDEO_CODEC_PREFLIGHT_ENABLED:"true"};
+ const f=setup({env});
+ f.storage.downloadMedia=async()=>Buffer.concat([
+   Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000")]);
+ const result=await dispatchSecondaryFollowUpVideo({
+  ...f.args,
+  verifyVideoBytes:async()=>({ok:false,code:"sender_followup_video_codec_unsupported"}),
+ });
+ assert.equal(result.definitivelyRejected,true);
+ assert.equal(result.unknown,false);
+ assert.equal(f.calls.upload,0);
+ assert.equal(f.calls.send,0);
+});
