@@ -1058,3 +1058,128 @@ test("automated secondary MARKETING template settles only matching signed market
    [ids.ariel])).rows[0].n,1);
  });
 });
+
+
+test("signed failed secondary receipt stops a claimed follow-up, alerts once, and preserves its Meta code after late sent",{
+ skip:!connectionString,
+},async()=>{
+ await withSchema(async({db,database})=>{
+  const {ids,contacts,messages,reservation}=await seededSend(db,database);
+  const c=contacts[1].id, m=messages[1].id;
+  const conversation=(await db.query(
+    "SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",
+    [ids.ariel,c])).rows[0].id;
+  const inbound=(await db.query(
+    "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) "+
+    "VALUES($1,'user','Interested in a clinic service','wamid.test-customer') RETURNING id",
+    [c])).rows[0].id;
+  await db.query(
+    "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+    [inbound,conversation]);
+  const followup=(await db.query(
+    "INSERT INTO whatsapp_sender_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours,message_id,status) "+
+    "VALUES($1,$2,$3,6,$4,'claimed') RETURNING id",
+    [ids.ariel,c,inbound,m])).rows[0].id;
+  const alerts=[];
+  const failed=await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{
+      status:"failed",errors:[{code:131052,title:"Private customer details"}],
+    })),
+    {database,env,onFailureAttention:async item=>alerts.push(item)}
+  );
+  assert.equal(failed.matched,1);
+  assert.equal(failed.held,1);
+  assert.equal(alerts.length,1);
+  assert.equal(alerts[0].contactId,c);
+  assert.equal(alerts[0].messageId,m);
+  assert.match(alerts[0].reason,/Meta code 131052/);
+  assert.doesNotMatch(alerts[0].reason,/Private customer/);
+  const before=(await db.query(
+    "SELECT delivery_status,delivery_error FROM messages WHERE id=$1",[m])).rows[0];
+  assert.equal(before.delivery_status,"failed");
+  assert.match(before.delivery_error,/code 131052/);
+  const slot=(await db.query(
+    "SELECT status,error_code FROM whatsapp_sender_followup_attempts WHERE id=$1",
+    [followup])).rows[0];
+  assert.equal(slot.status,"unknown");
+  assert.equal(slot.error_code,"secondary_signed_meta_delivery_failed");
+  const attemptedLateAccept=await db.query(
+    "UPDATE whatsapp_sender_followup_attempts SET status='accepted' "+
+    "WHERE id=$1 AND status='claimed'",[followup]);
+  assert.equal(attemptedLateAccept.rowCount,0);
+  const late=await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{status:"sent",timestamp:"1792657900"})),
+    {database,env,onFailureAttention:async item=>alerts.push(item)}
+  );
+  assert.equal(late.matched,1);
+  const after=(await db.query(
+    "SELECT delivery_status,delivery_error FROM messages WHERE id=$1",[m])).rows[0];
+  assert.deepEqual(after,before,"late sent must preserve the failed status AND Meta code");
+  assert.equal(alerts.length,1,"no duplicate failure attention for sent receipt");
+  assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_gates "+
+    "WHERE sender_id=$1 AND owner_contact_id=$2",[ids.ariel,c]
+  )).rows[0].state,"unknown");
+  assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+    [reservation.reservationId])).rows[0].state,"unknown");
+ });
+});
+
+test("two-reviewer settlement releases only the confirmed secondary gate and its matching attention",{
+ skip:!connectionString,
+},async()=>{
+ const manual=require("../src/services/whatsappSecondaryUnknownHoldReviewService");
+ await withSchema(async({db,database})=>{
+  const {ids,contacts,messages,reservation}=await seededSend(db,database);
+  const contactId=contacts[1].id,messageId=messages[1].id;
+  await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{status:"failed",errors:[{code:131052}]})),
+    {database,env});
+  await db.query(
+    "UPDATE contacts SET needs_attention=TRUE, "+
+    "attention_reason='Delivery failed: exact reviewed WhatsApp send', "+
+    "delivery_attention_message_id=$2 WHERE id=$1",
+    [contactId,messageId]);
+  await db.query(
+    "UPDATE whatsapp_sender_accounts SET sender_key='neutro_secondary' WHERE id=$1",
+    [ids.ariel]);
+  const manualEnv={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    WHATSAPP_SECONDARY_MANUAL_UNKNOWN_HOLD_RELEASE_ENABLED:"true"};
+  const result=await manual.releaseReviewedSecondaryUnknownHold({
+    reservationId:reservation.reservationId,releaseBasis:"signed_failed",
+    firstReviewer:"test_operator_one",secondReviewer:"test_operator_two",
+    evidenceTicket:"TEST_20261113_VERIFIED",
+    billingHubNoChargeChecked:true,businessAppReviewed:true,
+    oldMessageRetryProhibited:true,
+  },{database,env:manualEnv});
+  assert.equal(result.gateReleased,true);
+  assert.equal(result.deliveryAttentionResolved,true);
+  assert.equal(result.sendAuthorized,false);
+  assert.equal(result.oldMessageRetryAllowed,false);
+  assert.deepEqual((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_gates "+
+    "WHERE sender_id=$1 AND owner_contact_id=$2",
+    [ids.ariel,contactId])).rows.map(x=>x.state),["idle"]);
+  assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+    [reservation.reservationId])).rows[0].state,"unknown");
+  const restored=(await db.query(
+    "SELECT needs_attention,attention_reason,delivery_attention_message_id "+
+    "FROM contacts WHERE id=$1",[contactId])).rows[0];
+  assert.equal(restored.needs_attention,false);
+  assert.equal(restored.attention_reason,null);
+  assert.equal(restored.delivery_attention_message_id,null);
+  const history=await db.query(
+    "SELECT first_reviewer,second_reviewer,release_basis "+
+    "FROM whatsapp_sender_unknown_hold_releases WHERE reservation_id=$1",
+    [reservation.reservationId]);
+  assert.equal(history.rowCount,1);
+  assert.notEqual(history.rows[0].first_reviewer,history.rows[0].second_reviewer);
+  assert.equal((await db.query(
+    "SELECT delivery_status FROM messages WHERE id=$1",
+    [messageId])).rows[0].delivery_status,"failed",
+    "manual review must not replay or rewrite the failed message");
+ });
+});
