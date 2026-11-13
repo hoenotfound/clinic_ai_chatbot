@@ -110,7 +110,12 @@ async function dispatchSecondaryFollowUpVideo({
       return {...failedCacheUpload,success:false,mediaId:null,
         code:"sender_followup_video_upload_rejected"};
     }
-    if (cached?.kind === "download_failed" || cached?.kind === "upload_failed") {
+    if(cached?.kind==="download_failed") {
+      // The cached source download failed BEFORE a Meta /media or /messages
+      // request. It cannot be a delivered video, so release this gate.
+      return rejectedPreparation("sender_followup_media_unavailable");
+    }
+    if(cached?.kind==="upload_failed") {
       // A shared/ambiguous upload must never be repeated for this old slot.
       return uncertain("sender_followup_cached_video_preparation_unconfirmed");
     }
@@ -123,11 +128,11 @@ async function dispatchSecondaryFollowUpVideo({
       try {
         bytes = await storage.downloadMedia(mediaKey, { maxBytes: MAX_VIDEO_BYTES });
       } catch {
-        return uncertain("sender_followup_media_unavailable");
+        return rejectedPreparation("sender_followup_media_unavailable");
       }
     }
     if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_VIDEO_BYTES) {
-      return uncertain("sender_followup_media_unavailable");
+      return rejectedPreparation("sender_followup_media_unavailable");
     }
     if(checkMp4 && !validMp4Container(bytes)) {
       return rejectedPreparation("sender_followup_video_invalid_mp4");
