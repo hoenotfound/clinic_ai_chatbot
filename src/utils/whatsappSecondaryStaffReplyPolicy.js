@@ -142,5 +142,5 @@ function gentleStaffQuestionNudge(language){
 }
 
 module.exports={verifiedStaffReplySql,staffQuestionSql,staffPendingSql,
- serviceReplyAnchorSql,marketingReplyAnchorSql,latestUnresolvedStaffSql,
+ staffBookingCoordinationSql,serviceReplyAnchorSql,marketingReplyAnchorSql,latestUnresolvedStaffSql,
  recentStaffReplySql,gentleStaffQuestionNudge};
