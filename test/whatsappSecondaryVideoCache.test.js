@@ -386,3 +386,23 @@ test("cached upload rejection and malformed cached download remain distinct from
   assert.equal(invalid.definitivelyRejected,true);
   assert.equal(f.calls.send,0);
 });
+
+test("missing R2 source is a known pre-provider rejection, not an unknown delivery",async()=>{
+  const direct=setup({env:{...enabled,
+    WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED:"false"}});
+  direct.storage.downloadMedia=async()=>{throw Error("R2 unavailable");};
+  const result=await dispatchSecondaryFollowUpVideo({...direct.args});
+  assert.equal(result.code,"sender_followup_media_unavailable");
+  assert.equal(result.definitivelyRejected,true);
+  assert.equal(result.unknown,false);
+  assert.equal(direct.calls.upload,0);
+  assert.equal(direct.calls.send,0);
+  const cached=setup();
+  const missing=await dispatchSecondaryFollowUpVideo({
+    ...cached.args,
+    cacheFactory:()=>({resolveMediaId:async()=>({kind:"download_failed"})}),
+  });
+  assert.equal(missing.code,"sender_followup_media_unavailable");
+  assert.equal(missing.definitivelyRejected,true);
+  assert.equal(cached.calls.send,0);
+});
