@@ -109,7 +109,7 @@ async function releaseReviewedSecondaryUnknownHold({
       return denied("secondary_unknown_review_conflicting_provider_receipt");
     }
     if(releaseBasis==="signed_failed" &&
-       (!/^wamid\\./.test(clean(attempt.wamid)) ||
+       (!/^wamid\./.test(clean(attempt.wamid)) ||
         Number(proof.verified_failure_count)<1)){
       await client.query("ROLLBACK");tx=false;
       return denied("secondary_unknown_review_signed_failure_missing");
