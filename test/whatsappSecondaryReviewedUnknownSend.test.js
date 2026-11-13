@@ -56,7 +56,7 @@ test("Day4/Day6 candidate prefilter denies unreviewed, fresh and previously retr
  assert.match(denied,/held_attempt\.state='unknown'/);
  assert.match(denied,/AND FALSE/);
  const approved=reviewedUnknownGateCandidateSql("c","sa",env);
- assert.match(approved,/held_attempt\\.reservation_id IN/);
+ assert.ok(approved.includes("held_attempt.reservation_id IN"));
  assert.ok(approved.includes(a));
  assert.ok(approved.includes(b));
  for(const required of [
