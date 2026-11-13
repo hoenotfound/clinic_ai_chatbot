@@ -112,8 +112,9 @@ function resolveRecentPricingTreatment(candidate,customerTexts,config=clinicConf
     else if(candidate.recent_verified_treatment_consent===true)chosen=lead;
   }
   if(!chosen)return {service:null,reason:"ambiguous_or_missing_customer_treatment"};
-  if(!lead || chosen!==lead)
-    return {service:null,reason:"consent_treatment_mismatch"};
+  // A customer's current explicit treatment, or a recent authenticated
+  // WhatsApp ad on this sender, outranks a stale/missing CRM treatment label.
+  // The lead label is usable alone only with recent customer-authored proof.
   return {service:chosen,reason:null};
 }
 function select(candidate,options){
@@ -134,7 +135,7 @@ function select(candidate,options){
   const language=detectConversationLanguage(customerTexts,"zh");
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
-    candidate:{...candidate,
+    candidate:{...candidate,treatment_interest:matched.service,
       // A staff-sent image may have no caption. Preserve it when checking
       // all language variants and uncertain delivery statuses.
       sent_media:(candidate.sent_media||[]).map(m=>({

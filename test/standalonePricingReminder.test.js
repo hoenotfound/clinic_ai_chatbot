@@ -15,7 +15,7 @@ function flags(extra={}){
  NEUTRO_STANDALONE_PRICING_PRIMARY_ENABLED:"true",
  NEUTRO_STANDALONE_PRICING_SECONDARY_ENABLED:"true",...extra};
 }
-test("pricing is opt-in, Neutro-only, sender-scoped and preserves assessment-first",()=>{
+test("pricing is enabled for customer-initiated in-window enquiries, Neutro-only and sender-scoped",()=>{
  assert.equal(feature.settings({},base),null);
  assert.equal(feature.settings(flags({NEUTRO_STANDALONE_PRICING_REMINDER_ENABLED:"false"}),base),null);
  assert.equal(feature.settings(flags(),{...base,businessName:"Other Clinic"}),null);
@@ -79,12 +79,13 @@ test("vague follow-up uses only verified recent same-sender evidence, not old CR
  assert.equal(choose({...lead,ad_treatment_interest:"骨盆调理"}).service,"骨盆调理",
    "SQL supplies only current sender-bound, recent provider-authenticated referrals");
  assert.equal(choose({...lead,ad_name:"骨盆调理体验"}).service,"骨盆调理");
- assert.equal(choose({...lead,ad_treatment_interest:"9D 逆龄抗衰"}).service,null);
+ assert.equal(choose({...lead,ad_treatment_interest:"9D 逆龄抗衰"}).service,"9d 逆龄抗衰",
+   "the latest verified ad can override a stale CRM treatment");
  assert.equal(choose({...lead,ad_name:"骨盆调理",ad_treatment_interest:"9D 逆龄抗衰"}).service,null);
  assert.equal(choose({...lead,recent_verified_treatment_consent:true},
    ["3D or 9D?"]).service,null,"comparison is not a treatment choice");
  assert.equal(choose({...lead,recent_verified_treatment_consent:true},
-   ["3D"]).service,null,"latest stated interest overrides stale CRM interest");
+   ["3D"]).service,"3d 小颜术","latest stated interest overrides stale CRM interest");
  assert.equal(choose({...lead,recent_verified_treatment_consent:true},
    ["骨盆调理"]).service,"骨盆调理");
  const ambiguous=feature.select({...lead,recent_customer_messages:["你好"]},
@@ -110,12 +111,26 @@ test("query is independent of third follow-up, sender-bound and uses fresh inbou
  assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
  assert.match(sql,/whatsapp_marketing_consent_events/);
  assert.match(sql,/consent_scope='treatment_followups_and_related_offers'/);
- assert.match(sql,/consent_lead.marketing_consent='opted_in'/);
- assert.match(sql,/consent_conversation.sender_id=sa.id/);
- assert.match(sql,/consent_proof.whatsapp_message_id=permission.provider_message_id/);
- assert.match(sql,/consent_lead.treatment_interest/);
+ assert.doesNotMatch(sql,/consent_lead.marketing_consent='opted_in'/);
+ assert.match(sql,/COALESCE\(lead.marketing_consent,'unknown'\) <> 'opted_out'/);
+ assert.doesNotMatch(sql,/VERIFIED_PRICING_CONSENT_SQL/);
+ assert.match(sql,/proof_sender.sender_id=sa.id/);
+ assert.match(sql,/proof.whatsapp_message_id=permission.provider_message_id/);
+ assert.match(sql,/lead.treatment_interest/);
  assert.match(repo.stillEligible.toString(),/offer\?\.serviceName\|\|""/);
+ assert.match(repo.stillEligible.toString(),/outbound\.automated_follow_up_target_service/);
  assert.match(sql,/appointment_set/);
+});
+
+test("customer-initiated follow-up does not require recorded marketing consent",()=>{
+ const src=repo.ELIGIBLE_SQL;
+ assert.match(src,/inbound\.whatsapp_message_id LIKE 'wamid\.%'/);
+ assert.match(src,/inbound\.source_at > NOW\(\)-INTERVAL '23 hours 45 minutes'/);
+ assert.match(src,/c\.whatsapp_opt_out_at IS NULL AND c\.whatsapp_marketing_opt_out_at IS NULL/);
+ assert.doesNotMatch(src,/AND \$\{VERIFIED_PRICING_CONSENT_SQL\}/);
+ assert.match(repo.stillEligible.toString(),/opted_out_lead/);
+ assert.match(src,/FROM messages reply/);
+ assert.match(src,/e.origin='system_fallback'/);
 });
 
 test("Package B is gated behind a verified A, and prevents resending uncertain results",()=>{

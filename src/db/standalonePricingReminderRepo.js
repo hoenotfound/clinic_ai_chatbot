@@ -7,58 +7,10 @@ const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { temporaryStaffConversationSql } = require("../utils/temporaryStaffConversation");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 
-// This is promotional pricing, not a service answer. A Meta ad or a
-// customer treatment enquiry alone is NOT consent to send an unsolicited
-// offer. Accept only customer-authored, service-specific, sender-bound
-// marketing consent tied to the latest lead. Reused/imported proof is unsafe.
-// This expression is evaluated in both the batch scan and final pre-send
-// check, so a later staff/lead/opt-out change cannot enlarge the audience.
-const VERIFIED_PRICING_CONSENT_SQL = `
-  c.whatsapp_opt_in_at IS NOT NULL
-  AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
-  AND EXISTS (
-    SELECT 1
-    FROM leads consent_lead
-    JOIN whatsapp_marketing_consent_events permission
-      ON permission.lead_id=consent_lead.id
-      AND permission.contact_id=c.id
-      AND permission.consent_category='MARKETING'
-      AND permission.consent_scope='treatment_followups_and_related_offers'
-      AND permission.consent_method IN ('customer_whatsapp_text',
-                                        'customer_whatsapp_interactive_button')
-      AND NULLIF(BTRIM(permission.consent_service),'') IS NOT NULL
-      AND LOWER(BTRIM(permission.consent_service))=
-          LOWER(BTRIM(consent_lead.treatment_interest))
-    JOIN messages consent_proof
-      ON consent_proof.id=permission.message_id
-      AND consent_proof.contact_id=c.id
-      AND consent_proof.role='user'
-      AND consent_proof.whatsapp_message_id=permission.provider_message_id
-      AND consent_proof.whatsapp_message_id LIKE 'wamid.%'
-    JOIN whatsapp_sender_message_context consent_context
-      ON consent_context.message_id=consent_proof.id
-    JOIN whatsapp_sender_conversations consent_conversation
-      ON consent_conversation.id=consent_context.conversation_id
-      AND consent_conversation.sender_id=sa.id
-      AND consent_conversation.contact_id=c.id
-      AND consent_conversation.customer_wa_id=c.whatsapp_number
-      AND consent_conversation.state='bound'
-    WHERE consent_lead.id=(
-      SELECT current_lead.id FROM leads current_lead
-      WHERE current_lead.contact_id=c.id
-      ORDER BY current_lead.created_at DESC,current_lead.id DESC LIMIT 1)
-      AND consent_lead.marketing_consent='opted_in'
-      AND NULLIF(BTRIM(consent_lead.treatment_interest),'') IS NOT NULL
-      AND permission.consented_at IS NOT NULL
-      AND DATE_TRUNC('milliseconds',permission.consented_at)=
-          DATE_TRUNC('milliseconds',
-             COALESCE(consent_proof.source_created_at,consent_proof.created_at))
-      AND NOT EXISTS (
-        SELECT 1 FROM whatsapp_sender_coexistence_history_messages old
-        WHERE old.message_id=consent_proof.id)
-  )
-`;
-
+// Only follow-up directly in a genuine, recent customer-initiated WhatsApp
+// enquiry. No separate treatment-specific marketing consent record is
+// required in this customer-service-window path. Never bypass opt-outs,
+// sender ownership, service-window expiry, or pre-send delivery checks.
 const ELIGIBLE_SQL = `
 WITH latest_inbound AS (
   SELECT DISTINCT ON (m.contact_id)
@@ -153,7 +105,7 @@ JOIN contacts c ON c.id=inbound.contact_id
 JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
   AND sa.state='active' AND sa.sender_key=ANY($1::text[])
 LEFT JOIN LATERAL (
-  SELECT l.id,l.treatment_interest,l.is_closed,l.appointment_status,
+  SELECT l.id,l.treatment_interest,l.marketing_consent,l.is_closed,l.appointment_status,
          s.stage_type,s.system_key
   FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
   WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
@@ -186,7 +138,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND c.mode='ai' AND c.takeover_by IS NULL
   AND ${followUpAttentionAllowedSql("c")}
   AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-  AND ${VERIFIED_PRICING_CONSENT_SQL}
+  AND COALESCE(lead.marketing_consent,'unknown') <> 'opted_out'
   AND inbound.created_at >= $2::timestamptz
   AND inbound.source_at <= NOW()
   AND inbound.source_at > NOW()-INTERVAL '23 hours 45 minutes'
@@ -301,10 +253,16 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
              AND newer.role='user' ORDER BY newer.created_at DESC,newer.id DESC LIMIT 1)=inbound.id
         AND c.channel='whatsapp' AND c.mode='ai' AND c.takeover_by IS NULL
         AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-        AND ${VERIFIED_PRICING_CONSENT_SQL}
-        AND LOWER(BTRIM($8::text))=(SELECT LOWER(BTRIM(latest_lead.treatment_interest))
-          FROM leads latest_lead WHERE latest_lead.contact_id=c.id
-          ORDER BY latest_lead.created_at DESC,latest_lead.id DESC LIMIT 1)
+        AND NOT EXISTS (
+          SELECT 1 FROM leads opted_out_lead
+          WHERE opted_out_lead.id=(
+            SELECT latest_lead.id FROM leads latest_lead
+            WHERE latest_lead.contact_id=c.id
+            ORDER BY latest_lead.created_at DESC,latest_lead.id DESC LIMIT 1)
+            AND opted_out_lead.marketing_consent='opted_out')
+        AND NULLIF(BTRIM($8::text),'') IS NOT NULL
+        AND LOWER(BTRIM($8::text))=
+            LOWER(BTRIM(outbound.automated_follow_up_target_service))
         AND ${followUpAttentionAllowedSql("c")}
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
         AND NOT EXISTS (
