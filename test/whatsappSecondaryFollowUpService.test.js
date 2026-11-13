@@ -18,7 +18,8 @@ const env={
   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
 };
 const candidate={
-  contact_id:80,sender_id:2,slot_hours:2,
+  contact_id:80,conversation_id:880,inbound_at:new Date("2026-11-12T16:45:14Z"),
+  sender_id:2,slot_hours:2,
   rule_version:"1790000000.860775",
   inbound_id:981,whatsapp_number:"60125554444",
   media_key:null,media_type:null,media_mime_type:null,media_filename:null,
@@ -29,7 +30,7 @@ const candidate={
 const contact={id:80,channel:"whatsapp",mode:"ai",whatsapp_sender_key:"ariel",
   whatsapp_sender_id:2,whatsapp_number:candidate.whatsapp_number};
 
-function fake({rows=[candidate],fresh=true,claim=true,
+function fake({rows=[candidate],fresh=true,claim=true,staffVideoAllowed=true,
     throwSend=false,sendResult={success:true,wamid:"wamid.ariel-followup"}}={}) {
   const calls=[];
   const database={
@@ -37,6 +38,7 @@ function fake({rows=[candidate],fresh=true,claim=true,
       calls.push({sql,args});
       if(sql===worker.CANDIDATES_SQL)return{rows};
       if(sql===worker.RECHECK_SQL)return{rows:[{allowed:fresh}]};
+      if(sql===worker.RECENT_STAFF_VIDEO_SQL)return{rows:[{allowed:staffVideoAllowed}]};
       if(sql.includes("INSERT INTO whatsapp_sender_followup_attempts"))
         return{rows:claim?[{id:314}]:[]};
       return{rows:[],rowCount:1};
@@ -702,7 +704,9 @@ test("verified WhatsApp Business App replies are permitted only as safe service 
    assert.match(sql,/first_reply.staff_pending_action/);
    assert.match(sql,/first_reply.staff_question OR rule.slot_hours=2\s+OR \(/);
    assert.match(sql,/c.takeover_by IS NULL/);
-   assert.match(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
+   assert.doesNotMatch(sql,/human.created_at,human.id\)>\(first_reply.at,first_reply.id\)/);
+   assert.match(sql,/reply.sent_by_username IS NULL\) DESC/);
+   assert.match(sql,/reply.is_forwarded,FALSE\)=FALSE/);
    assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
    assert.match(sql,/CASE WHEN first_reply.staff_reply AND NOT/);
  }
@@ -875,4 +879,55 @@ test("remote goodbye is respected at discovery and immediately before sending",(
  // Thanks alone and explicit distance objections remain separate hard stops.
  assert.match(worker.CANDIDATES_SQL,/谢谢\|謝謝/);
  assert.match(worker.RECHECK_SQL,/too\[\[:space:\]\]\+far/);
+});
+
+test("forwarded Before & After photos and routine staff messages do not stop secondary follow-ups",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+  assert.doesNotMatch(sql,/FROM messages human\s+WHERE human.contact_id=c.id/);
+  assert.match(sql,/reply.sent_by_username IS NULL\) DESC/);
+  assert.match(sql,/reply.is_forwarded,FALSE\)=FALSE/);
+  assert.match(sql,/first_reply.staff_pending_action/);
+  assert.match(sql,/c.mode='ai' AND c.takeover_by IS NULL/);
+  assert.match(sql,/whatsapp_opt_out_at IS NULL/);
+  assert.match(sql,/inbound.created_at \+ INTERVAL '24 hours'/);
+ }
+});
+
+test("staff booking coordination still pauses follow-ups without marking an AI handoff",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+  assert.match(sql,/appointment\[\[:space:\]\]/);
+  assert.match(sql,/first_reply.staff_pending_action/);
+  assert.match(sql,/first_reply.staff_question OR rule.slot_hours=2/);
+  assert.match(sql,/reply.sent_by_username IS NOT NULL AND/);
+  assert.match(sql,/reply.sent_by_username IS NULL\) DESC/);
+ }
+});
+
+test("delivered staff video changes a service reminder to text-only, without cancelling it",async()=>{
+ const f=fake({rows:[{...candidate,media_key:"approved-clinic-video",
+   media_type:"video",media_mime_type:"video/mp4",media_filename:"clinic.mp4",
+   staff_video_sent:true}]});
+ const outcome=await worker.runOnce({...f,
+  env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  videoSelection:()=>assert.fail("another video must not be selected"),
+  storage:{downloadMedia:async()=>assert.fail("another video must not be downloaded")},
+ });
+ assert.equal(outcome.accepted,1);
+ assert.equal(f.sends,1);
+ assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,null);
+});
+
+test("a late staff video receipt blocks automatic video before outbound send",async()=>{
+ const f=fake({rows:[{...candidate,media_key:"approved-clinic-video",
+   media_type:"video",media_mime_type:"video/mp4",media_filename:"clinic.mp4",
+   staff_video_sent:false}],staffVideoAllowed:false});
+ const outcome=await worker.runOnce({...f,
+  env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  videoApproved:()=>true,
+  storage:{downloadMedia:async()=>Buffer.from("approved-video")},
+ });
+ assert.equal(outcome.accepted,0);
+ assert.equal(f.sends,0);
+ assert.equal(f.calls.some(x=>x.sql===worker.RECENT_STAFF_VIDEO_SQL),true);
+ assert.equal(f.calls.some(x=>x.save),false);
 });
