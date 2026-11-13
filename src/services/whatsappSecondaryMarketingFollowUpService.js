@@ -719,10 +719,12 @@ async function runOnce({
       result.unknown!==true){
     await store.setWhatsappMessageId(saved.id,result.wamid,{
      preserveVerifiedSecondaryReceipt:true});
-    await database.query(
+    const finalized=await database.query(
      "UPDATE whatsapp_sender_marketing_followup_attempts SET status='accepted',wamid=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
      [id,result.wamid]);
-    accepted++;
+    // A signed failed receipt may have moved a claimed slot to unknown
+    // before Meta HTTP acceptance reached this worker.
+    if(finalized.rowCount===1)accepted++;
    }else await fail(result?.code||"secondary_marketing_send_unconfirmed");
   }catch{await fail("secondary_marketing_unconfirmed");}
  }
