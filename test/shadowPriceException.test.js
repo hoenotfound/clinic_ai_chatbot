@@ -461,3 +461,130 @@ test("9D context is retained across short administrative and concern replies in 
   assert.equal(resolveShadowPriceException({...args,conversationHistory:stale}),null);
   assert.equal(resolveAiPricingDecision({...args,conversationHistory:stale}),null);
 });
+
+
+test("Shadow: 48-hour secondary 3D price reply requires complete verified RM388 offer", async () => {
+  // Regression for a secondary WhatsApp ad enquiry followed by automated
+  // 3D check-ins and a short customer price reply two days later. No contact
+  // identifiers or live media URLs are needed to reproduce the failure.
+  const day = 24 * 60 * 60 * 1000;
+  const offer = {
+    name: "3D 小颜术 First Trial", linkedService: "3D 小颜术",
+    sendOnPriceQuery: true, validFrom: "2000-01-01", validUntil: "2999-12-31",
+    imageUrl: "https://example.test/3d-388.jpg",
+    caption: "3D 小颜术是一项非注射的徒手脸部轮廓护理。",
+    pricing: { currency: "MYR", offer: 388 },
+    followUpMessage: "🎊 3D 小颜术｜首次体验优惠\\n💎 体验价 RM388（原价 RM888）",
+    mediaTranslations: {
+      en: { caption: "Hands-on 3D facial contour care" },
+      ms: { caption: "Rawatan muka 3D secara manual" },
+      zh: { caption: "3D 小颜术徒手脸部护理" },
+    },
+    followUpTranslations: {
+      en: "First Trial RM388 (normal price RM888)",
+      ms: "Harga promosi RM388 (harga asal RM888)",
+      zh: "体验价 RM388（原价 RM888）",
+    },
+  };
+  const ad = {
+    serviceHint: "3D 小颜术", serviceHintSource: "ad_name",
+    attributedAt: new Date(now - 2 * day).toISOString(),
+    headline: "1次就能看到明显效果",
+  };
+  const history = [
+    turn("user", "Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～", 2 * day),
+    turn("assistant", "你是对我们的 3D 小颜术有兴趣对吗～", 2 * day - 5_000),
+    turn("assistant", "这个是顾客完成一次 3D 小颜术的 Before & After", 2 * day - 10_000),
+    turn("assistant", "如果之后想了解 3D 小颜术，可以随时跟我说哦", day),
+    turn("assistant", "你比较想先看价钱，还是了解整个护理过程？", 8 * 60_000),
+    turn("user", "价钱", 0),
+  ];
+  const neutroServices = [...services, { name: "9D 逆龄抗衰" }];
+  const neutroAliases = [
+    ...serviceAliases, { alias: "9D", officialService: "9D 逆龄抗衰" },
+  ];
+  const inputs = {
+    customerText: "价钱", conversationHistory: history, metaAdContext: ad,
+    services: neutroServices, serviceAliases: neutroAliases,
+    promotions: [offer], now,
+  };
+  // With the normal price omitted, the translated original-price claims
+  // cannot be independently checked against structured promotion pricing.
+  const observed = resolveAiPricingDecision({ ...inputs, priceQuery: true });
+  assert.equal(observed?.treatment, "3D 小颜术");
+  assert.equal(observed?.source, "recent_customer");
+  assert.equal(observed?.prices, null);
+  assert.equal(resolveShadowPriceException(inputs), null);
+
+  const corrected = { ...offer, pricing: { ...offer.pricing, normal: 888 } };
+  const fixed = { ...inputs, promotions: [corrected] };
+  const candidate = resolveShadowPriceException(fixed);
+  assert.equal(candidate?.source, "customer_engaged_single_treatment");
+  assert.equal(candidate?.treatment, "3D 小颜术");
+  assert.deepEqual(candidate?.prices.map(item => item.price), ["RM388"]);
+
+  const approval = resolveApprovedPricingAssessment({
+    mode: "shadow", shadowException: candidate,
+    customerText: "价钱", conversationHistory: history,
+    services: neutroServices, serviceAliases: neutroAliases, resultMedia: [],
+  });
+  assert.equal(approval.reason, "approved");
+  const reply = ensureVerifiedPriceReply({
+    ...fixed, treatment: candidate.treatment, pricingDecision: approval.decision,
+    priceRequested: true, reply: "这项疗程的最新价格需要由门店帮你确认哦。",
+    language: "zh",
+  });
+  assert.match(reply.reply, /3D 小颜术/u);
+  assert.match(reply.reply, /RM388/u);
+  assert.doesNotMatch(reply.reply, /需要由门店帮你确认/u);
+
+  const graphic = await resolvePricePromotionForReply({
+    ...fixed, aiPricingEnabled: true, pricingDecision: approval.decision,
+    treatment: candidate.treatment, verifiedServiceFromText: candidate.treatment,
+    priceQuery: true, packageQuery: false,
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true, contactId: 47,
+    language: "zh", resultMedia: [],
+    wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+  });
+  assert.deepEqual(graphic?.packages.map(item => item.imageUrl),
+    ["https://example.test/3d-388.jpg"]);
+
+  // The customer independently named 3D and was invited to ask for its
+  // price. That customer-led evidence remains valid even without the ad hint.
+  assert.equal(resolveShadowPriceException({
+    ...fixed, metaAdContext: null,
+  })?.source, "customer_engaged_single_treatment");
+
+  // Without that customer selection, a CRM or assistant follow-up mention
+  // cannot authorize the offer after the original ad has expired.
+  const genericGreeting = [
+    { ...history[0], content: "Hi～" },
+    ...history.slice(1),
+  ];
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: genericGreeting, metaAdContext: null,
+  }), null);
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: genericGreeting,
+    metaAdContext: {
+      ...ad, attributedAt: new Date(now - 8 * day).toISOString(),
+    },
+  }), null);
+  const switched = [
+    ...history.slice(0, -1),
+    turn("user", "现在想了解9D 逆龄抗衰", 2 * 60_000),
+    turn("user", "价钱", 0),
+  ];
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: switched,
+  }), null);
+  assert.equal(resolveShadowPriceException({
+    ...fixed, conversationHistory: [
+      ...history.slice(0, -1),
+      turn("assistant", "[Verified STAFF message] 我来帮你", 60_000, true),
+      turn("user", "价钱", 0),
+    ],
+  }), null);
+});
