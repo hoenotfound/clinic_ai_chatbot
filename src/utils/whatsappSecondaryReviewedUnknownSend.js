@@ -100,4 +100,62 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
  ].join("\n").replaceAll("{A}",alias).replace("{APPROVED}",approved)
    .replace("{ANCHOR}",anchorCheck);
 }
-module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql};
+// Discovery-time check only. The final send uses the stronger transactional
+// reservation and provider evidence checks. Refuse unreviewed UNKNOWN gates
+// before inserting a one-shot marketing attempt or issuing a template.
+function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=process.env){
+ for(const alias of [contactAlias,senderAlias]){
+  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid SQL alias");
+ }
+ const approved=reviewReservationSql(env,"held_attempt.reservation_id");
+ return `NOT EXISTS (
+   SELECT 1 FROM whatsapp_sender_billing_gates preflight_gate
+   WHERE preflight_gate.sender_id=${senderAlias}.id
+     AND preflight_gate.owner_contact_id=${contactAlias}.id
+     AND preflight_gate.state='unknown'
+     AND NOT EXISTS (
+       SELECT 1 FROM whatsapp_sender_billing_attempts held_attempt
+       JOIN messages failed_video ON failed_video.id=held_attempt.message_id
+         AND failed_video.contact_id=held_attempt.contact_id
+         AND failed_video.role='assistant'
+       WHERE held_attempt.reservation_id=preflight_gate.reservation_id
+         AND held_attempt.sender_id=preflight_gate.sender_id
+         AND held_attempt.contact_id=${contactAlias}.id
+         AND held_attempt.message_id=preflight_gate.message_id
+         AND preflight_gate.contact_id=${contactAlias}.id
+         AND held_attempt.state='unknown'
+         AND ${approved}
+         AND preflight_gate.updated_at<=NOW()-INTERVAL '30 minutes'
+         AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends previous
+           WHERE previous.sender_id=held_attempt.sender_id
+             AND previous.contact_id=held_attempt.contact_id
+             AND previous.reopened_at>NOW()-INTERVAL '30 days')
+         AND NOT EXISTS (SELECT 1 FROM whatsapp_sender_status_receipts success
+           WHERE success.sender_id=held_attempt.sender_id
+             AND success.reservation_id=held_attempt.reservation_id
+             AND (success.delivery_status IN('delivered','read')
+                  OR success.pricing_billable=TRUE))
+         AND (
+           (held_attempt.wamid IS NULL
+             AND failed_video.whatsapp_message_id IS NULL
+             AND failed_video.delivery_status='unknown'
+             AND NOT EXISTS (SELECT 1 FROM whatsapp_sender_status_receipts any_receipt
+               WHERE any_receipt.sender_id=held_attempt.sender_id
+                 AND any_receipt.reservation_id=held_attempt.reservation_id))
+           OR
+           (held_attempt.wamid IS NOT NULL
+             AND failed_video.whatsapp_message_id=held_attempt.wamid
+             AND failed_video.delivery_status='failed'
+             AND EXISTS (SELECT 1 FROM whatsapp_sender_status_receipts signed_failure
+               WHERE signed_failure.sender_id=held_attempt.sender_id
+                 AND signed_failure.reservation_id=held_attempt.reservation_id
+                 AND signed_failure.wamid=held_attempt.wamid
+                 AND signed_failure.matched=TRUE
+                 AND signed_failure.delivery_status='failed'
+                 AND signed_failure.meta_phone_number_id=${senderAlias}.meta_phone_number_id
+                 AND signed_failure.meta_account_id=${senderAlias}.meta_account_id))
+         )
+     )
+ )`;
+}
+module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql,reviewedUnknownGateCandidateSql};

@@ -4,6 +4,7 @@
 // Every customer still goes through the sender-specific one-shot, policy,
 // cancellation and billing checks before the verified transport sends a media ID.
 const { createCache } = require("./whatsappVideoMediaCache");
+const videoVerification=require("./whatsappSecondaryVideoVerification");
 
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
 // This map holds only pending uploads, never provider tokens or media bytes.
@@ -40,6 +41,7 @@ async function dispatchSecondaryFollowUpVideo({
   preSendCheck, liveVideoApproval,
   prefetchedBytes = null,
   cacheFactory = createCache,
+  verifyVideoBytes = videoVerification.verifyMp4Bytes,
 }) {
   const allowed = async () => {
     try {
@@ -51,6 +53,9 @@ async function dispatchSecondaryFollowUpVideo({
   if (!await allowed()) return uncertain("sender_followup_policy_changed_before_video");
 
   const checkMp4 = env.WHATSAPP_SECONDARY_VIDEO_MP4_PREFLIGHT_ENABLED==="true";
+  const checkCodec = env.WHATSAPP_SECONDARY_VIDEO_CODEC_PREFLIGHT_ENABLED==="true";
+  const phoneId=String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"");
+  let checkedThisUpload=false;
   let mediaId = null;
   let cached = null;
   let cache = null;
@@ -61,14 +66,23 @@ async function dispatchSecondaryFollowUpVideo({
     // transport. It cannot borrow a primary WhatsApp Meta media ID/token.
     // The cache can perform the R2 download itself on a miss. Wrap only
     // that download and reject malformed source before the provider upload.
-    const mediaStorageForCache = checkMp4 ? Object.assign(
+    const mediaStorageForCache = (checkMp4||checkCodec) ? Object.assign(
       Object.create(storage), {
         downloadMedia: async (...args) => {
           const data = await storage.downloadMedia(...args);
-          if(!validMp4Container(data)){
+          if((checkMp4||checkCodec) && !validMp4Container(data)){
             const err=new Error("Invalid MP4 container");
             err.code="SECONDARY_MP4_INVALID";
             throw err;
+          }
+          if(checkCodec){
+            const check=await verifyVideoBytes(data,{phoneId});
+            if(!check.ok){
+              const err=new Error("Unsupported or unverifiable WhatsApp video");
+              err.code=check.code;
+              throw err;
+            }
+            checkedThisUpload=true;
           }
           return data;
         },
@@ -100,8 +114,11 @@ async function dispatchSecondaryFollowUpVideo({
       return uncertain("sender_followup_policy_changed_during_video");
     }
     if (cached?.kind === "download_failed" &&
-        cached.error?.code==="SECONDARY_MP4_INVALID") {
-      return rejectedPreparation("sender_followup_video_invalid_mp4");
+        (cached.error?.code==="SECONDARY_MP4_INVALID" ||
+         String(cached.error?.code||"").startsWith("sender_followup_video_"))) {
+      return rejectedPreparation(
+        cached.error.code==="SECONDARY_MP4_INVALID"
+          ? "sender_followup_video_invalid_mp4" : cached.error.code);
     }
     if(cached?.kind==="upload_failed" &&
        failedCacheUpload?.definitivelyRejected===true) {
@@ -119,6 +136,22 @@ async function dispatchSecondaryFollowUpVideo({
       // A shared/ambiguous upload must never be repeated for this old slot.
       return uncertain("sender_followup_cached_video_preparation_unconfirmed");
     }
+    if(cached?.kind==="ready" && checkCodec){
+      if(checkedThisUpload && cached.fingerprint)
+        videoVerification.markCodecVerified(phoneId,cached.fingerprint);
+      // Legacy Meta media IDs were uploaded before codec checks existed.
+      // A cached ID cannot bypass the current verified-source requirement.
+      if(!videoVerification.wasCodecVerified(phoneId,cached.fingerprint)){
+        let sourceBytes;
+        try{sourceBytes=await storage.downloadMedia(mediaKey,
+          {maxBytes:MAX_VIDEO_BYTES});}
+        catch{return rejectedPreparation("sender_followup_media_unavailable");}
+        const check=await verifyVideoBytes(sourceBytes,{
+          phoneId,fingerprint:cached.fingerprint});
+        sourceBytes=null;
+        if(!check.ok)return rejectedPreparation(check.code);
+      }
+    }
     if (cached?.kind === "ready") mediaId = cached.mediaId;
   }
 
@@ -134,8 +167,12 @@ async function dispatchSecondaryFollowUpVideo({
     if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_VIDEO_BYTES) {
       return rejectedPreparation("sender_followup_media_unavailable");
     }
-    if(checkMp4 && !validMp4Container(bytes)) {
+    if((checkMp4||checkCodec) && !validMp4Container(bytes)) {
       return rejectedPreparation("sender_followup_video_invalid_mp4");
+    }
+    if(checkCodec){
+      const checked=await verifyVideoBytes(bytes,{phoneId});
+      if(!checked.ok)return rejectedPreparation(checked.code);
     }
     if (!await allowed()) return uncertain("sender_followup_policy_changed_before_upload");
     const uploaded = await transport.uploadMedia(bytes, mimeType, filename);

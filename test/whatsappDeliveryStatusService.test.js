@@ -41,6 +41,7 @@ function harness({
   isQueuedImageMessage = async () => false,
   reconcileAcceptedReplyAttention = async () => null,
   verifyJobSender = null,
+  invalidateSecondaryVideoCache = async()=>({invalidated:false}),
   env = process.env,
 } = {}) {
   const calls = [];
@@ -101,6 +102,10 @@ function harness({
     queueTransientFailureRetry,
     reconcileQueuedMediaDelivery:async(wamid)=>{calls.push(["reconcileQueuedMediaDelivery",wamid]);return reconcileQueuedMediaDelivery(wamid);},
     isQueuedImageMessage,
+    invalidateSecondaryVideoCache: async(...args)=>{
+      calls.push(["invalidateSecondaryVideoCache",args[0]]);
+      return invalidateSecondaryVideoCache(...args);
+    },
     reconcileAcceptedReplyAttention: async (contactId) => {
       calls.push(["reconcileAcceptedReplyAttention", contactId]);
       return reconcileAcceptedReplyAttention(contactId);
@@ -541,4 +546,37 @@ test("unverified sender stays unknown and sender mismatch never publishes", asyn
   assert.equal(mismatched.calls.some(call => call[0] === "publish"), false);
   assert.equal(mismatched.calls.some(call => call[0] === "updateDeliveryStatusByWamid"), false);
   assert.ok(mismatched.calls.some(call => call[0] === "markFailed"));
+});
+
+test("a verified failed media status invokes the scoped cache invalidator only once per stored job",async()=>{
+ const statusJob=job({id:940,delivery_status:"failed",
+   error_code:"131053",error_title:"Media upload error",
+   business_phone_number_id:"1318355951360575",
+   business_account_id:"1852014482431209"});
+ const updated={id:19328,contact_id:9053,
+   whatsapp_message_id:statusJob.wamid,delivery_status:"failed",
+   delivery_error:statusJob.error_title};
+ let invalidations=0;
+ const {calls,service}=harness({claimed:[statusJob],updateResult:updated,
+   verifyJobSender:()=>({matched:true}),
+   invalidateSecondaryVideoCache:async({job,messageId,verifiedSender})=>{
+     assert.equal(job.id,940);
+     assert.equal(messageId,19328);
+     assert.equal(verifiedSender.matched,true);
+     invalidations++;
+     return{invalidated:true};
+   },
+ });
+ await service.processStoredDeliveryStatuses([{id:statusJob.id}]);
+ assert.equal(invalidations,1);
+ assert.ok(calls.some(x=>x[0]==="markCompleted"&&x[1]===940));
+});
+test("unverified sender cannot invalidate cached secondary video uploads",async()=>{
+ const statusJob=job({id:942,delivery_status:"failed",error_code:"131053"});
+ const {service,calls}=harness({claimed:[statusJob],updateResult:{
+  id:19328,contact_id:9053,whatsapp_message_id:statusJob.wamid,delivery_status:"failed"
+ },verifyJobSender:()=>({matched:false}),
+ invalidateSecondaryVideoCache:async()=>assert.fail("No invalidation from unverified sender")});
+ await service.processStoredDeliveryStatuses([{id:statusJob.id}]);
+ assert.equal(calls.filter(x=>x[0]==="invalidateSecondaryVideoCache").length,0);
 });

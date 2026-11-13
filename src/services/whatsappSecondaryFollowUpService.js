@@ -989,6 +989,34 @@ async function runOnce({
           [id,result.wamid]
         );
         if(finalized.rowCount===1)accepted++;
+      } else if(key && result?.code==="secondary_provider_definitively_rejected" &&
+                result?.definitivelyRejected===true &&
+                result?.unknown!==true && !result?.wamid) {
+        // The /messages call was never accepted. In particular, a video
+        // codec failure or definitive /media HTTP rejection is not an
+        // unknown delivery. Billing has already committed "rejected" and
+        // reset the per-contact gate. The original slot remains one-shot;
+        // staff may prepare a corrected NEW video under normal policy.
+        const reason=result?.providerFailureKind==="media_preflight_rejected"
+          ? "sender_followup_video_preflight_rejected"
+          : "sender_followup_video_upload_rejected";
+        const marked=await database.query(
+          "UPDATE messages SET delivery_status='failed',delivery_error=$2 "+
+          "WHERE id=$1 AND contact_id=$3 AND role='assistant' "+
+          "AND whatsapp_message_id IS NULL AND delivery_status='unknown' "+
+          "RETURNING id",
+          [messageId,reason,candidate.contact_id]
+        );
+        if(marked.rowCount!==1) {
+          await fail("secondary_video_rejected_status_unverified");
+        }else{
+          await database.query(
+            "UPDATE whatsapp_sender_followup_attempts SET status='blocked',"+
+            "error_code=$2,completed_at=NOW() WHERE id=$1 "+
+            "AND message_id=$3 AND status='claimed'",
+            [id,reason,messageId]
+          );
+        }
       } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
       // Never automatically replay this one-shot attempt. Report a fixed,
