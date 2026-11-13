@@ -97,9 +97,16 @@ test("new message can bypass only an aged no-WAMID UNKNOWN hold with a durable a
       contactId:s.contact,messageId:s.messages[0],
     },{database,env});
     assert.equal(repeat.code,"secondary_billing_previous_send_unresolved");
-    const next=await billing.reserveSecondaryBillingAttempt({
+    // Even a failed/unconfirmed message cannot bypass an UNKNOWN hold
+    // without an exact operator-reviewed reservation.
+    const unreviewed=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
     },{database,env});
+    assert.equal(unreviewed.code,"secondary_billing_unknown_hold_not_reviewed");
+    const next=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(next.reserved,true);
     assert.notEqual(next.reservationId,s.original.reservationId);
     const original=(await db.query(
@@ -131,7 +138,8 @@ test("new-send bypass never ignores fresh, accepted, contradictory or globally-a
       [s.messages[0]]);
     const request=()=>billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal((await request()).code,"secondary_billing_previous_send_unresolved",
       "new unknown hold must not be bypassed immediately");
     await db.query("UPDATE whatsapp_sender_billing_gates "+
@@ -195,7 +203,8 @@ test("signed failed original video can be bypassed for one fresh media message",
     );
     const fresh=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(fresh.reserved,true);
     const audit=(await db.query(
       "SELECT basis FROM whatsapp_sender_unknown_gate_new_sends "+
@@ -206,5 +215,49 @@ test("signed failed original video can be bypassed for one fresh media message",
       "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
       [s.original.reservationId]
     )).rows[0].state,"unknown");
+  });
+});
+
+test("a second UNKNOWN attempt cannot get another bypass in the same 30-day period",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,
+    },{database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",
+      [s.messages[0]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    const first=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
+    assert.equal(first.reserved,true);
+    await billing.recordSecondaryProviderOutcome({reservationId:first.reservationId},
+      {database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",
+      [s.messages[1]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    const third=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) "+
+      "VALUES($1,'assistant','new distinct follow-up') RETURNING id",
+      [s.contact])).rows[0].id;
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations "+
+      "WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context "+
+      "(message_id,conversation_id) VALUES($1,$2)",[third,conversation]);
+    const repeat=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:third,
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:first.reservationId}});
+    assert.equal(repeat.code,"secondary_billing_previous_send_unresolved");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_unknown_gate_new_sends "+
+      "WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].n,1);
   });
 });
