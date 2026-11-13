@@ -96,7 +96,8 @@ test("new message can bypass only an aged no-WAMID UNKNOWN hold with a durable a
     assert.equal(disabled.code,"secondary_billing_previous_send_unresolved");
     const repeat=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[0],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(repeat.code,"secondary_billing_previous_send_unresolved");
     // Even a failed/unconfirmed message cannot bypass an UNKNOWN hold
     // without an exact operator-reviewed reservation.
