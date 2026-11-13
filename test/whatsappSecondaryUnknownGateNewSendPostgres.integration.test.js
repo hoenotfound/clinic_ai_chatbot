@@ -301,6 +301,20 @@ test("verified customer return can resume AI only for exactly reviewed old deliv
       "old outgoing video is never a valid fresh customer anchor");
     assert.equal(await check(inbound),true,
       "a new signed same-sender enquiry may continue with staff alert retained");
+    const newReservation=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:authorized});
+    assert.equal(newReservation.reserved,true);
+    assert.equal(await check(inbound),false,
+      "a new in-flight send must settle before additional AI work");
+    // Simulate only a correctly reconciled NEW send, never the old original.
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' "+
+      "WHERE reservation_id=$1",[newReservation.reservationId]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET state='idle',"+
+      "reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL "+
+      "WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+    assert.equal(await check(inbound),true,
+      "reviewed old delivery attention must not permanently block later replies");
     await db.query("UPDATE contacts SET attention_reason='AI review requested: pending' "+
       "WHERE id=$1",[s.contact]);
     assert.equal(await check(inbound),false,
