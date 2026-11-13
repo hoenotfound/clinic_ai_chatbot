@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_unknown_gate_new_sends (
     CHECK (new_message_id<>old_message_id),
   CONSTRAINT whatsapp_sender_new_send_owner
     FOREIGN KEY (contact_id,sender_id)
-    REFERENCES contacts(id,whatsapp_sender_id) ON DELETE RESTRICT
+    REFERENCES contacts(id,whatsapp_sender_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_sender_unknown_gate_new_sends_contact
   ON whatsapp_sender_unknown_gate_new_sends(sender_id,contact_id,reopened_at DESC);
