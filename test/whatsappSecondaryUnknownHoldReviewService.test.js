@@ -17,7 +17,7 @@ const approved={
  oldMessageRetryProhibited:true,
 };
 function mock({wamid="wamid.synthetic",receiptCount=1,failures=1,
-  successCount=0,chargedCount=0,alarm=false,hasHold=true,gateUpdated=true}={}){
+  successCount=0,chargedCount=0,alarm=false,hasHold=true,gateUpdated=true,attentionChanged=true}={}){
  const calls=[];
  let released=false;
  const database={
@@ -36,6 +36,7 @@ function mock({wamid="wamid.synthetic",receiptCount=1,failures=1,
     if(sql===review.EXACT_RECEIPT_EVIDENCE_SQL)
       return {rows:[{receipt_count:receiptCount,verified_failure_count:failures,
         success_count:successCount,charged_count:chargedCount}]};
+    if(sql.startsWith("UPDATE contacts c"))return {rowCount:attentionChanged?1:0};
     if(sql.startsWith("UPDATE whatsapp_sender_billing_gates")){
       released=true;
       return {rowCount:gateUpdated?1:0};
@@ -130,4 +131,18 @@ test("all exact-ownership checks remain sender-bound and the release cannot repl
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.delivery_status='failed'"));
  assert.ok(review.EXACT_UNKNOWN_HOLD_SQL.includes("a.wamid IS NULL AND m.whatsapp_message_id IS NULL"));
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.pricing_billable=TRUE"));
+});
+
+test("manual release preserves an unrelated staff alert even when gate is cleared",async()=>{
+ const f=mock({attentionChanged:false});
+ const result=await review.releaseReviewedSecondaryUnknownHold(approved,{
+  database:f.database,env});
+ assert.equal(result.gateReleased,true);
+ assert.equal(result.deliveryAttentionResolved,false);
+ assert.equal(result.sendAuthorized,false);
+ assert.equal(result.oldMessageRetryAllowed,false);
+ const clear=f.calls.find(x=>x.sql.includes("UPDATE contacts c SET"));
+ assert.ok(clear);
+ assert.match(clear.sql,/c\.delivery_attention_message_id=\$3/);
+ assert.match(clear.sql,/attention_reason LIKE 'Delivery failed:%'/);
 });
