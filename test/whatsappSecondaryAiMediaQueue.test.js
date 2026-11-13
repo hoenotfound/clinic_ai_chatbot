@@ -422,7 +422,7 @@ test("location and treatment-method questions preserve media, while price and cl
   }
   for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
     assert.match(sql,/job\.media_kind='promotion' AND/);
-    assert.match(sql,/BTRIM\(newer\.content\)/);
+    assert.match(sql,/COALESCE\(newer\.content/);
     assert.match(sql,/newer\.role='user'/);
     assert.match(sql,/(staff|human)\.sent_by_username IS NOT NULL/);
     assert.match(sql,/successor\.sender_id=job\.sender_id/);
@@ -441,7 +441,7 @@ test("location and treatment-method questions preserve media, while price and cl
   }};
   await worker.cancelObsoletePending({database,env:approved});
   assert.match(calls[0].sql,/job\.media_kind='promotion' AND/);
-  assert.match(calls[0].sql,/BTRIM\(newer\.content\)/);
+  assert.match(calls[0].sql,/COALESCE\(newer\.content/);
   assert.match(calls[0].sql,/job.state='pending'/);
   assert.match(calls[0].sql,/successor\.sender_id=job\.sender_id/);
   assert.match(calls[0].sql,/successor_inbound\.created_at/);
