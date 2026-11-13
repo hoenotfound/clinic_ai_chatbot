@@ -23,10 +23,16 @@ function reviewReservationSql(env=process.env,qualified="a.reservation_id"){
 // A fresh sender-verified, readable customer inbound can resume AI while
 // a reviewed delivery failure remains flagged for staff. No prior send is
 // retried, and the final billing and WhatsApp checks are still mandatory.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
  const approved=reviewReservationSql(env,"held_attempt.reservation_id");
  if(approved==="FALSE")return "FALSE";
+ // The original ad session cannot regain authority just because a DIFFERENT
+ // later customer question arrived. Automated work must use that new anchor.
+ if(anchorSql!==null && !/^(?:[a-z][a-z0-9_]*|\$[1-9][0-9]*)$/i.test(anchorSql))
+   throw Error("Invalid message anchor SQL");
+ const anchorCheck=anchorSql===null?"":" AND customer.id="+
+   (/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
  return [
   "(",
   " {A}.mode='ai' AND {A}.needs_attention=TRUE",
@@ -70,6 +76,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env){
   "        AND customer.source_created_at>old_outbound.created_at",
   "        AND customer.created_at>old_outbound.created_at",
   "        AND customer.is_forwarded IS DISTINCT FROM TRUE",
+  "        {ANCHOR}",
   "        AND NULLIF(BTRIM(COALESCE(customer.content,'')),'') IS NOT NULL",
   "        AND customer.content NOT LIKE '📎 [%'",
   "      JOIN whatsapp_sender_message_context mc",
@@ -79,6 +86,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env){
   "    )",
   " )",
   ")",
- ].join("\n").replaceAll("{A}",alias).replace("{APPROVED}",approved);
+ ].join("\n").replaceAll("{A}",alias).replace("{APPROVED}",approved)
+   .replace("{ANCHOR}",anchorCheck);
 }
 module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql};
