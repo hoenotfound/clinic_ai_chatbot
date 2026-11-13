@@ -546,7 +546,17 @@ async function listUnresolvedSecondaryBillingHolds(database=pool){
       AND attempt.contact_id=c.id AND attempt.message_id=g.message_id
       AND attempt.state='unknown'
     WHERE g.state='unknown' AND g.contact_id=c.id
-      AND c.needs_attention IS DISTINCT FROM TRUE
+      -- A hold that has not been acknowledged for THIS exact message still
+      -- deserves attention, even if an older delivery incident was flagged.
+      -- Do not overwrite unrelated clinical or booking staff tasks.
+      AND (
+        c.needs_attention IS DISTINCT FROM TRUE
+        OR (
+          (c.attention_reason LIKE 'Delivery failed:%'
+           OR c.attention_reason LIKE 'Delivery unconfirmed:%')
+          AND c.delivery_attention_message_id IS DISTINCT FROM g.message_id
+        )
+      )
     ORDER BY g.updated_at ASC LIMIT 25`);
   return result.rows||[];
 }
