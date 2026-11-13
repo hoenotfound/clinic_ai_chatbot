@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
+const {reviewedDeliveryAttentionSql}=require("../src/utils/whatsappSecondaryReviewedUnknownSend");
 const connectionString=process.env.TEST_DATABASE_URL;
 const env={
   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -95,11 +96,19 @@ test("new message can bypass only an aged no-WAMID UNKNOWN hold with a durable a
     assert.equal(disabled.code,"secondary_billing_previous_send_unresolved");
     const repeat=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[0],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(repeat.code,"secondary_billing_previous_send_unresolved");
-    const next=await billing.reserveSecondaryBillingAttempt({
+    // Even a failed/unconfirmed message cannot bypass an UNKNOWN hold
+    // without an exact operator-reviewed reservation.
+    const unreviewed=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
     },{database,env});
+    assert.equal(unreviewed.code,"secondary_billing_unknown_hold_not_reviewed");
+    const next=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(next.reserved,true);
     assert.notEqual(next.reservationId,s.original.reservationId);
     const original=(await db.query(
@@ -131,7 +140,8 @@ test("new-send bypass never ignores fresh, accepted, contradictory or globally-a
       [s.messages[0]]);
     const request=()=>billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal((await request()).code,"secondary_billing_previous_send_unresolved",
       "new unknown hold must not be bypassed immediately");
     await db.query("UPDATE whatsapp_sender_billing_gates "+
@@ -195,7 +205,8 @@ test("signed failed original video can be bypassed for one fresh media message",
     );
     const fresh=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
-    },{database,env});
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
     assert.equal(fresh.reserved,true);
     const audit=(await db.query(
       "SELECT basis FROM whatsapp_sender_unknown_gate_new_sends "+
@@ -206,5 +217,110 @@ test("signed failed original video can be bypassed for one fresh media message",
       "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
       [s.original.reservationId]
     )).rows[0].state,"unknown");
+  });
+});
+
+test("a second UNKNOWN attempt cannot get another bypass in the same 30-day period",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,
+    },{database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",
+      [s.messages[0]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    const first=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
+    assert.equal(first.reserved,true);
+    await billing.recordSecondaryProviderOutcome({reservationId:first.reservationId},
+      {database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",
+      [s.messages[1]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    const third=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) "+
+      "VALUES($1,'assistant','new distinct follow-up') RETURNING id",
+      [s.contact])).rows[0].id;
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations "+
+      "WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context "+
+      "(message_id,conversation_id) VALUES($1,$2)",[third,conversation]);
+    const repeat=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:third,
+    },{database,env:{...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:first.reservationId}});
+    assert.equal(repeat.code,"secondary_billing_previous_send_unresolved");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_unknown_gate_new_sends "+
+      "WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].n,1);
+  });
+});
+
+test("verified customer return can resume AI only for exactly reviewed old delivery attention",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,
+    },{database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown',"+
+      "created_at=NOW()-INTERVAL '2 days' WHERE id=$1",[s.messages[0]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates "+
+      "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,"+
+      "attention_reason='Delivery unconfirmed: review original video',"+
+      "delivery_attention_message_id=$2 WHERE id=$1",
+      [s.contact,s.messages[0]]);
+    const authorized={...env,
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId};
+    const clause=reviewedDeliveryAttentionSql("c",authorized,"$2");
+    const check=async(anchor=null)=> (await db.query(
+      "SELECT "+clause+" AS ok FROM contacts c WHERE c.id=$1",
+      [s.contact,anchor])).rows[0].ok;
+    assert.equal(await check(),false,"a stale alert is not automatically ignored");
+    const inbound=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,"+
+      "source_created_at) VALUES($1,'user','想了解新的疗程',"+
+      "'wamid.fresh-customer',NOW()) RETURNING id",
+      [s.contact])).rows[0].id;
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1"+
+      " AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context "+
+      "(message_id,conversation_id) VALUES($1,$2)",
+      [inbound,conversation]);
+    assert.equal(await check(s.messages[0]),false,
+      "old outgoing video is never a valid fresh customer anchor");
+    assert.equal(await check(inbound),true,
+      "a new signed same-sender enquiry may continue with staff alert retained");
+    const newReservation=await billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId:s.messages[1],
+    },{database,env:authorized});
+    assert.equal(newReservation.reserved,true);
+    assert.equal(await check(inbound),false,
+      "a new in-flight send must settle before additional AI work");
+    // Simulate only a correctly reconciled NEW send, never the old original.
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' "+
+      "WHERE reservation_id=$1",[newReservation.reservationId]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET state='idle',"+
+      "reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL "+
+      "WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+    assert.equal(await check(inbound),true,
+      "reviewed old delivery attention must not permanently block later replies");
+    await db.query("UPDATE contacts SET attention_reason='AI review requested: pending' "+
+      "WHERE id=$1",[s.contact]);
+    assert.equal(await check(inbound),false,
+      "an unrelated clinical or staff review is never bypassed");
+    assert.equal(reviewedDeliveryAttentionSql("c",env),"FALSE",
+      "unreviewed production configuration must fail closed");
   });
 });
