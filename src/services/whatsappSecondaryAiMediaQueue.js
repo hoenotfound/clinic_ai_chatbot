@@ -419,7 +419,8 @@ async function wakeAfterVerifiedReconciliation({
        AND EXISTS(
          SELECT 1 FROM whatsapp_sender_billing_gates gate
          WHERE gate.sender_id=sa.id AND gate.owner_contact_id=job.contact_id
-           AND gate.state='idle'
+         -- Final billing reservation validates idle or strict aged UNKNOWN
+         -- new-send proof. Do not silently suppress qualified media here.
        )
      RETURNING job.id`,
    [env.WHATSAPP_SECONDARY_SENDER_KEY,
