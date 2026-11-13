@@ -391,7 +391,8 @@ test("Day 4 and Day 6 count accepted reminders in this verified ad session, not 
  assert.match(sql,/other\.status IN\('accepted','unknown','blocked'\)/);
  // Historic uncertain receipts remain a global safety hold until reviewed.
  assert.match(sql,/bad\.anchor_message_id IS NOT NULL/);
- assert.match(sql,/gate\.state<>'idle'/);
+ assert.match(sql,/gate\.state IN \('reserved','awaiting_pricing'\)/);
+ assert.doesNotMatch(sql,/gate\.state<>'idle'/);
 });
 test("extended Day 4/6 due-time hint checks both workers without an extra poll when disabled",async()=>{
  const time=new Date("2026-11-11T04:00:00Z");
