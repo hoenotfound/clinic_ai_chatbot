@@ -17,7 +17,7 @@ const approved={
  oldMessageRetryProhibited:true,
 };
 function mock({wamid="wamid.synthetic",receiptCount=1,failures=1,
-  successCount=0,chargedCount=0,alarm=false,hasHold=true,gateUpdated=true}={}){
+  successCount=0,chargedCount=0,alarm=false,hasHold=true,gateUpdated=true,attentionChanged=true}={}){
  const calls=[];
  let released=false;
  const database={
@@ -36,6 +36,7 @@ function mock({wamid="wamid.synthetic",receiptCount=1,failures=1,
     if(sql===review.EXACT_RECEIPT_EVIDENCE_SQL)
       return {rows:[{receipt_count:receiptCount,verified_failure_count:failures,
         success_count:successCount,charged_count:chargedCount}]};
+    if(sql.startsWith("UPDATE contacts c"))return {rowCount:attentionChanged?1:0};
     if(sql.startsWith("UPDATE whatsapp_sender_billing_gates")){
       released=true;
       return {rowCount:gateUpdated?1:0};
@@ -87,6 +88,13 @@ test("a signed failed receipt can release only the exact gate after independent 
  assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_followup_attempts")));
  assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_marketing_followup_attempts")));
  assert.ok(f.calls.find(x=>x.sql.includes("secondary_reviewed_unknown_billing_hold")));
+ const cleared=f.calls.find(x=>x.sql.includes("UPDATE contacts c SET"));
+ assert.ok(cleared,"release attempts only exact-pinned delivery attention cleanup");
+ assert.ok(cleared.sql.includes("c.delivery_attention_message_id=$3"));
+ assert.ok(cleared.sql.includes("other.state<>'idle'"));
+ assert.ok(cleared.sql.includes("ai_review_items"));
+ assert.deepEqual(cleared.args,[9001,2,19111]);
+ assert.equal(result.deliveryAttentionResolved,true);
  assert.equal(f.calls.some(x=>x.sql.includes("messages SET")),false);
 });
 test("an unconfirmed send with no WAMID requires separate human review",async()=>{
@@ -123,4 +131,18 @@ test("all exact-ownership checks remain sender-bound and the release cannot repl
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.delivery_status='failed'"));
  assert.ok(review.EXACT_UNKNOWN_HOLD_SQL.includes("a.wamid IS NULL AND m.whatsapp_message_id IS NULL"));
  assert.ok(review.EXACT_RECEIPT_EVIDENCE_SQL.includes("r.pricing_billable=TRUE"));
+});
+
+test("manual release preserves an unrelated staff alert even when gate is cleared",async()=>{
+ const f=mock({attentionChanged:false});
+ const result=await review.releaseReviewedSecondaryUnknownHold(approved,{
+  database:f.database,env});
+ assert.equal(result.gateReleased,true);
+ assert.equal(result.deliveryAttentionResolved,false);
+ assert.equal(result.sendAuthorized,false);
+ assert.equal(result.oldMessageRetryAllowed,false);
+ const clear=f.calls.find(x=>x.sql.includes("UPDATE contacts c SET"));
+ assert.ok(clear);
+ assert.match(clear.sql,/c\.delivery_attention_message_id=\$3/);
+ assert.match(clear.sql,/attention_reason LIKE 'Delivery failed:%'/);
 });

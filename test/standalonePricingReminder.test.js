@@ -163,3 +163,16 @@ test("standalone sender checks keep existing stages and never enable messenger",
  assert.match(repo.listUnresolvedSecondaryBillingHolds.toString(),/g\.state='unknown'/);
  assert.match(repo.listUnresolvedSecondaryBillingHolds.toString(),/c\.needs_attention IS DISTINCT FROM TRUE/);
 });
+
+test("new secondary billing holds are periodically discovered without repeated alerts",()=>{
+ const src=require("node:fs").readFileSync(require("node:path").join(__dirname,
+  "../src/services/standalonePricingReminderService.js"),"utf8");
+ assert.match(src,/UNKNOWN_HOLD_REVIEW_INTERVAL_MS=5\*60\*1000/);
+ assert.match(src,/unknownHoldReviewInFlight/);
+ assert.match(src,/lastUnknownHoldReviewMs=nowMs/);
+ const scanner=repo.listUnresolvedSecondaryBillingHolds.toString();
+ assert.match(scanner,/delivery_attention_message_id IS DISTINCT FROM g\.message_id/);
+ assert.match(scanner,/c\.attention_reason LIKE 'Delivery failed:%'/);
+ assert.match(scanner,/c\.attention_reason LIKE 'Delivery unconfirmed:%'/);
+ assert.match(scanner,/attempt\.state='unknown'/);
+});

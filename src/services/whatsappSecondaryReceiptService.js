@@ -4,6 +4,7 @@
 // webhook or any send/retry worker. Primary Neutro handler remains unchanged.
 const crypto = require("node:crypto");
 const { pool } = require("../db/db");
+const contactsRepo = require("../db/contactsRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 
 // Real Meta WAMIDs may use Base64 characters and up to two trailing padding =.
@@ -307,7 +308,7 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
 // accepted attempt to 'unknown' for manual billing review.
 async function recordSignedSecondaryStatusBatch({
   rawBody, signatureHeader, subsetFromVerifiedWebhook = false,
-}, { database = pool, env = process.env } = {}) {
+}, { database = pool, env = process.env, onFailureAttention = null } = {}) {
   if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
@@ -366,6 +367,7 @@ async function recordSignedSecondaryStatusBatch({
     let quarantined = 0;
     const reconciledContactIds = new Set();
     const changedMessages = [];
+    const failedAlerts = [];
     // Record unsupported but structurally valid, HMAC-signed secondary
     // statuses in the existing append-only quarantine ledger. A replay
     // cannot generate a new charge alarm or delivery state transition.
@@ -498,8 +500,10 @@ async function recordSignedSecondaryStatusBatch({
              WHEN $4='failed' AND COALESCE(delivery_status,'')
                   NOT IN('read','delivered')
                THEN $5::text
-             WHEN $4 IN('read','delivered','sent')
+             WHEN $4 IN('read','delivered')
                THEN NULL
+             WHEN $4='sent' AND COALESCE(delivery_status,'')
+                  NOT IN('read','delivered','failed') THEN NULL
              ELSE delivery_error
            END
          WHERE id=$1 AND contact_id=$2 AND role='assistant'
@@ -516,6 +520,14 @@ async function recordSignedSecondaryStatusBatch({
         throw new Error("Secondary status had no verified, saved message.");
       }
       changedMessages.push(delivery.rows[0]);
+      if (event.deliveryStatus === "failed" &&
+          delivery.rows[0].delivery_status === "failed") {
+        failedAlerts.push({
+          contactId: attempt.contact_id,
+          messageId: attempt.message_id,
+          errorCode: event.failureCode,
+        });
+      }
       // A provider-accepted follow-up can fail after its scheduler wrote
       // "accepted". Treat the signed terminal failure as an uncertain
       // one-shot attempt, never a successful prerequisite for later slots.
@@ -528,7 +540,7 @@ async function recordSignedSecondaryStatusBatch({
             "UPDATE "+ledger+" SET status='unknown', "+
             "error_code='secondary_signed_meta_delivery_failed' "+
             "WHERE sender_id=$1 AND contact_id=$2 AND message_id=$3 "+
-            "AND status='accepted'",
+            "AND status IN ('claimed','accepted')",
             [attempt.sender_id,attempt.contact_id,attempt.message_id]
           );
         }
@@ -710,6 +722,29 @@ async function recordSignedSecondaryStatusBatch({
       }
     }
     await client.query("COMMIT"); transaction = false;
+    // Alert staff only after the signed receipt is durably committed.
+    // A failed Telegram/attention side effect never rolls back provider facts.
+    // Test/isolated DB clients must explicitly inject an alert handler; they
+    // must never contact the production contacts pool by accident.
+    const attentionHandler = typeof onFailureAttention === "function"
+      ? onFailureAttention
+      : database === pool
+        ? ({contactId,messageId,reason}) =>
+          contactsRepo.setDeliveryAttention(contactId,reason,messageId)
+        : null;
+    if (attentionHandler) {
+      for (const failed of failedAlerts) {
+        const code = Number.isInteger(failed.errorCode) && failed.errorCode>0
+          ? " Meta code "+failed.errorCode+"." : "";
+        const reason = "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold."+
+          code+" Staff must reconcile the exact send; do not retry.";
+        try {
+          await attentionHandler({...failed,reason});
+        } catch {
+          console.warn("[Secondary WhatsApp receipt] staff attention update deferred.");
+        }
+      }
+    }
     // Once a previous sender reservation is safely reconciled, promptly
     // revisit deferred images. This is a queue wake, never a message retry.
     // A failure here must not invalidate a successfully saved signed receipt.

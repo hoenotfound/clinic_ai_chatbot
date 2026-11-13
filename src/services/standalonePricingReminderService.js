@@ -321,12 +321,17 @@ async function sendOne(candidate,offer,options,allOffers){
   await reportUncertain(candidate,row.id);
   return {sent:false,review:true};
 }
-// This is a one-time-per-process staff alert, NOT an automatic billing
-// settlement or send retry. Unknown/failed Meta outcomes stay latched until
-// their exact sender reservation is manually reconciled.
-let reviewedUnknownBillingHolds=false;
-async function reviewUnknownSecondaryBillingHoldsOnce(){
-  if(reviewedUnknownBillingHolds)return;
+// Periodically recheck unknown holds, rather than only once at startup:
+// a video failure can arrive hours after the service was deployed.
+// This read-only discovery never releases or retries an outbound message.
+const UNKNOWN_HOLD_REVIEW_INTERVAL_MS=5*60*1000;
+let lastUnknownHoldReviewMs=0;
+let unknownHoldReviewInFlight=false;
+async function reviewUnknownSecondaryBillingHoldsOnce(nowMs=Date.now()){
+  if(unknownHoldReviewInFlight ||
+     nowMs-lastUnknownHoldReviewMs<UNKNOWN_HOLD_REVIEW_INTERVAL_MS)return;
+  unknownHoldReviewInFlight=true;
+  try {
   const holds=await repo.listUnresolvedSecondaryBillingHolds();
   for(const hold of holds){
     // The error code comes only from the saved HMAC-verified Meta failure.
@@ -342,10 +347,13 @@ async function reviewUnknownSecondaryBillingHoldsOnce(){
     await contactsRepo.setDeliveryAttention(
       hold.contact_id,reason,hold.message_id||null);
   }
-  reviewedUnknownBillingHolds=true;
+  lastUnknownHoldReviewMs=nowMs;
   if(holds.length)console.warn(
     "[Standalone pricing] Flagged "+holds.length+
     " unresolved secondary billing holds for staff review; no automatic billing release or resend.");
+  } finally {
+    unknownHoldReviewInFlight=false;
+  }
 }
 async function runOnce(now=new Date()){
   const options=settings();
