@@ -77,6 +77,13 @@ test("query is independent of third follow-up, sender-bound and uses fresh inbou
  assert.match(sql,/pricing_reminder_preflight_retries/);
  assert.match(sql,/quote\.content.*RM\[/s);
  assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
+ assert.match(sql,/whatsapp_marketing_consent_events/);
+ assert.match(sql,/consent_scope='treatment_followups_and_related_offers'/);
+ assert.match(sql,/consent_lead.marketing_consent='opted_in'/);
+ assert.match(sql,/consent_conversation.sender_id=sa.id/);
+ assert.match(sql,/consent_proof.whatsapp_message_id=permission.provider_message_id/);
+ assert.match(sql,/consent_lead.treatment_interest/);
+ assert.match(repo.stillEligible.toString(),/offer\?\.serviceName\|\|""/);
  assert.match(sql,/appointment_set/);
 });
 
