@@ -21,6 +21,7 @@ const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
+const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
  require("../utils/secondaryDueTimeScheduler");
 
@@ -400,6 +401,9 @@ const CANDIDATES_SQL=`
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
    )
+   -- Discovery must not consume a one-shot slot for an unreviewed hold.
+   -- The billing reservation validates this evidence again under a lock.
+   AND ${reviewedUnknownGateCandidateSql("c","sa")}
  ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
 // This read-only hint keeps every candidate consent, sender and billing rule
