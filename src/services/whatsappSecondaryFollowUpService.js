@@ -967,11 +967,13 @@ async function runOnce({
       }
       if(result?.success===true && result?.unknown!==true &&
          /^wamid\./.test(String(result.wamid||""))) {
-        await database.query(
-          "UPDATE whatsapp_sender_followup_attempts SET status='accepted',wamid=$2,completed_at=NOW() WHERE id=$1",
+        // A signed failed receipt may arrive before Meta HTTP returns to
+        // this worker. Never promote its already-unknown slot to accepted.
+        const finalized=await database.query(
+          "UPDATE whatsapp_sender_followup_attempts SET status='accepted',wamid=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
           [id,result.wamid]
         );
-        accepted++;
+        if(finalized.rowCount===1)accepted++;
       } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
       // Never automatically replay this one-shot attempt. Report a fixed,
