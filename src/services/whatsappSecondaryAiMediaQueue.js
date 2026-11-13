@@ -160,7 +160,7 @@ async function enqueue({
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
           AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
-          AND ${secondaryAutomationAttentionAllowedSql("c")}
+          AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
@@ -222,7 +222,7 @@ const READY_SQL=`
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
    AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -261,7 +261,7 @@ const STILL_VALID_SQL=`
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
      AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c")}
+     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -341,7 +341,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
          AND (
            job.expires_at<=NOW() OR
-           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c")}) OR
+           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c","inbound")}) OR
            c.whatsapp_opt_out_at IS NOT NULL OR
            c.whatsapp_marketing_opt_out_at IS NOT NULL OR
            NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6","$7")}) OR
