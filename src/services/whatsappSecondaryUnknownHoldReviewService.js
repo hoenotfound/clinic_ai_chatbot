@@ -34,7 +34,8 @@ const EXACT_UNKNOWN_HOLD_SQL=`
  WHERE a.reservation_id=$1::uuid AND a.state='unknown' AND g.state='unknown'
    AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3
    AND sa.meta_account_id=$4 AND sa.state='active'
-   AND (a.wamid IS NULL OR m.whatsapp_message_id=a.wamid)
+   AND ((a.wamid IS NULL AND m.whatsapp_message_id IS NULL)
+     OR (a.wamid IS NOT NULL AND m.whatsapp_message_id=a.wamid))
  FOR UPDATE OF a,g
 `;
 
