@@ -481,10 +481,12 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
       WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
-        AND gate.state<>'idle')
+        AND gate.state IN ('reserved','awaiting_pricing'))
+   -- Old UNKNOWN outcomes are eligible only after a sender-bound staff
+   -- review and one-shot authorization at the final billing reservation.
+   -- Do not mark the old attempt as successful or replay its original media.
    -- Each verified seven-day ad session may receive up to four template
    -- reminders, even if the contact had prior successful ad sessions.
-   -- Preserve same-contact unknown-send holds above: never replay ambiguity.
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts other
       WHERE other.sender_id=sa.id AND other.contact_id=c.id
         AND other.slot_hours=rule.slot_hours
