@@ -230,7 +230,7 @@ const CANDIDATES_SQL=`
    AND NOT ${temporaryStaffConversationSql('c','inbound')}
    AND ${pendingCancellationFollowupAllowedSql('c')}
    AND c.mode='ai' AND c.takeover_by IS NULL
-   AND ${secondaryAutomationAttentionAllowedSql("c")}
+   AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
