@@ -137,6 +137,18 @@ async function releaseReviewedSecondaryUnknownHold({
          AND contact_id=$2 AND message_id=$4 AND state='unknown'`,
       [senderId,attempt.contact_id,reservation,attempt.message_id]);
     if(changed.rowCount!==1)throw Error("Lost exact unknown hold under review");
+    // If a receipt arrived before the scheduler recorded Meta acceptance,
+    // mark this exact follow-up attempt unsafe before opening its gate.
+    // Never advance the original sequence on a failed/unverified video.
+    for(const ledger of ["whatsapp_sender_followup_attempts",
+                         "whatsapp_sender_marketing_followup_attempts"]){
+      await client.query(
+        "UPDATE "+ledger+" SET status='unknown', "+
+        "error_code='secondary_reviewed_unknown_billing_hold' "+
+        "WHERE sender_id=$1 AND contact_id=$2 AND message_id=$3 "+
+        "AND status='accepted'",
+        [senderId,attempt.contact_id,attempt.message_id]);
+    }
     // The original billing attempt intentionally stays UNKNOWN. Late
     // signed provider receipts can still be matched and investigated.
     await client.query("COMMIT");tx=false;
