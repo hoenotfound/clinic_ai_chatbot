@@ -74,7 +74,37 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
        c.whatsapp_sender_id,sa.sender_key AS whatsapp_sender_key,
        inbound.id AS inbound_id,inbound.created_at AS inbound_at,
        inbound.source_at,lead.treatment_interest,
-       NULL::text AS ad_name,
+       verified_ad.ad_name AS ad_name,
+       verified_ad.treatment_interest AS ad_treatment_interest,
+       EXISTS (
+         SELECT 1 FROM whatsapp_marketing_consent_events permission
+         JOIN messages proof ON proof.id=permission.message_id
+           AND proof.contact_id=c.id AND proof.role='user'
+           AND proof.whatsapp_message_id=permission.provider_message_id
+           AND proof.whatsapp_message_id LIKE 'wamid.%'
+         JOIN whatsapp_sender_message_context proof_context
+           ON proof_context.message_id=proof.id
+         JOIN whatsapp_sender_conversations proof_sender
+           ON proof_sender.id=proof_context.conversation_id
+           AND proof_sender.sender_id=sa.id AND proof_sender.contact_id=c.id
+           AND proof_sender.customer_wa_id=c.whatsapp_number
+           AND proof_sender.state='bound'
+         WHERE permission.contact_id=c.id AND permission.lead_id=lead.id
+           AND permission.consent_category='MARKETING'
+           AND permission.consent_scope='treatment_followups_and_related_offers'
+           AND permission.consent_method IN ('customer_whatsapp_text',
+                                             'customer_whatsapp_interactive_button')
+           AND LOWER(BTRIM(permission.consent_service))=
+               LOWER(BTRIM(lead.treatment_interest))
+           AND permission.consented_at>=inbound.created_at-INTERVAL '24 hours'
+           AND permission.consented_at<=inbound.created_at
+           AND DATE_TRUNC('milliseconds',permission.consented_at)=
+               DATE_TRUNC('milliseconds',
+                 COALESCE(proof.source_created_at,proof.created_at))
+           AND NOT EXISTS (SELECT 1
+             FROM whatsapp_sender_coexistence_history_messages historic
+             WHERE historic.message_id=proof.id)
+       ) AS recent_verified_treatment_consent,
        EXISTS (SELECT 1 FROM messages first_price
          WHERE first_price.pricing_reminder_anchor_id=inbound.id
            AND first_price.pricing_reminder_package_key='Package A'
@@ -123,11 +153,35 @@ JOIN contacts c ON c.id=inbound.contact_id
 JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
   AND sa.state='active' AND sa.sender_key=ANY($1::text[])
 LEFT JOIN LATERAL (
-  SELECT l.treatment_interest,l.is_closed,l.appointment_status,
+  SELECT l.id,l.treatment_interest,l.is_closed,l.appointment_status,
          s.stage_type,s.system_key
   FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
   WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
 ) lead ON TRUE
+-- The fallback ad must be a genuine, recent customer entry on THIS exact
+-- WhatsApp sender. Never infer a price from old ads, CRM first-touch data,
+-- historical coexistence imports, or an unrelated sender's ad.
+LEFT JOIN LATERAL (
+  SELECT referral.ad_name, referral.treatment_interest
+  FROM whatsapp_free_entry_referrals referral
+  JOIN messages ad_inbound ON ad_inbound.id=referral.origin_message_id
+    AND ad_inbound.contact_id=c.id AND ad_inbound.role='user'
+    AND ad_inbound.whatsapp_message_id LIKE 'wamid.%'
+  JOIN whatsapp_sender_message_context ad_context
+    ON ad_context.message_id=ad_inbound.id
+  JOIN whatsapp_sender_conversations ad_sender
+    ON ad_sender.id=ad_context.conversation_id
+    AND ad_sender.sender_id=sa.id AND ad_sender.contact_id=c.id
+    AND ad_sender.customer_wa_id=c.whatsapp_number
+    AND ad_sender.state='bound'
+  WHERE referral.contact_id=c.id
+    AND ad_inbound.created_at>=inbound.created_at-INTERVAL '24 hours'
+    AND (ad_inbound.created_at,ad_inbound.id)<=(inbound.created_at,inbound.id)
+    AND NOT EXISTS (SELECT 1
+      FROM whatsapp_sender_coexistence_history_messages historic
+      WHERE historic.message_id=ad_inbound.id)
+  ORDER BY ad_inbound.created_at DESC,ad_inbound.id DESC LIMIT 1
+) verified_ad ON TRUE
 WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND c.mode='ai' AND c.takeover_by IS NULL
   AND ${followUpAttentionAllowedSql("c")}

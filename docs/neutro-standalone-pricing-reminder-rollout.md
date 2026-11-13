@@ -24,8 +24,12 @@ manually and never replayed blindly. Do not backdate the activation timestamp.
 - Only Neutro Sense, and only actively enabled primary/secondary sender.
 - A new, provider-identified customer inbound after activation, sender-bound
   history, a genuine business reply, and a verified *recent*
-  customer treatment mention. Generic hellos, unsupported messages and stale
-  CRM-only treatment labels are excluded.
+  customer treatment mention. When a customer's latest wording is vague,
+  a recently verified WhatsApp ad on the same sender may identify the
+  treatment; otherwise a recent, provider-verified consent event for the
+  latest lead's exact treatment may supply the fallback. Generic hellos with
+  no recent evidence, unsupported messages, comparison enquiries, conflicting
+  ad treatments and stale CRM-only treatment labels remain excluded.
 - A current lead marked opted-in with customer-authored, WhatsApp provider-verified,
   **treatment-specific marketing consent bound to that exact sender** is required.
   A CTWA click, prefilling an enquiry, or simply staying inside 24 hours does
