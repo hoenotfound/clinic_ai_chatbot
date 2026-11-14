@@ -65,7 +65,8 @@ test("Only a genuine prior RM68 opening establishes campaign conversation", () =
 
 test("RM68 follow-on queries preserve correct pricing, duration and event dates", () => {
   assert.match(run("这个多少钱？"), /RM68/);
-  assert.match(run("这个多少钱？"), /不是一般 RM388 的全身脉冲波护理/);
+  assert.doesNotMatch(run("这个多少钱？"), /RM388/);
+  assert.match(run("请问这个是 RM388 吗？"), /RM388 属于另一项全身脉冲波护理优惠/);
   assert.match(run("做多久？"), /1小时30分钟/);
   assert.match(run("RM68 包括什么？"), /脉冲波/);
   assert.match(run("RM68 包括什么？"), /不等于医院的乳腺癌筛查/);
@@ -97,6 +98,7 @@ test("RM68 final reply guard removes cross-campaign RM388 terms only for relevan
   assert.equal(check("一般 Pulse Wave RM388", "这个价钱多少？", early, []), "一般 Pulse Wave RM388");
   assert.match(check("首次体验 RM68", "这个价钱多少？", expired), /活动已于12月6日结束/);
   assert.doesNotMatch(check("12月5日有位", "活动哪天？", dec6), /12月5日/);
+  assert.match(check("12月5日有位", "活动哪天？", dec6), /12月6日/);
 });
 
 test("RM68 follow-ups require anchored customer campaign and are text-only", () => {
