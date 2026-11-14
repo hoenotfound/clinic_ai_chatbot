@@ -256,6 +256,7 @@ test("unconfigured new topics, human takeover and ambiguous selection never inhe
   const base=returningHistory();
   for(const intervening of [
     "我想了解按摩", "我想问下肩颈按摩怎么样",
+    "我想了解胸部专业检查", "我想了解新的护理项目",
     "换个话题聊脸部护理", "我想了解骨盆调理跟3D 小颜术",
     "免费体态评估多少钱？",
   ]) {
@@ -324,4 +325,13 @@ test("contact #9068-style multi-turn care enquiry keeps pelvic when X-ray is dec
   assert.equal(resolveReturningFirstTrialPriceService(args({
     customerText:"一次疗程多少钱？",conversationHistory:h,
   }))?.name,"骨盆调理");
+});
+
+
+test("an unconfigured new topic cannot borrow pelvic prices, even in the current amount question", () => {
+  for (const query of ["胸部专业检查多少钱？","乳腺护理价钱是多少？","按摩多少钱？"]) {
+    const h=returningHistory();
+    h[h.length-1]=turn("user",query,0.01);
+    assert.equal(shadow({customerText:query,conversationHistory:h}),null,query);
+  }
 });
