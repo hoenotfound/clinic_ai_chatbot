@@ -76,6 +76,8 @@ const {
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
+const { campaignContextReply, guardCampaignPriceConflicts } =
+  require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
@@ -2385,6 +2387,34 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // Only a verified prior RM68 first reply can authorize event-continuation
+    // facts. Keep genuine booking-ready, safety, opt-out and staff handoffs on
+    // their existing paths. This separate offer never enables standing RM388
+    // price media or overrides an explicitly switched treatment.
+    let rm68CampaignContinuationTextOnly = false;
+    if (!flagged && !bookingReady && !marketingStopQuestion &&
+        !keywordReason && !urgentSafety && !isActiveSafetyConcern(text)) {
+      const campaignAnswer = campaignContextReply({
+        history, customerText: text,
+      });
+      if (campaignAnswer) {
+        reply = campaignAnswer;
+        rm68CampaignContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      } else {
+        const replyBeforeCampaignGuard = reply;
+        reply = guardCampaignPriceConflicts({
+          history, customerText: text, reply,
+        });
+        // If any old Pulse Wave terms were corrected, do not attach media
+        // derived from the conflicting generic service offer.
+        rm68CampaignContinuationTextOnly = reply !== replyBeforeCampaignGuard;
+      }
+    }
+
     // Final exact-copy boundary for the single authorised, dated Meta campaign.
     // Do not let unrelated downstream text polishers rewrite its verified
     // staff-provided offer, while retaining ALL staff, safety and billing gates.
@@ -2514,6 +2544,10 @@ async function processIncomingMessage(
     // promos and Before/After media must not piggyback on this ad opener.
     if (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
       await auditResultMediaEarlyExit("neutro_breast_rm68_campaign_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
+    if (rm68CampaignContinuationTextOnly) {
+      await auditResultMediaEarlyExit("neutro_breast_rm68_continuation_text_only");
       return { wasFirstMessage, keywordReason };
     }
     if (reviewContinuationTextOnly) {
