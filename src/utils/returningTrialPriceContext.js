@@ -32,7 +32,7 @@ function isSpecificCurrentPriceRequest(text) {
       isFirstTrialAmountQuestion(text)) &&
     !RESET.test(text) && !NON_TREATMENT_FEE.test(text) &&
     !OPINION_ONLY.test(text) && !DIFFERENT_UNCONFIGURED_SUBJECT.test(text) &&
-    !hasClinicalMediaRisk(text);
+    !UNVERIFIED_NEW_SERVICE.test(text) && !hasClinicalMediaRisk(text);
 }
 
 function isSafeFreeAssessmentExplanation(turn, chosen, candidates, complimentaryEnabled) {
