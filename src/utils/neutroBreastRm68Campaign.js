@@ -104,8 +104,17 @@ const INCLUDES_QUESTION =
 const DATE_QUESTION =
   /(?:日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 
+function stillDiscussingCampaign(history) {
+  const messages = Array.isArray(history) ? history : [];
+  const opener = messages.findIndex(row => row?.role === "assistant" &&
+    isCampaignOpening(row.content));
+  return opener >= 0 && !messages.slice(opener + 1, -1).some(
+    row => row?.role === "user" && isOtherTreatmentQuery(row.content)
+  );
+}
 function campaignContextReply({ history, customerText, now = Date.now() } = {}) {
-  if (!hasCampaignConversation(history) || !CAMPAIGN_QUERY.test(String(customerText || "")) ||
+  if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
+      !CAMPAIGN_QUERY.test(String(customerText || "")) ||
       isOtherTreatmentQuery(customerText)) return null;
   if (campaignDay(now) === "expired") {
     return "您之前咨询的 RM68 胸部护理体验活动已于12月6日结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊";
@@ -135,7 +144,8 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
 
 function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.now() } = {}) {
   const original = String(reply || "");
-  if (!hasCampaignConversation(history) || isOtherTreatmentQuery(customerText)) return original;
+  if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
+      isOtherTreatmentQuery(customerText)) return original;
   if (/(?:RM\s*(?:388|688)|2\s*(?:小时|小時|hours?)\s*15|2h\s*15)/iu.test(original) ||
       (campaignDay(now) === "expired" && /\bRM\s*68\b/iu.test(original)) ||
       (campaignDay(now) === "dec6" && /12月5日/u.test(original))) {
@@ -165,7 +175,7 @@ function candidateIsCampaign(candidate) {
   };
   const verifiedAd = candidate?.ad_followup_source === "meta_ads" &&
     campaignCreativeMatches(ad);
-  return (exactPrefill && (recognizedOpener || verifiedAd)) || (recognizedOpener && verifiedAd);
+  return verifiedAd && (exactPrefill || recognizedOpener);
 }
 function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   if (!candidateIsCampaign(candidate)) return null;
@@ -185,6 +195,6 @@ module.exports = {
   CAMPAIGN_KEY, PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
   firstReply, isCampaignOpening, hasCampaignConversation,
-  isOtherTreatmentQuery, campaignContextReply, guardCampaignPriceConflicts,
+  isOtherTreatmentQuery, stillDiscussingCampaign, campaignContextReply, guardCampaignPriceConflicts,
   candidateIsCampaign, campaignFollowUp,
 };
