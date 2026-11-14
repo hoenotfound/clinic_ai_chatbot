@@ -68,3 +68,40 @@ test("nonshared message videos are not invalidated",async()=>{
     }});
  assert.equal(result.invalidated,false);
 });
+
+test("signed failed video with no Meta error code evicts only the exact cached upload",async()=>{
+ const calls=[];
+ const database={query:async(sql,args)=>{
+   calls.push({sql,args});
+   assert.match(sql,/JOIN whatsapp_sender_status_receipts r/);
+   assert.match(sql,/r\\.matched=TRUE/);
+   assert.match(sql,/r\\.delivery_status='failed'/);
+   assert.match(sql,/a\\.wamid=\\$2/);
+   return {rows:[{media_key:key,media_mime_type:"video/mp4"}]};
+ }};
+ const storage={
+   isSharedFollowUpConfigKey:x=>x===key,
+   getSharedFollowUpMediaInfo:async()=>({etag:"no-code-etag",bytes:850,mimeType:"video/mp4"}),
+ };
+ const cache={
+   get:async()=> "video-cache-123",
+   invalidate:async(phone,hash,id)=>{
+     assert.equal(phone,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+     assert.match(hash,/^[a-f0-9]{64}$/);
+     assert.equal(id,"video-cache-123");
+     calls.push({type:"evicted"});return true;
+   }
+ };
+ const result=await invalidateFailedSecondaryVideo({
+   job:{...job,error_code:null},messageId:19328,
+   verifiedSender:{matched:true},allowNoCode:true,
+ },{database,storage,cache,env});
+ assert.equal(result.invalidated,true);
+ assert.equal(calls.filter(x=>x.type==="evicted").length,1);
+});
+test("unclassified failure never evicts without an explicit signed-receipt path",async()=>{
+ const result=await invalidateFailedSecondaryVideo({
+   job:{...job,error_code:null},messageId:19328,verifiedSender:{matched:true},
+ },{env,database:{query:async()=>assert.fail("Must not query unverified no-code failure")}});
+ assert.equal(result.invalidated,false);
+});
