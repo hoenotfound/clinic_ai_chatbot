@@ -22,14 +22,12 @@ function campaignCreativeMatches(metaAdContext) {
   // Headline/body originate in the saved current-lead Meta referral. The
   // separately enriched ad/campaign names are useful when creative is sparse.
   // Never use the customer's prefill itself to prove what the ad advertised.
-  const sources = [
-    [metaAdContext.headline, metaAdContext.body].filter(Boolean).join(" "),
-    [metaAdContext.adName, metaAdContext.campaignName].filter(Boolean).join(" "),
-  ];
-  return sources.some((source) =>
-    /\b(?:RM|MYR)\s*68\b/iu.test(source) &&
-    /(?:胸部|乳腺|乳房|breast|payudara)/iu.test(source)
-  );
+  const source = [
+    metaAdContext.headline, metaAdContext.body,
+    metaAdContext.adName, metaAdContext.campaignName,
+  ].filter(Boolean).join(" ");
+  return /\b(?:RM|MYR)\s*68\b/iu.test(source) &&
+    /(?:胸部|乳腺|乳房|breast|payudara)/iu.test(source);
 }
 function campaignDay(now = Date.now()) {
   const time = now instanceof Date ? now.getTime() : Number(now);
