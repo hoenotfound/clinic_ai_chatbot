@@ -279,7 +279,13 @@ async function reserveSecondaryBillingAttempt({
       }
       if (approved.release_basis !== "signed_failed" && !manuallyReviewed) {
         await client.query("ROLLBACK"); inTransaction = false;
-        return deny("secondary_billing_unknown_hold_not_reviewed");
+        // No-WAMID remains a possible provider send; the operator bypass
+        // setting must be enabled before any manual UUID review is relevant.
+        return deny(
+          env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED === "true"
+            ? "secondary_billing_unknown_hold_not_reviewed"
+            : "secondary_billing_previous_send_unresolved"
+        );
       }
       // Preserve a separate, permanent record of which original UNKNOWN gate
       // was bypassed for which new message. Both writes occur in the same
