@@ -14,6 +14,25 @@ function staffWaitingOwnershipSql(waitingAlias) {
       c.mode = 'ai'
       AND c.needs_attention = true
       AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'
+      -- A failed *follow-up attachment* is its own delivery incident.
+      -- If a normal AI reply was already verified delivered/read after this
+      -- customer turn, do not reclassify the old question as Staff Waiting.
+      -- An unanswered new customer turn, Staff mode, and other actionable
+      -- staff review categories remain eligible.
+      AND (
+        (COALESCE(c.attention_reason, '') NOT LIKE 'Delivery failed:%'
+         AND COALESCE(c.attention_reason, '') NOT LIKE 'Delivery unconfirmed:%')
+        OR NOT EXISTS (
+          SELECT 1 FROM messages delivered_ai
+          WHERE delivered_ai.contact_id=c.id
+            AND delivered_ai.role='assistant'
+            AND delivered_ai.sent_by_username IS NULL
+            AND delivered_ai.is_automated_follow_up = false
+            AND delivered_ai.delivery_status IN ('delivered','read')
+            AND (delivered_ai.created_at,delivered_ai.id)>
+                (${waitingAlias}.created_at,${waitingAlias}.id)
+        )
+      )
       AND (
         COALESCE(c.attention_reason, '') NOT ILIKE 'Historical %'
         OR (
