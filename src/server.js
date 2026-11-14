@@ -75,7 +75,7 @@ const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
 } = require("./utils/resultMediaTrigger");
-const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
+const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
