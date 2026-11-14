@@ -25,6 +25,8 @@ const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {isVerifiedFailedVideo,textWithoutVideo}=
+  require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
@@ -782,6 +784,7 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
  videoSelection=selectApprovedTreatmentVideo,
+ videoQuarantined=isVerifiedFailedVideo,
  // Inject only the existing, scoped AI-copy helper for deterministic tests.
  personalize20h=createPersonalized20h,
  onUnexpectedFailure=()=>{},
@@ -909,9 +912,20 @@ async function runOnce({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=(staffVideoSent || generalOnly || candidate.staff_reply ||
+      let key=(staffVideoSent || generalOnly || candidate.staff_reply ||
         candidate.recovery_no_selection) ? null
         : candidate.media_key || selectedVideo?.mediaKey || null;
+      // Stop reusing an immutable video that Meta already rejected with a
+      // signed 131053 media-upload failure. A normal service reminder can
+      // continue as text within the existing customer window and AI rules.
+      const videoWasQuarantined=Boolean(key &&
+        await videoQuarantined({
+          database,senderId:candidate.sender_id,mediaKey:key,env,
+        }));
+      if(videoWasQuarantined && !textWithoutVideo(replyLanguage)){
+        await fail("sender_followup_quarantined_video_no_safe_language");continue;
+      }
+      if(videoWasQuarantined)key=null;
       checkingVideo=Boolean(key);
       const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
       const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
@@ -952,7 +966,8 @@ async function runOnce({
       // If AI declines or temporarily fails, use a reviewed, treatment-neutral
       // service reminder in the verified customer language. Do not bypass an
       // identity/policy failure, fabricate a treatment, or retry a sent slot.
-      let outboundText=safeText;
+      let outboundText=videoWasQuarantined
+        ?textWithoutVideo(replyLanguage):safeText;
       let aiMode=null;
       phase="ai_generation";
       if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
