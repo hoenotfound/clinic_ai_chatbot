@@ -24,6 +24,7 @@ const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
@@ -623,6 +624,7 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
+       AND attempted.status<>'deferred'
    )
  ORDER BY inbound.created_at,c.id,rule.slot_hours
  LIMIT $5
@@ -823,7 +825,7 @@ async function runOnce({
     const claimed=await database.query(
       `INSERT INTO whatsapp_sender_followup_attempts
         (sender_id,contact_id,anchor_message_id,slot_hours)
-       VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`,
+       VALUES($1,$2,$3,$4) ${reclaimClause("whatsapp_sender_followup_attempts")}`,
       [candidate.sender_id,candidate.contact_id,candidate.inbound_id,slot]
     );
     const id=claimed.rows?.[0]?.id;
@@ -1017,6 +1019,12 @@ async function runOnce({
             [id,reason,messageId]
           );
         }
+      } else if(await deferProvenUnsent({
+        database,table:"whatsapp_sender_followup_attempts",
+        attemptId:id,messageId,contactId:candidate.contact_id,result,
+      })){
+        // Confirmed pre-provider billing refusal. The old Inbox draft stays
+        // cancelled; another scheduler may reclaim only this exact slot.
       } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
       // Never automatically replay this one-shot attempt. Report a fixed,
