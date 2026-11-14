@@ -20,7 +20,8 @@ const NON_TREATMENT_FEE = /(?:免费|免費|评估|評估|assessment|consultatio
 const FIRST_TRIAL = /(?:第一次|首次|初次)\s*(?:体验|體驗|护理|護理|疗程|療程|做|来|來)?|\b(?:first[\s-]*trial|trial[\s-]*(?:price|cost)|harga[\s-]*percubaan)\b/iu;
 const PRICE_REQUEST = /(?:多少[钱錢]|[几幾]多[钱錢]|(?:价钱|價錢|价格|價格|价位|費用|费用|收费|收費)\s*(?:是|要|大概|多少|几多|幾多)?\s*[?？]|(?:想(?:问|問|知道|了解|看看)|请问|請問|可(?:以|否)|告诉|告訴|发给|發給|给我|給我|麻烦|麻煩).{0,32}(?:价格|價格|价钱|價錢|费用|費用|收费|收費)|\b(?:how\s+much|price|pricing|cost|fee|harga|berapa\s+(?:harga|bayar|satu\s+sesi))\b)/iu;
 const OPINION_ONLY = /(?:[价價](?:格|钱|錢|位).{0,18}(?:太贵|太貴|好贵|好貴|很贵|很貴|偏高|超出预算|超出預算)|(?:预算|預算).{0,25}(?:是|只有|不到|RM)|\b(?:too\s+expensive|over\s+budget|mahal\s+sangat)\b)/iu;
-const DIFFERENT_UNCONFIGURED_SUBJECT = /(?:想了解|想问|想問|想做|做其他|请问|請問|换成|換成).{0,32}(?:按摩|肩颈|肩頸|筋膜|皮肤|皮膚|美容|面部|洗脸|洗臉|\b(?:massage|facial|skin\s+treatment|full\s*body)\b)/iu;
+const DIFFERENT_UNCONFIGURED_SUBJECT = /(?:按摩|肩颈|肩頸|筋膜|皮肤|皮膚|美容|面部|洗脸|洗臉|胸部|乳腺|乳腺检查|乳腺檢查|胸部专业检查|胸部專業檢查|乳房检查|乳房檢查|\b(?:massage|facial|skin\s*treatment|full\s*body|breast\s*check|breast\s*care|pulse\s*wave|hifu)\b)/iu;
+const UNVERIFIED_NEW_SERVICE = /(?:想(?:了解|问|問|做|看看)|我要|想预约|想預約|要做|给我介绍|給我介紹).{0,36}(?:疗程|療程|治疗|治療|调理|調理|项目|項目|服务|服務|检查|檢查|护理(?!过程|過程|流程|安排|时间|時間|步骤|步驟|效果|详情|詳情|内容|內容)|\b(?:treatment|service|procedure|rawatan)\b)/iu;
 const FREE_INTRO = /(?:免费|免費|complimentary|percuma|free).{0,50}(?:1\s*[对對]\s*1|体态评估|體態評估|assessment).{0,25}(?:体验|體驗|experience|sesi)?/iu;
 const INTRO_ASSESSMENT = /(?:先|首先|会先|會先|可以先).{0,44}(?:1\s*[对對]\s*1|体态评估|體態評估|assessment).{0,25}(?:体验|體驗|experience|sesi)/iu;
 
@@ -85,6 +86,7 @@ function resolveReturningTreatmentPriceService({
     const names = [...new Set(findServicesInText(value, candidates))];
     if (names.length > 1) return null;
     if (!names.length) {
+      if (UNVERIFIED_NEW_SERVICE.test(value)) return null;
       if (NON_TREATMENT_FEE.test(value) && hasExplicitPriceRequest(value))
         return null;
       continue;
@@ -119,7 +121,7 @@ function resolveReturningTreatmentPriceService({
     if (!value) return null;
     if (turn.role === "user") {
       if (RESET.test(value) || DIFFERENT_UNCONFIGURED_SUBJECT.test(value) ||
-          hasClinicalMediaRisk(value)) return null;
+          UNVERIFIED_NEW_SERVICE.test(value) || hasClinicalMediaRisk(value)) return null;
       const names = [...new Set(findServicesInText(value, candidates))];
       if (names.some(name => name !== selected.name)) return null;
       if (NON_TREATMENT_FEE.test(value) && hasExplicitPriceRequest(value))
