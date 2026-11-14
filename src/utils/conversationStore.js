@@ -170,6 +170,43 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
   });
 }
 
+// Separate from the 20-turn AI prompt: pricing-only trusted history for
+// Neutro returning customers. Never download media or enlarge normal prompts.
+// One bounded page and a seven-day cut-off. If the relevant window is
+// truncated, reject the recovery rather than overlooking older staff/topic
+// messages. This does not authorize or send a message by itself.
+async function getPricingHistoryForContact(contactId, { throughMessageId } = {}) {
+  const boundary = Number(throughMessageId);
+  if (!Number.isSafeInteger(boundary) || boundary < 1) return null;
+  const page = await messagesRepo.getMessagePageForContact(contactId, {
+    limit: 100, beforeId: boundary + 1, includeMedia: false,
+  });
+  const rows = page.rows || [];
+  if (!rows.length || Number(rows.at(-1).id) !== boundary) return null;
+  const earliest = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const oldestAt = new Date(rows[0].created_at).getTime();
+  if (!Number.isFinite(oldestAt) || (page.hasMore && oldestAt >= earliest))
+    return null;
+
+  const recent = rows.filter(row => new Date(row.created_at).getTime() >= earliest);
+  if (!recent.length || recent.length > 100 ||
+      // An edited/revoked turn may have changed the original meaning; do not
+      // silently skip a staff intervention or topic switch in this evidence.
+      recent.some(row => row.whatsapp_customer_mutation ||
+        !["assistant", "user"].includes(row.role) ||
+        (row.role === "assistant" && (
+          ["failed", "unknown", "cancelled"].includes(row.delivery_status) ||
+          (row.pricing_reminder_anchor_id != null && row.delivery_status == null)
+        )))) return null;
+
+  return recent.map(row => withPricingHistoryMetadata({
+    role: row.role,
+    content: isVerifiedHumanStaffRow(row)
+      ? STAFF_HISTORY_PREFIX + aiContextTextForRow(row)
+      : aiContextTextForRow(row),
+  }, row));
+}
+
 async function getHistory(waId) {
   const contact = await contactsRepo.getOrCreateContact(waId);
   return getHistoryForContact(contact.id);
@@ -310,6 +347,7 @@ module.exports = {
   aiVisibleRows,
   getHistory,
   getHistoryForContact,
+  getPricingHistoryForContact,
   appendMessage,
   appendMessageForContact,
   appendInboundMessageIfNew,
