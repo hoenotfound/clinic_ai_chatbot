@@ -1082,17 +1082,23 @@ test("signed failed secondary receipt stops a claimed follow-up, alerts once, an
     "VALUES($1,$2,$3,6,$4,'claimed') RETURNING id",
     [ids.ariel,c,inbound,m])).rows[0].id;
   const alerts=[];
+   const evictions=[];
   const failed=await receipts.recordSignedSecondaryStatusBatch(
     signed(st("wamid.ariel-one",{
       status:"failed",errors:[{code:131052,title:"Private customer details"}],
     })),
-    {database,env,onFailureAttention:async item=>alerts.push(item)}
+    {database,env,onFailureAttention:async item=>alerts.push(item),
+       onFailedVideoCacheInvalidation:async item=>evictions.push(item)}
   );
   assert.equal(failed.matched,1);
   assert.equal(failed.held,1);
   assert.equal(alerts.length,1);
   assert.equal(alerts[0].contactId,c);
   assert.equal(alerts[0].messageId,m);
+   assert.equal(evictions.length,1,"cache handler must run after signed failure");
+   assert.equal(evictions[0].messageId,m);
+   assert.equal(evictions[0].wamid,"wamid.ariel-one");
+   assert.equal(evictions[0].errorCode,131052);
   assert.match(alerts[0].reason,/Meta code 131052/);
   assert.doesNotMatch(alerts[0].reason,/Private customer/);
   const before=(await db.query(
@@ -1110,9 +1116,11 @@ test("signed failed secondary receipt stops a claimed follow-up, alerts once, an
   assert.equal(attemptedLateAccept.rowCount,0);
   const late=await receipts.recordSignedSecondaryStatusBatch(
     signed(st("wamid.ariel-one",{status:"sent",timestamp:"1792657900"})),
-    {database,env,onFailureAttention:async item=>alerts.push(item)}
+    {database,env,onFailureAttention:async item=>alerts.push(item),
+       onFailedVideoCacheInvalidation:async item=>evictions.push(item)}
   );
   assert.equal(late.matched,1);
+   assert.equal(evictions.length,1,"late sent must not evict twice");
   const after=(await db.query(
     "SELECT delivery_status,delivery_error FROM messages WHERE id=$1",[m])).rows[0];
   assert.deepEqual(after,before,"late sent must preserve the failed status AND Meta code");

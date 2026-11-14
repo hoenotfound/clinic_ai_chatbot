@@ -308,7 +308,8 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
 // accepted attempt to 'unknown' for manual billing review.
 async function recordSignedSecondaryStatusBatch({
   rawBody, signatureHeader, subsetFromVerifiedWebhook = false,
-}, { database = pool, env = process.env, onFailureAttention = null } = {}) {
+}, { database = pool, env = process.env, onFailureAttention = null,
+     onFailedVideoCacheInvalidation = null } = {}) {
   if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
@@ -526,6 +527,7 @@ async function recordSignedSecondaryStatusBatch({
           contactId: attempt.contact_id,
           messageId: attempt.message_id,
           errorCode: event.failureCode,
+          wamid: event.wamid,
         });
       }
       // A provider-accepted follow-up can fail after its scheduler wrote
@@ -743,6 +745,30 @@ async function recordSignedSecondaryStatusBatch({
         } catch {
           console.warn("[Secondary WhatsApp receipt] staff attention update deferred.");
         }
+      }
+    }
+    // This secondary signed-receipt handler updates delivery directly; it
+    // does not enqueue the primary delivery-status worker. Invalidate only
+    // the exact cached secondary upload after a matched signed failed receipt.
+    // Missing provider error codes are inconclusive about *why* the video
+    // failed, but cache eviction is safe: it never sends or retries anything.
+    const failedVideoHandler = typeof onFailedVideoCacheInvalidation === "function"
+      ? onFailedVideoCacheInvalidation
+      : database === pool
+        ? ({messageId,wamid,errorCode}) =>
+          require("./whatsappSecondaryFailedVideoCache").invalidateFailedSecondaryVideo({
+            job: {
+              wamid,delivery_status:"failed",error_code:errorCode,
+              business_phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+              business_account_id:env.WHATSAPP_SECONDARY_WABA_ID,
+            },
+            messageId,verifiedSender:{matched:true},allowNoCode:true,
+          },{database,env})
+        : null;
+    if(failedVideoHandler){
+      for(const failed of failedAlerts){
+        try{await failedVideoHandler(failed);}
+        catch{console.warn("[Secondary WhatsApp receipt] video cache invalidation deferred.");}
       }
     }
     // Once a previous sender reservation is safely reconciled, promptly
