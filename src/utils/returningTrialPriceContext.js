@@ -22,6 +22,7 @@ const PRICE_REQUEST = /(?:多少[钱錢]|[几幾]多[钱錢]|(?:价钱|價錢|�
 const OPINION_ONLY = /(?:[价價](?:格|钱|錢|位).{0,18}(?:太贵|太貴|好贵|好貴|很贵|很貴|偏高|超出预算|超出預算)|(?:预算|預算).{0,25}(?:是|只有|不到|RM)|\b(?:too\s+expensive|over\s+budget|mahal\s+sangat)\b)/iu;
 const DIFFERENT_UNCONFIGURED_SUBJECT = /(?:想了解|想问|想問|想做|做其他|请问|請問|换成|換成).{0,32}(?:按摩|肩颈|肩頸|筋膜|皮肤|皮膚|美容|面部|洗脸|洗臉|\b(?:massage|facial|skin\s+treatment|full\s*body)\b)/iu;
 const FREE_INTRO = /(?:免费|免費|complimentary|percuma|free).{0,50}(?:1\s*[对對]\s*1|体态评估|體態評估|assessment).{0,25}(?:体验|體驗|experience|sesi)?/iu;
+const INTRO_ASSESSMENT = /(?:先|首先|会先|會先|可以先).{0,44}(?:1\s*[对對]\s*1|体态评估|體態評估|assessment).{0,25}(?:体验|體驗|experience|sesi)/iu;
 
 function isSpecificCurrentPriceRequest(text) {
   return Boolean(text) && text.length <= 120 &&
@@ -33,9 +34,10 @@ function isSpecificCurrentPriceRequest(text) {
     !hasClinicalMediaRisk(text);
 }
 
-function isSafeFreeAssessmentExplanation(turn, chosen, candidates) {
+function isSafeFreeAssessmentExplanation(turn, chosen, candidates, complimentaryEnabled) {
   const value = pricingMessageText(turn);
-  if (!FREE_INTRO.test(value) ||
+  if (!complimentaryEnabled ||
+      !(FREE_INTRO.test(value) || INTRO_ASSESSMENT.test(value)) ||
       /\b(?:RM|MYR)\s*[1-9]\d+/iu.test(value)) return false;
   const names = [...new Set(findServicesInText(value, candidates))];
   return names.length === 1 && names[0] === "1对1体态评估" &&
@@ -121,7 +123,9 @@ function resolveReturningTreatmentPriceService({
         return null;
     } else if (assistantIntroducesCompetingPaidService(
       turn, selected.name, candidates
-    ) && !isSafeFreeAssessmentExplanation(turn, selected.name, candidates)) {
+    ) && !isSafeFreeAssessmentExplanation(
+      turn, selected.name, candidates, complimentaryAssessmentExperienceEnabled
+    )) {
       return null;
     }
   }
