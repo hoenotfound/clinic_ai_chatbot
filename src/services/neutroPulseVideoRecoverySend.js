@@ -8,6 +8,7 @@
 const { pool } = require("../db/db");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
+const conversationStore = require("../utils/conversationStore");
 const storage = require("./mediaStorageService");
 const policy = require("./whatsappSecondaryPolicyService");
 const { sendSecondaryStaffText } = require("./whatsappSecondaryStaffDispatch");
@@ -128,9 +129,9 @@ async function dispatchForOne(entry,bytes,{database=pool,env=process.env}={}){
   }
   const check=await verifyRecipient(entry,{database,env});
   if(!check.ok)return {contactId:entry.id,status:"skipped",code:check.code};
-  const saved=await messagesRepo.saveMessage(
-    entry.id,"assistant",CAPTION,null,null,null,null,"video/mp4",
-    {mediaKey:KEY,mediaFilename:FILENAME}
+  const saved=await conversationStore.appendMessageForContact(
+    entry.id,"assistant",CAPTION,null,null,null,
+    {mimeType:"video/mp4"},{mediaKey:KEY,mediaFilename:FILENAME}
   );
   // No duplicate writes on restart. A message saved before a provider send
   // remains a permanent one-shot claim, even if no WAMID was accepted.
