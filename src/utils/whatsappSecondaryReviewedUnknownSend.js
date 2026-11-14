@@ -20,12 +20,40 @@ function reviewReservationSql(env=process.env,qualified="a.reservation_id"){
    : "FALSE";
 }
 
-// A fresh sender-verified, readable customer inbound can resume AI while
-// a reviewed delivery failure remains flagged for staff. No prior send is
-// retried, and the final billing and WhatsApp checks are still mandatory.
+// A final signed failure on the exact sender+WAMID is conclusive evidence of
+// delivery failure, not proof that Meta charged nothing. It may resume normal
+// new-send eligibility without a manual review UUID, but never replay the
+// failed message or bypass opt-out, takeover, fresh-inbound or billing checks.
+function signedFailureOrReviewedSql(env=process.env,messageAlias="old_outbound"){
+ if(!/^[a-z][a-z0-9_]*$/i.test(messageAlias))
+   throw Error("Invalid message SQL alias");
+ const review=reviewReservationSql(env,"held_attempt.reservation_id");
+ if(env?.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary")
+   return review;
+ return `(${review} OR (
+   held_attempt.wamid IS NOT NULL
+   AND ${messageAlias}.whatsapp_message_id=held_attempt.wamid
+   AND ${messageAlias}.delivery_status='failed'
+   AND EXISTS(
+     SELECT 1 FROM whatsapp_sender_status_receipts verified_failure
+     JOIN whatsapp_sender_accounts expected_sender
+       ON expected_sender.id=held_attempt.sender_id
+       AND expected_sender.sender_key='neutro_secondary'
+     WHERE verified_failure.sender_id=held_attempt.sender_id
+       AND verified_failure.reservation_id=held_attempt.reservation_id
+       AND verified_failure.wamid=held_attempt.wamid
+       AND verified_failure.matched=TRUE
+       AND verified_failure.delivery_status='failed'
+       AND verified_failure.meta_phone_number_id=expected_sender.meta_phone_number_id
+       AND verified_failure.meta_account_id=expected_sender.meta_account_id
+   )
+ ))`;
+}
+// Fresh readable inbound still required to resume AI. No earlier message is
+// replayed; the final transactional reservation enforces current sender rules.
 function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
- const approved=reviewReservationSql(env,"held_attempt.reservation_id");
+ const approved=signedFailureOrReviewedSql(env,"old_outbound");
  if(approved==="FALSE")return "FALSE";
  // The original ad session cannot regain authority just because a DIFFERENT
  // later customer question arrived. Automated work must use that new anchor.
@@ -107,7 +135,7 @@ function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=p
  for(const alias of [contactAlias,senderAlias]){
   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid SQL alias");
  }
- const approved=reviewReservationSql(env,"held_attempt.reservation_id");
+ const approved=signedFailureOrReviewedSql(env,"failed_video");
  return `NOT EXISTS (
    SELECT 1 FROM whatsapp_sender_billing_gates preflight_gate
    WHERE preflight_gate.sender_id=${senderAlias}.id
