@@ -1958,7 +1958,7 @@ async function processIncomingMessage(
     // must NEVER allow unsolicited first-contact prices to slip through.
     // Actual current price enquiries still bypass the guard. Preserve all AI
     // intent fields, clinical escalation and Before & After media eligibility.
-    if (!flagged) {
+    if (!flagged && fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026") {
       const guardedOfferIntro = guardFutureOfferIntroductionReply({
         channel,
         isFirstMessage: clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true ? false : isFirstMessage,
@@ -1996,6 +1996,7 @@ async function processIncomingMessage(
     // to move straight to the assessment. Use only this verified treatment's
     // active configured packages, never a guessed amount or stacked voucher.
     if (!flagged && !marketingStopQuestion &&
+        fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026" &&
         (aiPricingEnabled ||
          clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true)) {
       const priced = ensureVerifiedPriceReply({
@@ -2384,6 +2385,13 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // Final exact-copy boundary for the single authorised, dated Meta campaign.
+    // Do not let unrelated downstream text polishers rewrite its verified
+    // staff-provided offer, while retaining ALL staff, safety and billing gates.
+    if (!flagged && fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
+      reply = fixedAdFirstReply.reply;
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
@@ -2502,6 +2510,12 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
+    // This dated, customer-requested RM68 offer is text-only. Other treatment
+    // promos and Before/After media must not piggyback on this ad opener.
+    if (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
+      await auditResultMediaEarlyExit("neutro_breast_rm68_campaign_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (reviewContinuationTextOnly) {
       await auditResultMediaEarlyExit("review_continuation_text_only");
       return { wasFirstMessage, keywordReason };
