@@ -235,6 +235,38 @@ const PREVIOUS_STEP_SQL=`
 // (20-6)=14 hours after its actual delivery can make 20h impossible.
 // Preserve accepted-step ordering, but require only a short spacing buffer
 // after a delayed video. Do not let downtime generate backdated messages.
+// A verified pre-provider refusal must not permanently suppress later
+// stages once an earlier step is outside the eight-hour catch-up window.
+// No accepted/ambiguous/blocked step may use this exception. A 20h step may
+// also pass a never-claimed 6h slot ONLY when its 2h antecedent was safely
+// deferred and both earlier due windows have elapsed.
+const STALE_PRE_PROVIDER_STEP_SQL=`(
+  previous_step.completed_at IS NULL
+  AND rule.slot_hours IN (6,20)
+  AND EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_attempts earlier_deferred
+    WHERE earlier_deferred.sender_id=sa.id
+      AND earlier_deferred.contact_id=c.id
+      AND earlier_deferred.anchor_message_id=inbound.id
+      AND earlier_deferred.status='deferred'
+      AND earlier_deferred.message_id IS NULL
+      AND earlier_deferred.error_code='pre_provider_billing_deferred'
+      AND earlier_deferred.defer_count>0
+      AND earlier_deferred.claimed_at <= NOW()-INTERVAL '8 hours'
+      AND (
+        earlier_deferred.slot_hours=previous_step.slot_hours
+        OR (rule.slot_hours=20 AND earlier_deferred.slot_hours=2
+            AND previous_step.slot_hours=6
+            AND first_reply.at+INTERVAL '14 hours'<NOW()
+            AND NOT EXISTS (
+              SELECT 1 FROM whatsapp_sender_followup_attempts any_six
+              WHERE any_six.sender_id=sa.id AND any_six.contact_id=c.id
+                AND any_six.anchor_message_id=inbound.id
+                AND any_six.slot_hours=6
+            ))
+      )
+  )
+)`;
 const SEQUENCE_DUE_SQL=`(CASE WHEN rule.slot_hours=20
  THEN GREATEST(
    ${FOLLOWUP_DUE_SQL},
@@ -609,7 +641,8 @@ const CANDIDATES_SQL=`
        > $4::timestamptz - INTERVAL '8 hours'
    -- Follow-ups run in order. A later step needs its preceding enabled
    -- sender-specific step to have been accepted, not merely scheduled.
-   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
+   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
+     OR ${STALE_PRE_PROVIDER_STEP_SQL})
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
    -- Routine staff information and forwards do not cancel AI-owned follow-ups.
    -- Staff questions, pending bookings and explicit takeover remain gated above.
@@ -729,7 +762,8 @@ const RECHECK_SQL=`
    AND ${SEQUENCE_DUE_SQL} <= NOW()
    AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
-   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
+   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
+     OR ${STALE_PRE_PROVIDER_STEP_SQL})
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts prior_problem
      WHERE prior_problem.sender_id=sa.id AND prior_problem.contact_id=c.id
