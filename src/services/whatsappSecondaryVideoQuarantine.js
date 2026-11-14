@@ -26,7 +26,7 @@ const SQL=`
  ) AS quarantined`;
 async function isVerifiedFailedVideo({database,senderId,mediaKey,env=process.env}={}){
  if(env.WHATSAPP_SECONDARY_SENDER_KEY!=='neutro_secondary' ||
-   !Number.isSafeInteger(Number(senderId)) ||
+   (!Number.isSafeInteger(Number(senderId)) || Number(senderId)<=0) ||
    !/^clients\/[a-z0-9-]+\/messages\/follow-up-config\/[A-Za-z0-9._-]+\.mp4$/.test(
      String(mediaKey||'')))return false;
  const result=await database.query(SQL,[mediaKey,Number(senderId)]);
