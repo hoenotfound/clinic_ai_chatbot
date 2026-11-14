@@ -239,7 +239,8 @@ test("latest explicitly selected treatment wins without carrying an older pelvic
   const facial = {
     name:"3D First Trial",linkedService:"3D 小颜术",
     sendOnPriceQuery:true, validFrom:"2000-01-01",validUntil:"2999-12-31",
-    imageUrl:"https://example.test/3d.jpg",caption:"First Trial 体验价 RM488",
+    imageUrl:"https://example.test/3d.jpg",caption:"首次体验仅需 RM488",
+    pricing:{currency:"MYR",offer:488,normal:888},
   };
   assert.equal(resolveReturningFirstTrialPriceService(args({
     customerText:"多少钱？",conversationHistory:h,
@@ -295,8 +296,8 @@ test("current price language is genuine enquiry, not an objection or unsupported
   for(const query of ["多少钱？","价钱","一次疗程多少钱？","我想知道价格才安排过来","Berapa harga?"]) {
     const h=returningHistory();
     h.splice(-1,0,
-      turn("user","只是想了解护理过程",10),
-      turn("assistant","骨盆调理会先由中医师了解体态",9.99),
+      turn("user","只是想了解护理过程",0.03),
+      turn("assistant","骨盆调理会先由中医师了解体态",0.02),
     );
     h[h.length-1]=turn("user",query,0.01);
     assert.equal(shadow({customerText:query,conversationHistory:h})?.treatment,
