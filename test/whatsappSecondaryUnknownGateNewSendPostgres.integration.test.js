@@ -256,8 +256,8 @@ test("verified failed delivery does not permit replay or contradictory proof",
         "d".repeat(64),env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]);
     assert.equal((await request(s.messages[0])).code,
-      "secondary_billing_previous_send_unresolved",
-      "old failed provider send never replays itself");
+      "secondary_billing_sender_mismatch",
+      "old failed provider send never replays itself because WAMID is already set");
     await db.query(
       "UPDATE whatsapp_sender_status_receipts SET pricing_billable=TRUE WHERE reservation_id=$1",
       [s.original.reservationId]);
