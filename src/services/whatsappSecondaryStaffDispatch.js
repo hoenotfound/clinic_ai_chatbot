@@ -308,10 +308,13 @@ async function sendSecondaryStaffText({
     typeof dispatchTransport === "function";
   const waitingAutomatedText = (origin === "ai_reply" || origin === "system_fallback") &&
     typeof dispatchTransport !== "function" && templateRequest == null;
-  if ((waitingStaffMedia || waitingAutomatedText) &&
+  // Follow-ups may wait only for the PRE-provider billing gate, never retry Meta.
+  const waitingScheduledFollowup = origin === "followup" ||
+    origin === "marketing_followup";
+  if ((waitingStaffMedia || waitingAutomatedText || waitingScheduledFollowup) &&
       !reserved.reserved &&
       reserved.code === "secondary_billing_previous_send_unresolved") {
-    const maxWaitChecks = waitingAutomatedText ? 8 : 4;
+    const maxWaitChecks = (waitingAutomatedText || waitingScheduledFollowup) ? 8 : 4;
     for (let i = 0; i < maxWaitChecks; i++) {
       await waitForPriorSettlement(750);
       if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
