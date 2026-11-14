@@ -406,6 +406,17 @@ const CANDIDATES_SQL=`
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   -- The RM68 event is a different 90-minute offer from the standing RM388
+   -- Pulse Wave template. Skip unapproved generic 48h/66h/Day4/Day6
+   -- templates for this verified RM68 session (also on pre-send rechecks).
+   AND NOT EXISTS (
+     SELECT 1 FROM messages event_reply
+     WHERE event_reply.contact_id=c.id AND event_reply.role='assistant'
+       AND event_reply.created_at>=first_reply.at
+       AND event_reply.created_at<first_reply.at+INTERVAL '167 hours'
+       AND event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
+       AND event_reply.content LIKE '%首次体验只需 RM68%'
+   )
  ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
 // This read-only hint keeps every candidate consent, sender and billing rule
