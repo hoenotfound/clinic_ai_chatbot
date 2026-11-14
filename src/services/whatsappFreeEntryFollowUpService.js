@@ -199,6 +199,16 @@ const candidateSql = `
     AND (first_reply.created_at >= $1::timestamptz
       OR c.whatsapp_opt_in_at <= $1::timestamptz)
     AND first_reply.created_at > now() - interval '7 days'
+    -- RM68 chest assessment is an event-only offer. Never send unrelated
+    -- general Pulse Wave templates to this campaign session.
+    AND NOT EXISTS (
+      SELECT 1 FROM messages event_reply
+      WHERE event_reply.contact_id=c.id AND event_reply.role='assistant'
+        AND event_reply.created_at>=origin.created_at
+        AND event_reply.created_at<origin.created_at+interval '24 hours'
+        AND event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
+        AND event_reply.content LIKE '%首次体验只需 RM68%'
+    )
     -- Later customer replies are allowed; restart silence only after
     -- a genuine business response to the latest inbound WhatsApp message.
     AND EXISTS (

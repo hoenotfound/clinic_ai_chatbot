@@ -11,6 +11,7 @@ const { recordWorkerWake } = require("../utils/refreshWakeDiagnostics");
 const { createCoalescedImmediateWake, followUpChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const { campaignFollowUp } = require("../utils/neutroBreastRm68Campaign");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { resolveAdFollowUpTreatment, neutralMixedAdFollowUp } =
   require("../utils/adFollowUpTreatment");
@@ -1276,6 +1277,32 @@ async function sendCandidate(candidate) {
   const step = settings.steps[stepIndex - 1];
   if (!step) return;
 
+  const rm68FollowUp = campaignFollowUp({ candidate });
+  if (rm68FollowUp?.expired) {
+    // End only this expired ad's follow-up sequence; avoid repeatedly
+    // attempting to send an obsolete offer after 6 December.
+    const decision = normalizeFollowUpDecision({
+      action: "stop_sequence",
+      reason: "neutro_rm68_campaign_expired",
+    });
+    return Boolean(await followUpRepo.recordAiDecisionIfStillEligible({
+      contactId: candidate.contact_id,
+      triggerMessageId: candidate.trigger_message_id,
+      stepIndex,
+      action: decision.action,
+      reason: decision.reason,
+      topic: "expired_rm68_event",
+      delayMinutes: step.delayMinutes,
+      previousDelayMinutes:
+        stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+      quietHours: settings.quietHours,
+      triggerMode: settings.triggerMode,
+      activatedAt: settings.activatedAt,
+    }));
+  }
+
   // Respect an explicit request for a local alternative outside PJ. Persist
   // a terminal sequence stop before any Meta send, AI generation or billing
   // preflight. A city mention alone is not a stop; a fresh customer conversation
@@ -1337,8 +1364,8 @@ async function sendCandidate(candidate) {
     language,
     stepIndex
   );
-  let followUpMessage = fallbackSelection.message;
-  let targetedService = fallbackSelection.targetedService;
+  let followUpMessage = rm68FollowUp?.message || fallbackSelection.message;
+  let targetedService = rm68FollowUp ? null : fallbackSelection.targetedService;
   let targetedMediaService = fallbackSelection.targetedMediaService || null;
   let selectedImageUrl = fallbackSelection.selectedImageUrl || "";
   let selectedVideoKey = fallbackSelection.selectedVideoKey || "";
@@ -1355,6 +1382,7 @@ async function sendCandidate(candidate) {
   let followUpMessageMode = "fixed";
   let aiLeaseToken = null;
   const needsAiWork =
+    !rm68FollowUp &&
     !candidate.adFollowUpPolicy?.ambiguous &&
     (Boolean(promotionPackageSelection) ||
      (step.messageMode === "ai" && !promotionFollowUp));
@@ -1584,9 +1612,11 @@ async function sendCandidate(candidate) {
   // Guard every follow-up channel and mode just before durable reservation.
   // If configured media was paired with a price-bearing caption, omit the
   // attachment as well: an image itself might display an unasked amount.
-  const safeFollowUp = enforceAssessmentFirstFollowUpCopy({
-    message: followUpMessage, candidate, targetedService, language,
-  });
+  const safeFollowUp = rm68FollowUp
+    ? { message: rm68FollowUp.message, suppressMedia: false }
+    : enforceAssessmentFirstFollowUpCopy({
+        message: followUpMessage, candidate, targetedService, language,
+      });
   if (safeFollowUp.suppressMedia) {
     console.info(`[Assessment-first] Suppressed unsolicited price in follow-up step ${stepIndex} contact ${candidate.contact_id}`);
   }
@@ -1598,8 +1628,8 @@ async function sendCandidate(candidate) {
   // A promotion override replaces the normal step content. Use only the
   // matched promotion/package follow-up graphic; never fall back to the
   // generic step image because it may belong to a different offer.
-  const selectedFollowUpImage = promotionFollowUp
-    ? promotionFollowUpImageUrl
+  const selectedFollowUpImage = rm68FollowUp ? ""
+    : promotionFollowUp ? promotionFollowUpImageUrl
     : selectedImageUrl;
   const effectiveImageUrl =
     originalHasPrice ||
@@ -1607,8 +1637,8 @@ async function sendCandidate(candidate) {
       isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
       ? "" : selectedFollowUpImage;
   let effectiveVideoKey =
-    !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
-  let effectiveVoice = !originalHasPrice && !promotionFollowUp &&
+    !rm68FollowUp && !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
+  let effectiveVoice = !rm68FollowUp && !originalHasPrice && !promotionFollowUp &&
     ["whatsapp", "facebook", "instagram"].includes(channel) ? selectedVoice : null;
   // A voice recording is a stand-alone message, not a caption.
   // Validate its own speech rather than the independently generated fallback.

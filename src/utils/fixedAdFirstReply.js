@@ -11,61 +11,12 @@ const {
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
+const { CAMPAIGN_KEY, isNeutro, isExactPrefill, campaignCreativeMatches, firstReply } =
+  require("./neutroBreastRm68Campaign");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PREFILL_MAX_LENGTH = 240;
 
-
-// This single dated campaign is intentionally narrower than treatment-wide
-// fixed replies. It must not replace the general Pulse Wave or breast-care
-// reply for other ads, or reinterpret customers' edited questions.
-const NEUTRO_BREAST_RM68_CAMPAIGN_KEY = "neutro_breast_rm68_2026";
-const NEUTRO_BREAST_RM68_PREFILL =
-  "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
-const NEUTRO_BREAST_RM68_EXPIRES_AT = Date.parse("2026-12-06T16:00:00.000Z");
-// 00:00 on 7 December 2026 in Malaysia (UTC+8).
-const NEUTRO_BREAST_RM68_REPLY = [
-  "您好💕 欢迎咨询 Neutro Sense TCM！",
-  "",
-  "我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠 🌸",
-  "",
-  "✨ 首次体验只需 RM68（原价以门店公告为准）",
-  "📅 活动日期：12月5日 & 6日",
-  "⏰ 全程约 1小时30分钟",
-  "",
-  "护理包含：",
-  "✅ 专业胸部健康评估",
-  "✅ 脉冲波舒缓护理，帮助放松胸部周围组织",
-  "✅ 胸部日常护理建议",
-  "",
-  "💗 名额有限，需要提前预约哦！",
-  "",
-  "请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊",
-].join("\n");
-const NEUTRO_BREAST_RM68_EXPIRED_REPLY = [
-  "您好💕 欢迎咨询 Neutro Sense TCM！",
-  "",
-  "12月5日及6日的体验活动已经结束了。如想了解目前的胸部护理项目或预约安排，我们可以帮您向门店确认哦 😊",
-].join("\n");
-
-function resolveNeutroBreastRm68Campaign(customerText, businessName, now) {
-  if (!/^neutro\s+sense\s+tcm(?:\s+centre)?$/iu.test(String(businessName || "").trim())) {
-    return null;
-  }
-  const exact = value => String(value || "").normalize("NFKC").replace(/\s+/gu, " ").trim();
-  if (exact(customerText) !== exact(NEUTRO_BREAST_RM68_PREFILL)) return null;
-  return {
-    reply: now >= NEUTRO_BREAST_RM68_EXPIRES_AT
-      ? NEUTRO_BREAST_RM68_EXPIRED_REPLY : NEUTRO_BREAST_RM68_REPLY,
-    // Do not infer a configured treatment from this event's mixture of
-    // assessment and Pulse Wave care. In particular, do not authorize old
-    // Pulse Wave pricing graphics or unrelated breast-care results media.
-    treatment: null,
-    serviceQuery: false,
-    serviceQuerySource: null,
-    campaignKey: NEUTRO_BREAST_RM68_CAMPAIGN_KEY,
-  };
-}
 
 // A user may type an interest statement and append a real question or a visit
 // preference without a question mark. Such messages must reach normal AI.
@@ -197,9 +148,15 @@ function resolveFixedAdFirstReply({
   // The exact RM68 availability prefill is an intentional exception to the
   // normal price/booking-question exclusion, after first-turn, safety,
   // verified-ad and staff/booking guards have all passed.
-  if (!hasClinicalMediaRisk(customerText)) {
-    const campaign = resolveNeutroBreastRm68Campaign(customerText, businessName, now);
-    if (campaign) return campaign;
+  if (!hasClinicalMediaRisk(customerText) && isNeutro(businessName) &&
+      isExactPrefill(customerText) && campaignCreativeMatches(metaAdContext)) {
+    return {
+      reply: firstReply(now),
+      treatment: null,
+      serviceQuery: false,
+      serviceQuerySource: null,
+      campaignKey: CAMPAIGN_KEY,
+    };
   }
   if (!isStandardAdPrefill(customerText, { services, serviceAliases, businessName }) ||
       hasCustomerPriceEnquiry(standardPrefillInterestText(customerText)) ||

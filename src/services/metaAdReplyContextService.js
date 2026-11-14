@@ -2,10 +2,13 @@ const leadAttributionRepo = require("../db/leadAttributionRepo");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { getActivePromotions } = require("../utils/activePromotion");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
+const { campaignCreativeMatches } = require("../utils/neutroBreastRm68Campaign");
 
 const FIELD_LIMITS = Object.freeze({
   headline: 500,
   body: 1200,
+  adName: 500,
+  campaignName: 500,
 });
 
 function cleanContextText(value, maxLength) {
@@ -22,6 +25,9 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [], promoti
   if (!row || row.source !== "meta_ads") return null;
   const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
+  const adName = cleanContextText(row.ad_name, FIELD_LIMITS.adName);
+  const campaignName = cleanContextText(row.campaign_name, FIELD_LIMITS.campaignName);
+  const verifiedRm68Names = campaignCreativeMatches({ headline, body, adName, campaignName });
   const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
   const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
   const expandedAliases = (Array.isArray(aliases) ? aliases : []).flatMap((entry) =>
@@ -53,10 +59,14 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [], promoti
   // Ad-only pricing requires it to be recent; missing timestamps fail closed.
   const attributedAtMs = row.attributed_at == null ? NaN : new Date(row.attributed_at).getTime();
   const attributedAt = Number.isFinite(attributedAtMs) ? new Date(attributedAtMs).toISOString() : null;
-  if (!headline && !body && !serviceHint) return null;
+  if (!headline && !body && !serviceHint && !verifiedRm68Names) return null;
   return {
     headline,
     body,
+    // Enriched names are carried only for exact campaign verification; the
+    // generic AI prompt still excludes these untrusted ad-name strings.
+    ...(verifiedRm68Names && adName ? { adName } : {}),
+    ...(verifiedRm68Names && campaignName ? { campaignName } : {}),
     ...(serviceHint ? { serviceHint, serviceHintSource } : {}),
     ...(attributedAt ? { attributedAt } : {}),
   };

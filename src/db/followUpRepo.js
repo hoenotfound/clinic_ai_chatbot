@@ -280,6 +280,8 @@ async function findCandidates({
          ad_followup.source AS ad_followup_source,
          ad_followup.headline AS ad_followup_headline,
          ad_followup.body AS ad_followup_body,
+         ad_followup.ad_name AS ad_followup_ad_name,
+         ad_followup.campaign_name AS ad_followup_campaign_name,
          ARRAY(
            SELECT recent_inbound.content
            FROM messages recent_inbound
@@ -399,7 +401,12 @@ async function findCandidates({
          LIMIT 1
        ) latest_lead ON true
        LEFT JOIN LATERAL (
-         SELECT attribution.source, attribution.headline, attribution.body
+         SELECT attribution.source, attribution.headline, attribution.body,
+                -- Older/synthetic follow-up databases may not have the
+                -- enrichment columns. JSONB projection safely returns NULL
+                -- without requiring those columns in every schema.
+                to_jsonb(attribution)->>'ad_name' AS ad_name,
+                to_jsonb(attribution)->>'campaign_name' AS campaign_name
          FROM lead_attributions attribution
          WHERE attribution.lead_id = latest_lead.id
          ORDER BY attribution.attributed_at DESC, attribution.id DESC
@@ -454,6 +461,8 @@ async function findCandidates({
        ad_followup_source,
        ad_followup_headline,
        ad_followup_body,
+       ad_followup_ad_name,
+       ad_followup_campaign_name,
        next_follow_up_step,
        policy_retry_at
      FROM conversation_state
