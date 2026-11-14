@@ -74,9 +74,9 @@ test("signed failed video with no Meta error code evicts only the exact cached u
  const database={query:async(sql,args)=>{
    calls.push({sql,args});
    assert.match(sql,/JOIN whatsapp_sender_status_receipts r/);
-   assert.match(sql,/r\\.matched=TRUE/);
-   assert.match(sql,/r\\.delivery_status='failed'/);
-   assert.match(sql,/a\\.wamid=\\$2/);
+   assert.match(sql,/r\.matched=TRUE/);
+   assert.match(sql,/r\.delivery_status='failed'/);
+   assert.match(sql,/a\.wamid=\$2/);
    return {rows:[{media_key:key,media_mime_type:"video/mp4"}]};
  }};
  const storage={
