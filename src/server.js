@@ -1629,6 +1629,12 @@ async function processIncomingMessage(
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
+          // Only Neutro's Shadow client can carry a customer-confirmed
+          // first-trial price across its own scheduled follow-ups.
+          allowReturningTrialPrice: clinicConfig.businessType === "tcm_clinic" &&
+            /^neutro\s+sense\b/iu.test(String(
+              clinicConfig.businessName || clinicConfig.clinicName || ""
+            )),
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
