@@ -76,6 +76,14 @@ test("RM68 follow-on queries preserve correct pricing, duration and event dates"
   assert.equal(run("3D 小颜术 RM488 多少钱？"), null);
   assert.equal(run("取消活动"), null);
   assert.equal(run("好的"), null);
+  const changedTopic = [...history,
+    { role: "user", content: "骨盆调理多少钱？" },
+    { role: "assistant", content: "骨盆配套费用按当前优惠确认" },
+    { role: "user", content: "多少钱？" },
+  ];
+  assert.equal(campaignContextReply({
+    history: changedTopic, customerText: "多少钱？", now: early,
+  }), null, "do not revive RM68 after customer switches treatments");
   assert.equal(isOtherTreatmentQuery("骨盆调理多少钱？"), true);
 });
 
@@ -108,7 +116,9 @@ test("RM68 follow-ups require anchored customer campaign and are text-only", () 
   assert.match(campaignFollowUp({ candidate, now: dec6 }).message, /今天12月6日/);
   assert.deepEqual(campaignFollowUp({ candidate, now: expired }), { expired: true, message: null });
   assert.equal(candidateIsCampaign({ ...candidate, ad_followup_body: "一般疗程", ad_followup_headline: "脉冲波 RM388" }), false);
-  assert.equal(candidateIsCampaign({ ...candidate, recent_inbound_messages: ["Hello"], recent_service_messages: ["Hello"] }), false);
+  assert.equal(candidateIsCampaign({ ...candidate, ad_followup_source: "direct" }), false);
+  assert.equal(candidateIsCampaign({ ...candidate, recent_inbound_messages: ["Hello"], recent_service_messages: ["Hello"] }), true,
+    "verified saved opener remains authoritative after customer replies");
   assert.equal(campaignFollowUp({ candidate: { ...candidate, recent_inbound_messages: ["骨盆调理多少钱？"] }, now: early }), null);
   assert.equal(campaignFollowUp({ candidate: { ...candidate, trigger_message_content: "您好，我们的脉冲波 RM388" }, now: early })?.expired, false);
 });
