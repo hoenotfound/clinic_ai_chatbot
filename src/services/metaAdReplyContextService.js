@@ -27,7 +27,7 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [], promoti
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
   const adName = cleanContextText(row.ad_name, FIELD_LIMITS.adName);
   const campaignName = cleanContextText(row.campaign_name, FIELD_LIMITS.campaignName);
-  const verifiedRm68Names = campaignCreativeMatches({ adName, campaignName });
+  const verifiedRm68Names = campaignCreativeMatches({ headline, body, adName, campaignName });
   const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
   const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
   const expandedAliases = (Array.isArray(aliases) ? aliases : []).flatMap((entry) =>
