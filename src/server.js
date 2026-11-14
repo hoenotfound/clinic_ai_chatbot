@@ -2385,6 +2385,13 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // Final exact-copy boundary for the single authorised, dated Meta campaign.
+    // Do not let unrelated downstream text polishers rewrite its verified
+    // staff-provided offer, while retaining ALL staff, safety and billing gates.
+    if (!flagged && fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
+      reply = fixedAdFirstReply.reply;
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
