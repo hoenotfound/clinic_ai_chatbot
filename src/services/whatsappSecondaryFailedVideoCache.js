@@ -59,6 +59,6 @@ async function invalidateFailedSecondaryVideo({
  const metaId=await cache.get(phoneId,fingerprint);
  if(!metaId)return{invalidated:false,reason:"not_cached"};
  const cleared=await cache.invalidate(phoneId,fingerprint,metaId);
- return{invalidated:cleared===true,reason:cleared===true?"verified_failed_video_upload":"cache_changed"};
+ return{invalidated:cleared===true,reason:cleared===true?"confirmed_media_failure":"cache_changed"};
 }
 module.exports={invalidateFailedSecondaryVideo};
