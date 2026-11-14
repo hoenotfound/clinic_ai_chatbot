@@ -308,3 +308,19 @@ test("current price language is genuine enquiry, not an objection or unsupported
     assert.equal(shadow({customerText:query,conversationHistory:h}),null,query);
   }
 });
+
+
+test("contact #9068-style multi-turn care enquiry keeps pelvic when X-ray is declined", () => {
+  const h=[
+    turn("user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",5),
+    turn("assistant","Hi～欢迎来到 Neutro Sense 😊 想了解骨盆调理对吗～",4.98),
+    turn("user","只是想调整",4.94),
+    turn("assistant","中医师会先帮你做一个1对1的体态评估+体验，看看整体状态。",4.92),
+    turn("user","不需要xray 是吗？",4.87),
+    turn("assistant","中医师会先帮你做一个1对1体态评估+体验，了解骨盆整体平衡。",4.85),
+    turn("user","一次疗程多少钱？",0.01),
+  ];
+  assert.equal(resolveReturningFirstTrialPriceService(args({
+    customerText:"一次疗程多少钱？",conversationHistory:h,
+  }))?.name,"骨盆调理");
+});
