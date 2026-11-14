@@ -203,10 +203,14 @@ test("signed failed original video can be bypassed for one fresh media message",
         "b".repeat(64),env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]
     );
+    // A signed, sender-matched FAILED delivery is already sufficient proof
+    // to permit a different new message. No manual reviewer UUID is needed.
     const fresh=await billing.reserveSecondaryBillingAttempt({
       contactId:s.contact,messageId:s.messages[1],
-    },{database,env:{...env,
-      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:s.original.reservationId}});
+    },{database,env:{
+      ...env,WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED:"false",
+      WHATSAPP_SECONDARY_REVIEWED_UNKNOWN_RESERVATIONS:"",
+    }});
     assert.equal(fresh.reserved,true);
     const audit=(await db.query(
       "SELECT basis FROM whatsapp_sender_unknown_gate_new_sends "+
@@ -220,6 +224,48 @@ test("signed failed original video can be bypassed for one fresh media message",
   });
 });
 
+test("verified failed delivery does not permit replay or contradictory proof",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    const wamid="wamid.signedFailedAutoGuard";
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:s.original.reservationId,acceptedWamid:wamid,
+    },{database,env});
+    await db.query("UPDATE messages SET whatsapp_message_id=$2,delivery_status='failed' WHERE id=$1",
+      [s.messages[0],wamid]);
+    await db.query(
+      "UPDATE whatsapp_sender_billing_attempts SET state='unknown' WHERE reservation_id=$1",
+      [s.original.reservationId]);
+    await db.query(
+      "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",
+      [s.sender]);
+    const noReviewEnv={...env,WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED:"false"};
+    const request=(messageId)=>billing.reserveSecondaryBillingAttempt({
+      contactId:s.contact,messageId,
+    },{database,env:noReviewEnv});
+    assert.equal((await request(s.messages[1])).code,
+      "secondary_billing_previous_send_unresolved",
+      "no signed failure receipt must deny even when message says failed");
+    await db.query(
+      "INSERT INTO whatsapp_sender_status_receipts("+
+      "fingerprint,sender_id,reservation_id,wamid,wamid_hash,"+
+      "delivery_status,meta_phone_number_id,meta_account_id,matched) "+
+      "VALUES($1,$2,$3,$4,$5,'failed',$6,$7,TRUE)",
+      ["c".repeat(64),s.sender,s.original.reservationId,wamid,
+        "d".repeat(64),env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID]);
+    assert.equal((await request(s.messages[0])).code,
+      "secondary_billing_previous_send_unresolved",
+      "old failed provider send never replays itself");
+    await db.query(
+      "UPDATE whatsapp_sender_status_receipts SET pricing_billable=TRUE WHERE reservation_id=$1",
+      [s.original.reservationId]);
+    assert.equal((await request(s.messages[1])).code,
+      "secondary_billing_previous_send_unresolved",
+      "known charge remains blocked");
+  });
+});
 test("a second UNKNOWN attempt cannot get another bypass in the same 30-day period",
  {skip:!connectionString},async()=>{
   await withSchema(async({db,database})=>{
@@ -320,7 +366,13 @@ test("verified customer return can resume AI only for exactly reviewed old deliv
       "WHERE id=$1",[s.contact]);
     assert.equal(await check(inbound),false,
       "an unrelated clinical or staff review is never bypassed");
-    assert.equal(reviewedDeliveryAttentionSql("c",env),"FALSE",
-      "unreviewed production configuration must fail closed");
+    // Mere UNKNOWN/no-WAMID outcomes still cannot resume an old AI thread.
+    // The SQL also permits newly sent, verified failed Meta receipts.
+    const autoSql=reviewedDeliveryAttentionSql("c",env);
+    assert.match(autoSql,/verified_failure\.matched=TRUE/);
+    assert.equal((await db.query(
+      "SELECT "+autoSql+" AS ok FROM contacts c WHERE c.id=$1",
+      [s.contact])).rows[0].ok,false,
+      "no-WAMID outcomes never inherit automatic signed-failure recovery");
   });
 });
