@@ -9,15 +9,16 @@ const {mediaSpecificDeliveryFailure}=
 // Only the HMAC-verified delivery worker calls this. Invalidation is a
 // conditional compare-and-clear of an upload, never a resend or gate release.
 async function invalidateFailedSecondaryVideo({
-  job,messageId,verifiedSender,
+  job,messageId,verifiedSender,allowNoCode=false,
 },{
   database=pool,storage=mediaStorage,cache=videoCacheRepo,env=process.env,
 }={}){
  if(verifiedSender?.matched!==true || job?.delivery_status!=="failed" ||
-    !mediaSpecificDeliveryFailure({
+    !(mediaSpecificDeliveryFailure({
       errorCode:job.error_code,
       errorTitle:job.error_title,errorMessage:job.error_message
-    }) ||
+    }) || (allowNoCode===true && (job.error_code===null || job.error_code===undefined) &&
+      !job.error_title && !job.error_message)) ||
     String(job.business_phone_number_id||"")!==String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"") ||
     String(job.business_account_id||"")!==String(env.WHATSAPP_SECONDARY_WABA_ID||"") ||
     !/^[0-9]+$/.test(String(messageId||"")))return{invalidated:false,reason:"not_verified_media_failure"};
@@ -31,6 +32,16 @@ async function invalidateFailedSecondaryVideo({
      AND sa.sender_key='neutro_secondary'
      AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4
      AND sa.state='active' AND m.media_key IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM whatsapp_sender_billing_attempts a
+       JOIN whatsapp_sender_status_receipts r
+         ON r.sender_id=a.sender_id AND r.reservation_id=a.reservation_id
+         AND r.wamid=a.wamid AND r.matched=TRUE
+         AND r.delivery_status='failed'
+         AND r.meta_phone_number_id=$3 AND r.meta_account_id=$4
+       WHERE a.sender_id=sa.id AND a.message_id=m.id
+         AND a.contact_id=m.contact_id AND a.wamid=$2
+     )
    LIMIT 1
  `,[messageId,job.wamid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
      env.WHATSAPP_SECONDARY_WABA_ID]);
@@ -48,6 +59,6 @@ async function invalidateFailedSecondaryVideo({
  const metaId=await cache.get(phoneId,fingerprint);
  if(!metaId)return{invalidated:false,reason:"not_cached"};
  const cleared=await cache.invalidate(phoneId,fingerprint,metaId);
- return{invalidated:cleared===true,reason:cleared===true?"confirmed_media_failure":"cache_changed"};
+ return{invalidated:cleared===true,reason:cleared===true?"verified_failed_video_upload":"cache_changed"};
 }
 module.exports={invalidateFailedSecondaryVideo};
