@@ -15,7 +15,7 @@ const {
 const MAX_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CURRENT_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_HISTORY_TURNS = 100;
-const RESET = /(?:换个|換個|换话题|換話題|改聊|另外想|另外问|另外問|改做|想换|想換|其他|其它|别的|別的|全部|所有|不想|不要|不需要|退订|退訂|\b(?:instead|switch|different|another|other\s+treatments?|all\s+treatments?|stop|unsubscribe|opt\s*out|not\s+interested|don't\s+want)\b)/iu;
+const RESET = /(?:换个|換個|换话题|換話題|改聊|另外想|另外问|另外問|改做|想换|想換|其他|其它|别的|別的|全部|所有|(?:不想|不要|不需要)(?:.{0,26}(?:疗程|療程|护理|護理|调理|調理|治疗|治療|项目|項目|价格|價格|价钱|價錢|优惠|優惠|配套|套餐)|了解|做)|退订|退訂|\b(?:instead|switch|different|another|other\s+treatments?|all\s+treatments?|stop|unsubscribe|opt\s*out|not\s+interested|don't\s+want)\b)/iu;
 const NON_TREATMENT_FEE = /(?:免费|免費|评估|評估|assessment|consultation|deposit|订金|訂金|预约费|預約費|booking[\s-]*fee|admin(?:istration)?[\s-]*fee)/iu;
 const FIRST_TRIAL = /(?:第一次|首次|初次)\s*(?:体验|體驗|护理|護理|疗程|療程|做|来|來)?|\b(?:first[\s-]*trial|trial[\s-]*(?:price|cost)|harga[\s-]*percubaan)\b/iu;
 const PRICE_REQUEST = /(?:多少[钱錢]|[几幾]多[钱錢]|(?:价钱|價錢|价格|價格|价位|費用|费用|收费|收費)\s*(?:是|要|大概|多少|几多|幾多)?\s*[?？]|(?:想(?:问|問|知道|了解|看看)|请问|請問|可(?:以|否)|告诉|告訴|发给|發給|给我|給我|麻烦|麻煩).{0,32}(?:价格|價格|价钱|價錢|费用|費用|收费|收費)|\b(?:how\s+much|price|pricing|cost|fee|harga|berapa\s+(?:harga|bayar|satu\s+sesi))\b)/iu;
