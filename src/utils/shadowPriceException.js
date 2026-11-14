@@ -14,6 +14,7 @@ const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { resolveReturningFirstTrialPriceService } = require("./returningTrialPriceContext");
 const {
   resolveRecentPriceSelection, resolveEstablishedTreatmentPrice, resolveCustomerEngagedPrice,
 } = require("./priceConversationRecovery");
@@ -243,10 +244,26 @@ function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false,
-  allowOfferEnquiries = false, now = Date.now(),
+  allowOfferEnquiries = false, allowReturningTrialPrice = false, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
   if (!text || hasClinicalMediaRisk(text)) return null;
+
+  // Neutro opt-in: a first-trial price question after 2h-6d automatic
+  // follow-ups may refer to the customer's original verified treatment.
+  // This does NOT expand the older 24h Shadow session for any other enquiry.
+  const returning = allowReturningTrialPrice === true
+    ? resolveReturningFirstTrialPriceService({
+        customerText: text, conversationHistory, services, serviceAliases,
+        complimentaryAssessmentExperienceEnabled, now,
+      }) : null;
+  if (returning) {
+    return shadowVerifiedPrice({
+      source: "customer_returning_first_trial", treatment: returning.name,
+      customerText: text, conversationHistory, promotions,
+    });
+  }
+
   const session = recentVerifiedPricingSession(conversationHistory, text, now);
   if (!session || isComplimentaryAssessmentFeeQuestion(
     text, complimentaryAssessmentExperienceEnabled, session
