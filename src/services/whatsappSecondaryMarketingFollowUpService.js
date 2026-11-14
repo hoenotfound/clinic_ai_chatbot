@@ -538,6 +538,7 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=qualified_session.origin_id
        AND attempted.slot_hours=rule.slot_hours
+       AND attempted.status<>'deferred'
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
