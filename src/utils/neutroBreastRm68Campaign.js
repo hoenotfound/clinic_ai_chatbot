@@ -124,17 +124,20 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
     return "RM68 胸部健康评估 + 脉冲波舒缓护理的活动日期是" + dates +
       "，全程约1小时30分钟。具体名额需要由门店确认哦 😊 " + dayQuestion(now);
   }
+  if (INCLUDES_QUESTION.test(text)) {
+    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理，以及胸部日常护理建议；全程约1小时30分钟。" +
+      "这项护理不等于医院的乳腺癌筛查或医学诊断 😊";
+  }
   if (AMOUNT_QUESTION.test(text)) {
     return "您咨询的【胸部健康评估 + 脉冲波舒缓护理】12月活动首次体验是 RM68，全程约1小时30分钟。" +
-      "这是独立活动，不是一般 RM388 的全身脉冲波护理。名额以门店确认为准 😊";
+      (/RM\s*388/iu.test(text)
+        ? "RM388 属于另一项全身脉冲波护理优惠，两者不是同一个活动。"
+        : "这是独立于其他脉冲波疗程的限时活动。") +
+      "名额以门店确认为准 😊";
   }
   if (DURATION_QUESTION.test(text)) {
     return "这个 RM68 胸部健康评估 + 脉冲波舒缓护理活动，全程约1小时30分钟，活动日期为" +
       dates + "。想预约可以先告诉我们方便的日期，由门店确认名额哦 😊";
-  }
-  if (INCLUDES_QUESTION.test(text)) {
-    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理，以及胸部日常护理建议；全程约1小时30分钟。" +
-      "这项护理不等于医院的乳腺癌筛查或医学诊断 😊";
   }
   return "您之前咨询的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，活动日期为" +
     dates + "，全程约1小时30分钟。名额需要由门店确认哦 😊";
@@ -147,10 +150,11 @@ function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.
   if (/(?:RM\s*(?:388|688)|2\s*(?:小时|小時|hours?)\s*15|2h\s*15)/iu.test(original) ||
       (campaignDay(now) === "expired" && /\bRM\s*68\b/iu.test(original)) ||
       (campaignDay(now) === "dec6" && /12月5日/u.test(original))) {
-    return campaignContextReply({ history, customerText:
-      CAMPAIGN_QUERY.test(String(customerText || "")) ? customerText : "RM68优惠",
-      now,
-    }) || original;
+    const query = CAMPAIGN_QUERY.test(String(customerText || ""))
+      ? customerText
+      : campaignDay(now) === "dec6" && /12月5日/u.test(original)
+        ? "活动日期" : "RM68优惠";
+    return campaignContextReply({ history, customerText: query, now }) || original;
   }
   return original;
 }
