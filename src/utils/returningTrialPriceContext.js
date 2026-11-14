@@ -107,9 +107,12 @@ function resolveReturningTreatmentPriceService({
   const acknowledgements = remaining.slice(
     0, firstNextCustomer < 0 ? remaining.length : firstNextCustomer
   );
-  if (!acknowledgements.some(turn => turn.role === "assistant" &&
-      findServicesInText(pricingMessageText(turn), candidates)
-        .includes(selected.name))) return null;
+  // Only an immediate bot acknowledgement grounds this customer choice.
+  // A later automated photo/caption cannot retroactively invent the topic.
+  if (acknowledgements[0]?.role !== "assistant" ||
+      isVerifiedStaffTurn(acknowledgements[0]) ||
+      !findServicesInText(pricingMessageText(acknowledgements[0]), candidates)
+        .includes(selected.name)) return null;
 
   for (const turn of remaining) {
     const value = pricingMessageText(turn).trim();
