@@ -209,26 +209,21 @@ async function reserveSecondaryBillingAttempt({
       return deny("secondary_billing_sender_alarm");
     }
     if (gate.rows[0].state !== "idle") {
-      // Neutro-only opt-in: replace an aged UNKNOWN hold when a different,
-      // newly persisted message is being sent. Preserve the historical
-      // unknown attempt; NEVER retry the original message or overwrite its
-      // Meta WAMID/receipt. Reserved and awaiting_pricing gates still block.
-      // This bypass is deliberately limited to exact signed failures, or
-      // no-WAMID sends with absolutely no receipts. No charge is *inferred*.
+      // Neutro secondary: a *signed, sender-matched final FAILED receipt*
+      // is enough to permit a DIFFERENT fresh message, without two human
+      // reviewers or a manually curated UUID allowlist. This does not assert
+      // the failed send was free, and never retries the historical message.
+      // Unconfirmed/no-WAMID attempts still require explicit review.
+      // Reserved, awaiting_pricing and sender-wide alarms always block.
       if (gate.rows[0].state !== "unknown" ||
-          env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
-          env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED !== "true") {
+          env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary") {
         await client.query("ROLLBACK"); inTransaction = false;
         return deny("secondary_billing_previous_send_unresolved");
       }
-      // Staff review must identify this exact historical reservation.
-      // Requiring an explicit operator-provided allowlist means no unrelated
-      // unknown Meta outcome can become a blanket automatic bypass.
-      if (!reviewedReservationIds(env).includes(
-            String(gate.rows[0].reservation_id||"").toLowerCase())) {
-        await client.query("ROLLBACK"); inTransaction = false;
-        return deny("secondary_billing_unknown_hold_not_reviewed");
-      }
+      const manuallyReviewed =
+        env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED === "true" &&
+        reviewedReservationIds(env).includes(
+          String(gate.rows[0].reservation_id||"").toLowerCase());
       const proof = await client.query(`
         SELECT a.reservation_id,
           CASE WHEN a.wamid IS NULL AND old.whatsapp_message_id IS NULL
@@ -281,6 +276,16 @@ async function reserveSecondaryBillingAttempt({
       if (!approved?.release_basis) {
         await client.query("ROLLBACK"); inTransaction = false;
         return deny("secondary_billing_previous_send_unresolved");
+      }
+      if (approved.release_basis !== "signed_failed" && !manuallyReviewed) {
+        await client.query("ROLLBACK"); inTransaction = false;
+        // No-WAMID remains a possible provider send; the operator bypass
+        // setting must be enabled before any manual UUID review is relevant.
+        return deny(
+          env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED === "true"
+            ? "secondary_billing_unknown_hold_not_reviewed"
+            : "secondary_billing_previous_send_unresolved"
+        );
       }
       // Preserve a separate, permanent record of which original UNKNOWN gate
       // was bypassed for which new message. Both writes occur in the same
