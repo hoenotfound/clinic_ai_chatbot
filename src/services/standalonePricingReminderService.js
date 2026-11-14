@@ -43,25 +43,41 @@ function settings(env=process.env,config=clinicConfig){
 }
 
 // A pricing graphic is the last service-window message, not an early offer.
-// A non-quiet due time is 22 hours after the last inbound. When that time
-// lands in 00:00-07:00 MYT, the previous evening can be used ONLY if the
-// customer message is at least 20 hours old. Otherwise skip rather than send
-// an aggressive offer 14-17 hours into the conversation.
+// A non-quiet due time is 22 hours after the last inbound. If it lands
+// during 00:00-07:00 MYT, allow the prior 23:20 only once 20 hours have
+// elapsed; otherwise consider the next 07:00 only if still within 23h30m.
+// Never extend a WhatsApp freeform window or override consent/booking rules.
 function dueAt(candidate,quietHours=normalizeQuietHours()){
   const source=Date.parse(candidate.source_at);
   if(!Number.isFinite(source))return null;
   let due=source+DUE_AFTER_HOURS*3600000;
-  if(quietHoursStatus(new Date(due),quietHours).active){
-    if(!quietHours.enabled || quietHours.start!=="00:00" || quietHours.end!=="07:00")
-      return null;
-    const local=new Date(due+8*3600000);
-    local.setUTCHours(0,0,0,0);
-    due=local.getTime()-40*60000-8*3600000; // 23:20 MYT
-    if(due<source+20*3600000)return null;
+  const safeEnd=source+SAFE_END_MINUTES*60000;
+  const quiet=quietHoursStatus(new Date(due),quietHours);
+  if(quiet.active){
+    if(!quietHours.enabled || quietHours.start!=="00:00" ||
+       quietHours.end!=="07:00" || !quiet.endsAt)return null;
+    // The prior 23:20 MYT offer is acceptable only once a customer has
+    // already waited at least 20 hours. For later morning enquiries, the
+    // quiet-hour end at 07:00 can be after 22 hours AND still inside their
+    // existing 24h freeform window. Never send earlier just to hit a quota.
+    const opens=Date.parse(quiet.endsAt);
+    if(!Number.isFinite(opens))return null;
+    const previousEvening=opens-(7*60+40)*60000; // 23:20 MYT
+    due=previousEvening>=source+20*3600000
+      ?previousEvening:opens;
   }
   const last=candidate.last_automation_at?Date.parse(candidate.last_automation_at):NaN;
   if(Number.isFinite(last))due=Math.max(due,last+45*60000);
-  if(due>source+SAFE_END_MINUTES*60000 ||
+  // A prior accepted message may push the earliest safe send into quiet
+  // hours. Use only their actual next end, never a guessed earlier time.
+  const afterGap=quietHoursStatus(new Date(due),quietHours);
+  if(afterGap.active){
+    if(!afterGap.endsAt)return null;
+    due=Date.parse(afterGap.endsAt);
+  }
+  // The last 30 minutes are reserved for Meta latency and policy checks.
+  // Equality is not safe: beforeEnd() refuses it too.
+  if(!Number.isFinite(due) || due>=safeEnd ||
       quietHoursStatus(new Date(due),quietHours).active)return null;
   return new Date(due);
 }

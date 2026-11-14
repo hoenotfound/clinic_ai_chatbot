@@ -48,6 +48,35 @@ test("when at least 20 hours have elapsed, earlier evening is allowed",()=>{
  const candidate={source_at:"2026-11-11T18:00:00.000Z"}; // 02:00 MYT
  assert.equal(feature.dueAt(candidate).toISOString(),"2026-11-12T15:20:00.000Z"); // 23:20 MYT
 });
+test("07:00 MYT serves early-morning pricing within the safe 24-hour window",()=>{
+ // Realistic 14 Nov Neutro inquiry at 08:26:56 MYT. The 22-hour
+ // target is 06:26 the following day; the next 07:00 is still safe.
+ const c={source_at:"2026-11-14T00:26:56.000Z"};
+ assert.equal(feature.dueAt(c).toISOString(),"2026-11-14T23:00:00.000Z");
+ assert.equal(feature.beforeEnd(c,new Date("2026-11-14T23:00:00.000Z")),true);
+});
+test("07:00 cannot extend the WhatsApp window or become a premature offer",()=>{
+ // 07:30 MYT exactly 23h30m before the next 07:00: no send.
+ assert.equal(feature.dueAt({
+   source_at:"2026-11-13T23:30:00.000Z",
+ }),null);
+ // 06:00 MYT would be 25h before the next 07:00; earlier
+ // 23:20 would be an aggressive 17h20 offer. Both are refused.
+ assert.equal(feature.dueAt({
+   source_at:"2026-11-13T22:00:00.000Z",
+ }),null);
+});
+test("quiet-hour boundary and automation gap never schedule past cutoff",()=>{
+ // 08:26 MYT allows 07:00 next morning, but a message sent at
+ // 06:30 means its required 45m gap would move pricing to 07:15,
+ // still inside the safe service window.
+ const c={source_at:"2026-11-14T00:26:56.000Z",
+   last_automation_at:"2026-11-14T22:30:00.000Z"};
+ assert.equal(feature.dueAt(c).toISOString(),"2026-11-14T23:15:00.000Z");
+ // A gap that crosses the 23h30 safety cutoff must skip.
+ assert.equal(feature.dueAt({...c,
+   last_automation_at:"2026-11-14T23:35:00.000Z"}),null);
+});
 test("disabled quiet hours keep the 22h due time",()=>{
  const candidate={source_at:"2026-11-11T22:00:00.000Z"};
  assert.equal(feature.dueAt(candidate,{enabled:false,start:"00:00",end:"07:00"}).toISOString(),
