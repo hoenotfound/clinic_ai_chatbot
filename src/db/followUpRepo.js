@@ -402,7 +402,11 @@ async function findCandidates({
        ) latest_lead ON true
        LEFT JOIN LATERAL (
          SELECT attribution.source, attribution.headline, attribution.body,
-                attribution.ad_name, attribution.campaign_name
+                -- Older/synthetic follow-up databases may not have the
+                -- enrichment columns. JSONB projection safely returns NULL
+                -- without requiring those columns in every schema.
+                to_jsonb(attribution)->>'ad_name' AS ad_name,
+                to_jsonb(attribution)->>'campaign_name' AS campaign_name
          FROM lead_attributions attribution
          WHERE attribution.lead_id = latest_lead.id
          ORDER BY attribution.attributed_at DESC, attribution.id DESC
