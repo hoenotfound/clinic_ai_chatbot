@@ -248,6 +248,12 @@ test("known signed 131053 video is replaced with truthful text, not retried",asy
  let checked=0;
  const result=await worker.runOnce({
   ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+    automatedFollowUp:{additionalSteps:[{
+      message:"An approved 6h service reminder",
+      translations:{en:"Would you like to know more about the treatment?"}
+    }]}
+  }),
   videoQuarantined:async ({mediaKey,senderId})=>{
     checked++;assert.equal(mediaKey,"approved-failed-video");
     assert.equal(senderId,2);return true;},
