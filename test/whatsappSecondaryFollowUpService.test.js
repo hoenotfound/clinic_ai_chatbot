@@ -973,3 +973,19 @@ test("definitive video upload HTTP rejection is separately recorded as blocked",
  assert.ok(f.calls.some(x=>x.sql?.includes("status='blocked'") &&
    x.args?.[1]==="sender_followup_video_upload_rejected"));
 });
+
+test("stale proven pre-provider slot alone can permit later 6h/20h service reminders",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+  assert.match(sql,/earlier_deferred\.status='deferred'/);
+  assert.match(sql,/earlier_deferred\.message_id IS NULL/);
+  assert.match(sql,/earlier_deferred\.error_code='pre_provider_billing_deferred'/);
+  assert.match(sql,/earlier_deferred\.defer_count>0/);
+  assert.match(sql,/earlier_deferred\.claimed_at <= NOW\(\)-INTERVAL '8 hours'/);
+  assert.match(sql,/rule\.slot_hours IN \(6,20\)/);
+  assert.match(sql,/previous_step\.completed_at IS NULL/);
+  assert.match(sql,/any_six\.slot_hours=6/);
+  assert.match(sql,/first_reply\.at\+INTERVAL '14 hours'<NOW\(\)/);
+  assert.match(sql,/previous_step\.completed_at IS NOT NULL[\s\S]*STALE|OR \(/);
+  assert.match(sql,/previous\.status IN\('unknown','blocked'\)|prior_problem\.status IN\('unknown','blocked'\)/);
+ }
+});
