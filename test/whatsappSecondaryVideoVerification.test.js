@@ -2,10 +2,10 @@
 const test=require("node:test");
 const assert=require("node:assert/strict");
 const {
- inspectMp4Codec,verifyMp4Bytes,mediaSpecificDeliveryFailure,
+ validMp4Container,inspectMp4Codec,verifyMp4Bytes,mediaSpecificDeliveryFailure,
  wasCodecVerified,
 }=require("../src/services/whatsappSecondaryVideoVerification");
-const mp4=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000")]);
+const mp4=Buffer.concat([Buffer.from([0,0,0,20]),Buffer.from("ftypisom00000000")]);
 function files(){
  const calls=[];
  return {calls,fsApi:{
@@ -14,6 +14,25 @@ function files(){
    rm:async(...args)=>{calls.push(["remove",...args]);},
  }};
 }
+test("Meta video preflight rejects QuickTime brands despite H.264/AAC codecs",async()=>{
+ const qt=Buffer.from(mp4);
+ qt.write("qt  ",8,"ascii");
+ qt.write("qt  ",16,"ascii");
+ assert.equal(validMp4Container(qt),false);
+ assert.equal(validMp4Container(mp4),true);
+ const candidate=Buffer.from(mp4);
+ candidate.write("mp42",8,"ascii");
+ candidate.write("isom",16,"ascii");
+ assert.equal(validMp4Container(candidate),true);
+ let called=false;
+ const rejected=await inspectMp4Codec(qt,{
+   fsApi:files().fsApi,probe:async()=>{
+     called=true;return {durationSeconds:56.6,videoCodec:"h264",audioCodec:"aac"};
+   },
+ });
+ assert.equal(rejected.code,"sender_followup_video_invalid_mp4");
+ assert.equal(called,false,"QuickTime video must never reach codec probe/upload");
+});
 test("H.264/AAC, no audio, and bad codecs are distinguished without uploading",async()=>{
  const file=files();
  const codec=await inspectMp4Codec(mp4,{fsApi:file.fsApi,

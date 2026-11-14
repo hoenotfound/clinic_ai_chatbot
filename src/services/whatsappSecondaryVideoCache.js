@@ -12,10 +12,7 @@ const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
 const secondaryInFlight = new Map();
 // Check the actual MP4 container before paying for another Meta upload.
 // This is a header check, NOT a substitute for ffprobe/codec certification.
-function validMp4Container(bytes) {
-  return Buffer.isBuffer(bytes) && bytes.length >= 16 &&
-    bytes.toString("ascii",4,8)==="ftyp";
-}
+const {validMp4Container}=videoVerification;
 function rejectedPreparation(code,kind="media_preflight_rejected"){
   return {success:false,wamid:null,unknown:false,ambiguous:false,
     definitivelyRejected:true,retryable:false,

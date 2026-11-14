@@ -14,9 +14,17 @@ const MAX_VERIFIED=64;
 const verified=new Map();
 const inFlight=new Map();
 
+// A QuickTime MOV can contain H.264/AAC and even be renamed .mp4,
+// but Meta can reject its 'qt  ' file brand with media error 131053.
+// Only accept an ISO Base Media / MPEG-4 file brand before invoking ffmpeg.
+const ISO_MP4_BRANDS=new Set(["isom","iso2","iso4","iso5","iso6","mp41","mp42","avc1"]);
 function validMp4Container(bytes){
- return Buffer.isBuffer(bytes) && bytes.length>=16 &&
-   bytes.toString("ascii",4,8)==="ftyp";
+ if(!Buffer.isBuffer(bytes) || bytes.length<20 ||
+    bytes.toString("ascii",4,8)!=="ftyp")return false;
+ const atomSize=bytes.readUInt32BE(0);
+ if(atomSize<20 || atomSize>bytes.length || atomSize%4!==0)return false;
+ const major=bytes.toString("ascii",8,12);
+ return ISO_MP4_BRANDS.has(major);
 }
 function wasCodecVerified(phoneId,fingerprint,now=Date.now()){
  if(!phoneId || !/^[a-f0-9]{64}$/i.test(String(fingerprint||"")))return false;

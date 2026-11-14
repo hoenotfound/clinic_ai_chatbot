@@ -317,8 +317,13 @@ test("extended outbound counters count only known API request sizes and coarse 5
 });
 
 test("MP4 preflight checks the container before attempting any provider upload",async()=>{
-  const valid=Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000","ascii")]);
+  const valid=Buffer.concat([Buffer.from([0,0,0,20]),Buffer.from("ftypisom00000000","ascii")]);
   assert.equal(validMp4Container(valid),true);
+  const fakeMp4=Buffer.from(valid);
+  fakeMp4.write("qt  ",8,"ascii");
+  fakeMp4.write("qt  ",16,"ascii");
+  assert.equal(validMp4Container(fakeMp4),false,
+    "QuickTime MOV with .mp4 filename must be blocked before Meta upload");
   assert.equal(validMp4Container(Buffer.from("not an mp4 file")),false);
   const f=setup({env:{...enabled,
     WHATSAPP_SECONDARY_VIDEO_MEDIA_CACHE_ENABLED:"false",
@@ -412,7 +417,7 @@ test("legacy cached secondary media IDs are codec-checked before any customer se
  const f=setup({env});
  f.storage.downloadMedia=async()=>{
    f.calls.download++;
-   return Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000")]);
+   return Buffer.concat([Buffer.from([0,0,0,20]),Buffer.from("ftypisom00000000")]);
  };
  const fp="d".repeat(64);
  let inspected=0;
@@ -449,7 +454,7 @@ test("video codec failure before upload is a conclusive pre-provider rejection",
    WHATSAPP_SECONDARY_VIDEO_CODEC_PREFLIGHT_ENABLED:"true"};
  const f=setup({env});
  f.storage.downloadMedia=async()=>Buffer.concat([
-   Buffer.from([0,0,0,24]),Buffer.from("ftypisom00000000")]);
+   Buffer.from([0,0,0,20]),Buffer.from("ftypisom00000000")]);
  const result=await dispatchSecondaryFollowUpVideo({
   ...f.args,
   verifyVideoBytes:async()=>({ok:false,code:"sender_followup_video_codec_unsupported"}),
