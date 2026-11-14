@@ -25,6 +25,22 @@ test("unreviewed, wrong sender or malformed operator allowlist fails closed",()=
  assert.equal(reviewedDeliveryAttentionSql("c",{}),"FALSE");
  assert.throws(()=>reviewedDeliveryAttentionSql("c;DROP TABLE contacts",env));
 });
+test("signed Meta failed receipt needs no operator allowlist on Neutro secondary",()=>{
+ const autoEnv={WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary"};
+ const recovery=reviewedDeliveryAttentionSql("c",autoEnv,"$2");
+ assert.match(recovery,/verified_failure\.matched=TRUE/);
+ assert.match(recovery,/verified_failure\.delivery_status='failed'/);
+ assert.match(recovery,/verified_failure\.reservation_id=held_attempt\.reservation_id/);
+ assert.match(recovery,/verified_failure\.meta_phone_number_id=expected_sender\.meta_phone_number_id/);
+ assert.match(recovery,/verified_failure\.meta_account_id=expected_sender\.meta_account_id/);
+ assert.match(recovery,/customer\.source_created_at>old_outbound\.created_at/);
+ assert.match(recovery,/customer\.id=\$2/);
+ const eligible=reviewedUnknownGateCandidateSql("c","sa",autoEnv);
+ assert.match(eligible,/signed_failure\.matched=TRUE/);
+ assert.match(eligible,/verified_failure\.matched=TRUE/);
+ assert.equal(reviewedDeliveryAttentionSql("c",{
+   WHATSAPP_SECONDARY_SENDER_KEY:"some_other_sender"}),"FALSE");
+});
 test("only exact reservation IDs permit a fresh sender-owned enquiry past delivery attention",()=>{
  assert.deepEqual(reviewedReservationIds(env),[a,b]);
  const sql=reviewedDeliveryAttentionSql("c",env);
