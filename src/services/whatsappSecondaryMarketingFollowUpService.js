@@ -14,6 +14,7 @@ const tools=require("./whatsappTemplateService");
 const generalSql=require("./neutroSecondaryGeneralMarketingSql");
 const {pinned:pinnedGeneralTemplate}=require("./neutroSecondaryGeneralMarketingTemplates");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -400,6 +401,7 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
+       AND attempted.status<>'deferred'
    )
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
@@ -521,6 +523,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
+       AND attempted.status<>'deferred'
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -604,7 +607,7 @@ async function runOnce({
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
      (sender_id,contact_id,anchor_message_id,slot_hours)
-    VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`,
+    VALUES($1,$2,$3,$4) ${reclaimClause("whatsapp_sender_marketing_followup_attempts")}`,
    [candidate.sender_id,candidate.contact_id,candidate.inbound_id,slot]);
   const id=claimed.rows?.[0]?.id;
   if(!id)continue;
@@ -734,6 +737,12 @@ async function runOnce({
     // A signed failed receipt may have moved a claimed slot to unknown
     // before Meta HTTP acceptance reached this worker.
     if(finalized.rowCount===1)accepted++;
+   }else if(await deferProvenUnsent({
+     database,table:"whatsapp_sender_marketing_followup_attempts",
+     attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
+   })){
+     // Billing refused before provider dispatch. Preserve the cancelled
+     // Inbox draft and let an eligible later slot claim retry safely.
    }else await fail(result?.code||"secondary_marketing_send_unconfirmed");
   }catch{await fail("secondary_marketing_unconfirmed");}
  }
