@@ -241,6 +241,36 @@ test("media followup uploads only through verified Ariel transport",async()=>{
   assert.equal(f.calls.filter(x=>x.persist).length,1);
 });
 
+test("known signed 131053 video is replaced with truthful text, not retried",async()=>{
+ const row={...candidate,slot_hours:6,media_key:"approved-failed-video",
+  media_type:"video",media_mime_type:"video/mp4",media_filename:"pulse.mp4"};
+ const f=fake({rows:[row]});
+ let checked=0;
+ const result=await worker.runOnce({
+  ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+    automatedFollowUp:{additionalSteps:[{
+      message:"An approved 6h service reminder",
+      translations:{en:"Would you like to know more about the treatment?"}
+    }]}
+  }),
+  videoQuarantined:async ({mediaKey,senderId})=>{
+    checked++;assert.equal(mediaKey,"approved-failed-video");
+    assert.equal(senderId,2);return true;},
+  storage:{downloadMedia:async()=>assert.fail("Never re-upload rejected video")},
+  videoApproved:()=>assert.fail("No video should be dispatched"),
+ });
+ assert.equal(result.accepted,1);
+ assert.equal(checked,1);
+ const saved=f.calls.find(x=>x.save).save;
+ assert.equal(saved[7],null,"never record forbidden video MIME");
+ assert.equal(saved[8].mediaKey,null,"never save banned media key");
+ assert.match(saved[2],/process or how to arrange an assessment/);
+ assert.doesNotMatch(saved[2],/watch|video|clip/i);
+ const dispatched=f.calls.find(x=>x.send).send;
+ assert.equal(dispatched.dispatchTransport,undefined,"send only text");
+ assert.equal(dispatched.text,saved[2]);
+});
 test("secondary video removed from primary config cannot create an outbound or upload",async()=>{
  const f=fake({rows:[{...candidate,media_key:"approved-then-removed-video",
   media_type:"video",media_mime_type:"video/mp4",media_filename:"clip.mp4"}]});

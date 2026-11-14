@@ -230,6 +230,37 @@ test(
       // admin-flagged enquiry, without clearing the administrative flag.
       assert.equal(await isStillWaitingForStaff(68,211,query),true);
       assert.equal(await isStillWaitingForStaff(69,221,query),false);
+      // A separately failed video must not turn a successfully delivered AI
+      // answer into a fake 12-hour staff-waiting episode (Cassey #9063).
+      await client.query(`
+        INSERT INTO contacts(id,mode,needs_attention,attention_reason) VALUES
+        (72,'ai',true,'Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold.'),
+        (73,'ai',true,'Delivery failed: Meta delivery was rejected.');
+        INSERT INTO messages(id,contact_id,role,sent_by_username,is_automated_follow_up,delivery_status,created_at) VALUES
+        (251,72,'user',NULL,false,NULL,now()-interval '20 minutes'),
+        (252,72,'assistant',NULL,false,'delivered',now()-interval '19 minutes'),
+        (253,72,'assistant',NULL,true,'failed',now()-interval '2 minutes'),
+        (261,73,'user',NULL,false,NULL,now()-interval '20 minutes'),
+        (262,73,'assistant',NULL,false,'failed',now()-interval '19 minutes');
+      `);
+      assert.equal(await isStillWaitingForStaff(72,251,query),false,
+        "delivery-only attention must not count an already answered chat");
+      assert.equal(await shouldSendImmediateAlert({
+        contact_id:72,event_key:"staff_waiting:72:251",alert_type:"staff_waiting",
+      },query),false);
+      assert.equal(await isStillWaitingForStaff(73,261,query),true,
+        "an actual unanswered customer remains eligible for staff attention");
+      const afterMediaFailure=await findWaitingStaffOwnedConversations(
+        {waitMinutes:10,limit:40},query);
+      assert.equal(afterMediaFailure.some(x=>Number(x.contact_id)===72),false);
+      assert.equal(afterMediaFailure.some(x=>Number(x.contact_id)===73),true);
+      // A *new* customer question after the earlier delivered AI answer
+      // remains actionable when no new confirmed AI answer exists.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,sent_by_username,is_automated_follow_up,delivery_status,created_at)
+        VALUES(254,72,'user',NULL,false,NULL,now()-interval '12 minutes')
+      `);
+      assert.equal(await isStillWaitingForStaff(72,254,query),true);
       // No blanket 48-hour expiry is permitted for unresolved staff tasks.
       assert.equal(await isStillWaitingForStaff(70,231,query),true);
       // The explicit staff resolution stops future waiting alerts.
