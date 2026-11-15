@@ -523,3 +523,69 @@ test("media recovery deadline query stays sender-owned and does not wake disable
    env,database:{query:async()=>({rows:[]})},nowMs,
  }),/unavailable/);
 });
+
+
+test("secondary AI media worker actually schedules quiet-hour and claimed recovery with fake timers",async()=>{
+ const clock=fakeClock();
+ const offset=Date.parse("2026-11-15T22:50:00Z"); // 06:50 Malaysia
+ const now=()=>offset+clock.now();
+ const env={
+   WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+   WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
+   WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-10-30T03:00:00Z",
+   WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+   WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+   WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+   WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+   WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ const state={has_claimed:false,has_pending:true,
+   next_pending_at:"2026-11-15T23:05:00Z"};
+ let runs=0,deadlineReads=0;
+ const database={query:async(sql)=>{
+   if(sql===media.RECOVERY_DEADLINE_SQL){
+     deadlineReads++;
+     return{rows:[{...state}]};
+   }
+   // Initial best-effort historical reconciliation must never authorize sends.
+   return{rows:[],rowCount:0};
+ }};
+ assert.equal(media.start({env,database,run:async()=>{runs++;},...clock,now}),true);
+ try{
+   await clock.advance(0);
+   assert.equal(runs,1);
+   assert.deepEqual(clock.pending(),[10*60*1000],
+     "quiet hours must wait until the 07:00 recovery boundary");
+   const before=deadlineReads;
+   await clock.advance(5*60*1000);
+   assert.equal(runs,1);
+   assert.equal(deadlineReads,before,"no unnecessary database read at 06:55");
+   await clock.advance(5*60*1000);
+   assert.equal(runs,2);
+   assert.deepEqual(clock.pending(),[15*60*1000],
+     "07:00 check must schedule the actual 07:05 retry");
+
+   // Signed receipt or fresh durable enqueue can wake immediately, and a
+   // claimed job must preserve the minute-level unknown outcome safeguard.
+   state.has_claimed=true;
+   assert.equal(media.wake(),true);
+   await clock.advance(0);
+   assert.equal(runs,3);
+   assert.deepEqual(clock.pending(),[11*60*1000]);
+   state.has_claimed=false;
+   state.has_pending=false;
+   state.next_pending_at=null;
+   await clock.advance(60*1000);
+   assert.equal(runs,4);
+   assert.deepEqual(clock.pending(),[71*60*1000],
+     "empty queues return to an hourly lost-event check");
+ }finally{media.stop();}
+});
