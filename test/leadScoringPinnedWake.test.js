@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   createLeadScoringRunner,
   createPinnedWakeScheduler,
+  createLeadScoringActivitySignal,
 } = require("../src/services/leadScoringService");
 const { createAdaptiveWorkerTimer } = require("../src/utils/adaptiveWorkerTimer");
 
@@ -120,6 +121,27 @@ test("lead scoring retry deadline survives early unrelated activity wake", async
     pinned.clear();
     worker.stop();
   }
+});
+
+test("same-turn lead scoring messages coalesce without delaying next-turn and retry wakes", () => {
+ const microtasks=[];
+ const events=[];
+ const signal=createLeadScoringActivitySignal({
+   wake:()=>events.push("wake"),
+   scheduleInactivity:()=>events.push("inactivity"),
+   scheduleMicrotask:fn=>microtasks.push(fn),
+ });
+ assert.equal(signal(),true);
+ assert.equal(signal(),false);
+ assert.equal(signal(),false);
+ assert.deepEqual(events,[],"the next microtask is still within the current event-loop turn");
+ assert.equal(microtasks.length,1,"no extra timers or repeated database wake-ups");
+ microtasks.shift()();
+ assert.deepEqual(events,["wake","inactivity"]);
+ assert.equal(signal(),true,"new customer activity in later turn must still wake");
+ microtasks.shift()();
+ assert.deepEqual(events,["wake","inactivity","wake","inactivity"]);
+ assert.throws(()=>createLeadScoringActivitySignal({wake:()=>{}}),/inactivity/);
 });
 
 test("pinned retry scheduler retains multiple independent deadlines and cleans up on stop", async () => {
