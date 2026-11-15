@@ -76,7 +76,7 @@ test("returning pelvic trial-price question is independently verified after 48h 
   assert.equal(shadow({allowReturningTrialPrice:false}), null,
     "old Shadow must not silently gain a seven-day session or change other clients");
   const decision = shadow();
-  assert.equal(decision?.source, "customer_returning_first_trial");
+  assert.equal(decision?.source, "customer_returning_treatment_price");
   assert.equal(decision?.treatment, "骨盆调理");
   assert.deepEqual(decision?.prices.map(item => item.price), ["RM388", "RM288"]);
 
@@ -178,5 +178,160 @@ test("a trial mention is not enough to price an assessment, duration, refusal or
     const h=returningHistory();
     h[h.length-1].content=question;
     assert.equal(shadow({customerText:question,conversationHistory:h}),null,question);
+  }
+});
+
+
+test("multiple customer turns retain latest confirmed pelvic service for a returning price request", () => {
+  const h = [
+    turn("user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣 😊", 49),
+    turn("assistant","欢迎！我们的骨盆调理可以先了解一下。", 48.99),
+    turn("user","只是想调整", 47),
+    turn("assistant","中医师会先帮你做一个1对1体态评估+体验，再了解护理安排", 46.99),
+    turn("user","平日比较方便", 25),
+    turn("assistant","骨盆调理可以安排平日，预约时我们再确认时间。",24.99),
+    turn("assistant","免费1对1体态评估+体验也可以先了解哦 😊", 0.2),
+    turn("user","一次疗程多少钱？",0.01),
+  ];
+  const verified = resolveReturningFirstTrialPriceService(args({
+    customerText:"一次疗程多少钱？",conversationHistory:h,
+  }));
+  assert.equal(verified?.name,"骨盆调理");
+  const priced = shadow({
+    customerText:"一次疗程多少钱？",conversationHistory:h,
+  });
+  assert.equal(priced?.source,"customer_returning_treatment_price");
+  assert.deepEqual(priced?.prices?.map(x=>x.price),["RM388","RM288"]);
+});
+
+test("a specific seven-day treatment price can survive more than 20 messages without extending the AI prompt", () => {
+  const full = [
+    turn("user","我想了解骨盆调理",60),
+    turn("assistant","我们的骨盆调理可以先安排评估",59.99),
+  ];
+  for (let i=0;i<23;i++) {
+    full.push(turn("assistant","跟进骨盆调理护理过程和到店安排 😊",56-i*2));
+  }
+  full.push(turn("user","请问第一次体验的价格是多少呀",0.01));
+  assert.ok(full.length>20);
+  const shortened=full.slice(-20);
+  const option={
+    customerText:"请问第一次体验的价格是多少呀",
+    conversationHistory:shortened, returningPricingHistory:full,
+  };
+  assert.equal(shadow(option)?.treatment,"骨盆调理");
+  assert.equal(shadow({...option,returningPricingHistory:null}),null,
+    "an orphan assistant-only prompt must not independently authorize a price");
+  const withStaff=full.map(x=>({...x}));
+  withStaff[4].pricingStaffAuthored=true;
+  assert.equal(shadow({...option,returningPricingHistory:withStaff}),null,
+    "old staff activity outside the 20-turn prompt must still block pricing");
+});
+
+test("latest explicitly selected treatment wins without carrying an older pelvic price", () => {
+  const h=[
+    turn("user","我想了解骨盆调理",48),
+    turn("assistant","骨盆调理可以先评估",47.99),
+    turn("user","我想了解3D 小颜术",27),
+    turn("assistant","好的，3D 小颜术是徒手面部护理",26.99),
+    turn("user","多少钱？",0.01),
+  ];
+  const facial = {
+    name:"3D First Trial",linkedService:"3D 小颜术",
+    sendOnPriceQuery:true, validFrom:"2000-01-01",validUntil:"2999-12-31",
+    imageUrl:"https://example.test/3d.jpg",caption:"首次体验仅需 RM488",
+    pricing:{currency:"MYR",offer:488,normal:888},
+  };
+  assert.equal(resolveReturningFirstTrialPriceService(args({
+    customerText:"多少钱？",conversationHistory:h,
+  }))?.name,"3D 小颜术");
+  const decision=shadow({
+    customerText:"多少钱？",conversationHistory:h,promotions:[...promotions,facial],
+  });
+  assert.equal(decision?.treatment,"3D 小颜术");
+  assert.deepEqual(decision?.prices?.map(x=>x.price),["RM488"]);
+});
+
+test("unconfigured new topics, human takeover and ambiguous selection never inherit old prices", () => {
+  const base=returningHistory();
+  for(const intervening of [
+    "我想了解按摩", "我想问下肩颈按摩怎么样",
+    "我想了解胸部专业检查", "我想了解新的护理项目",
+    "换个话题聊脸部护理", "我想了解骨盆调理跟3D 小颜术",
+    "免费体态评估多少钱？",
+  ]) {
+    const h=base.slice(0,-1);
+    h.push(turn("user",intervening,1),turn("assistant","好的呀",0.9),base.at(-1));
+    assert.equal(shadow({conversationHistory:h}),null,intervening);
+  }
+  const staff=base.slice(0,-1);
+  staff.push(turn("assistant","[Verified STAFF message] 我来跟进您",1,true),base.at(-1));
+  assert.equal(shadow({conversationHistory:staff}),null);
+  const stale=base.map(x=>({...x}));
+  stale[0].pricingCreatedAtMs=now-8*24*HOUR;
+  assert.equal(shadow({conversationHistory:stale}),null);
+});
+
+test("the free 1-to-1 introduction is described separately from paid first-trial packages", () => {
+  const { clarifyFreeAssessmentAndPaidTrial }=require("../src/utils/returningTrialPriceContext");
+  const base=returningHistory();
+  const message=clarifyFreeAssessmentAndPaidTrial({
+    customerText:text,conversationHistory:base,treatment:"骨盆调理",
+    reply:"Package A RM388；Package B RM288",complimentaryAssessmentExperienceEnabled:true,
+  });
+  assert.match(message,/免费1对1体态评估/u);
+  assert.match(message,/不收费/u);
+  assert.match(message,/正式护理的收费配套/u);
+  assert.match(message,/Package A RM388.*Package B RM288/su);
+  const noDisclosure=clarifyFreeAssessmentAndPaidTrial({
+    customerText:"一次疗程多少钱？",conversationHistory:base,treatment:"骨盆调理",
+    reply:"Package A RM388",complimentaryAssessmentExperienceEnabled:true,
+  });
+  assert.equal(noDisclosure,"Package A RM388");
+  const freeQuestion="免费1对1体态评估多少钱？";
+  const history=base.slice(0,-1).concat(turn("user",freeQuestion,0.01));
+  assert.equal(shadow({customerText:freeQuestion,conversationHistory:history}),null);
+});
+
+test("current price language is genuine enquiry, not an objection or unsupported topic", () => {
+  for(const query of ["多少钱？","价钱","一次疗程多少钱？","我想知道价格才安排过来","Berapa harga?"]) {
+    const h=returningHistory();
+    h.splice(-1,0,
+      turn("user","只是想了解护理过程",0.03),
+      turn("assistant","骨盆调理会先由中医师了解体态",0.02),
+    );
+    h[h.length-1]=turn("user",query,0.01);
+    assert.equal(shadow({customerText:query,conversationHistory:h})?.treatment,
+      "骨盆调理",query);
+  }
+  for(const query of ["价格太贵了","预算是 RM250","换成按摩多少钱？"]) {
+    const h=returningHistory();
+    h[h.length-1]=turn("user",query,0.01);
+    assert.equal(shadow({customerText:query,conversationHistory:h}),null,query);
+  }
+});
+
+
+test("contact #9068-style multi-turn care enquiry keeps pelvic when X-ray is declined", () => {
+  const h=[
+    turn("user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",5),
+    turn("assistant","Hi～欢迎来到 Neutro Sense 😊 想了解骨盆调理对吗～",4.98),
+    turn("user","只是想调整",4.94),
+    turn("assistant","中医师会先帮你做一个1对1的体态评估+体验，看看整体状态。",4.92),
+    turn("user","不需要xray 是吗？",4.87),
+    turn("assistant","中医师会先帮你做一个1对1体态评估+体验，了解骨盆整体平衡。",4.85),
+    turn("user","一次疗程多少钱？",0.01),
+  ];
+  assert.equal(resolveReturningFirstTrialPriceService(args({
+    customerText:"一次疗程多少钱？",conversationHistory:h,
+  }))?.name,"骨盆调理");
+});
+
+
+test("an unconfigured new topic cannot borrow pelvic prices, even in the current amount question", () => {
+  for (const query of ["胸部专业检查多少钱？","乳腺护理价钱是多少？","按摩多少钱？"]) {
+    const h=returningHistory();
+    h[h.length-1]=turn("user",query,0.01);
+    assert.equal(shadow({customerText:query,conversationHistory:h}),null,query);
   }
 });

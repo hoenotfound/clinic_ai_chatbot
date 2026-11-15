@@ -244,7 +244,8 @@ function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false,
-  allowOfferEnquiries = false, allowReturningTrialPrice = false, now = Date.now(),
+  allowOfferEnquiries = false, allowReturningTrialPrice = false,
+  returningPricingHistory = undefined, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
   if (!text || hasClinicalMediaRisk(text)) return null;
@@ -252,15 +253,21 @@ function resolveShadowPriceException({
   // Neutro opt-in: a first-trial price question after 2h-6d automatic
   // follow-ups may refer to the customer's original verified treatment.
   // This does NOT expand the older 24h Shadow session for any other enquiry.
-  const returning = allowReturningTrialPrice === true
+  const completeReturningHistory = returningPricingHistory === null ? null
+    : returningPricingHistory === undefined ? conversationHistory
+      : returningPricingHistory;
+  const returning = allowReturningTrialPrice === true &&
+    Array.isArray(completeReturningHistory)
     ? resolveReturningFirstTrialPriceService({
-        customerText: text, conversationHistory, services, serviceAliases,
-        complimentaryAssessmentExperienceEnabled, now,
+        customerText: text,
+        conversationHistory: completeReturningHistory,
+        services, serviceAliases, complimentaryAssessmentExperienceEnabled, now,
       }) : null;
   if (returning) {
     return shadowVerifiedPrice({
-      source: "customer_returning_first_trial", treatment: returning.name,
-      customerText: text, conversationHistory, promotions,
+      source: "customer_returning_treatment_price", treatment: returning.name,
+      customerText: text,
+      conversationHistory: returningPricingHistory || conversationHistory, promotions,
     });
   }
 

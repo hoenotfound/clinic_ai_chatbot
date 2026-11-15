@@ -34,6 +34,7 @@ const { resolveScopedPackagePriceContinuation,
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
+const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPriceContext");
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
@@ -74,7 +75,7 @@ const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
 } = require("./utils/resultMediaTrigger");
-const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
+const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { campaignContextReply, guardCampaignPriceConflicts } =
   require("./utils/neutroBreastRm68Campaign");
@@ -1622,12 +1623,30 @@ async function processIncomingMessage(
     // current-Meta-ad pricing exception may use the legacy reply path.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
+    // Separate 7-day/100-turn pricing evidence read. The AI prompt remains
+    // capped at 20 messages. Missing or truncated evidence fails closed.
+    let returningPricingHistory = null;
+    if (aiPricingMode === "shadow" &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(
+          clinicConfig.businessName || clinicConfig.clinicName || ""
+        )) && hasExplicitPriceRequest(text) &&
+        typeof conversationStore.getPricingHistoryForContact === "function") {
+      try {
+        returningPricingHistory = await conversationStore.getPricingHistoryForContact(
+          contact.id, { throughMessageId: savedInbound.id }
+        );
+      } catch (err) {
+        console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
+      }
+    }
     const shadowPriceException = aiPricingMode === "shadow" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveShadowPriceException({
           customerText: text, conversationHistory: history, metaAdContext,
+          returningPricingHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
@@ -2032,6 +2051,16 @@ async function processIncomingMessage(
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
       }
       reply = priced.reply;
+      if (priced.restored && approvedPricingDecision?.source ===
+          "customer_returning_treatment_price") {
+        reply = clarifyFreeAssessmentAndPaidTrial({
+          customerText: text, conversationHistory: returningPricingHistory || history,
+          treatment: approvedPricingDecision.treatment, reply,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+          language: mediaLanguage,
+        });
+      }
       // The verified price formatter intentionally replaces model-authored
       // text. Recover independently configured branch/hours details when the
       // same customer turn also asks for them (e.g. location + RM488).
