@@ -43,7 +43,11 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [], promoti
   const activePriced = new Set(getActivePromotions(promotions)
     .filter(p => p?.sendOnPriceQuery === true)
     .map(p => p.linkedService));
-  const verifiedTie = creativeMatches.length === 2 &&
+  // A named, actively priced treatment may coexist with several generic
+  // unpriced support services in the same ad (e.g. pelvis, posture and
+  // assessment). The former two-match limit rejected real pelvic ads.
+  // Never resolve a tie when another independently priced treatment appears.
+  const verifiedTie = creativeMatches.length >= 2 &&
     creativeMatches.includes(nameCandidate) &&
     activePriced.has(nameCandidate) &&
     creativeMatches.every(name => name === nameCandidate || !activePriced.has(name));

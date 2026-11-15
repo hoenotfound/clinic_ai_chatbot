@@ -589,3 +589,29 @@ test("secondary AI media worker actually schedules quiet-hour and claimed recove
      "empty queues return to an hourly lost-event check");
  }finally{media.stop();}
 });
+
+
+test("solicited price images recover in quiet hours without waking ordinary media",()=>{
+ const at=s=>Date.parse(s), MIN=60*1000,HOUR=60*MIN;
+ const quiet=at("2026-11-15T22:40:00Z"); // 06:40 MYT
+ const state={
+   has_claimed:false,has_pending:true,next_pending_at:"2026-11-15T22:39:00Z",
+   has_solicited_pending:true,next_solicited_at:"2026-11-15T22:42:00Z",
+ };
+ assert.equal(media.nextMediaRecoveryDelay(state,quiet),2*MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,next_solicited_at:"2026-11-15T22:39:00Z",
+ },quiet),MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,has_solicited_pending:false,next_solicited_at:null,
+ },quiet),20*MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,next_solicited_at:"2026-11-16T02:40:00Z",
+ },quiet),HOUR);
+ assert.throws(()=>media.nextMediaRecoveryDelay({
+   ...state,next_solicited_at:null,
+ },quiet),/unavailable/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/has_solicited_pending/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/next_solicited_at/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/job\.media_kind='promotion' AND job\.solicited_pricing=TRUE/);
+});

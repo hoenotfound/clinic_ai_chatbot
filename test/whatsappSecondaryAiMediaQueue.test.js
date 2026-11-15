@@ -530,3 +530,54 @@ test("promotion supersession distinguishes continued pelvis questions from real 
   }
   assert.match(worker.PROMOTION_MEDIA_SUPERSESSION_SQL,/job\.caption/);
 });
+
+test("solicited pricing is recorded durably, while normal promotions and results stay quiet",async()=>{
+  const enqueueFor=async({solicitedPricing=false,kind="promotion"})=>{
+    const calls=[];
+    const client={query:async(sql,args)=>{
+      calls.push({sql,args});
+      if(sql.includes("SELECT c.whatsapp_sender_id AS sender_id"))
+        return{rows:[{sender_id:9,created_at:new Date("2026-11-15T22:40:41Z")}],rowCount:1};
+      return{rows:[],rowCount:1};
+    },release:()=>{}};
+    const database={connect:async()=>client,
+      query:async()=>({rows:[{eligible:true}],rowCount:1})};
+    const result=await worker.enqueue({
+      contactId:21,inboundMessageId:41,kind,solicitedPricing,
+      items:[{imageUrl:"https://example.test/clinic.jpg",caption:"approved"}],
+    },{database,env:{...approved,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary"}});
+    return{result,calls};
+  };
+  for(const input of [
+    {kind:"promotion",solicitedPricing:true,expected:true},
+    {kind:"promotion",solicitedPricing:false,expected:false},
+    {kind:"result",solicitedPricing:false,expected:false},
+  ]){
+    const {result,calls}=await enqueueFor(input);
+    assert.equal(result,true);
+    const insert=calls.find(c=>c.sql.includes("INSERT INTO whatsapp_sender_ai_media_jobs"));
+    assert.ok(insert);
+    assert.match(insert.sql,/media_kind,solicited_pricing,image_url/);
+    assert.equal(insert.args[5],input.expected);
+    assert.equal(insert.args[6],"https://example.test/clinic.jpg");
+  }
+  const forbidden=await enqueueFor({kind:"result",solicitedPricing:true});
+  assert.equal(forbidden.result,false);
+  assert.equal(forbidden.calls.length,0);
+  // The exception applies identically at the initial dequeue and again
+  // immediately before each Meta provider attempt.
+  for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+    assert.match(sql,/BETWEEN 7 AND 23/);
+    assert.match(sql,/job\.media_kind='promotion' AND job\.solicited_pricing=TRUE/);
+    assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
+    assert.match(sql,/staff\.sent_by_username IS NOT NULL|human\.sent_by_username IS NOT NULL/);
+  }
+});
+
+test("server can mark a solicited image only from approved pricing authority",()=>{
+  const fs=require("node:fs");
+  const path=require("node:path");
+  const s=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  assert.match(s,/solicitedPricing:Boolean\(secondaryAiConversation &&[\s\S]{0,130}approvedPricingDecision\?\.type === "price"/);
+  assert.match(s,/kind:"promotion",[\s\S]{0,370}solicitedPricing:Boolean/);
+});
