@@ -150,6 +150,54 @@ test("live durable status is claimed, applied, published and completed with its 
   assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
 });
 
+test("only verified successful secondary automated replies skip redundant follow-up rescans",async()=>{
+ const env={
+   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+   WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
+   WHATSAPP_WABA_ID:"1593376338308612",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
+   WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
+ };
+ const secondary=job({
+   business_phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   business_account_id:env.WHATSAPP_SECONDARY_WABA_ID,
+   delivery_status:"delivered",
+ });
+ const saved={
+   id:901,contact_id:90,whatsapp_message_id:secondary.wamid,
+   delivery_status:"delivered",role:"assistant",is_automated_follow_up:true,
+ };
+ async function published(jobData,message,verification){
+   const {service,calls}=harness({claimed:[jobData],updateResult:message,
+     verifyJobSender:()=>verification,env});
+   await service.processStoredDeliveryStatuses([{id:jobData.id}]);
+   const signal=calls.find(call=>call[0]==="publish");
+   assert.ok(signal,"Inbox always receives its delivery-status event");
+   return signal[2];
+ }
+ const automated=await published(secondary,saved,{matched:true});
+ assert.equal(automated.followUpStateUnchanged,true);
+ assert.equal(automated.businessPhoneNumberId,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+
+ for(const [scenario,jobData,message,verification] of [
+   ["verified initial AI reply",secondary,{...saved,is_automated_follow_up:false},{matched:true}],
+   ["verified staff reply",secondary,{...saved,sent_by_username:"Staff",is_automated_follow_up:false},{matched:true}],
+   ["verified secondary failure",{...secondary,delivery_status:"failed"},
+     {...saved,delivery_status:"failed"},{matched:true}],
+   ["uncertain sender",secondary,saved,null],
+   ["primary receipt",{...secondary,business_phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID,
+     business_account_id:env.WHATSAPP_WABA_ID},saved,{matched:true}],
+ ]){
+   const scope=await published(jobData,message,verification);
+   assert.equal(scope.followUpStateUnchanged,undefined,scenario+" must still wake secondary schedulers");
+ }
+ const rejected=harness({claimed:[secondary],updateResult:saved,
+   verifyJobSender:()=>({matched:false}),env});
+ await rejected.service.processStoredDeliveryStatuses([{id:secondary.id}]);
+ assert.equal(rejected.calls.some(call=>call[0]==="publish"),false,
+   "unverified sender is rejected before publishing or classifying an event");
+});
+
 test("read status callback repairs an earlier Inbox cleanup failure without resending", async () => {
   const completed = job({ id: 81, delivery_status: "read" });
   const { calls, service } = harness({

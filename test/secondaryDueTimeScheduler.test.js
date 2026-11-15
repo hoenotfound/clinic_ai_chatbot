@@ -248,6 +248,29 @@ test("worker restart immediately checks overdue slots, then schedules the next g
  scheduler.stop();
 });
 
+test("full secondary follow-up batches skip discarded due hints and still drain promptly",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary backlog avoids an unnecessary hint query",
+  env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async()=>({attempted:++runs===1?10:0,accepted:0}),
+  readNextDue:async()=>{reads++;return{
+   next_due_at:"2026-11-02T03:00:00Z",has_overdue:false,
+  }},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1);
+ assert.equal(reads,0,"a full batch uses its ten-second drain delay without the discarded DB hint");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:00:10Z"));
+ await clock.advance(10*1000);
+ assert.equal(runs,2,"the next batch remains on the existing ten-second cadence");
+ assert.equal(reads,1,"after the backlog drains, restore the exact due-time lookup");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T03:00:00Z"));
+ scheduler.stop();
+});
+
 test("failed due lookups use existing five-minute error retry, never hot-loop",async()=>{
  const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
  let runs=0,errors=0;
@@ -290,6 +313,21 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  }),true,"verified secondary message must wake immediately");
  assert.equal(check("conversation_changed",{reason:"message",contactId:90}),true,
   "legacy publishers with unknown sender must still wake safely");
+ assert.equal(check("conversation_changed",{
+   reason:"delivery_status",channel:"whatsapp",
+   businessPhoneNumberId:"1318355951360575",
+   followUpStateUnchanged:true,deliveryStatus:"delivered",
+ }),false,"verified already-sent automated step cannot create a new due slot");
+ assert.equal(check("conversation_changed",{
+   reason:"delivery_status",channel:"whatsapp",
+   businessPhoneNumberId:"1318355951360575",
+   deliveryStatus:"sent",
+ }),true,"initial or unclassified secondary receipt still wakes");
+ assert.equal(check("conversation_changed",{
+   reason:"delivery_status",channel:"whatsapp",
+   businessPhoneNumberId:"1318355951360575",
+   deliveryStatus:"failed",
+ }),true,"failed delivery status remains actionable");
  assert.equal(check("conversation_changed",{reason:"booking_confirmed"}),true);
  assert.equal(check("conversation_changed",{reason:"whatsapp_opt_out"}),true);
  assert.equal(check("pipeline_changed",{reason:"lead_scored"}),false);
@@ -299,6 +337,53 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
  assert.equal(check("pipeline_changed",{}),true);
  assert.equal(check("config_changed",{}),true);
+});
+
+test("both secondary schedulers ignore only proven unchanged status updates",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ const env={WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"};
+ const counts={secondary_service:0,secondary_marketing:0};
+ const schedulers=[];
+ for(const lane of Object.keys(counts)){
+   const scheduler=createSecondaryDueScheduler({
+     label:lane==="secondary_marketing"
+       ?"Secondary WhatsApp marketing followup scheduler"
+       :"Secondary WhatsApp service followup scheduler",
+     env,database:{},events,createTimer:clock.createTimer,now:clock.now,
+     run:async()=>{counts[lane]++;return{attempted:0,accepted:0};},
+     readNextDue:async()=>({next_due_at:"2026-11-02T03:00:00Z",has_overdue:false}),
+   });
+   scheduler.start();schedulers.push(scheduler);
+ }
+ try{
+   await clock.advance(0);
+   assert.deepEqual(counts,{secondary_service:1,secondary_marketing:1});
+   const secondaryReceipt={
+     reason:"delivery_status",channel:"whatsapp",
+     businessPhoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+     deliveryStatus:"delivered",
+   };
+   events.publish("conversation_changed",{
+     ...secondaryReceipt,followUpStateUnchanged:true,
+   });
+   await Promise.resolve();await clock.advance(0);
+   assert.deepEqual(counts,{secondary_service:1,secondary_marketing:1});
+   events.publish("conversation_changed",secondaryReceipt);
+   await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
+   assert.deepEqual(counts,{secondary_service:2,secondary_marketing:2},
+     "unknown or first-reply receipts still wake both workers after three seconds");
+   events.publish("conversation_changed",{
+     reason:"message",channel:"whatsapp",
+     businessPhoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   });
+   await Promise.resolve();await clock.advance(0);
+   assert.deepEqual(counts,{secondary_service:3,secondary_marketing:3},
+     "incoming messages remain immediate");
+   events.publish("pipeline_changed",{reason:"appointment_set"});
+   await Promise.resolve();await clock.advance(0);
+   assert.deepEqual(counts,{secondary_service:4,secondary_marketing:4},
+     "booking changes remain immediate");
+ }finally{schedulers.forEach(s=>s.stop());}
 });
 
 test("unrelated verified events do not reschedule a genuine due slot",async()=>{

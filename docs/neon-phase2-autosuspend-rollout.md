@@ -163,3 +163,56 @@ Validation before a deliberate manual Render deployment:
    `emptyIntervalMs:60*60*1000` overrides to restore the previous 30-minute
    safety fallback without changing any sending policy.
 
+
+## 15 November 2026: verified Business App idle recovery and follow-up batch optimization
+
+A follow-up review found two remaining fixed one-minute database recovery
+loops in the *optional* Business App echo-media downloader and consented
+history importer. These should not wake the Free-tier compute when no work
+is queued. This change is independent of the already deployed PR #634.
+
+- Both workers start with an immediate recovery pass after a Render restart.
+- Only a verified, durably stored media job or signed history import wakes
+  its corresponding worker immediately. Existing duplicate receipts are safe.
+- Pending/claimed media and pending/processing history jobs preserve the
+  **one-minute** retry/recovery cadence. Failed queue status inspection also
+  retries after one minute; missing query results never mean "empty".
+- Empty queues use a **60-minute** lost-event backstop instead of fixed
+  one-minute polling. If a durable enqueue was saved but its in-process wake
+  was lost, the orphan may be discovered up to an hour later. This is a
+  deliberate tradeoff: roll back the two hourly overrides if observed
+  Business App attachment/history recovery is too slow.
+- Staff Inbox appointment-reminder repair retains its immediate error-path
+  wake and the original **30-minute** lost-event safety interval. The more
+  aggressive 60-minute change was removed after review to protect bookings.
+- When a secondary follow-up sweep attempts 10 or more jobs, it already
+  schedules a new sweep in ten seconds. Skip the read-only due-time hint in
+  that one case, because the existing scheduler would discard its result.
+  Smaller batches, booked/opted-out changes, consent checks, quiet hours
+  and all billing rules remain unchanged.
+- Verified successful delivery updates on already-created *automated*
+  secondary follow-up messages are tagged as presentation-only for the
+  secondary due-time schedulers. The Inbox still receives them. **Do not
+  suppress** first AI/staff reply receipts, the 131060 recovery menu, FEP
+  pricing evidence, failed delivery outcomes, unknown/unverified sender
+  receipts, bookings, opt-outs, customer messages or rule changes. The
+  existing three-second receipt scheduling stays unchanged for all eligible
+  events.
+- A single startup log records **actual** worker-start booleans for
+  optional Business App echo-media, optional consented history, secondary
+  service follow-ups and marketing follow-ups. It contains no secrets, phone
+  numbers or customer data. Before deployment, whether each optional worker
+  is enabled in the live Render environment cannot be established from
+  an absence of worker-duration log entries alone.
+
+Verification: run
+`node --test test/secondaryIdleRecoveryOptimization.test.js test/secondaryDueTimeScheduler.test.js test/whatsappCoexistenceMediaService.test.js test/whatsappCoexistenceHistoryService.test.js test/whatsappDeliveryStatusService.test.js`
+plus the repository's remaining CI suites. Test with synthetic event payloads
+and an isolated database, never by replaying production customer sends.
+
+Release: leave manual Render deploy disabled until CI and PR review finish.
+After a deliberate deployment, compare same-traffic 24-hour periods of billed
+CU-hours, compute starts, and worker outcomes. Confirm secondary echo
+attachments, staff app history import, both WhatsApp numbers, booking
+recording and due follow-ups before claiming savings. No production SQL,
+Neon settings, customer data, or messages are required for code review.
