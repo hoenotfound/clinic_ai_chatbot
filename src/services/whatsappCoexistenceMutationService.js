@@ -185,6 +185,10 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  worker=createIdleAwareRecoveryWorker({
    ...clock,
    label:"Business App mutation recovery",
+   // Unmatched edits/revokes are resumed by the original staff echo event.
+   // Do not wake Neon every 30 minutes when no actionable target exists.
+   // Keep the one-minute cadence when work is actually ready.
+   emptyIntervalMs:60*60*1000,
    run:()=>run({env,database}),
    hasPendingWork:()=>hasPendingWork({env,database}),
  });
