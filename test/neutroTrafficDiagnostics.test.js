@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const marketing = require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const {
   coarseHttpRoute, recordHttpResponse, recordDirectR2Video,
-  takeOutboundPayloadSnapshot,
+  instrumentHttpBodyWrites, takeOutboundPayloadSnapshot,
 } = require("../src/utils/outboundPayloadDiagnostics");
 
 const enabled = { DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED: "true" };
@@ -91,7 +91,7 @@ test("response size diagnostics are bounded, classified and contain no customer 
   assert.deepEqual(media, {
     category: "inbox_media", requests: 1, status404: 0,
     status429: 0, status503: 0, knownResponseMiB: 1,
-    unknownResponseSize: 0,
+    observedBodyMiB: 0, unknownResponseSize: 0,
   });
   assert.equal(messages.status503, 1);
   assert.equal(messages.unknownResponseSize, 1);
@@ -111,4 +111,46 @@ test("response size diagnostics are bounded, classified and contain no customer 
     statusCode: 200, pathname: "/api/conversations", contentLength: 999,
     env: {},
   }), false);
+});
+
+
+test("passive response byte probe counts chunked media and open SSE without altering I/O", () => {
+  takeOutboundPayloadSnapshot();
+  const sent = [];
+  const res = {
+    write(...args) { sent.push(["write", args]); return true; },
+    end(...args) {
+      sent.push(["end", args]);
+      // Emulate a response implementation that internally calls write on end.
+      if (args[0]) this.write(args[0]);
+      return "ended";
+    },
+  };
+  assert.equal(instrumentHttpBodyWrites(res,
+    "/api/conversations/private-contact/messages/17/media", enabled), true);
+  const a = Buffer.alloc(512 * 1024);
+  const b = Buffer.alloc(512 * 1024);
+  assert.equal(res.write(a), true);
+  assert.equal(res.end(b), "ended");
+  assert.equal(sent.length, 3); // All write/end behavior is preserved.
+  const snapshot = takeOutboundPayloadSnapshot();
+  const media = snapshot.httpResponses.find(x => x.category === "inbox_media");
+  assert.equal(media.requests, 0); // Does not need a finished response.
+  assert.equal(media.observedBodyMiB, 1); // Counted once, not twice.
+  assert.equal(media.knownResponseMiB, 0);
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-contact|private-media/);
+  assert.equal(takeOutboundPayloadSnapshot().httpResponses.find(
+    x => x.category === "inbox_media").observedBodyMiB, 0);
+
+  const sse = { write() { return true; }, end() { return true; } };
+  assert.equal(instrumentHttpBodyWrites(sse, "/api/conversations/events", enabled), true);
+  sse.write("x".repeat(64 * 1024)); // SSE connection is still open, no end/finish.
+  const live = takeOutboundPayloadSnapshot();
+  assert.equal(live.httpResponses.find(x => x.category === "inbox_other").observedBodyMiB, 0.06);
+
+  const noop = { write() { return true; }, end() { return true; } };
+  assert.equal(instrumentHttpBodyWrites(noop, "/api/conversations/events", {}), false);
+  noop.write(Buffer.alloc(1024 * 1024));
+  const after = takeOutboundPayloadSnapshot();
+  assert.equal(after.httpResponses.find(x => x.category === "inbox_other").observedBodyMiB, 0);
 });
