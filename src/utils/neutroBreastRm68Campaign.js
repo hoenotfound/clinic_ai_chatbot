@@ -4,6 +4,9 @@
 // full-body Pulse Wave offer. Nothing here changes configured service prices.
 const CAMPAIGN_KEY = "neutro_breast_rm68_2026";
 const PREFILL = "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
+// Keep the legacy Meta ad live while the copy is gradually updated.
+// This is only campaign recognition; promotional consent is verified separately.
+const FOLLOWUP_PREFILL = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
 const MYT_DEC_6_START = Date.parse("2026-12-05T16:00:00.000Z");
 const MYT_CAMPAIGN_END = Date.parse("2026-12-06T16:00:00.000Z");
 const INTRO_MARKER = "我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠";
@@ -12,7 +15,7 @@ function normalize(value) {
   return String(value || "").normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 function isExactPrefill(value) {
-  return normalize(value) === normalize(PREFILL);
+  return [PREFILL, FOLLOWUP_PREFILL].some((prefill) => normalize(value) === normalize(prefill));
 }
 function isNeutro(businessName) {
   return /^neutro\s+sense\s+tcm(?:\s+centre)?$/iu.test(String(businessName || "").trim());
@@ -194,7 +197,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
 }
 
 module.exports = {
-  CAMPAIGN_KEY, PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
+  CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
   firstReply, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, campaignContextReply, guardCampaignPriceConflicts,
