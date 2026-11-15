@@ -319,6 +319,40 @@ test("Business App echo media waits an hour when empty but wakes immediately for
  }finally{echoMedia.stop();}
 });
 
+test("duplicate completed Business App echo media does not wake Neon again",async()=>{
+ const clock=fakeClock();
+ const env={
+   WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED:"true",
+   WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"secondary",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ let runs=0;
+ const db={query:async(sql)=>{
+   if(sql===echoMedia.PENDING_SQL)return{rows:[{has_work:false}]};
+   if(sql.includes("INSERT INTO whatsapp_sender_coexistence_media_jobs"))
+     return{rowCount:0,rows:[]};
+   if(sql.includes("SELECT provider_media_id,media_type,status"))
+     return{rows:[{provider_media_id:"verified-media",media_type:"image",status:"complete"}]};
+   throw Error("Unexpected media query");
+ }};
+ assert.equal(echoMedia.start({env,database:db,run:async()=>{runs++;},...clock}),true);
+ try{
+   await clock.advance(0);
+   assert.equal(runs,1);
+   assert.deepEqual(clock.pending(),[60*60*1000]);
+   assert.equal(await echoMedia.enqueue({
+     contactId:12,messageId:42,wamid:"wamid.verified-echo",
+     mediaId:"verified-media",type:"image",
+   },{database:db,env}),true,"duplicate is still safe and idempotent");
+   await clock.advance(0);
+   assert.equal(runs,1,"completed duplicate must not start another recovery pass");
+   assert.deepEqual(clock.pending(),[60*60*1000]);
+ }finally{echoMedia.stop();}
+});
+
 test("signed Business App history staging wakes a sleeping importer without periodic minute polls",async()=>{
  const clock=fakeClock();
  const env={
