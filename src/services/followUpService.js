@@ -8,7 +8,8 @@ const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { recordWorkerWake } = require("../utils/refreshWakeDiagnostics");
-const { createCoalescedImmediateWake, followUpChangeRequiresWake } =
+const { createCoalescedImmediateWake, followUpChangeRequiresWake,
+  primaryPipelineChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { campaignFollowUp } = require("../utils/neutroBreastRm68Campaign");
@@ -2315,6 +2316,10 @@ realtimeEvents.subscribe("conversation_changed", (payload) => {
 // Booking, consent, and lead changes always wake the same worker, including
 // previously booked contacts that become eligible again on cancellation.
 realtimeEvents.subscribe("pipeline_changed", (payload) => {
+  if (!primaryPipelineChangeRequiresWake(payload)) {
+    recordWorkerWake("primary", "pipeline_changed", payload, "ignored");
+    return;
+  }
   recordWorkerWake("primary", "pipeline_changed", payload,
     wakeForRealtimeStateChange() ? "queued" : "coalesced");
 });

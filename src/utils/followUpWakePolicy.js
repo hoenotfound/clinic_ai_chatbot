@@ -37,4 +37,15 @@ function followUpChangeRequiresWake(payload, env = process.env) {
   return true;
 }
 
-module.exports = { createCoalescedImmediateWake, followUpChangeRequiresWake };
+// CRM-only updates do not affect sender consent, booking state, treatment
+// intent, billing holds or any follow-up due time. Secondary service and
+// marketing schedulers already ignore these exact three reasons. Unknown or
+// missing reasons still wake conservatively, including staff changes and
+// appointment cancellations.
+function primaryPipelineChangeRequiresWake(payload) {
+  return payload?.reason !== "lead_scored" &&
+    payload?.reason !== "meta_ad_enriched" &&
+    payload?.reason !== "lead_assignment_recovered";
+}
+module.exports = { createCoalescedImmediateWake, followUpChangeRequiresWake,
+  primaryPipelineChangeRequiresWake };

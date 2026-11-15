@@ -4,6 +4,7 @@ const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { createCoalescedImmediateWake } = require("../utils/followUpWakePolicy");
 const { scoreLeadConversation, nextLeadScoringModelRetryAt, restoreLeadScoringModelCooldowns } = require("./leadScoringAiService");
 const { isSecondaryAutomationEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 const telegramAlerts = require("./telegramAlertService");
@@ -555,12 +556,29 @@ function scheduleStaleRecoveryCheck() {
   return true;
 }
 
+// Multiple message and voice-transcript events in the same synchronous turn
+// describe one newly stored conversation state. Preserve immediate next-turn
+// scoring, without repeating the worker wake or resetting the inactivity
+// timer for every individual event. New turns still wake normally.
+function createLeadScoringActivitySignal({
+  wake, scheduleInactivity, scheduleMicrotask = queueMicrotask,
+} = {}) {
+  if (typeof wake !== "function" || typeof scheduleInactivity !== "function") {
+    throw new TypeError("Lead scoring activity requires a wake and inactivity schedule");
+  }
+  return createCoalescedImmediateWake(() => {
+    wake();
+    scheduleInactivity();
+  }, scheduleMicrotask);
+}
+const activitySignal = createLeadScoringActivitySignal({
+  wake: () => wakeLeadScoring(0),
+  scheduleInactivity: () => scheduleInactivityCheck(),
+});
 function noteLeadScoringActivity() {
-  // Run once now so message-count/time ceilings remain responsive, then one
-  // final time after the configured inactivity window. New chat activity resets
-  // that final timer instead of generating one Postgres query every minute.
-  wakeLeadScoring(0);
-  scheduleInactivityCheck();
+  // Run promptly for new message-count ceilings and once after inactivity.
+  // Real future turns, scheduled retries and manual/config wakes are unchanged.
+  activitySignal();
 }
 
 function startLeadScoring() {
@@ -619,6 +637,7 @@ module.exports = {
   buildScoringFailureFallback,
   createLeadScoringRunner,
   createPinnedWakeScheduler,
+  createLeadScoringActivitySignal,
   delayUntilTelegramRetry,
   ensureConversationAnalysisActivation,
   getActiveSettings,

@@ -216,3 +216,45 @@ CU-hours, compute starts, and worker outcomes. Confirm secondary echo
 attachments, staff app history import, both WhatsApp numbers, booking
 recording and due follow-ups before claiming savings. No production SQL,
 Neon settings, customer data, or messages are required for code review.
+
+
+## 15 November 2026 follow-up: distinguish unattributed HTTP work
+
+Live PR #637 pool telemetry showed repeated database acquisitions from
+primary automated follow-ups, secondary marketing, lead scoring, AI media,
+and a large `unattributed` category. No evidence indicated an abandoned
+open connection, and the secondary AI media queue can legitimately perform
+several guarded reads during a send. Do not shorten its approved billing
+reconciliation or replay an uncertain provider outcome to save CU-hours.
+
+This change adds a passive HTTP request context around existing Express
+handlers. The labels are fixed categories (WhatsApp inbound, Meta webhook,
+Inbox list/detail, pipeline, configuration, authentication, other API, public
+promo media, health, other). They **never** include URL parameters, patient
+identifiers, raw paths, query strings, tokens or message contents. Worker
+timers retain their more specific existing labels. This is source
+attribution only: no SQL, new timer, database connection or customer send.
+
+Two additional conservative wake changes:
+
+- The primary follow-up worker now ignores the same three CRM-only
+  `pipeline_changed` reasons already skipped by the secondary schedulers:
+  `lead_scored`, `meta_ad_enriched`, `lead_assignment_recovered`.
+  Unknown pipeline changes, appointments, opt-outs, configuration, real
+  messages and delivery-status evidence still re-evaluate immediately.
+- Multiple message and transcript updates published synchronously during
+  the same event-loop turn now cause one lead-scoring worker wake and one
+  inactivity timer reset. A later message, Telegram fallback, pinned retry
+  deadline, or configuration change remains independently actionable.
+
+Safety checks: run the backend and full portal CI. In particular, run
+`node --test test/httpDatabaseActivitySource.test.js
+test/neutroDatabaseQuerySafety.test.js test/leadScoringPinnedWake.test.js
+test/neonPhaseTwoPoolActivity.test.js`.
+
+After an explicitly approved manual Render deployment, inspect at least
+three consecutive five-minute `[Neon pool activity]` samples. Compare
+counts by source and confirm that the previously unattributed acquisitions
+move into named HTTP categories before changing any expensive follow-up
+discovery query. Measure CU-hour change on equivalent traffic, and do not
+claim reduced billing from lower counts alone.

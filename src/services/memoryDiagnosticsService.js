@@ -13,6 +13,17 @@ const { getPoolActivitySnapshot } = require("./databasePoolActivity");
 // are summed into "other" to avoid exposing arbitrary labels or identifiers.
 const SAFE_POOL_SOURCES = new Set([
   "unattributed",
+  "HTTP WhatsApp ingress",
+  "HTTP Meta webhook",
+  "HTTP Inbox list",
+  "HTTP Inbox detail",
+  "HTTP pipeline API",
+  "HTTP configuration API",
+  "HTTP auth API",
+  "HTTP other API",
+  "HTTP promo media",
+  "HTTP health",
+  "HTTP other",
   "Inbox full conversation list",
   "Inbox secondary eligibility",
   "Automated follow-up worker",
