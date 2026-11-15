@@ -92,3 +92,41 @@ test("a genuinely newer explicit message may renew promotional consent after a m
   assert.equal((await repo.recordFromInbound(input, { database:driver })).recorded,true);
   assert.ok(calls.some((c)=>c.sql.startsWith("UPDATE leads")));
 });
+
+test("new CTWA messages record sender-authored, treatment-specific consent without cross-campaign leaks", async () => {
+  const cases = [
+    {
+      text: "Hi～我对 Neutro Sense TCM 黄金脉冲技术有兴趣，可以跟进我，有优惠也发我看看 😊",
+      service: "脉冲波调理",
+    },
+    {
+      text: "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊",
+      service: "neutro_breast_rm68_2026",
+    },
+  ];
+  const treatmentConfig = {
+    services: [{name:"脉冲波调理"}, {name:"胸部专业检查"}],
+    serviceAliases: [{alias:"黄金脉冲技术", officialService:"脉冲波调理"}],
+  };
+  for (const {text,service} of cases) {
+    const {calls,driver} = database({messageText:text});
+    const recorded = await repo.recordFromInbound(input,{database:driver,config:treatmentConfig});
+    assert.equal(recorded.recorded,true,text);
+    const insert = calls.find(c => c.sql.includes("INSERT INTO whatsapp_marketing_consent_events"));
+    assert.equal(insert.params[2],"ctwa_explicit_customer_message");
+    assert.equal(insert.params[7],"treatment_followups_and_related_offers");
+    assert.equal(insert.params[8],"MARKETING");
+    assert.equal(insert.params[11],service);
+    for (const rejected of [
+      {provider:null}, {forwarded:true},
+      {globalOptOut:"2026-10-09T00:50:00Z"}, {marketingOptOut:"2026-10-09T01:03:00Z"},
+    ]) {
+      const blocked = database({messageText:text,...rejected});
+      const status = await repo.recordFromInbound(input,{
+        database:blocked.driver,config:treatmentConfig,
+      });
+      assert.equal(status.recorded,false,"cannot infer verified consent: "+Object.keys(rejected)[0]);
+      assert.equal(blocked.calls.some(c => c.sql.includes("INSERT INTO whatsapp_marketing_consent_events")),false);
+    }
+  }
+});
