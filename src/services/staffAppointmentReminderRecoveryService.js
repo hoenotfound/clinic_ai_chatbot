@@ -8,6 +8,9 @@ const clinicConfig=require("../config/clinicConfig");
 const {isProactiveAppointmentReminder}=require("../utils/staffAppointmentReminderText");
 const {recordStaffConfirmedBooking}=require("./staffBookingConfirmationService");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
+// A failed post-send booking write explicitly wakes this worker; the periodic
+// sweep is only an orphan-safety fallback after an otherwise empty run.
+const IDLE_APPOINTMENT_RECOVERY_MS=60*60*1000;
 const RECOVERY_SQL="SELECT m.id,m.contact_id,m.content\n FROM messages m\n JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'\n WHERE m.created_at>=NOW()-INTERVAL '48 hours'\n   AND m.role='assistant'\n   AND m.sent_by_username IS NOT NULL\n   AND m.sent_by_username NOT IN\n     ('WhatsApp Business App','Follow-up automation','Consent request automation')\n   AND m.whatsapp_message_id IS NOT NULL\n   AND m.is_automated_follow_up IS DISTINCT FROM TRUE\n   AND m.is_forwarded IS DISTINCT FROM TRUE\n   AND m.media_mime_type IS NULL\n   AND m.delivery_status IS DISTINCT FROM 'failed'\n   AND m.delivery_status IS DISTINCT FROM 'unknown'\n   AND m.content ~* '(appointment|booking|remind|see[[:space:]]+you|see[[:space:]]+u|tomorrow|tmr|预约|預約|明天|后天|後天|见|見|temujanji|janji[[:space:]]+temu|jumpa)'\n   AND NOT EXISTS (\n     SELECT 1 FROM lead_activities a\n     JOIN leads l ON l.id=a.lead_id AND l.contact_id=m.contact_id\n     WHERE a.metadata->>'outcome'='staff_appointment_reminder'\n       AND a.metadata->>'staffMessageId'=m.id::text\n   )\n ORDER BY m.created_at DESC,m.id DESC LIMIT 120";
 
 async function runOnce({
@@ -40,9 +43,10 @@ function start({run=runOnce,...clock}={}){
   worker=createIdleAwareRecoveryWorker({
     ...clock,label:"accepted Inbox appointment reminder recovery",
     run,hasPendingWork:async()=>false,
+    emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS,
   });
   worker.start(0);
   return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={RECOVERY_SQL,runOnce,start,wake,stop};
+module.exports={RECOVERY_SQL,IDLE_APPOINTMENT_RECOVERY_MS,runOnce,start,wake,stop};
