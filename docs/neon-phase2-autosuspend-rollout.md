@@ -163,3 +163,43 @@ Validation before a deliberate manual Render deployment:
    `emptyIntervalMs:60*60*1000` overrides to restore the previous 30-minute
    safety fallback without changing any sending policy.
 
+
+
+## 15 November 2026: verified Business App idle recovery and follow-up batch optimization
+
+A follow-up review found two remaining fixed one-minute database recovery
+loops in the *optional* Business App echo-media downloader and consented
+history importer. These should not wake the Free-tier compute when no work
+is queued. This change is independent of the already deployed PR #634.
+
+- Both workers start with an immediate recovery pass after a Render restart.
+- Only a verified, durably stored media job or signed history import wakes
+  its corresponding worker immediately. Existing duplicate receipts are safe.
+- Pending/claimed media and pending/processing history jobs preserve the
+  **one-minute** retry/recovery cadence. Failed queue status inspection also
+  retries after one minute; missing query results never mean "empty".
+- Empty queues use a **60-minute** lost-event backstop instead of fixed
+  one-minute polling. If a durable enqueue was saved but its in-process wake
+  was lost, the orphan may be discovered up to an hour later. This is a
+  deliberate tradeoff: roll back the two hourly overrides if observed
+  Business App attachment/history recovery is too slow.
+- Staff Inbox appointment-reminder repair retains its immediate error-path
+  wake. Its empty-queue safety fallback is extended from 30 to 60 minutes;
+  there is no change to booking detection, outbound delivery, or reminders.
+- When a secondary follow-up sweep attempts 10 or more jobs, it already
+  schedules a new sweep in ten seconds. Skip the read-only due-time hint in
+  that one case, because the existing scheduler would discard its result.
+  Smaller batches, booked/opted-out changes, consent checks, quiet hours
+  and all billing rules remain unchanged.
+
+Verification: run
+`node --test test/secondaryIdleRecoveryOptimization.test.js test/secondaryDueTimeScheduler.test.js test/whatsappCoexistenceMediaService.test.js test/whatsappCoexistenceHistoryService.test.js`
+plus the repository's remaining CI suites. Test with synthetic event payloads
+and an isolated database, never by replaying production customer sends.
+
+Release: leave manual Render deploy disabled until CI and PR review finish.
+After a deliberate deployment, compare same-traffic 24-hour periods of billed
+CU-hours, compute starts, and worker outcomes. Confirm secondary echo
+attachments, staff app history import, both WhatsApp numbers, booking
+recording and due follow-ups before claiming savings. No production SQL,
+Neon settings, customer data, or messages are required for code review.
