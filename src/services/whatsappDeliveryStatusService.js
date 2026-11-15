@@ -21,6 +21,8 @@ const BILLING_ALERT_RETRY_INTERVAL_MS = 30 * 1000;
 const UNMATCHED_CALLBACK_GRACE_SECONDS = 5 * 60;
 const STALE_AFTER_SECONDS = 60;
 const { scopeForVerifiedDeliveryJob } = require("../utils/verifiedWhatsAppEventScope");
+const { automatedSecondaryReceiptDoesNotChangeEligibility } =
+  require("../utils/secondaryFollowUpReceiptPolicy");
 
 const STALE_RECHECK_GRACE_MS = 5 * 1000;
 const BATCH_SIZE = 50;
@@ -264,7 +266,15 @@ function createWhatsAppDeliveryStatusService({
     } else {
       statusAppliedNow = true;
       try {
-        publish(updatedMessage, eventScope);
+        // This is a verified, persisted secondary automated follow-up receipt,
+        // not a first reply or consent/billing event that changes eligibility.
+        // Keep the Inbox update; only omit unnecessary follow-up DB rescans.
+        const followUpStateUnchanged=automatedSecondaryReceiptDoesNotChangeEligibility({
+          message:updatedMessage,providerStatus:job.delivery_status,
+          senderVerified:senderVerification?.matched,scope:eventScope,env,
+        });
+        publish(updatedMessage,followUpStateUnchanged
+          ? {...eventScope,followUpStateUnchanged:true} : eventScope);
       } catch (err) {
         logger.error("Failed to publish durable WhatsApp delivery status:", err);
       }
