@@ -248,6 +248,29 @@ test("worker restart immediately checks overdue slots, then schedules the next g
  scheduler.stop();
 });
 
+test("full secondary follow-up batches skip discarded due hints and still drain promptly",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary backlog avoids an unnecessary hint query",
+  env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async()=>({attempted:++runs===1?10:0,accepted:0}),
+  readNextDue:async()=>{reads++;return{
+   next_due_at:"2026-11-02T03:00:00Z",has_overdue:false,
+  }},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1);
+ assert.equal(reads,0,"a full batch uses its ten-second drain delay without the discarded DB hint");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:00:10Z"));
+ await clock.advance(10*1000);
+ assert.equal(runs,2,"the next batch remains on the existing ten-second cadence");
+ assert.equal(reads,1,"after the backlog drains, restore the exact due-time lookup");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T03:00:00Z"));
+ scheduler.stop();
+});
+
 test("failed due lookups use existing five-minute error retry, never hot-loop",async()=>{
  const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
  let runs=0,errors=0;
