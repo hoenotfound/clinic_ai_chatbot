@@ -7,6 +7,66 @@ const { readFileSync } = require("node:fs");
 const { takeOutboundPayloadSnapshot } = require("../utils/outboundPayloadDiagnostics");
 const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
 const { snapshot: getWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
+const { getPoolActivitySnapshot } = require("./databasePoolActivity");
+
+// Only literal, audited source names may reach Render logs. Unknown sources
+// are summed into "other" to avoid exposing arbitrary labels or identifiers.
+const SAFE_POOL_SOURCES = new Set([
+  "unattributed",
+  "Inbox full conversation list",
+  "Inbox secondary eligibility",
+  "Automated follow-up worker",
+  "Secondary WhatsApp service followup scheduler",
+  "Secondary WhatsApp marketing followup scheduler",
+  "WhatsApp extended follow-up scheduler",
+  "Staff waiting alert worker",
+  "Lead scoring worker",
+  "Meta Ads enrichment worker",
+  "Meta Ads Insights sync",
+  "Meta comment recovery worker",
+  "Inbound processing recovery",
+  "WhatsApp delivery-status recovery",
+  "Strict RM0 result image queue",
+  "Secondary WhatsApp AI media recovery",
+  "Secondary WhatsApp Business App media recovery",
+  "Secondary WhatsApp coexistence history import",
+  "accepted Inbox appointment reminder recovery",
+  "Customer retention sweep",
+  "Customer purge-job prune",
+]);
+const safeCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+function summarizePoolActivity(snapshot = {}) {
+  const totals = new Map();
+  for (const row of Array.isArray(snapshot.bySource) ? snapshot.bySource : []) {
+    const source = SAFE_POOL_SOURCES.has(row?.source) ? row.source : "other";
+    const item = totals.get(source) || { source, last5Minutes: 0, last15Minutes: 0,
+      acquiredTotal: 0 };
+    for (const key of ["last5Minutes", "last15Minutes", "acquiredTotal"]) {
+      const value = safeCount(row?.[key]);
+      if (value !== null) item[key] += value;
+    }
+    totals.set(source, item);
+  }
+  const bySource = [...totals.values()]
+    .sort((a, b) => b.last15Minutes - a.last15Minutes ||
+      b.last5Minutes - a.last5Minutes || b.acquiredTotal - a.acquiredTotal)
+    .slice(0, 16);
+  return {
+    acquiredTotal: safeCount(snapshot.acquiredTotal),
+    connectedTotal: safeCount(snapshot.connectedTotal),
+    removedTotal: safeCount(snapshot.removedTotal),
+    last5Minutes: safeCount(snapshot.last5Minutes),
+    last15Minutes: safeCount(snapshot.last15Minutes),
+    openConnections: safeCount(snapshot.openConnections),
+    idleConnections: safeCount(snapshot.idleConnections),
+    waitingForConnection: safeCount(snapshot.waitingForConnection),
+    lastAcquireAt: typeof snapshot.lastAcquireAt === "string" &&
+      !Number.isNaN(Date.parse(snapshot.lastAcquireAt))
+      ? new Date(snapshot.lastAcquireAt).toISOString() : null,
+    bySource,
+  };
+}
 
 const INTERVAL_MS = 60 * 1000;
 const MIB = 1024 * 1024;
@@ -71,6 +131,7 @@ function startMemoryDiagnostics({
   setIntervalFn = setInterval,
   sample = sampleMemory,
   wakeSnapshot = getWakeDiagnostics,
+  poolSnapshot = getPoolActivitySnapshot,
 } = {}) {
   if (timer || env.DA_MEMORY_DIAGNOSTICS_ENABLED === "false") return timer;
   if (!env.RENDER_SERVICE_ID && env.DA_MEMORY_DIAGNOSTICS_ENABLED !== "true") return null;
@@ -99,6 +160,9 @@ function startMemoryDiagnostics({
             .map(item => ({ key: item.key, count: item.last5Minutes })),
         };
         logger.info?.(`[Refresh/wake diagnostics] ${JSON.stringify(summary)}`);
+        // Piggyback on the same fifth-minute tick. In-memory node-pg pool
+        // counters only: no SQL, new timer, network request, or DB wake-up.
+        logger.info?.(`[Neon pool activity] ${JSON.stringify(summarizePoolActivity(poolSnapshot()))}`);
         if (env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
           logger.info?.(`[Outbound payload diagnostics] ${JSON.stringify(takeOutboundPayloadSnapshot())}`);
         }
@@ -114,4 +178,5 @@ function startMemoryDiagnostics({
   return timer;
 }
 
-module.exports = { INTERVAL_MS, mib, readCgroupBytes, readCgroupMemoryStat, sampleMemory, startMemoryDiagnostics };
+module.exports = { INTERVAL_MS, mib, readCgroupBytes, readCgroupMemoryStat,
+  sampleMemory, summarizePoolActivity, startMemoryDiagnostics };
