@@ -4,7 +4,7 @@
 // their media using the verified recipient number's own token. Never invoke
 // an outbound Graph send, Neutro's token fallback, or a customer AI turn.
 const {pool}=require("../db/db");
-const {measureSecondaryWorkerRun}=require("../utils/secondaryDueTimeScheduler");
+const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
 const channelMessaging=require("./channelMessagingService");
@@ -12,7 +12,7 @@ const channelMessaging=require("./channelMessagingService");
 const TYPES=new Set(["image","video","audio","document","sticker"]);
 const LIMIT=10;
 const MAX_BYTES=25*1024*1024;
-let timer=null;
+let worker=null;
 function enabled(env=process.env) {
  return env.WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED==="true" &&
    env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED==="true" &&
@@ -47,14 +47,16 @@ async function enqueue({
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID]
  );
- if(result.rowCount===1)return true;
+ if(result.rowCount===1){wake();return true;}
  const existing=await database.query(
    "SELECT provider_media_id,media_type FROM whatsapp_sender_coexistence_media_jobs WHERE message_id=$1",
    [messageId]
  );
- return existing.rows?.length===1 &&
+ const matches=existing.rows?.length===1 &&
    existing.rows[0].provider_media_id===mediaId &&
    existing.rows[0].media_type===type;
+ if(matches)wake();
+ return matches;
 }
 const READY_SQL=`
  SELECT j.message_id,j.contact_id,j.sender_id,j.provider_media_id,j.media_type,
@@ -165,13 +167,40 @@ async function runOnce({
  }
  return{disabled:false,processed,review};
 }
-function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
- if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>measureSecondaryWorkerRun(
-   "Secondary WhatsApp Business App media recovery",()=>run({env})
- ).catch(e=>
-   console.error("[Business App echo media] worker:",e?.message)),60000);
- timer?.unref?.();return true;
+// A verified, committed Business App echo wakes recovery immediately. When
+// empty, there is no reason to requery Neon each minute. Claimed and pending
+// jobs retain the original one-minute recovery cadence, including retries.
+const PENDING_SQL=`SELECT EXISTS (
+ SELECT 1 FROM whatsapp_sender_coexistence_media_jobs j
+ JOIN whatsapp_sender_accounts sa ON sa.id=j.sender_id
+ WHERE j.status IN ('pending','claimed')
+   AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2
+   AND sa.meta_account_id=$3 AND sa.state='active'
+) AS has_work`;
+async function hasPendingWork({database=pool,env=process.env}={}){
+ if(!enabled(env))return false;
+ const result=await database.query(PENDING_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ const pending=result.rows?.[0]?.has_work;
+ if(typeof pending!=="boolean")throw Error("Business App media pending state unavailable");
+ return pending;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={enabled,enqueue,READY_SQL,runOnce,start,stop};
+function wake(){return worker?.wake(0)===true;}
+function start({env=process.env,run=runOnce,database=pool,...clock}={}){
+ if(!enabled(env)||worker)return false;
+ worker=createIdleAwareRecoveryWorker({
+   ...clock,
+   label:"Secondary WhatsApp Business App media recovery",
+   emptyIntervalMs:60*60*1000,
+   run:()=>run({env,database}),
+   hasPendingWork:()=>hasPendingWork({env,database}),
+ });
+ worker.start(0);
+ return true;
+}
+function stop(){if(worker){worker.stop();worker=null;}}
+module.exports={enabled,enqueue,READY_SQL,PENDING_SQL,hasPendingWork,
+ runOnce,start,stop,wake};
