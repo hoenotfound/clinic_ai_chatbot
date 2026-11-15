@@ -8,6 +8,9 @@ const {createIdleAwareRecoveryWorker,ACTIVE_RECOVERY_MS,EMPTY_RECOVERY_MS}=
   require("../src/utils/idleAwareRecoveryWorker");
 const media=require("../src/services/whatsappSecondaryAiMediaQueue");
 const mutations=require("../src/services/whatsappCoexistenceMutationService");
+const echoMedia=require("../src/services/whatsappCoexistenceMediaService");
+const history=require("../src/services/whatsappCoexistenceHistoryService");
+const appointmentRecovery=require("../src/services/staffAppointmentReminderRecoveryService");
 
 function fakeClock(){
  let current=0,nextId=1;
@@ -275,4 +278,129 @@ test("staff echo and media queue wake only after durable commit, without provide
  assert.match(mediaSource,/quarantineStaleClaims/);
  assert.match(mediaSource,/STILL_VALID_SQL/);
  assert.match(mediaSource,/isSecondaryAutomationEligible/);
+});
+
+test("Business App echo media waits an hour when empty but wakes immediately for a saved attachment",async()=>{
+ const clock=fakeClock();
+ const env={
+   WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED:"true",
+   WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"secondary",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ let runs=0,busy=false;
+ const db={query:async(sql)=>{
+   if(sql===echoMedia.PENDING_SQL)return{rows:[{has_work:busy}]};
+   if(sql.includes("INSERT INTO whatsapp_sender_coexistence_media_jobs"))
+     return{rowCount:1,rows:[{message_id:42}]};
+   throw Error("Unexpected media query");
+ }};
+ assert.equal(echoMedia.start({env,database:db,run:async()=>{runs++;},...clock}),true);
+ try{
+   await clock.advance(0);
+   assert.equal(runs,1);
+   assert.deepEqual(clock.pending(),[60*60*1000]);
+   await clock.advance(30*60*1000);
+   assert.equal(runs,1,"no idle Neon poll at one minute or thirty minutes");
+   busy=true;
+   assert.equal(await echoMedia.enqueue({
+     contactId:12,messageId:42,wamid:"wamid.verified-echo",
+     mediaId:"verified-media",type:"image",
+   },{database:db,env}),true);
+   await clock.advance(0);
+   assert.equal(runs,2,"durably enqueued media wakes the worker immediately");
+   assert.deepEqual(clock.pending(),[30*60*1000+ACTIVE_RECOVERY_MS]);
+   busy=false;
+   await clock.advance(ACTIVE_RECOVERY_MS);
+   assert.equal(runs,3,"active queue retains the one-minute safety check");
+   assert.deepEqual(clock.pending(),[31*60*1000+60*60*1000]);
+ }finally{echoMedia.stop();}
+});
+
+test("signed Business App history staging wakes a sleeping importer without periodic minute polls",async()=>{
+ const clock=fakeClock();
+ const env={
+   WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+   WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"secondary",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ let runs=0;
+ const db={query:async(sql)=>{
+   if(sql===history.PENDING_SQL)return{rows:[{has_work:false}]};
+   if(sql.includes("SELECT id FROM whatsapp_sender_accounts"))return{rows:[{id:11}]};
+   if(sql.includes("INSERT INTO whatsapp_sender_coexistence_import_jobs"))
+     return{rowCount:1,rows:[{fingerprint:"test"}]};
+   throw Error("Unexpected history query");
+ }};
+ assert.equal(history.start({env,database:db,run:async()=>{runs++;},...clock}),true);
+ try{
+   await clock.advance(0);
+   assert.equal(runs,1);
+   assert.deepEqual(clock.pending(),[60*60*1000]);
+   await clock.advance(30*60*1000);
+   assert.equal(runs,1);
+   const received=await history.acceptPassiveSync({entry:[{
+     id:env.WHATSAPP_SECONDARY_WABA_ID,changes:[{field:"history",value:{
+       metadata:{phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+       history:[],
+     }}],
+   }]},{database:db,env});
+   assert.equal(received.staged,1);
+   await clock.advance(0);
+   assert.equal(runs,2,"verified durable history stage wakes the importer immediately");
+   assert.deepEqual(clock.pending(),[30*60*1000+60*60*1000]);
+ }finally{history.stop();}
+});
+
+test("Business App idle checks remain sender-owned and fail closed on missing results",async()=>{
+ const mediaEnv={
+   WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED:"true",
+   WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"secondary",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ const historyEnv={...mediaEnv,
+   WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+ };
+ for(const [service,env,states] of [
+   [echoMedia,mediaEnv,"'pending','claimed'"],
+   [history,historyEnv,"'pending','processing'"],
+ ]){
+   let calls=0;
+   const db={query:async(sql,args)=>{
+     calls++;
+     assert.equal(sql,service.PENDING_SQL);
+     assert.ok(sql.includes(states));
+     assert.match(sql,/sa.sender_key=\$1/);
+     assert.match(sql,/sa.meta_account_id=\$3/);
+     assert.deepEqual(args,["secondary","100000000000002","200000000000002"]);
+     return{rows:[{has_work:false}]};
+   }};
+   assert.equal(await service.hasPendingWork({database:db,env}),false);
+   assert.equal(calls,1);
+   assert.equal(await service.hasPendingWork({database:db,env:{}}),false);
+   assert.equal(calls,1,"disabled workers must never query Neon");
+   await assert.rejects(service.hasPendingWork({
+     database:{query:async()=>({rows:[]})},env,
+   }),/pending state unavailable/);
+ }
+});
+
+test("appointment reminder safety recovery uses hourly idle fallback and keeps post-send wake",()=>{
+ const appSource=fs.readFileSync(path.join(__dirname,
+   "../src/services/staffAppointmentReminderRecoveryService.js"),"utf8");
+ const inboxSource=fs.readFileSync(path.join(__dirname,
+   "../src/routes/conversations.js"),"utf8");
+ assert.equal(appointmentRecovery.IDLE_APPOINTMENT_RECOVERY_MS,60*60*1000);
+ assert.match(appSource,/emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS/);
+ assert.match(inboxSource,/if \(isProactiveAppointmentReminder\(text\.trim\(\)\)\) staffReminderRecovery\.wake\(\)/);
 });
