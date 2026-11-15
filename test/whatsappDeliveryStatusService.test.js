@@ -184,7 +184,6 @@ test("only verified successful secondary automated replies skip redundant follow
    ["verified staff reply",secondary,{...saved,sent_by_username:"Staff",is_automated_follow_up:false},{matched:true}],
    ["verified secondary failure",{...secondary,delivery_status:"failed"},
      {...saved,delivery_status:"failed"},{matched:true}],
-   ["unverified sender",secondary,saved,{matched:false}],
    ["uncertain sender",secondary,saved,null],
    ["primary receipt",{...secondary,business_phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID,
      business_account_id:env.WHATSAPP_WABA_ID},saved,{matched:true}],
@@ -192,6 +191,11 @@ test("only verified successful secondary automated replies skip redundant follow
    const scope=await published(jobData,message,verification);
    assert.equal(scope.followUpStateUnchanged,undefined,scenario+" must still wake secondary schedulers");
  }
+ const rejected=harness({claimed:[secondary],updateResult:saved,
+   verifyJobSender:()=>({matched:false}),env});
+ await rejected.service.processStoredDeliveryStatuses([{id:secondary.id}]);
+ assert.equal(rejected.calls.some(call=>call[0]==="publish"),false,
+   "unverified sender is rejected before publishing or classifying an event");
 });
 
 test("read status callback repairs an earlier Inbox cleanup failure without resending", async () => {
