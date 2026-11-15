@@ -51,6 +51,41 @@ test("empty recovery queues sleep 30 minutes, preserving a complete Neon idle in
  worker.stop();
 });
 
+test("hourly idle fallback keeps immediate wakes and one-minute active recovery",async()=>{
+ const clock=fakeClock();
+ let runs=0,hasWork=false;
+ const worker=createIdleAwareRecoveryWorker({
+   run:async()=>{runs++;},
+   hasPendingWork:async()=>hasWork,
+   emptyIntervalMs:60*60*1000,
+   ...clock,
+ });
+ worker.start(0);
+ await clock.advance(0);
+ assert.deepEqual(clock.pending(),[60*60*1000]);
+ await clock.advance(30*60*1000);
+ assert.equal(runs,1,"empty queue must not wake Neon at 30 minutes");
+ hasWork=true;
+ assert.equal(worker.wake(0),true,"new work must wake immediately");
+ await clock.advance(0);
+ assert.equal(runs,2);
+ assert.deepEqual(clock.pending(),[30*60*1000+ACTIVE_RECOVERY_MS]);
+ await clock.advance(ACTIVE_RECOVERY_MS);
+ assert.equal(runs,3,"active work retains one-minute recovery");
+ worker.stop();
+});
+
+test("both secondary recovery producers explicitly select hourly empty fallback",()=>{
+ const mediaSource=fs.readFileSync(path.join(__dirname,
+   "../src/services/whatsappSecondaryAiMediaQueue.js"),"utf8");
+ const mutationSource=fs.readFileSync(path.join(__dirname,
+   "../src/services/whatsappCoexistenceMutationService.js"),"utf8");
+ assert.match(mediaSource,/label:"Secondary WhatsApp AI media recovery",[\\s\\S]{0,300}emptyIntervalMs:60\\*60\\*1000/);
+ assert.match(mutationSource,/label:"Business App mutation recovery",[\\s\\S]{0,300}emptyIntervalMs:60\\*60\\*1000/);
+ assert.match(mediaSource,/if\\(pending\\.rowCount>0\\)wake\\(\\)/);
+ assert.match(mutationSource,/if\\(!applied\\)wake\\(\\)/);
+});
+
 test("pending media and edits retain exact one-minute safety cadence",async()=>{
  const clock=fakeClock();
  let runs=0;
