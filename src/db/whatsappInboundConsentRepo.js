@@ -6,6 +6,8 @@ const {explicitGeneralFollowupConsent,parseConsentButton,BUTTON_TITLES,
  GENERAL_SCOPE,GENERAL_SERVICE,SENTENCES}=
  require("../utils/neutroGeneralFollowupConsent");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const { CAMPAIGN_KEY: RM68_CAMPAIGN_KEY, isExactPrefill: isRm68Prefill } =
+  require("../utils/neutroBreastRm68Campaign");
 const clinicConfig = require("../config/clinicConfig");
 
 /**
@@ -145,6 +147,14 @@ async function recordFromInbound({
       ? "customer_whatsapp_button"
       : isClickToWhatsApp
         ? "ctwa_explicit_customer_message" : "explicit_customer_message";
+    // The RM68 breast event is distinct from the usual RM388 Pulse Wave
+    // treatment. Scope any affirmative customer-sent event opt-in to the
+    // event itself; do not let unrelated treatment templates inherit it.
+    // Campaign activation and outbound approval are verified separately.
+    const consentService = generalExplicit ? GENERAL_SERVICE
+      : (isClickToWhatsApp && isRm68Prefill(message.content))
+        ? RM68_CAMPAIGN_KEY
+        : inferConfiguredServiceFromText(message.content, config) || null;
     const inserted = await client.query(
       `INSERT INTO whatsapp_marketing_consent_events
        (contact_id,lead_id,source,recorded_by,message_id,
@@ -155,7 +165,7 @@ async function recordFromInbound({
       [contactId,leadId,source,messageId,message.whatsapp_message_id,
         message.content,businessName,generalExplicit?GENERAL_SCOPE:explicit.scope,explicit.category,
         sentAt.toISOString(),explicit.method,
-        generalExplicit?GENERAL_SERVICE:(inferConfiguredServiceFromText(message.content, config) || null)]
+        consentService]
     );
     if (inserted.rowCount !== 1) {
       await client.query("ROLLBACK");

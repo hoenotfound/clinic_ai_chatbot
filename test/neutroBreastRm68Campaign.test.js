@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
-  CAMPAIGN_KEY, PREFILL, isExactPrefill, campaignCreativeMatches,
+  CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, campaignCreativeMatches,
   campaignDay, firstReply, hasCampaignConversation, isOtherTreatmentQuery,
   campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
   campaignFollowUp,
@@ -28,6 +28,8 @@ function run(text, now = early) {
 test("RM68 creative verification fails closed for unrelated ads", () => {
   assert.equal(CAMPAIGN_KEY, "neutro_breast_rm68_2026");
   assert.equal(isExactPrefill(PREFILL), true);
+  assert.equal(isExactPrefill(FOLLOWUP_PREFILL), true);
+  assert.equal(isExactPrefill(FOLLOWUP_PREFILL + " 我今天能预约吗？"), false);
   assert.equal(isExactPrefill(PREFILL + " 今天可以吗？"), false);
   assert.equal(campaignCreativeMatches(creative), true);
   assert.equal(campaignCreativeMatches({ headline: "脉冲波 RM388", body: "胸部护理" }), false);
@@ -56,6 +58,10 @@ test("RM68 date options change on Malaysian calendar without inventing a booking
 
 test("Only a genuine prior RM68 opening establishes campaign conversation", () => {
   assert.equal(hasCampaignConversation(history), true);
+  assert.equal(hasCampaignConversation([
+    { role: "user", content: FOLLOWUP_PREFILL },
+    { role: "assistant", content: firstReply(early) },
+  ]), true, "new opt-in-style enquiry keeps RM68 price continuity");
   assert.equal(hasCampaignConversation([{ role: "user", content: PREFILL }]), false);
   assert.equal(hasCampaignConversation([{ role: "user", content: PREFILL }, {
     role: "assistant", content: "Pulse Wave RM388 full-body"
@@ -112,6 +118,17 @@ test("RM68 follow-ups require anchored customer campaign and are text-only", () 
     ad_followup_body: creative.body,
   };
   assert.equal(candidateIsCampaign(candidate), true);
+  const newPrefillCandidate = { ...candidate,
+    recent_inbound_messages: [FOLLOWUP_PREFILL],
+    recent_service_messages: [FOLLOWUP_PREFILL],
+  };
+  assert.equal(candidateIsCampaign(newPrefillCandidate), true);
+  assert.match(campaignFollowUp({ candidate: newPrefillCandidate, now: early }).message, /RM68/);
+  assert.doesNotMatch(campaignFollowUp({ candidate: newPrefillCandidate, now: early }).message, /RM388/);
+  assert.equal(candidateIsCampaign({ ...newPrefillCandidate, ad_followup_source: "direct" }), false);
+  assert.equal(candidateIsCampaign({ ...newPrefillCandidate,
+    ad_followup_headline: "黄金脉冲技术 RM388", ad_followup_body: "脉冲波护理",
+  }), false, "non-RM68 ad cannot enable the event");
   assert.match(campaignFollowUp({ candidate, now: early }).message, /RM68/);
   assert.match(campaignFollowUp({ candidate, now: early }).message, /1小时30分钟/);
   assert.doesNotMatch(campaignFollowUp({ candidate, now: early }).message, /RM388/);
@@ -136,4 +153,19 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
   assert.match(follow, /campaignFollowUp\(\{ candidate \}\)/);
   assert.match(follow, /neutro_rm68_campaign_expired/);
   assert.match(follow, /!rm68FollowUp && !originalHasPrice/);
+  const secondaryService = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappSecondaryFollowUpService.js"), "utf8");
+  const secondaryMarketing = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappSecondaryMarketingFollowUpService.js"), "utf8");
+  const freeEntry = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(secondaryService, /rule\.slot_hours IN\s*\(2,6,20\)/,
+    "2h, 6h and 20h service follow-up slots remain separate");
+  assert.match(secondaryMarketing, /const SLOTS=new Set\(\[48,66,96,144\]\)/);
+  assert.match(secondaryMarketing, /lead\.marketing_consent='opted_in'/,
+    "extended marketing still checks recorded consent");
+  assert.match(secondaryMarketing, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
+    "RM68 event must not receive ordinary RM388 extended marketing templates");
+  assert.match(freeEntry, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
+    "RM68 event must not use unrelated free-entry marketing graphics");
 });
