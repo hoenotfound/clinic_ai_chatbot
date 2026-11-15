@@ -83,7 +83,9 @@ test("both secondary recovery producers explicitly select hourly empty fallback"
    "../src/services/whatsappSecondaryAiMediaQueue.js"),"utf8");
  const mutationSource=fs.readFileSync(path.join(__dirname,
    "../src/services/whatsappCoexistenceMutationService.js"),"utf8");
- assert.match(mediaSource,/label:"Secondary WhatsApp AI media recovery",[\s\S]{0,300}emptyIntervalMs:60\*60\*1000/);
+ assert.match(mediaSource,/label:"Secondary WhatsApp AI media recovery",[\s\S]{0,150}errorRetryDelayMs:MEDIA_ACTIVE_CHECK_MS/);
+ assert.match(mediaSource,/const RECOVERY_DEADLINE_SQL=/);
+ assert.match(mediaSource,/delayForResult:result=>result.nextDelayMs/);
  assert.match(mutationSource,/label:"Business App mutation recovery",[\s\S]{0,300}emptyIntervalMs:60\*60\*1000/);
  assert.match(mediaSource,/if\(pending\.rowCount>0\)wake\(\)/);
  assert.match(mutationSource,/if\(!applied\)wake\(\)/);
@@ -439,4 +441,85 @@ test("appointment reminder retains 30-minute fallback and immediate post-send wa
  assert.doesNotMatch(appSource,/emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS/);
  assert.match(appSource,/run,hasPendingWork:async\(\)=>false/);
  assert.match(inboxSource,/if \(isProactiveAppointmentReminder\(text\.trim\(\)\)\) staffReminderRecovery\.wake\(\)/);
+});
+
+
+test("secondary AI media recovery sleeps until retries are due without missing 07:00 MYT",()=>{
+ const at=s=>Date.parse(s),HOUR=60*60*1000,MIN=60*1000;
+ const due="2026-11-15T23:05:00Z"; // 07:05 MYT November 16
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:false,next_pending_at:null,
+ },at("2026-11-15T18:00:00Z")),HOUR);
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:true,next_pending_at:due,
+ },at("2026-11-15T18:00:00Z")),HOUR,
+ "02:00 MYT pending jobs need only the hourly orphan sweep");
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:true,next_pending_at:due,
+ },at("2026-11-15T22:50:00Z")),10*MIN,
+ "06:50 MYT worker must check at 07:00, not an hour later");
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:true,next_pending_at:due,
+ },at("2026-11-15T23:02:00Z")),3*MIN,
+ "07:02 MYT worker resumes at the exact pending retry");
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:true,next_pending_at:"2026-11-16T02:30:00Z",
+ },at("2026-11-15T23:02:00Z")),HOUR,
+ "future retries retain the hourly orphan-job fallback");
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:false,has_pending:true,next_pending_at:"2026-11-15T23:02:00Z",
+ },at("2026-11-15T23:02:00Z")),MIN,
+ "due work retains one-minute crash recovery");
+ assert.equal(media.nextMediaRecoveryDelay({
+   has_claimed:true,has_pending:true,next_pending_at:due,
+ },at("2026-11-15T18:00:00Z")),MIN,
+ "claimed/unknown provider attempts must never lose minute-level quarantine");
+});
+
+test("secondary AI media scheduling fails safe on missing or corrupt recovery deadlines",()=>{
+ const now=Date.parse("2026-11-15T23:10:00Z");
+ for(const invalid of [null,{has_claimed:false},{has_claimed:false,has_pending:true},
+   {has_claimed:false,has_pending:true,next_pending_at:"not a date"}]){
+   assert.throws(()=>media.nextMediaRecoveryDelay(invalid,now),/unavailable/);
+ }
+});
+
+test("media recovery deadline query stays sender-owned and does not wake disabled numbers",async()=>{
+ const env={
+   WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+   WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
+   WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-10-30T03:00:00Z",
+   WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+   WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+   WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+   WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+   WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ let calls=0;
+ const database={query:async(sql,params)=>{
+   calls++;
+   assert.equal(sql,media.RECOVERY_DEADLINE_SQL);
+   assert.match(sql,/sender\.sender_key=\$1/);
+   assert.match(sql,/sender\.meta_account_id=\$3/);
+   assert.match(sql,/job.state IN \('pending','claimed'\)/);
+   assert.deepEqual(params,["ariel","100000000000002","200000000000002"]);
+   return{rows:[{has_claimed:false,has_pending:true,
+     next_pending_at:"2026-11-15T23:05:00Z"}]};
+ }};
+ const nowMs=Date.parse("2026-11-15T23:02:00Z");
+ assert.equal(await media.readMediaRecoveryDelay({database,env,nowMs}),3*60*1000);
+ assert.equal(calls,1);
+ assert.equal(await media.readMediaRecoveryDelay({database,env:{},nowMs}),60*60*1000);
+ assert.equal(calls,1,"disabled secondary sender must not read Neon");
+ await assert.rejects(media.readMediaRecoveryDelay({
+   env,database:{query:async()=>({rows:[]})},nowMs,
+ }),/unavailable/);
 });
