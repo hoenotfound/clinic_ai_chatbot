@@ -49,13 +49,15 @@ async function enqueue({
  );
  if(result.rowCount===1){wake();return true;}
  const existing=await database.query(
-   "SELECT provider_media_id,media_type FROM whatsapp_sender_coexistence_media_jobs WHERE message_id=$1",
+   "SELECT provider_media_id,media_type,status FROM whatsapp_sender_coexistence_media_jobs WHERE message_id=$1",
    [messageId]
  );
  const matches=existing.rows?.length===1 &&
    existing.rows[0].provider_media_id===mediaId &&
    existing.rows[0].media_type===type;
- if(matches)wake();
+ // A repeated echo for completed media does not create another job.
+ // Only a still-pending duplicate merits an immediate recovery wake.
+ if(matches && existing.rows[0].status==='pending')wake();
  return matches;
 }
 const READY_SQL=`
