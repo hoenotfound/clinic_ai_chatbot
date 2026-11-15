@@ -437,3 +437,27 @@ test("Day4/Day6 refuses unreviewed UNKNOWN holds before any one-shot claim",()=>
  }
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/gate\.state IN \('reserved','awaiting_pricing'\)/);
 });
+
+
+test("marketing candidate seed excludes unrelated WhatsApp senders before materialization",()=>{
+ // The seed is a necessary-condition filter only: all pre-existing consent,
+ // treatment, booking, staff and billing authorizations still run afterward.
+ for(const sql of [
+   svc.CANDIDATES_SQL,svc.RECHECK_SQL,svc.POTENTIAL_DUE_SQL,
+   svc.EXTENDED_CANDIDATES_SQL,svc.EXTENDED_RECHECK_SQL,
+   svc.EXTENDED_POTENTIAL_DUE_SQL,
+ ]){
+   assert.match(sql,/recent_seed AS MATERIALIZED/);
+   assert.match(sql,/JOIN contacts seed_contact ON seed_contact.id=recent.contact_id/);
+   assert.match(sql,/seed_contact.channel='whatsapp'/);
+   assert.match(sql,/seed_sender.id=seed_contact.whatsapp_sender_id/);
+   assert.match(sql,/seed_sender.state='active' AND seed_sender.sender_key=\$1/);
+   assert.match(sql,/seed_sender.meta_phone_number_id=\$2/);
+   assert.match(sql,/seed_sender.meta_account_id=\$3/);
+   assert.match(sql,/c.whatsapp_sender_id=sa.id/);
+   assert.match(sql,/sc.state='bound'/);
+   assert.match(sql,/consent.consent_scope='treatment_followups_and_related_offers'/);
+   assert.match(sql,/consent_ctx.conversation_id=sc.id/);
+   assert.match(sql,/rule.operator_billing_approved=TRUE/);
+ }
+});
