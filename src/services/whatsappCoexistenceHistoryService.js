@@ -5,7 +5,7 @@
 // AI scheduling, 24h policy, billing or marketing consent handlers.
 const crypto=require("node:crypto");
 const {pool}=require("../db/db");
-const {measureSecondaryWorkerRun}=require("../utils/secondaryDueTimeScheduler");
+const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const senderRepo=require("../db/whatsappSenderConversationRepo");
 const {normalizeWhatsappNumber}=require("../utils/whatsappPhoneNormalization");
 
@@ -237,6 +237,9 @@ async function acceptPassiveSync(body,{database=pool,env=process.env}={}){
      }
    }
  }
+ // The staged job is durable before waking the historical importer.
+ // No historical message is processed inline with the webhook.
+ if(staged>0)wake();
  return{enabled:true,staged};
 }
 async function runOnce({
@@ -313,15 +316,41 @@ async function runOnce({
  }
  return{disabled:false,processed,failed};
 }
-let timer=null;
-function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
- if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>measureSecondaryWorkerRun(
-   "Secondary WhatsApp coexistence history import",()=>run({env})
- ).catch(e=>
-   console.error("[WhatsApp Coexistence] import worker:",e?.message)),60000);
- timer?.unref?.();return true;
+// A signed, durably staged history batch wakes the importer immediately.
+// Preserve one-minute retry/recovery while pending or processing jobs exist,
+// but use hourly orphan detection instead of waking empty Neon every minute.
+const PENDING_SQL=`SELECT EXISTS (
+ SELECT 1 FROM whatsapp_sender_coexistence_import_jobs j
+ JOIN whatsapp_sender_accounts sa ON sa.id=j.sender_id
+ WHERE j.status IN ('pending','processing')
+   AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2
+   AND sa.meta_account_id=$3 AND sa.state='active'
+) AS has_work`;
+async function hasPendingWork({database=pool,env=process.env}={}){
+ if(!enabled(env))return false;
+ const result=await database.query(PENDING_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ const pending=result.rows?.[0]?.has_work;
+ if(typeof pending!=="boolean")throw Error("Coexistence history pending state unavailable");
+ return pending;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
+let worker=null;
+function wake(){return worker?.wake(0)===true;}
+function start({env=process.env,run=runOnce,database=pool,...clock}={}){
+ if(!enabled(env)||worker)return false;
+ worker=createIdleAwareRecoveryWorker({
+   ...clock,
+   label:"Secondary WhatsApp coexistence history import",
+   emptyIntervalMs:60*60*1000,
+   run:()=>run({env,database}),
+   hasPendingWork:()=>hasPendingWork({env,database}),
+ });
+ worker.start(0);
+ return true;
+}
+function stop(){if(worker){worker.stop();worker=null;}}
 module.exports={enabled,fingerprint,splitHistoryChange,cleanPhone,mediaPlaceholder,importPassiveChange,
- acceptPassiveSync,runOnce,start,stop};
+ acceptPassiveSync,runOnce,PENDING_SQL,hasPendingWork,start,stop,wake};
