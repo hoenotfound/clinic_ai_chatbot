@@ -12,7 +12,7 @@ const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGat
 const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
 const configRepo=require("../db/configRepo");
-const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
+const {createAdaptiveWorkerTimer}=require("../utils/adaptiveWorkerTimer");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
 const {resultSupersessionSql,promotionSupersessionSql}=require("../utils/resultMediaSupersessionSql");
@@ -669,19 +669,69 @@ async function hasPendingWork({database=pool,env=process.env}={}){
    throw Error("Recovery queue status unavailable; retry shortly");
  return pending;
 }
+// A deferred image must not keep Neon awake once per minute just because its
+// durable state is "pending". Claimed attempts still need the original
+// one-minute crash/billing recovery; pending retries wake at their actual due
+// time (and no later than the hourly orphan-job safety sweep).
+const MEDIA_ACTIVE_CHECK_MS=60*1000;
+const MEDIA_IDLE_CHECK_MS=60*60*1000;
+const MALAYSIA_UTC_OFFSET_MS=8*60*60*1000;
+const RECOVERY_DEADLINE_SQL=`
+ SELECT COALESCE(BOOL_OR(job.state='claimed'),FALSE) AS has_claimed,
+        COALESCE(BOOL_OR(job.state='pending' AND job.expires_at>NOW()),FALSE)
+          AS has_pending,
+        MIN(job.next_attempt_at) FILTER(
+          WHERE job.state='pending' AND job.expires_at>NOW()
+        ) AS next_pending_at
+ FROM whatsapp_sender_ai_media_jobs job
+ JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
+ WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
+   AND sender.meta_account_id=$3 AND sender.state='active'
+   AND job.state IN ('pending','claimed')
+`;
+function nextMediaRecoveryDelay(state,nowMs=Date.now()){
+ if(!Number.isFinite(nowMs) || typeof state?.has_claimed!=="boolean" ||
+    typeof state?.has_pending!=="boolean")
+   throw Error("Media recovery deadline unavailable; retry shortly");
+ // Keep minute-level quarantine and billing reconciliation for claimed sends.
+ if(state.has_claimed)return MEDIA_ACTIVE_CHECK_MS;
+ if(!state.has_pending)return MEDIA_IDLE_CHECK_MS;
+ const nextAt=new Date(state.next_pending_at).getTime();
+ if(state.next_pending_at==null || !Number.isFinite(nextAt))
+   throw Error("Pending media retry deadline unavailable; retry shortly");
+ const shifted=new Date(nowMs+MALAYSIA_UTC_OFFSET_MS);
+ if(shifted.getUTCHours()<7){
+   const opening=Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),
+     shifted.getUTCDate(),7)-MALAYSIA_UTC_OFFSET_MS;
+   // Pending sends are forbidden during clinic quiet hours. Wake at 07:00
+   // or for the existing hourly orphan recovery, whichever comes first.
+   return Math.max(1000,Math.min(MEDIA_IDLE_CHECK_MS,opening-nowMs));
+ }
+ // Preserve immediate enqueue/receipt wakes and due retries during allowed
+ // hours. When a job is blocked despite being due, retain the minute backstop.
+ return Math.min(MEDIA_IDLE_CHECK_MS,
+   Math.max(MEDIA_ACTIVE_CHECK_MS,nextAt-nowMs));
+}
+async function readMediaRecoveryDelay({database=pool,env=process.env,nowMs=Date.now()}={}){
+ if(!enabled(env))return MEDIA_IDLE_CHECK_MS;
+ const result=await database.query(RECOVERY_DEADLINE_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ return nextMediaRecoveryDelay(result.rows?.[0],nowMs);
+}
+
 function wake(){return worker?.wake(0)===true;}
 function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  if(!enabled(env)||worker)return false;
  let historicalAuditPending=true;
- worker=createIdleAwareRecoveryWorker({
+ worker=createAdaptiveWorkerTimer({
    ...clock,
    label:"Secondary WhatsApp AI media recovery",
-   // Verified empty on 2026-11-15. Normal enqueue/receipt wake remains immediate,
-   // with a one-minute check while pending or claimed work exists.
-   // This hourly fallback is only for orphaned jobs without a wake signal.
-   emptyIntervalMs:60*60*1000,
+   errorRetryDelayMs:MEDIA_ACTIVE_CHECK_MS,
    run:async()=>{
-     const result=await run({env,database});
+     await run({env,database});
      if(historicalAuditPending){
        try{
          await reconcileRecentTerminalMediaAudit({database,env});
@@ -691,12 +741,15 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
            err?.message);
        }
      }
-     return result;
+     return {nextDelayMs:await readMediaRecoveryDelay({
+       env,database,nowMs:(clock.now||Date.now)(),
+     })};
    },
-   hasPendingWork:()=>hasPendingWork({env,database}),
+   delayForResult:result=>result.nextDelayMs,
  });
  worker.start(0);
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,HARMLESS_CONTINUATION_SQL,PROMOTION_MEDIA_SUPERSESSION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,
+ RECOVERY_DEADLINE_SQL,nextMediaRecoveryDelay,readMediaRecoveryDelay,HARMLESS_CONTINUATION_SQL,PROMOTION_MEDIA_SUPERSESSION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
