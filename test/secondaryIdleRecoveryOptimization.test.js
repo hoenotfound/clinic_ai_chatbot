@@ -434,7 +434,9 @@ test("appointment reminder safety recovery uses hourly idle fallback and keeps p
    "../src/services/staffAppointmentReminderRecoveryService.js"),"utf8");
  const inboxSource=fs.readFileSync(path.join(__dirname,
    "../src/routes/conversations.js"),"utf8");
- assert.equal(appointmentRecovery.IDLE_APPOINTMENT_RECOVERY_MS,60*60*1000);
- assert.match(appSource,/emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS/);
+ assert.equal(appointmentRecovery.IDLE_APPOINTMENT_RECOVERY_MS,undefined,
+   "keep the existing 30-minute idle fallback rather than delaying staff booking recovery");
+ assert.doesNotMatch(appSource,/emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS/);
+ assert.match(appSource,/run,hasPendingWork:async\(\)=>false/);
  assert.match(inboxSource,/if \(isProactiveAppointmentReminder\(text\.trim\(\)\)\) staffReminderRecovery\.wake\(\)/);
 });
