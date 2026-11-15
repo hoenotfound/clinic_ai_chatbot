@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { normalizeMetaAdReplyContext } = require("../src/services/metaAdReplyContextService");
 const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
+const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
@@ -408,3 +409,88 @@ test("9D customer-selected interest survives a short address enquiry despite 3D 
   assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
 });
 
+
+
+test("Mixed-service 骨盆 1 ad resolves Pm price to both pelvic packages", async () => {
+  const extendedServices = [...services, {name:"1对1体态评估"}, {name:"徒手体态调理"}];
+  const extendedAliases = [...serviceAliases,
+    {alias:"骨盆矫正",officialService:"骨盆调理"},
+    {alias:"体态评估",officialService:"1对1体态评估"},
+    {alias:"整骨",officialService:"徒手体态调理"},
+    {alias:"徒手矫正",officialService:"徒手体态调理"},
+  ];
+  // The real ad mentioned three different configured services, although
+  // its name and sole priced offer were for pelvic care.
+  const ad = normalizeMetaAdReplyContext({
+    source:"meta_ads",
+    ad_name:"骨盆 1",
+    headline:"徒手整骨｜从头到脚🦶",
+    body:"骨盆矫正评估，体态评估，客制化徒手矫正。怀疑自己有骨盆前倾？",
+    attributed_at:TEST_NOW,
+  }, {
+    services:extendedServices, aliases:extendedAliases, promotions,
+  });
+  assert.equal(ad?.serviceHint,"骨盆调理");
+  assert.equal(ad?.serviceHintSource,"ad_name");
+  const history=[{role:"user",content:"Pm price"}];
+  const decision=resolveAiPricingDecision({
+    priceQuery:true,customerText:"Pm price",conversationHistory:history,
+    metaAdContext:ad,services:extendedServices,serviceAliases:extendedAliases,
+    promotions,now:TEST_NOW,
+  });
+  assert.equal(decision?.source,"meta_ad");
+  assert.equal(decision?.treatment,"骨盆调理");
+  assert.deepEqual(decision?.prices?.map(p=>p.price),["RM388","RM288"]);
+  const media=await promotionFor(decision,"Pm price",history,{
+    services:extendedServices,serviceAliases:extendedAliases,
+  });
+  assert.deepEqual(media?.packages?.map(p=>p.imageUrl),
+    ["https://example.test/a.png","https://example.test/b.png"]);
+});
+
+test("another independently priced treatment in the creative remains ambiguous", () => {
+  const extendedServices=[...services,{name:"徒手体态调理"}];
+  const extendedAliases=[...serviceAliases,
+    {alias:"徒手矫正",officialService:"徒手体态调理"}];
+  const ad=normalizeMetaAdReplyContext({
+    source:"meta_ads",ad_name:"骨盆 1",
+    headline:"3D 小颜术 + 骨盆调理",
+    body:"徒手矫正也可以搭配",
+    attributed_at:TEST_NOW,
+  },{services:extendedServices,aliases:extendedAliases,promotions});
+  assert.equal(ad?.serviceHint,undefined);
+  const d=resolveAiPricingDecision({
+    priceQuery:true,customerText:"Pm price",metaAdContext:ad,
+    conversationHistory:[{role:"user",content:"Pm price"}],
+    services:extendedServices,serviceAliases:extendedAliases,
+    promotions,now:TEST_NOW,
+  });
+  assert.equal(d,null);
+});
+
+
+test("shadow pricing mode recovers a fresh Pm price from the mixed pelvic ad", () => {
+  const extendedServices=[...services,{name:"1对1体态评估"},{name:"徒手体态调理"}];
+  const extendedAliases=[...serviceAliases,
+    {alias:"骨盆矫正",officialService:"骨盆调理"},
+    {alias:"体态评估",officialService:"1对1体态评估"},
+    {alias:"整骨",officialService:"徒手体态调理"},
+    {alias:"徒手矫正",officialService:"徒手体态调理"},
+  ];
+  const ad=normalizeMetaAdReplyContext({
+    source:"meta_ads",ad_name:"骨盆 1",
+    headline:"徒手整骨｜从头到脚",
+    body:"骨盆矫正评估，也有体态评估和徒手矫正",
+    attributed_at:TEST_NOW,
+  },{services:extendedServices,aliases:extendedAliases,promotions});
+  assert.equal(ad?.serviceHint,"骨盆调理");
+  const decision=resolveShadowPriceException({
+    customerText:"Pm price",
+    conversationHistory:[{role:"user",content:"Pm price",pricingCreatedAtMs:TEST_NOW-1000}],
+    metaAdContext:ad,services:extendedServices,serviceAliases:extendedAliases,
+    promotions,now:TEST_NOW,
+  });
+  assert.equal(decision?.source,"meta_ad");
+  assert.equal(decision?.treatment,"骨盆调理");
+  assert.deepEqual(decision?.prices?.map(p=>p.price),["RM388","RM288"]);
+});

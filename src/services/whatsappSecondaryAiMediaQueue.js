@@ -139,12 +139,13 @@ function validItem(item){
   }catch{return false;}
 }
 async function enqueue({
-  contactId,inboundMessageId,items,kind="promotion",sequenceOffset=0,
+  contactId,inboundMessageId,items,kind="promotion",solicitedPricing=false,sequenceOffset=0,
 },{database=pool,env=process.env}={}){
   if(!enabled(env)) return false;
   if(!Number.isSafeInteger(contactId)||contactId<=0||
      !Number.isSafeInteger(inboundMessageId)||inboundMessageId<=0||
      !["promotion","result"].includes(kind)||
+     (solicitedPricing === true && kind !== "promotion")||
      !Number.isSafeInteger(sequenceOffset)||sequenceOffset<0||
      !Array.isArray(items)||!items.length||items.length+sequenceOffset>MAX_ITEMS||
      !items.every(validItem))return false;
@@ -179,9 +180,9 @@ async function enqueue({
       await client.query(
         `INSERT INTO whatsapp_sender_ai_media_jobs
           (sender_id,contact_id,inbound_message_id,sequence_no,
-           media_kind,image_url,caption,expires_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,
-           LEAST($8::timestamptz + INTERVAL '23 hours',
+           media_kind,solicited_pricing,image_url,caption,expires_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,
+           LEAST($9::timestamptz + INTERVAL '23 hours',
               CASE
                 -- The image worker observes clinic quiet hours (00:00-06:59 MYT).
                 -- Keep its pending images until after the next permitted 07:00
@@ -196,7 +197,8 @@ async function enqueue({
               END))
          ON CONFLICT(sender_id,inbound_message_id,sequence_no) DO NOTHING`,
         [owner.rows[0].sender_id,contactId,inboundMessageId,i+sequenceOffset,
-          kind,items[i].imageUrl,items[i].caption,owner.rows[0].created_at]
+          kind,solicitedPricing === true,items[i].imageUrl,items[i].caption,
+          owner.rows[0].created_at]
       );
     }
     await client.query("COMMIT");
@@ -229,7 +231,8 @@ const READY_SQL=`
    AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
-   AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
+   AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
+     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
    AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND NOT EXISTS(
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -268,7 +271,8 @@ const STILL_VALID_SQL=`
      AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
-     AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
+     AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
+     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
      AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4
      AND NOT EXISTS(
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -680,6 +684,13 @@ const RECOVERY_DEADLINE_SQL=`
  SELECT COALESCE(BOOL_OR(job.state='claimed'),FALSE) AS has_claimed,
         COALESCE(BOOL_OR(job.state='pending' AND job.expires_at>NOW()),FALSE)
           AS has_pending,
+        COALESCE(BOOL_OR(job.state='pending' AND job.expires_at>NOW()
+          AND job.media_kind='promotion' AND job.solicited_pricing=TRUE),FALSE)
+          AS has_solicited_pending,
+        MIN(job.next_attempt_at) FILTER(
+          WHERE job.state='pending' AND job.expires_at>NOW()
+            AND job.media_kind='promotion' AND job.solicited_pricing=TRUE
+        ) AS next_solicited_at,
         MIN(job.next_attempt_at) FILTER(
           WHERE job.state='pending' AND job.expires_at>NOW()
         ) AS next_pending_at
@@ -701,9 +712,18 @@ function nextMediaRecoveryDelay(state,nowMs=Date.now()){
    throw Error("Pending media retry deadline unavailable; retry shortly");
  const shifted=new Date(nowMs+MALAYSIA_UTC_OFFSET_MS);
  if(shifted.getUTCHours()<7){
+   // Verified current pricing graphics have their own quiet-hours deadline.
+   // Ordinary promotional and result media remain asleep until opening.
+   if(state.has_solicited_pending===true){
+     const requestedAt=new Date(state.next_solicited_at).getTime();
+     if(state.next_solicited_at==null || !Number.isFinite(requestedAt))
+       throw Error("Solicited pricing media deadline unavailable; retry shortly");
+     return Math.min(MEDIA_IDLE_CHECK_MS,
+       Math.max(MEDIA_ACTIVE_CHECK_MS,requestedAt-nowMs));
+   }
    const opening=Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),
      shifted.getUTCDate(),7)-MALAYSIA_UTC_OFFSET_MS;
-   // Pending sends are forbidden during clinic quiet hours. Wake at 07:00
+   // Other pending sends remain paused during quiet hours. Wake at 07:00
    // or for the existing hourly orphan recovery, whichever comes first.
    return Math.max(1000,Math.min(MEDIA_IDLE_CHECK_MS,opening-nowMs));
  }

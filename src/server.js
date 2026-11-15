@@ -2742,6 +2742,12 @@ async function processIncomingMessage(
               inboundMessageId:savedInbound.id,
               items:pacedPromotions.items,
               kind:"promotion",
+              // Only an independently approved customer price decision can
+              // exempt this specific artwork from secondary quiet hours.
+              solicitedPricing:Boolean(secondaryAiConversation &&
+                approvedPricingDecision?.type === "price" &&
+                Array.isArray(approvedPricingDecision.prices) &&
+                approvedPricingDecision.prices.length > 0),
               sequenceOffset:0,
             });
             if (secondaryAiConversation && !enqueued) {
