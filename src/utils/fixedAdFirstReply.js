@@ -11,9 +11,12 @@ const {
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
+const { CAMPAIGN_KEY, isNeutro, isExactPrefill, campaignCreativeMatches, firstReply } =
+  require("./neutroBreastRm68Campaign");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PREFILL_MAX_LENGTH = 240;
+
 
 // A user may type an interest statement and append a real question or a visit
 // preference without a question mark. Such messages must reach normal AI.
@@ -142,6 +145,19 @@ function resolveFixedAdFirstReply({
   const adTimestamp = Date.parse(metaAdContext?.attributedAt || "");
   if (!Number.isFinite(adTimestamp) || adTimestamp > now + 60_000 ||
       now - adTimestamp > MAX_AD_CONTEXT_AGE_MS) return skip("missing_or_stale_attribution");
+  // The exact RM68 availability prefill is an intentional exception to the
+  // normal price/booking-question exclusion, after first-turn, safety,
+  // verified-ad and staff/booking guards have all passed.
+  if (!hasClinicalMediaRisk(customerText) && isNeutro(businessName) &&
+      isExactPrefill(customerText) && campaignCreativeMatches(metaAdContext)) {
+    return {
+      reply: firstReply(now),
+      treatment: null,
+      serviceQuery: false,
+      serviceQuerySource: null,
+      campaignKey: CAMPAIGN_KEY,
+    };
+  }
   if (!isStandardAdPrefill(customerText, { services, serviceAliases, businessName }) ||
       hasCustomerPriceEnquiry(standardPrefillInterestText(customerText)) ||
       hasExplicitPackageOptionsRequest(standardPrefillInterestText(customerText)) ||

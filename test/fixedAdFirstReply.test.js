@@ -41,6 +41,88 @@ function attempt(overrides = {}) {
   });
 }
 
+test("Neutro RM68 breast campaign sends exact first reply without changing treatment-wide scripts", () => {
+  const customerText = "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
+  const campaignNow = Date.parse("2026-11-14T14:00:00Z");
+  const campaignAd = {
+    headline: "胸部专业检查 RM68体验优惠",
+    body: "胸部健康评估 + 脉冲波护理 12月5日与6日",
+    attributedAt: new Date(campaignNow - 60_000).toISOString(),
+  };
+  const expected = [
+    "您好💕 欢迎咨询 Neutro Sense TCM！",
+    "",
+    "我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠 🌸",
+    "",
+    "✨ 首次体验只需 RM68（原价以门店公告为准）",
+    "📅 活动日期：12月5日 & 6日",
+    "⏰ 全程约 1小时30分钟",
+    "",
+    "护理包含：",
+    "✅ 专业胸部健康评估",
+    "✅ 脉冲波舒缓护理，帮助放松胸部周围组织",
+    "✅ 胸部日常护理建议",
+    "",
+    "💗 名额有限，需要提前预约哦！",
+    "",
+    "请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊",
+  ].join("\n");
+  const run = (overrides = {}) => attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: campaignAd, metaAdCreativeService: null,
+    now: campaignNow, ...overrides,
+  });
+  const fixed = run();
+  assert.equal(fixed?.reply, expected);
+  assert.equal(fixed?.campaignKey, "neutro_breast_rm68_2026");
+  assert.equal(fixed?.serviceQuery, false, "mixed treatment ad cannot enable wrong results media");
+  assert.equal(fixed?.treatment, null);
+  assert.equal(run({ metaAdContext: null }), null, "organic copy/paste is not a proven Meta ad");
+  assert.equal(run({ config: { ...config, enabled: false } }), null);
+  assert.equal(run({ businessName: "Other Clinic" }), null);
+  assert.equal(run({ isFirstMessage: false }), null);
+  assert.equal(run({ isTextMessage: false }), null);
+  assert.equal(run({ hasExistingBooking: true }), null);
+  assert.equal(run({ hasStaffHandoff: true }), null);
+  assert.equal(run({ keywordReason: "urgent" }), null);
+  assert.equal(run({ conversationHistory: [
+    { role: "user", content: "Hi" }, { role: "user", content: customerText },
+  ] }), null, "do not repeat the campaign greeting mid-conversation");
+  assert.equal(run({ metaAdContext: {
+    ...campaignAd,
+    attributedAt: new Date(campaignNow - 8 * 86400000).toISOString(),
+  } }), null, "stale attribution cannot enable the campaign");
+
+  for (const edited of [
+    customerText + "我有乳房肿块怎么办？",
+    customerText + "请问今天可以预约吗？",
+    "你好！我想了解【胸部专业检查 RM68体验优惠】",
+    "你好！想了解你们家的【黄金脉冲技术】",
+  ]) {
+    assert.equal(run({
+      customerText: edited,
+      conversationHistory: [{ role: "user", content: edited }],
+    })?.campaignKey, undefined, "other or edited enquiries must not use the campaign: " + edited);
+  }
+});
+
+test("Neutro RM68 reply expires at midnight 7 December Malaysia time", () => {
+  const customerText = "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
+  const adAt = new Date("2026-12-06T12:00:00Z").toISOString();
+  const base = {
+    customerText,
+    conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: { headline: "胸部专业检查 RM68", attributedAt: adAt },
+    metaAdCreativeService: null,
+  };
+  const active = attempt({ ...base, now: Date.parse("2026-12-06T15:59:59Z") });
+  const expired = attempt({ ...base, now: Date.parse("2026-12-06T16:00:00Z") });
+  assert.match(active?.reply || "", /首次体验只需 RM68/);
+  assert.match(expired?.reply || "", /活动已经结束/);
+  assert.doesNotMatch(expired.reply, /首次体验只需 RM68|名额有限/);
+  assert.equal(expired.campaignKey, "neutro_breast_rm68_2026");
+});
+
 test("Neutro golden pulse ad prefill selects 脉冲波调理 and bypasses Gemini safely", () => {
   const pulseServices = [...services, { name: "脉冲波调理" }];
   const pulseAliases = [
@@ -279,6 +361,8 @@ test("handler selects fixed reply before model and skips configured introductory
   assert.match(source, /serviceQuerySource = fixedAdFirstReply.serviceQuerySource/);
   assert.match(source, /isFirstMessage: wasFirstMessage === true/);
   assert.match(source, /assessmentFirstPricingEnabled === true &&\s*!fixedAdFirstReply/);
+  assert.match(source, /fixedAdFirstReply\?\.campaignKey !== "neutro_breast_rm68_2026"/);
+  assert.match(source, /neutro_breast_rm68_campaign_text_only/);
 });
 
 test("actual server decision branch skips Gemini for valid first ad message and falls back for custom questions", async () => {

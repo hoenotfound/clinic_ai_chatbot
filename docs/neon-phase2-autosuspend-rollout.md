@@ -120,3 +120,46 @@ background timers.
 a new TCP connection or a Neon wake-up. Counters reset on Render process
 restart. Compare named activity with Neon operations and measured CU-hours
 without inducing database activity during the observation window.
+
+## 15 November 2026: measured idle recovery wake reduction
+
+Read-only production baseline (project `steep-forest-44509907`, Free tier):
+
+- Neon alert: 80.1 of 100 CU-hours used for November, with reset on December 1 UTC.
+- Endpoint API reports `suspend_timeout_seconds: 0` but operation history
+  **confirms successful Free-tier suspensions and restarts**. Do not toggle
+  autosuspend based on the numeric field alone.
+- Render was confirmed to deploy manually (`autoDeploy: no`), so opening or
+  merging a PR does not change production by itself.
+- The secondary AI media recovery worker ran just after compute starts at
+  2026-11-15 01:09:49 UTC and 01:39:50 UTC. Its default empty queue check was
+  every 30 minutes, and a read-only SQL snapshot found zero pending/claimed
+  secondary media jobs (212 accepted, 36 expired).
+- Other expensive SQL observed: secondary service/marketing follow-up candidate
+  and next-due queries around 0.7–1.3 seconds per execution since the most
+  recent pg_stat_statements reset. These remain subject to separate index/plan
+  review: avoid changing eligibility logic or follow-up timing on a cost guess.
+
+This patch changes **only** the empty-queue fallback for
+`whatsappSecondaryAiMediaQueue` and `whatsappCoexistenceMutationService`
+from 30 to 60 minutes. It preserves the existing generic worker default,
+immediate enqueue/receipt/echo wakes, and 60-second cadence when actionable
+work exists. An orphaned job with no event wake can be discovered up to
+30 minutes later than before. Do not apply that tradeoff to primary follow-ups,
+marketing, staff appointment reminders, Meta billing or provider retries.
+
+Validation before a deliberate manual Render deployment:
+
+1. Run `node --test test/secondaryIdleRecoveryOptimization.test.js` and the
+   related secondary media, mutation, follow-up and billing suites.
+2. Confirm the PR's full CI jobs passed before merging.
+3. After deployment, check actual inbound replies, both WhatsApp numbers,
+   media queue creation, edits/revocations, booked-contact suppression and
+   follow-up delivery, not just the lack of error logs.
+4. Compare equivalent 24-hour windows of billed CU-hours, compute
+   start/suspend operations, DB activity, and customer traffic. Do not
+   report projected savings as observed savings.
+5. If orphaned work recovery is unacceptably delayed, remove the two
+   `emptyIntervalMs:60*60*1000` overrides to restore the previous 30-minute
+   safety fallback without changing any sending policy.
+
