@@ -9,6 +9,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const {
   createCoalescedImmediateWake,
   followUpChangeRequiresWake,
+  primaryPipelineChangeRequiresWake,
 } = require("../src/utils/followUpWakePolicy");
 
 test("same-turn pipeline and conversation events wake once, with no timeout or missed follow-up", () => {
@@ -91,12 +92,30 @@ test("secondary-only provider receipts never wake the primary follow-up scan", (
  "missing sender configuration must not silently suppress a receipt");
 });
 
+test("primary follow-ups ignore only proven CRM-only pipeline updates", () => {
+  for (const reason of ["lead_scored","meta_ad_enriched","lead_assignment_recovered"]) {
+    assert.equal(primaryPipelineChangeRequiresWake({ reason }),false,
+      reason+" does not affect consent, booking, treatment or follow-up due time");
+  }
+  for (const event of [
+    {},null,undefined,{ reason:"booking_confirmed" },
+    { reason:"appointment_set" },{ reason:"lead_assignment_changed" },
+    { reason:"whatsapp_opt_out" },{ reason:"sales_follow_up_booking_corrected" },
+    { reason:"treatment_changed" },{ reason:"industry_profile_selected" },
+  ]) {
+    assert.equal(primaryPipelineChangeRequiresWake(event),true,
+      "ambiguous or eligibility-changing events must wake promptly");
+  }
+});
+
 test("follow-up realtime subscriptions coalesce events but retain pipeline/config safeguards", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/services/followUpService.js"), "utf8");
   assert.match(source, /createCoalescedImmediateWake/);
   assert.match(source, /followUpChangeRequiresWake\(payload\)/);
   assert.match(source, /realtimeEvents\.subscribe\("pipeline_changed", \(payload\) => \{/);
   assert.match(source, /recordWorkerWake\("primary", "pipeline_changed", payload,/);
+  assert.match(source, /if \(!primaryPipelineChangeRequiresWake\(payload\)\)/);
+  assert.match(source, /recordWorkerWake\("primary", "pipeline_changed", payload, "ignored"\)/);
   assert.match(source, /wakeForRealtimeStateChange\(\) \? "queued" : "coalesced"/);
   assert.match(source, /policyHoldRepo\.releaseAll\(\)/);
   assert.match(source, /wakeAutomatedFollowUps\(0\)/);
