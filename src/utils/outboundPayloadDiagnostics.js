@@ -24,6 +24,7 @@ const R2_VIDEO_OUTCOMES = [
 ];
 const responses = new Map();
 const directVideos = new Map();
+const httpBodyBytes = new Map();
 
 function coarseHttpRoute(pathname) {
   if (pathname === "/api/conversations") return "inbox_list";
@@ -40,6 +41,45 @@ function coarseHttpRoute(pathname) {
   if (isKnownPortalRoute(pathname)) return "portal_page";
   if (/\.(?:html?|js|mjs|css|map|json|xml|txt|webmanifest|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|pdf)$/.test(pathname)) return "static";
   return "unknown_path";
+}
+
+// Count response body chunks while they are written, including long-lived SSE
+// and chunked media that may never have a declared Content-Length. These are
+// attempted app-level body bytes, not Render-billed wire bytes. Capture only a
+// fixed route category, never a request path, response body or patient detail.
+function instrumentHttpBodyWrites(res, pathname, env = process.env) {
+  if (!enabled(env) || typeof res?.write !== "function" ||
+      typeof res?.end !== "function") return false;
+  const category = coarseHttpRoute(pathname);
+  const originalWrite = res.write;
+  const originalEnd = res.end;
+  let ending = false;
+  const countChunk = (chunk, encoding) => {
+    if (ending || chunk == null) return;
+    let bytes;
+    if (Buffer.isBuffer(chunk) || ArrayBuffer.isView(chunk)) {
+      bytes = chunk.byteLength;
+    } else if (typeof chunk === "string") {
+      try {
+        bytes = Buffer.byteLength(chunk, typeof encoding === "string" ? encoding : undefined);
+      } catch { return; }
+    } else return;
+    if (!Number.isSafeInteger(bytes) || bytes <= 0) return;
+    httpBodyBytes.set(category, (httpBodyBytes.get(category) || 0) + bytes);
+  };
+  res.write = function (...args) {
+    countChunk(args[0], args[1]);
+    return originalWrite.apply(this, args);
+  };
+  res.end = function (...args) {
+    countChunk(args[0], args[1]);
+    // Avoid counting twice if a particular Node response implementation
+    // delegates res.end(chunk) to res.write(chunk).
+    ending = true;
+    try { return originalEnd.apply(this, args); }
+    finally { ending = false; }
+  };
+  return true;
 }
 
 function recordHttpResponse({ statusCode, pathname, contentLength, env = process.env } = {}) {
@@ -130,6 +170,7 @@ function takeOutboundPayloadSnapshot() {
       category, requests: v.requests, status404: v.status404,
       status429: v.status429, status503: v.status503,
       knownResponseMiB: Math.round(v.knownResponseBytes / 1048576 * 100) / 100,
+      observedBodyMiB: Math.round((httpBodyBytes.get(category) || 0) / 1048576 * 100) / 100,
       unknownResponseSize: v.unknownResponseSize,
     };
   });
@@ -139,6 +180,7 @@ function takeOutboundPayloadSnapshot() {
   counters.clear();
   failures.clear();
   responses.clear();
+  httpBodyBytes.clear();
   directVideos.clear();
   return {
     coverage: "attempted_upload_known_json_and_content_length_only",
@@ -148,6 +190,6 @@ function takeOutboundPayloadSnapshot() {
 
 module.exports = {
   recordOutboundPayload, recordOutboundRequest, recordHttp503,
-  recordHttpResponse, recordDirectR2Video, coarseHttpRoute,
+  recordHttpResponse, recordDirectR2Video, coarseHttpRoute, instrumentHttpBodyWrites,
   takeOutboundPayloadSnapshot,
 };

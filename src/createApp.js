@@ -1,6 +1,6 @@
 const path = require("path");
 const express = require("express");
-const { recordHttp503, recordHttpResponse } = require("./utils/outboundPayloadDiagnostics");
+const { recordHttp503, recordHttpResponse, instrumentHttpBodyWrites } = require("./utils/outboundPayloadDiagnostics");
 const ingressDiagnostics = require("./services/whatsappWebhookIngressDiagnostics");
 const { createPortalFallback } = require("./utils/portalFallbackGuard");
 const cookieSession = require("cookie-session");
@@ -119,6 +119,9 @@ function createApp({
   if (process.env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
     app.use((req, res, next) => {
       const readyAtStart = startupReadiness.isReady();
+      // Passive body-size measurement for streams without Content-Length.
+      // This preserves write/end arguments and does not alter authorization.
+      instrumentHttpBodyWrites(res, req.path);
       res.once("finish", () => {
         // Count only declared Content-Length values. Chunked or compressed
         // responses without a declared size remain explicitly unknown.
