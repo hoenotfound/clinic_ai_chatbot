@@ -138,9 +138,15 @@ test("passive response byte probe counts chunked media and open SSE without alte
   assert.equal(media.requests, 0); // Does not need a finished response.
   assert.equal(media.observedBodyMiB, 1); // Counted once, not twice.
   assert.equal(media.knownResponseMiB, 0);
-  assert.doesNotMatch(JSON.stringify(snapshot), /private-contact|\\/17\\//);
+  assert.doesNotMatch(JSON.stringify(snapshot), /private-contact|private-media/);
   assert.equal(takeOutboundPayloadSnapshot().httpResponses.find(
     x => x.category === "inbox_media").observedBodyMiB, 0);
+
+  const sse = { write() { return true; }, end() { return true; } };
+  assert.equal(instrumentHttpBodyWrites(sse, "/api/conversations/events", enabled), true);
+  sse.write("x".repeat(64 * 1024)); // SSE connection is still open, no end/finish.
+  const live = takeOutboundPayloadSnapshot();
+  assert.equal(live.httpResponses.find(x => x.category === "inbox_other").observedBodyMiB, 0.06);
 
   const noop = { write() { return true; }, end() { return true; } };
   assert.equal(instrumentHttpBodyWrites(noop, "/api/conversations/events", {}), false);
