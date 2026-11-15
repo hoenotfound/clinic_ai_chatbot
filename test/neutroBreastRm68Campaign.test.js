@@ -153,4 +153,19 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
   assert.match(follow, /campaignFollowUp\(\{ candidate \}\)/);
   assert.match(follow, /neutro_rm68_campaign_expired/);
   assert.match(follow, /!rm68FollowUp && !originalHasPrice/);
+  const secondaryService = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappSecondaryFollowUpService.js"), "utf8");
+  const secondaryMarketing = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappSecondaryMarketingFollowUpService.js"), "utf8");
+  const freeEntry = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(secondaryService, /rule\.slot_hours IN \(2,6,20\)/,
+    "2h, 6h and 20h service follow-up slots remain separate");
+  assert.match(secondaryMarketing, /const SLOTS=new Set\(\[48,66,96,144\]\)/);
+  assert.match(secondaryMarketing, /lead\.marketing_consent='opted_in'/,
+    "extended marketing still checks recorded consent");
+  assert.match(secondaryMarketing, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
+    "RM68 event must not receive ordinary RM388 extended marketing templates");
+  assert.match(freeEntry, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
+    "RM68 event must not use unrelated free-entry marketing graphics");
 });
