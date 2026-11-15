@@ -224,10 +224,10 @@ async function startApplication({
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
     secondaryAiMediaQueue.start();
-    coexistenceMediaQueue.start();
+    const businessAppEchoMediaStarted = coexistenceMediaQueue.start();
     coexistenceMutations.start();
     staffReminderRecovery.start();
-    coexistenceHistory.start();
+    const businessAppHistoryImportStarted = coexistenceHistory.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
@@ -236,11 +236,11 @@ async function startApplication({
     startWhatsAppFreeEntryFollowUps();
     // No Ariel followup scheduler starts unless explicitly enabled, and
     // sender-specific rules have no default enabled entries.
-    startSecondaryFollowUps();
+    const secondaryServiceFollowUpsStarted = startSecondaryFollowUps();
     // All outbound flags remain independent/default-OFF. Only verified
     // secondary account + explicit operator marketing charge authorization
     // may start this separate 48h/72h post-window template worker.
-    startSecondaryMarketingFollowUps();
+    const secondaryMarketingFollowUpsStarted = startSecondaryMarketingFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
@@ -248,10 +248,10 @@ async function startApplication({
     // Read only configured feature flags. These labels reveal which optional
     // Neon recovery workers actually start; no SQL, secrets or contact data.
     console.info("[Neon idle-worker configuration]", JSON.stringify({
-      businessAppEchoMedia:coexistenceMediaQueue.enabled(process.env),
-      businessAppHistoryImport:coexistenceHistory.enabled(process.env),
-      secondaryServiceFollowUps:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
-      secondaryMarketingFollowUps:process.env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true",
+      businessAppEchoMedia:businessAppEchoMediaStarted,
+      businessAppHistoryImport:businessAppHistoryImportStarted,
+      secondaryServiceFollowUps:secondaryServiceFollowUpsStarted,
+      secondaryMarketingFollowUps:secondaryMarketingFollowUpsStarted,
     }));
     console.log("[Startup] Maintenance and recovery workers started.");
     // Read-only memory diagnostics; no change to message traffic or worker behavior.
