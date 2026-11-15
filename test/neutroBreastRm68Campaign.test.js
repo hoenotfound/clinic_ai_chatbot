@@ -159,7 +159,7 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
     "../src/services/whatsappSecondaryMarketingFollowUpService.js"), "utf8");
   const freeEntry = fs.readFileSync(path.join(__dirname,
     "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
-  assert.match(secondaryService, /rule\.slot_hours IN \(2,6,20\)/,
+  assert.match(secondaryService, /rule\.slot_hours IN\s*\(2,6,20\)/,
     "2h, 6h and 20h service follow-up slots remain separate");
   assert.match(secondaryMarketing, /const SLOTS=new Set\(\[48,66,96,144\]\)/);
   assert.match(secondaryMarketing, /lead\.marketing_consent='opted_in'/,
