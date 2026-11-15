@@ -1,27 +1,30 @@
-# Neutro idle media recovery and marketing shortlist optimization (2026-11-16)
+# Neutro secondary AI media recovery: CU optimization (2026-11-16)
 
-## Evidence and scope
-- Production Neon: `steep-forest-44509907`, Free tier, 100 CU-hour November allowance.
-- Passive Render logs on 2026-11-15 17:03–22:38 UTC recorded 1,079 pool acquisitions labeled "Secondary WhatsApp AI media recovery" among 2,663 total, including extended periods of roughly 20 acquisitions every five minutes without WhatsApp ingress.
-- Those acquisition counts are NOT billed CU-hours and do not prove the queue is empty. No production SQL was run or compute deliberately awakened for this review.
-- Source analysis shows `hasPendingWork` returns true for any durable `pending` job, including jobs deferred to a future attempt and during forbidden sending hours. This keeps the one-minute recovery loop alive.
+## Observed production activity
+- Passive Render logs from 2026-11-15 17:03–22:38 UTC showed 1,079 database pool acquisitions attributed to the "Secondary WhatsApp AI media recovery" worker, out of 2,663 total.
+- During Malaysia's 00:00–06:59 quiet hours, this worker repeatedly recorded approximately 20 acquisitions every five minutes despite little incoming WhatsApp traffic.
+- Pool acquisitions are not billed compute CU-hours, nor proof that any queue is empty. No production SQL or production data mutations were used in this analysis.
 
-## Proposed media scheduler
-- Use one sender-bound read of pending/claimed job state and the earliest pending retry deadline after each sweep.
-- Keep immediate durable enqueue and verified receipt wakes; retain the original one-minute cadence for `claimed` attempts and due work, as well as one-minute retry after scheduler errors.
-- Sleep until the next retry for deferred `pending` jobs, at most one hour. During Malaysia's 00:00–06:59 quiet hours, do not use pending-only jobs to wake every minute; check at most hourly and at 07:00 so the first permitted send is not delayed.
-- Retain startup sweep, stale claim quarantine, expiry cancellation, signed provider outcome and billing safeguards. The patch does not bypass send authorizations, change treatment eligibility or resend uncertain outcomes.
+## Media recovery change
+- The original `hasPendingWork()` response returned true for every `pending` or `claimed` media job, even when pending work could not be retried until later, causing one-minute polling.
+- The new scheduler checks the earliest `pending.next_attempt_at` after completing a recovery sweep. Deferred jobs wait until their deadline, with an hourly lost-wake fallback.
+- Within Malaysia's 00:00–06:59 quiet hours, pending-only jobs use the hourly fallback and a 07:00 boundary wake. A true `claimed` attempt retains minute-level crash/billing reconciliation.
+- Preserve immediate post-commit enqueue wakes, signed receipt wakes, startup reconciliation, pre-send rechecks, approval, customer opt-out, booking, staff takeover, expiry, Meta receipt ambiguity, and billing protections.
+- A failed deadline read or invalid result retries in one minute; it must never silently treat an unreadable queue as empty.
+- No changes to marketing eligibility, follow-up timing, user messages, or customer records.
 
-## Proposed marketing shortlist
-- Filter the materialized `recent_seed` using the already-required sender account, channel and active status. The outer sender-bound conversation, consent, booking, opt-out, staff, treatment, template approval, billing and one-shot checks remain unchanged.
-- This is a **candidate performance hypothesis, not a measured SQL improvement**. The previous isolated staging benchmark found marketing candidates were still slow after migration 132. This filter must be compared with the previous query on an isolated, explicitly approved staging database before release.
+## Marketing SQL benchmark and decision: reject proposed change
+- An earlier version of this PR pre-filtered the materialized marketing follow-up seed by sender. This edit and its test were reverted after the same isolated staging snapshot showed **no reliable candidate performance gain**.
+- Repeated warmed candidate runs: original 59–65 ms vs proposed 54–59 ms, with the proposed plan reading significantly more shared buffers (~42k vs ~26k). One proposed cold run measured ~133 ms.
+- Next-due plans were mixed: original ~59–70 ms vs proposed ~53–54 ms, but the modified query again touched considerably more buffers.
+- These runs returned no due candidate contacts in the tested window, so they do not establish true production throughput or eligibility equivalence under load.
+- Do not ship the unproven sender-shortlist change. Keep the existing SQL and migration 132 contact index. Revisit only with realistic staging fixtures and demonstrated parity and benefits.
 
-## Required release gates
-1. Run focused unit tests and PostgreSQL integration tests, including secondary media, billing, marketing, sender isolation and due-hint SQL compilation. Confirm all CI jobs pass.
-2. Benchmark marketing candidate/due/recheck queries against the identical prior query and representative test data. Require the same eligible contact IDs, slot/language and recheck result, with no performance regression, before enabling the marketing change in production.
-3. With synthetic events, exercise midnight, 06:59, 07:00, future retries, next-attempt expiry, inbound media enqueue, signed receipts, claimed/unknown outcomes, opt-outs, appointments and both senders.
-4. Only after review, merge intentionally and deploy once, using manual Render deployment. Verify first customer replies and media, marketing/service follow-up jobs, provider receipts, staff takeover, appointments, and error rates.
-5. Compare comparable 24-hour Neon CU-hours and pool activity before and after. Do not claim savings from traffic differences or raw pool acquisitions.
+## Release verification
+1. Run CI, including backend PostgreSQL and secondary media tests, and new fake-clock tests for quiet hours, immediate wakes, claimed jobs, corrupt deadline results and sender scope.
+2. If tests pass, intentionally merge and deploy once with Render auto-deploy still disabled.
+3. Verify production logs for errors and per-source pool acquisitions. Confirm both WhatsApp numbers, first AI replies, media results and price images, queued jobs, follow-ups, staff takeover, appointments and signed Meta receipts using non-sending/read-only evidence.
+4. Compare equivalent 24-hour Neon CU-hour and message-volume windows; do not claim realized savings from staging execution times or acquisition counts alone.
 
 ## Rollback
-Revert only this worker scheduling/seed change if media is late or marketing parity/performance regresses. Retain the migration 132 index and all existing Meta billing/consent protections. Neither PR creation nor merging changes the running Render service while auto-deploy is disabled.
+Revert this media worker scheduling change if any confirmed media recovery delay, safety-policy or billing regression appears. The previous hourly empty fallback and one-minute active recovery are available in the prior release. Keep all Meta and follow-up authorization safeguards intact.
