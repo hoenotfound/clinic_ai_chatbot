@@ -97,3 +97,19 @@ test("explicit refusal of WhatsApp follow-up or promotions never grants consent"
     clinic
   )?.category, "MARKETING");
 });
+
+test("new golden pulse and RM68 CTWA text requests have explicit treatment-scoped marketing wording", () => {
+  const newPrefills = [
+    "Hi～我对 Neutro Sense TCM 黄金脉冲技术有兴趣，可以跟进我，有优惠也发我看看 😊",
+    "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊",
+  ];
+  for (const value of newPrefills) {
+    const consent = explicitPromotionConsent(value, clinic);
+    assert.equal(consent?.category, "MARKETING");
+    assert.equal(consent?.scope, "treatment_followups_and_related_offers");
+    assert.equal(explicitPromotionConsent(value, { businessName: "Another Clinic" }), null);
+    assert.equal(explicitPromotionConsent(value.replace("可以跟进我，有优惠也发我看看", "只想了解详情")), null);
+  }
+  assert.equal(explicitPromotionConsent("你好！想了解你们家的【黄金脉冲技术】", clinic), null);
+  assert.equal(explicitPromotionConsent("你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？", clinic), null);
+});
