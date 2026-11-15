@@ -80,10 +80,10 @@ test("both secondary recovery producers explicitly select hourly empty fallback"
    "../src/services/whatsappSecondaryAiMediaQueue.js"),"utf8");
  const mutationSource=fs.readFileSync(path.join(__dirname,
    "../src/services/whatsappCoexistenceMutationService.js"),"utf8");
- assert.match(mediaSource,/label:"Secondary WhatsApp AI media recovery",[\\s\\S]{0,300}emptyIntervalMs:60\\*60\\*1000/);
- assert.match(mutationSource,/label:"Business App mutation recovery",[\\s\\S]{0,300}emptyIntervalMs:60\\*60\\*1000/);
- assert.match(mediaSource,/if\\(pending\\.rowCount>0\\)wake\\(\\)/);
- assert.match(mutationSource,/if\\(!applied\\)wake\\(\\)/);
+ assert.match(mediaSource,/label:"Secondary WhatsApp AI media recovery",[\s\S]{0,300}emptyIntervalMs:60\*60\*1000/);
+ assert.match(mutationSource,/label:"Business App mutation recovery",[\s\S]{0,300}emptyIntervalMs:60\*60\*1000/);
+ assert.match(mediaSource,/if\(pending\.rowCount>0\)wake\(\)/);
+ assert.match(mutationSource,/if\(!applied\)wake\(\)/);
 });
 
 test("pending media and edits retain exact one-minute safety cadence",async()=>{
