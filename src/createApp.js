@@ -52,6 +52,8 @@ const { stagingWebhookGuard } = require("./services/pr395StagingSafety");
 const preidentityReceiver = require("./services/pr395PreidentityReceiver");
 const legacyLifecycleReceiver = require("./services/pr395LegacyLifecycleReceiver");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
+const { withDatabaseActivitySource } = require("./utils/databaseActivityContext");
+const { httpDatabaseActivitySource } = require("./utils/httpDatabaseActivitySource");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
 const authRoutes = require("./routes/auth");
@@ -105,6 +107,12 @@ function createApp({
   // Attach before readiness so even a pre-parser 503 has a route/outcome marker.
   // Only signed requests can contribute identity, timestamp and message metadata.
   app.use(ingressDiagnostics.observe);
+  // Passive attribution for request-driven database acquisitions. The
+  // AsyncLocalStorage scope propagates through existing Express handlers,
+  // without a DB query, extra timer, logging raw paths or changing auth.
+  // Background workers use their own more-specific activity scopes.
+  app.use((req, _res, next) =>
+    withDatabaseActivitySource(httpDatabaseActivitySource(req), next));
   app.use(applyPortalSecurityHeaders);
   // Passive, coarse 503 attribution. No URI paths, queries, customer IDs,
   // addresses or request bodies are persisted or logged.
