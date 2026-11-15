@@ -165,6 +165,10 @@ function createSecondaryDueScheduler({
       run: async () => {
         const outcome = await run({ env, database });
         if (outcome?.disabled) return { disabled: true };
+        // A full batch always schedules another run in ten seconds. Its due
+        // hint is discarded by delayForResult, so avoid that expensive query
+        // until the backlog has drained. Existing one-shot send checks remain.
+        if (Number(outcome?.attempted || 0) >= 10) return { outcome, hint: null };
         const hint = await readNextDue({ env, database, now: new Date(now()) });
         return { outcome, hint };
       },
