@@ -106,6 +106,41 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
   }
 });
 
+test("new Neutro RM68 opt-in-style CTWA prefill preserves campaign intro and guards", () => {
+  const customerText = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
+  const campaignNow = Date.parse("2026-11-15T01:00:00Z");
+  const campaignAd = {
+    headline: "胸部专业检查 RM68体验优惠",
+    body: "胸部健康评估 + 脉冲波护理 12月5日与6日",
+    attributedAt: new Date(campaignNow - 60_000).toISOString(),
+  };
+  const run = (overrides = {}) => attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: campaignAd, metaAdCreativeService: null, now: campaignNow,
+    ...overrides,
+  });
+  const first = run();
+  assert.equal(first?.campaignKey, "neutro_breast_rm68_2026");
+  assert.match(first?.reply || "", /首次体验只需 RM68/);
+  assert.match(first?.reply || "", /12月5日 & 6日/);
+  assert.doesNotMatch(first?.reply || "", /RM388/);
+  assert.equal(first?.treatment, null, "do not confuse RM68 chest with regular Pulse Wave");
+  assert.equal(run({ metaAdContext: null }), null);
+  assert.equal(run({ metaAdContext: { ...campaignAd,
+    headline: "黄金脉冲技术 RM388", body: "一般脉冲波护理" } }), null);
+  assert.equal(run({ hasStaffHandoff: true }), null);
+  assert.equal(run({ hasExistingBooking: true }), null);
+  assert.equal(run({ isFirstMessage: false }), null);
+  for (const edited of [
+    customerText + " 我怀孕了可以做吗？",
+    customerText + " 那今天有位吗？",
+  ]) {
+    assert.equal(run({ customerText: edited,
+      conversationHistory: [{ role: "user", content: edited }] })?.campaignKey,
+    undefined, "real edited questions must not be swallowed by an ad script");
+  }
+});
+
 test("Neutro RM68 reply expires at midnight 7 December Malaysia time", () => {
   const customerText = "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
   const adAt = new Date("2026-12-06T12:00:00Z").toISOString();
@@ -176,6 +211,37 @@ test("Neutro golden pulse ad prefill selects 脉冲波调理 and bypasses Gemini
     services: pulseServices,
     serviceAliases: pulseAliases,
   }), null, "mismatched creative must not send a pulse script");
+});
+
+test("new golden pulse CTWA prefill keeps verified 脉冲波调理 first reply", () => {
+  const customerText = "Hi～我对 Neutro Sense TCM 黄金脉冲技术有兴趣，可以跟进我，有优惠也发我看看 😊";
+  const pulseServices = [...services, { name: "脉冲波调理" }];
+  const pulseAliases = [...aliases, { alias: "黄金脉冲技术", officialService: "脉冲波调理" }];
+  const reply = "您好，欢迎了解我们的黄金脉冲技术 😊";
+  const first = attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    services: pulseServices, serviceAliases: pulseAliases,
+    config: { enabled: true, replies: [{
+      service: "脉冲波调理", translations: { zh: reply },
+    }] },
+    metaAdContext: { headline: "黄金脉冲技术", body: "黄金脉冲技术介绍",
+      attributedAt: ad.attributedAt },
+    metaAdCreativeService: "脉冲波调理",
+  });
+  assert.equal(isStandardAdPrefill(customerText, {
+    services: pulseServices, serviceAliases: pulseAliases,
+    businessName: "Neutro Sense TCM Centre",
+  }), true);
+  assert.equal(first?.reply, reply);
+  assert.equal(first?.treatment, "脉冲波调理");
+  assert.equal(first?.serviceQuery, true);
+  const mismatch = attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    services: pulseServices, serviceAliases: pulseAliases,
+    metaAdContext: { headline: "3D 小颜术", body: "3D 小颜术",
+      attributedAt: ad.attributedAt }, metaAdCreativeService: "3D 小颜术",
+  });
+  assert.equal(mismatch, null);
 });
 
 test("golden pulse prefill keeps substantive and edited enquiries on AI", () => {
