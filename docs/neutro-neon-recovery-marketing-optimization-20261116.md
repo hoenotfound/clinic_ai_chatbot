@@ -17,7 +17,7 @@
 - An earlier version of this PR pre-filtered the materialized marketing follow-up seed by sender. This edit and its test were reverted after the same isolated staging snapshot showed **no reliable candidate performance gain**.
 - Repeated warmed candidate runs: original 59–65 ms vs proposed 54–59 ms, with the proposed plan reading significantly more shared buffers (~42k vs ~26k). One proposed cold run measured ~133 ms.
 - Next-due plans were mixed: original ~59–70 ms vs proposed ~53–54 ms, but the modified query again touched considerably more buffers.
-- These runs returned no due candidate contacts in the tested window, so they do not establish true production throughput or eligibility equivalence under load.
+- A follow-up isolated comparison tested multiple dates with 0, 3 and 6 eligible contacts. The original and modified candidate queries returned identical ordered records at each date, and the due-time hint matched exactly. Repeated warm runs on the six-contact case measured the original at 57–70 ms and the proposal at 52–57 ms, but the proposal read approximately 42,000 shared buffer pages versus 26,000 previously. One transient run was much slower. This modest speed difference is not sufficient evidence of lower CU-hours under live traffic.
 - Do not ship the unproven sender-shortlist change. Keep the existing SQL and migration 132 contact index. Revisit only with realistic staging fixtures and demonstrated parity and benefits.
 
 ## Release verification
