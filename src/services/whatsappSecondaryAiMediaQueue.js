@@ -676,6 +676,10 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  worker=createIdleAwareRecoveryWorker({
    ...clock,
    label:"Secondary WhatsApp AI media recovery",
+   // Verified empty on 2026-11-15. Normal enqueue/receipt wake remains immediate,
+   // with a one-minute check while pending or claimed work exists.
+   // This hourly fallback is only for orphaned jobs without a wake signal.
+   emptyIntervalMs:60*60*1000,
    run:async()=>{
      const result=await run({env,database});
      if(historicalAuditPending){
