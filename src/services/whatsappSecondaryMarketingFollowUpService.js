@@ -138,6 +138,16 @@ const CANDIDATES_SQL=`
    WITH recent_seed AS MATERIALIZED (
      SELECT DISTINCT recent.contact_id
      FROM messages recent
+     -- The outer candidate query already enforces these sender and channel
+     -- conditions. Applying them here avoids materializing candidates from
+     -- unrelated WhatsApp numbers, without changing send authorization.
+     JOIN contacts seed_contact ON seed_contact.id=recent.contact_id
+       AND seed_contact.channel='whatsapp'
+     JOIN whatsapp_sender_accounts seed_sender
+       ON seed_sender.id=seed_contact.whatsapp_sender_id
+       AND seed_sender.state='active' AND seed_sender.sender_key=$1
+       AND seed_sender.meta_phone_number_id=$2
+       AND seed_sender.meta_account_id=$3
      WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'
        AND recent.role='user'
        AND recent.whatsapp_message_id IS NOT NULL
