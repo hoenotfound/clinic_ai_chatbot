@@ -50,7 +50,7 @@ test("secondary 6h and 20h service follow-ups never request generic marketing co
  assert.match(repoSrc,/prompt\.delivery_status IN \('sent','delivered','read'\)/);
  assert.match(repoSrc,/prompt\.content LIKE/);
  assert.match(repoSrc,/generalExplicit\?GENERAL_SCOPE:explicit\.scope/);
- assert.match(repoSrc,/generalExplicit\?GENERAL_SERVICE/);
+ assert.match(repoSrc,/generalExplicit\s*\?\s*GENERAL_SERVICE/);
  assert.doesNotMatch(service.CANDIDATES_SQL,/general_clinic_followups_and_related_offers/,
   "service follow-ups do not claim marketing permission");
 });
