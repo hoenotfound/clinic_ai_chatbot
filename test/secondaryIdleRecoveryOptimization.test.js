@@ -429,13 +429,13 @@ test("Business App idle checks remain sender-owned and fail closed on missing re
  }
 });
 
-test("appointment reminder safety recovery uses hourly idle fallback and keeps post-send wake",()=>{
+test("appointment reminder retains 30-minute fallback and immediate post-send wake",()=>{
  const appSource=fs.readFileSync(path.join(__dirname,
    "../src/services/staffAppointmentReminderRecoveryService.js"),"utf8");
  const inboxSource=fs.readFileSync(path.join(__dirname,
    "../src/routes/conversations.js"),"utf8");
- assert.equal(appointmentRecovery.IDLE_APPOINTMENT_RECOVERY_MS,undefined,
-   "keep the existing 30-minute idle fallback rather than delaying staff booking recovery");
+ assert.equal(EMPTY_RECOVERY_MS,30*60*1000,
+   "keep the original 30-minute recovery period rather than delaying booking repair");
  assert.doesNotMatch(appSource,/emptyIntervalMs:IDLE_APPOINTMENT_RECOVERY_MS/);
  assert.match(appSource,/run,hasPendingWork:async\(\)=>false/);
  assert.match(inboxSource,/if \(isProactiveAppointmentReminder\(text\.trim\(\)\)\) staffReminderRecovery\.wake\(\)/);
