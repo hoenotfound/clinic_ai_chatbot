@@ -8,6 +8,9 @@ const { takeOutboundPayloadSnapshot } = require("../utils/outboundPayloadDiagnos
 const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
 const { snapshot: getWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
 const { getPoolActivitySnapshot } = require("./databasePoolActivity");
+const { pool } = require("../db/db");
+const { installOutboundNetworkDiagnostics, takeOutboundNetworkSnapshot } =
+  require("../utils/outboundNetworkDiagnostics");
 
 // Only literal, audited source names may reach Render logs. Unknown sources
 // are summed into "other" to avoid exposing arbitrary labels or identifiers.
@@ -146,6 +149,11 @@ function startMemoryDiagnostics({
 } = {}) {
   if (timer || env.DA_MEMORY_DIAGNOSTICS_ENABLED === "false") return timer;
   if (!env.RENDER_SERVICE_ID && env.DA_MEMORY_DIAGNOSTICS_ENABLED !== "true") return null;
+  // Diagnostics subscribe to existing network events; no new polling,
+  // socket activity, SQL, request or customer-visible behavior.
+  if (env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
+    installOutboundNetworkDiagnostics({ env, databasePool: pool });
+  }
   let samples = 0;
   const log = () => {
     try {
@@ -176,6 +184,7 @@ function startMemoryDiagnostics({
         logger.info?.(`[Neon pool activity] ${JSON.stringify(summarizePoolActivity(poolSnapshot()))}`);
         if (env.DA_OUTBOUND_PAYLOAD_DIAGNOSTICS_ENABLED === "true") {
           logger.info?.(`[Outbound payload diagnostics] ${JSON.stringify(takeOutboundPayloadSnapshot())}`);
+          logger.info?.(`[Outbound network diagnostics] ${JSON.stringify(takeOutboundNetworkSnapshot())}`);
         }
       }
     } catch (error) {
