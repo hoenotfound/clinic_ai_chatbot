@@ -245,6 +245,14 @@ async function startApplication({
     startLeadScoring();
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
+    // Read only configured feature flags. These labels reveal which optional
+    // Neon recovery workers actually start; no SQL, secrets or contact data.
+    console.info("[Neon idle-worker configuration]", JSON.stringify({
+      businessAppEchoMedia:coexistenceMediaQueue.enabled(process.env),
+      businessAppHistoryImport:coexistenceHistory.enabled(process.env),
+      secondaryServiceFollowUps:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
+      secondaryMarketingFollowUps:process.env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true",
+    }));
     console.log("[Startup] Maintenance and recovery workers started.");
     // Read-only memory diagnostics; no change to message traffic or worker behavior.
     startMemoryDiagnostics();
