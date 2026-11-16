@@ -258,7 +258,7 @@ test("verified amounts and appointment digits cannot change in language-only cor
   ), true);
 });
 
-test("failed correction hands off without silent information-review recovery", async () => {
+test("wrong-language correction without changed intent keeps ordinary enquiries in AI mode", async () => {
   let calls = 0;
   const result = await correctReplyLanguage(copy(ordinary), [], { replyLanguage: "en", ...names }, {
     getReply: async () => {
@@ -268,9 +268,33 @@ test("failed correction hands off without silent information-review recovery", a
     parseReply: JSON.parse,
   });
   assert.equal(calls, 1);
-  assert.equal(result.flagged, true);
+  assert.equal(result.flagged, false);
   assert.equal(result.reviewRequired, false);
+  assert.equal(result.priceQuery, false);
+  assert.equal(result.serviceQuery, false);
   assert.equal(result.languageCorrectionFailed, true);
+  assert.match(result.text, /continue in English/);
+});
+
+test("nonclinical language correction provider errors use safe acknowledgement", async () => {
+  const result = await correctReplyLanguage(copy(ordinary), [], { replyLanguage: "en", ...names }, {
+    getReply: async () => { throw new Error("temporary provider outage"); },
+    parseReply: JSON.parse,
+  });
+  assert.equal(result.flagged, false);
+  assert.equal(result.bookingReady, false);
+  assert.equal(result.details, null);
+  assert.match(result.text, /English/);
+});
+
+test("a simple language-only request bypasses the model while retaining safety guards", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  assert.match(src, /isGreetingOrLanguageOnly\(text\) && detectExplicitLanguagePreference\(text\)/);
+  assert.match(src, /preference acknowledged without AI handoff/);
+  const userStaff = src.indexOf("} else if (isExplicitStaffRequest(text))");
+  const language = src.indexOf("} else if (isGreetingOrLanguageOnly(text)");
+  const model = src.indexOf("const rawAiReply = await ai.getReply(modelReplyHistory");
+  assert.ok(userStaff > 0 && language > userStaff && language < model);
 });
 
 test("already flagged clinical review does not request a second model response", async () => {
