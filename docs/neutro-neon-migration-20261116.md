@@ -200,6 +200,46 @@ router, embedded router, WhatsApp default relay and relay-deadline suites.
 There was no deployment, live shutdown rehearsal, end-to-end AI check or
 post-cutover monitoring because no production switch occurred.
 
+### Follow-up shutdown and recovery check, 13:51 UTC
+
+123 focused tests passed across inbound recovery, receipt recovery, scheduled
+messages, timer behavior, callback durability, shared routing, the hold server
+and copy/boundary guards. These include synthetic failure, duplicate and
+out-of-order recovery cases. Tests using fake repositories are not a live Meta
+redelivery test or a production stop/restart rehearsal.
+
+A controlled local probe of the actual adaptive timer demonstrated that
+`stop()` returns immediately while its current async run is still active. It
+rejects new wakes and does not reschedule, but exposes no promise that waits for
+the run to finish. The active work completed only after the probe explicitly
+released it. Startup ignores returned stop functions for inbound recovery,
+receipt recovery and retry workers; the scheduled-message bootstrap discards
+its underlying stop function. Preload timers need separate coverage. The main
+chatbot has no SIGTERM/SIGINT handler; the signal handlers in the standalone
+router and operations service are not a chatbot shutdown mechanism.
+
+At 13:51:11 UTC, read-only production inspection found zero open inbound jobs,
+zero open receipt jobs, zero scheduled messages, zero AI generation leases and
+zero pricing preflight retries. Receipt jobs were 51 completed and five failed
+with terminal state. Six source connections belonged to the live chatbot and
+were idle at that instant. An idle connection does not prove its process has
+stopped or that no external request is in flight.
+
+The state inspection also found two unknown billing gates, four unknown billing
+attempts, 12 unknown service-follow-up attempts and two unknown marketing
+follow-up attempts. No state was reset, released or replayed.
+
+The prepared boundary checker initially omitted `processing_status`, which is
+used by delivery receipt jobs, and leases without a state column. This check
+corrected that omission and added regression tests. The checker now reports
+receipt processing states, AI generation leases, pricing retry counts, manual
+template claim counts, open receipts and terminal receipts. It still never
+authorizes a cutover or claims process retirement.
+
+Result: database recovery safeguards and synthetic callback failure handling
+passed their checks; application-wide shutdown and provider redelivery during
+a real pause remain unverified. Keep production and DATABASE_URL unchanged.
+
 Vendor references:
 
 - https://render.com/docs/maintenance-mode (does not stop the process)
