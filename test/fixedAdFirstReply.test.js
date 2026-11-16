@@ -474,6 +474,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
     correctReplyLanguage: async draft => draft,
+    ...require("../src/utils/chatLanguage"),
     console: { info: (...parts) => logs.push(parts.join(" ")) },
   });
   const optIn = "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看";
