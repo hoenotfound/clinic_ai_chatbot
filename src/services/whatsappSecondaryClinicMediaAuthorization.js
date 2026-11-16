@@ -2,6 +2,7 @@
 // Source-of-truth check at dispatch time. A queue entry never grants
 // permanent authorization if an operator removes/changes clinic media.
 const {getActivePromotions,promotionPackages}=require("../utils/activePromotion");
+const {configuredFirstReplyImage}=require("../utils/neutroBreastRm68Campaign");
 function imageUrls(entry){
  if(!entry || typeof entry!=="object")return[];
  const urls=[entry.imageUrl];
@@ -14,6 +15,12 @@ function imageUrls(entry){
 function isCurrentApprovedClinicImage({imageUrl,kind,config,now=new Date()}={}){
  if(typeof imageUrl!=="string" || !imageUrl || !config || typeof config!=="object")return false;
  if(kind==="promotion"){
+  // A verified RM68 ad opener may have its own operator-uploaded graphic.
+  // Do not interpret it as part of any normal RM388 promotion.
+  const rm68Image = configuredFirstReplyImage({
+    config,businessName:config.businessName,now,
+  });
+  if (rm68Image && imageUrl === rm68Image) return true;
   return getActivePromotions(config.promotions,now).some(p=>
    p?.enabled!==false && promotionPackages(p).some(item=>
      imageUrls(item).includes(imageUrl)));
