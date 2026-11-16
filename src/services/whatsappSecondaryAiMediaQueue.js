@@ -91,6 +91,19 @@ const NEWER_MEDIA_PLAN_SQL=`EXISTS(
 // Only a newer result-image plan supersedes a prior result. A price graphic
 // should not erase a queued Before & After result.
 
+// Only fresh, verified customer-enquiry result images may bypass quiet hours.
+// Sender, conversation, billing, opt-out, and no-duplicate gates are unchanged.
+const FRESH_VERIFIED_RESULT_SQL=`(
+  job.media_kind='result' AND inbound.whatsapp_message_id IS NOT NULL
+  AND inbound.created_at BETWEEN NOW() - INTERVAL '2 hours' AND NOW()
+  AND job.created_at >= inbound.created_at
+  AND job.created_at <= inbound.created_at + INTERVAL '5 minutes'
+)`;
+const DIRECT_MEDIA_HOURS_SQL=`(
+  EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
+  OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE)
+  OR ${FRESH_VERIFIED_RESULT_SQL}
+)`;
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
@@ -231,8 +244,7 @@ const READY_SQL=`
    AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
-   AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
-     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
+   AND ${DIRECT_MEDIA_HOURS_SQL}
    AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND NOT EXISTS(
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -271,8 +283,7 @@ const STILL_VALID_SQL=`
      AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
-     AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
-     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
+     AND ${DIRECT_MEDIA_HOURS_SQL}
      AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4
      AND NOT EXISTS(
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -691,11 +702,20 @@ const RECOVERY_DEADLINE_SQL=`
           WHERE job.state='pending' AND job.expires_at>NOW()
             AND job.media_kind='promotion' AND job.solicited_pricing=TRUE
         ) AS next_solicited_at,
+        COALESCE(BOOL_OR(job.state='pending' AND job.expires_at>NOW()
+          AND ${FRESH_VERIFIED_RESULT_SQL}),FALSE)
+          AS has_fresh_result_pending,
+        MIN(job.next_attempt_at) FILTER(
+          WHERE job.state='pending' AND job.expires_at>NOW()
+            AND ${FRESH_VERIFIED_RESULT_SQL}
+        ) AS next_fresh_result_at,
         MIN(job.next_attempt_at) FILTER(
           WHERE job.state='pending' AND job.expires_at>NOW()
         ) AS next_pending_at
  FROM whatsapp_sender_ai_media_jobs job
  JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
+  LEFT JOIN messages inbound ON inbound.id=job.inbound_message_id
+    AND inbound.contact_id=job.contact_id AND inbound.role='user'
  WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
    AND sender.meta_account_id=$3 AND sender.state='active'
    AND job.state IN ('pending','claimed')
@@ -712,15 +732,23 @@ function nextMediaRecoveryDelay(state,nowMs=Date.now()){
    throw Error("Pending media retry deadline unavailable; retry shortly");
  const shifted=new Date(nowMs+MALAYSIA_UTC_OFFSET_MS);
  if(shifted.getUTCHours()<7){
-   // Verified current pricing graphics have their own quiet-hours deadline.
-   // Ordinary promotional and result media remain asleep until opening.
+   // Wake overnight only for solicited price images or fresh requested results.
+   const nightDue=[];
    if(state.has_solicited_pending===true){
      const requestedAt=new Date(state.next_solicited_at).getTime();
      if(state.next_solicited_at==null || !Number.isFinite(requestedAt))
        throw Error("Solicited pricing media deadline unavailable; retry shortly");
-     return Math.min(MEDIA_IDLE_CHECK_MS,
-       Math.max(MEDIA_ACTIVE_CHECK_MS,requestedAt-nowMs));
+     nightDue.push(requestedAt);
    }
+   if(state.has_fresh_result_pending===true){
+     const resultAt=new Date(state.next_fresh_result_at).getTime();
+     if(state.next_fresh_result_at==null || !Number.isFinite(resultAt))
+       throw Error("Fresh result media deadline unavailable; retry shortly");
+     nightDue.push(resultAt);
+   }
+   if(nightDue.length)return Math.min(MEDIA_IDLE_CHECK_MS,
+     Math.max(MEDIA_ACTIVE_CHECK_MS,Math.min(...nightDue)-nowMs));
+
    const opening=Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),
      shifted.getUTCDate(),7)-MALAYSIA_UTC_OFFSET_MS;
    // Other pending sends remain paused during quiet hours. Wake at 07:00
