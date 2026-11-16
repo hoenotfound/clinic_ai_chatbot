@@ -153,7 +153,7 @@ test("late English request swaps queued result to approved English artwork and c
  const originalQuery=args.database.query;
  args.database.query=async(sql,params)=>sql===worker.READY_SQL
    ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
-   : sql.includes("FROM messages newer")
+   : sql.includes("SELECT newer.content")
      ? {rows:[{content:"In English please"}]}
      : originalQuery(sql,params);
  args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
@@ -180,7 +180,7 @@ test("late English request with no approved localized artwork suppresses optiona
  const originalQuery=args.database.query;
  args.database.query=async(sql,params)=>sql===worker.READY_SQL
    ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
-   : sql.includes("FROM messages newer")
+   : sql.includes("SELECT newer.content")
      ? {rows:[{content:"In English please"}]}
      : originalQuery(sql,params);
  args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
