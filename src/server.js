@@ -57,6 +57,7 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const promoImagesRepo = require("./db/promoImagesRepo");
 const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
@@ -77,7 +78,8 @@ const {
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
-const { campaignContextReply, guardCampaignPriceConflicts } =
+const { campaignContextReply, guardCampaignPriceConflicts,
+  configuredFirstReplyImage } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -2569,10 +2571,55 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
-    // This dated, customer-requested RM68 offer is text-only. Other treatment
-    // promos and Before/After media must not piggyback on this ad opener.
+    // This campaign has its own optional operator-uploaded graphic. Always
+    // send the fixed welcome text first, then use the sender-specific durable
+    // WhatsApp image queue. Do not reuse the generic RM388 promo selector or
+    // bypass billing/receipt, ownership, opt-out, or staff takeover checks.
     if (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
-      await auditResultMediaEarlyExit("neutro_breast_rm68_campaign_text_only");
+      const graphic = configuredFirstReplyImage({
+        config: clinicConfig,
+        businessName: clinicConfig.businessName,
+      });
+      let mediaReason = "neutro_breast_rm68_campaign_text_only";
+      if (graphic && channel === "whatsapp" && sendOutcome.sendResult.success) {
+        try {
+          const imageId = Number(graphic.split("/").pop());
+          const metadata = await promoImagesRepo.getPublicImageMetadata(imageId);
+          if (metadata) {
+            const senderQueue = secondaryAiConversation
+              ? secondaryAiMediaQueue
+              : whatsappZeroCostGuard.enabled() ? whatsappResultMediaQueue : null;
+            if (senderQueue) {
+              const queued = await senderQueue.enqueue({
+                contactId: contact.id,
+                inboundMessageId: savedInbound.id,
+                kind: "promotion",
+                items: [{
+                  imageUrl: graphic,
+                  caption: "",
+                }],
+              });
+              mediaReason = queued
+                ? "neutro_breast_rm68_campaign_graphic_queued"
+                : "neutro_breast_rm68_campaign_media_not_enabled";
+            } else {
+              mediaReason = "neutro_breast_rm68_campaign_media_queue_unavailable";
+            }
+          } else {
+            mediaReason = "neutro_breast_rm68_campaign_image_missing";
+          }
+        } catch (campaignImageError) {
+          // The already-accepted welcome text MUST NOT be replayed, and a
+          // single failed image plan cannot trigger a second customer send.
+          console.error("[RM68 campaign] Could not enqueue welcome image:",
+            campaignImageError);
+          mediaReason = "neutro_breast_rm68_campaign_graphic_enqueue_failed";
+          await contactsRepo.setDeliveryAttention(contact.id,
+            "RM68 welcome text was sent, but its campaign graphic could not be queued. Please inspect the Inbox."
+          ).catch(() => {});
+        }
+      }
+      await auditResultMediaEarlyExit(mediaReason);
       return { wasFirstMessage, keywordReason };
     }
     if (rm68CampaignContinuationTextOnly) {

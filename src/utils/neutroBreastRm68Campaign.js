@@ -49,6 +49,14 @@ function dayQuestion(now = Date.now()) {
     : "请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊";
 }
 
+// A campaign-specific Settings image is accepted only as a first-party
+// public-config upload, never as a remote URL or a normal RM388 promo.
+function configuredFirstReplyImage({ config, businessName, now = Date.now() } = {}) {
+  if (!isNeutro(businessName) || campaignDay(now) === "expired") return null;
+  const path = String(config?.adFirstReply?.rm68ImageUrl || "").trim();
+  return /^\/promo-images\/[1-9][0-9]{0,9}$/u.test(path) ? path : null;
+}
+
 function firstReply(now = Date.now()) {
   if (campaignDay(now) === "expired") {
     return [
@@ -64,7 +72,8 @@ function firstReply(now = Date.now()) {
     "",
     "✨ 首次体验只需 RM68（原价以门店公告为准）",
     "📅 活动日期：" + dayLine(now),
-    "⏰ 全程约 1小时30分钟",
+    "⏰ RM68胸部护理约45分钟；加上赠送护理，全程约 1小时30分钟",
+    "🎁 免费赠送艾灸护理",
     "",
     "护理包含：",
     "✅ 专业胸部健康评估",
@@ -89,19 +98,19 @@ function hasCampaignConversation(history) {
   );
 }
 
-const OTHER_TREATMENT = /(?:\b(?:3\s*d|9\s*d|hifu|facial|pelvic|postpartum)\b|骨盆|小颜|小顏|逆龄|逆齡|产后|產後|子宫|子宮|艾灸|体态|體態|全身脉冲|全身脈衝)/iu;
+const OTHER_TREATMENT = /(?:\b(?:3\s*d|9\s*d|hifu|facial|pelvic|postpartum)\b|骨盆|小颜|小顏|逆龄|逆齡|产后|產後|子宫|子宮|艾灸(?:疗程|療程|单做|單做|单独|單獨)|体态|體態|全身脉冲|全身脈衝)/iu;
 const EXIT_CAMPAIGN = /(?:不想了解|不想要|换个|換個|另外想|改聊|停止|退订|退訂|取消活动|取消活動|\b(?:stop|unsubscribe|not interested|switch treatment|another service|cancel promotion)\b)/iu;
 function isOtherTreatmentQuery(text) {
   return OTHER_TREATMENT.test(String(text || "")) || EXIT_CAMPAIGN.test(String(text || ""));
 }
 const CAMPAIGN_QUERY =
-  /(?:胸部|乳腺|乳房|脉冲|脈衝|专业检查|專業檢查|评估|評估|RM\s*68|RM\s*388|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|便宜|包括|包含|做什么|做什麼|什么项目|什麼項目|多久|多长|多長|时间|時間|小时|小時|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:price|cost|fee|duration|how long|hours?|breast|pulse|rm ?68|rm ?388|appointment|availability|slot|december [56]|5th|6th)\b)/iu;
+  /(?:胸部|乳腺|乳房|艾灸|赠送|贈送|脉冲|脈衝|专业检查|專業檢查|评估|評估|RM\s*68|RM\s*388|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|便宜|包括|包含|做什么|做什麼|什么项目|什麼項目|多久|多长|多長|时间|時間|小时|小時|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:price|cost|fee|duration|how long|hours?|breast|pulse|rm ?68|rm ?388|appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 const AMOUNT_QUESTION =
   /(?:RM\s*(?:68|388)|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|\b(?:price|cost|fee|how much|harga)\b)/iu;
 const DURATION_QUESTION =
   /(?:多久|多长|多長|时间|時間|小时|小時|\b(?:duration|how long|hour|hours|lama)\b)/iu;
 const INCLUDES_QUESTION =
-  /(?:包括|包含|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist)\b)/iu;
+  /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist)\b)/iu;
 const DATE_QUESTION =
   /(?:日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 
@@ -128,18 +137,18 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
       "，全程约1小时30分钟。具体名额需要由门店确认哦 😊 " + dayQuestion(now);
   }
   if (INCLUDES_QUESTION.test(text)) {
-    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理，以及胸部日常护理建议；全程约1小时30分钟。" +
+    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理、胸部日常护理建议，并免费赠送艾灸护理；全程合计约1小时30分钟。" +
       "这项护理不等于医院的乳腺癌筛查或医学诊断 😊";
   }
   if (AMOUNT_QUESTION.test(text)) {
-    return "您咨询的【胸部健康评估 + 脉冲波舒缓护理】12月活动首次体验是 RM68，全程约1小时30分钟。" +
+    return "您咨询的【胸部健康评估 + 脉冲波舒缓护理】12月活动首次体验是 RM68，免费赠送艾灸护理，合计全程约1小时30分钟。" +
       (/RM\s*388/iu.test(text)
         ? "RM388 属于另一项全身脉冲波护理优惠，两者不是同一个活动。"
         : "这是独立于其他脉冲波疗程的限时活动。") +
       "名额以门店确认为准 😊";
   }
   if (DURATION_QUESTION.test(text)) {
-    return "这个 RM68 胸部健康评估 + 脉冲波舒缓护理活动，全程约1小时30分钟，活动日期为" +
+    return "这个 RM68 胸部健康评估 + 脉冲波舒缓护理活动，包含赠送的艾灸护理，全程合计约1小时30分钟，活动日期为" +
       dates + "。想预约可以先告诉我们方便的日期，由门店确认名额哦 😊";
   }
   return "您之前咨询的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，活动日期为" +
@@ -191,15 +200,15 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   const day = campaignDay(now);
   if (day === "expired") return { expired: true, message: null };
   const message = day === "both"
-    ? "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，活动日期为12月5日和6日，全程约1小时30分钟。具体名额以门店确认为准，如需安排欢迎回复我们 😊"
-    : "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】RM68 活动只剩今天12月6日，全程约1小时30分钟。具体名额以门店确认为准，如需安排欢迎回复我们 😊";
+    ? "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，额外免费赠送艾灸护理，活动日期为12月5日和6日，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊"
+    : "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】RM68 活动只剩今天12月6日，额外免费赠送艾灸护理，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊";
   return { expired: false, message };
 }
 
 module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
-  firstReply, isCampaignOpening, hasCampaignConversation,
+  firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, campaignContextReply, guardCampaignPriceConflicts,
   candidateIsCampaign, campaignFollowUp,
 };

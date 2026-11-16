@@ -200,7 +200,11 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
       .filter((id) => id !== null);
     const snapshotImageIds =
       await configImportHistoryRepo.listReferencedPromoImageIds();
+    const rm68CampaignImageId = extractPromoImageId(
+      clinicConfig.adFirstReply?.rm68ImageUrl
+    );
     const referencedIds = [
+      ...(rm68CampaignImageId ? [rm68CampaignImageId] : []),
       ...promotionIds,
       ...resultMediaIds,
       ...followUpImageIds,

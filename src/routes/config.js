@@ -196,6 +196,9 @@ const VALIDATORS = {
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
   adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
+    (v.rm68ImageUrl === undefined ||
+      (typeof v.rm68ImageUrl === "string" &&
+       (v.rm68ImageUrl === "" || /^\/promo-images\/[1-9][0-9]{0,9}$/.test(v.rm68ImageUrl)))) &&
     Array.isArray(v.replies) && v.replies.length <= 30 &&
     new Set(v.replies.map(item => item?.service)).size === v.replies.length &&
     v.replies.every(item =>

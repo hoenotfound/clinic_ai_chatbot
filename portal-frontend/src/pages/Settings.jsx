@@ -2817,6 +2817,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
     adFirstReply: {
       enabled: config.adFirstReply?.enabled === true,
+      rm68ImageUrl: config.adFirstReply?.rm68ImageUrl || "",
       replies: (config.adFirstReply?.replies || []).map(item => ({
         service: item.service,
         translations: { zh: item.translations?.zh || "", en: item.translations?.en || "", ms: item.translations?.ms || "" },
@@ -2881,6 +2882,41 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           Your saved opening is not automatically extended with another assessment question.
           Existing Before / After, pricing, delivery and follow-up rules remain in place.
         </p>
+        {/^(?:neutro\s+sense\s+tcm)(?:\s+centre)?$/i.test(
+          String(config.businessName || "").trim()
+        ) && (
+          <div className="mt-4 rounded-xl border border-[var(--color-border)] p-3.5">
+            <p className="text-sm font-semibold">RM68 breast-care campaign graphic</p>
+            <p className="mt-1 mb-3 text-xs text-[var(--color-text-muted)]">
+              Optional. Sent once after the welcome text to verified RM68 Meta ad enquiries only.
+              The poster describes the 45-minute chest-care session; the complimentary
+              moxibustion treatment brings the total visit to approximately 1 hour 30 minutes.
+              This does not affect the regular RM388 Pulse Wave promotion.
+            </p>
+            <ImageFieldEditor
+              value={form.adFirstReply.rm68ImageUrl}
+              alt="Neutro RM68 campaign artwork"
+              allowUrl={false}
+              onError={onError}
+              onChange={(uploadedUrl) => {
+                let path = "";
+                if (uploadedUrl) {
+                  try { path = new URL(uploadedUrl, window.location.origin).pathname; }
+                  catch { onError("Please upload a campaign image."); return; }
+                }
+                if (path && !/^\/promo-images\/[1-9][0-9]{0,9}$/.test(path)) {
+                  onError("Only a Settings-uploaded promotion image can be used here.");
+                  return;
+                }
+                updateAdFirstReply(current => ({ ...current, rm68ImageUrl: path }));
+              }}
+            />
+            <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+              After uploading, click Save AI behavior. Previously contacted leads will not be
+              sent the image again automatically.
+            </p>
+          </div>
+        )}
         <div className="mt-4 space-y-4">
           {form.adFirstReply.replies.map((item, index) => (
             <div key={item.service} className="rounded-xl border border-[var(--color-border)] p-3.5">
