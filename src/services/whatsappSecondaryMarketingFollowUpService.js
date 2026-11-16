@@ -836,7 +836,14 @@ async function runOnce({
       // No Graph API call has happened when this final authorization fails.
       // Return an explicit pre-provider cancellation, never an ambiguous
       // provider outcome that would create a false billing hold.
-      if(!await current() || !await validateTemplate())
+      let allowed=false;
+      try{
+       allowed=await current() && Boolean(await validateTemplate());
+      }catch{
+       // A failed policy lookup also occurs before any provider request.
+       // Never wrap the actual Meta send in this catch.
+      }
+      if(!allowed)
        return{success:false,preProviderCancelled:true,retryable:false};
       return transport.sendTemplatePayload(template.name,template.language,[]);
      },
