@@ -668,8 +668,6 @@ async function runOnce({
 const PENDING_SQL=`SELECT EXISTS(
   SELECT 1 FROM whatsapp_sender_ai_media_jobs job
   JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
-  LEFT JOIN messages inbound ON inbound.id=job.inbound_message_id
-    AND inbound.contact_id=job.contact_id AND inbound.role='user'
   WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
     AND sender.meta_account_id=$3 AND sender.state='active'
     AND job.state IN ('pending','claimed')
@@ -716,6 +714,8 @@ const RECOVERY_DEADLINE_SQL=`
         ) AS next_pending_at
  FROM whatsapp_sender_ai_media_jobs job
  JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
+  LEFT JOIN messages inbound ON inbound.id=job.inbound_message_id
+    AND inbound.contact_id=job.contact_id AND inbound.role='user'
  WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
    AND sender.meta_account_id=$3 AND sender.state='active'
    AND job.state IN ('pending','claimed')
