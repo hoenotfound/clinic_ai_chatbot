@@ -419,6 +419,18 @@ async function sendSecondaryStaffText({
       : typeof dispatchTransport === "function"
         ? await dispatchTransport(transport)
         : await transport.sendText(text.trim(), { replyToProviderMessageId });
+    // This signal is produced only by our marketing follow-up callback
+    // before it invokes sendTemplatePayload. It is NOT a Meta HTTP result.
+    // Never treat ambiguous responses, timeouts or provider WAMIDs as proof
+    // of cancellation or use this path for staff/AI sends.
+    if (origin === "marketing_followup" &&
+        typeof dispatchTransport === "function" &&
+        send?.preProviderCancelled === true &&
+        send?.success === false && !send?.wamid &&
+        send?.unknown !== true && send?.ambiguous !== true) {
+      return cancelProvenMarketingBeforeProvider(
+        "secondary_marketing_cancelled_before_meta");
+    }
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
     if (!accepted) {
       // Only allowlisted scalar diagnostics. The transport's original body,
