@@ -49,6 +49,14 @@ function dayQuestion(now = Date.now()) {
     : "请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊";
 }
 
+// A campaign-specific Settings image is accepted only as a first-party
+// public-config upload, never as a remote URL or a normal RM388 promo.
+function configuredFirstReplyImage({ config, businessName, now = Date.now() } = {}) {
+  if (!isNeutro(businessName) || campaignDay(now) === "expired") return null;
+  const path = String(config?.adFirstReply?.rm68ImageUrl || "").trim();
+  return /^\/promo-images\/[1-9][0-9]{0,9}$/u.test(path) ? path : null;
+}
+
 function firstReply(now = Date.now()) {
   if (campaignDay(now) === "expired") {
     return [
@@ -64,7 +72,8 @@ function firstReply(now = Date.now()) {
     "",
     "✨ 首次体验只需 RM68（原价以门店公告为准）",
     "📅 活动日期：" + dayLine(now),
-    "⏰ 全程约 1小时30分钟",
+    "⏰ RM68胸部护理约45分钟；加上赠送护理，全程约 1小时30分钟",
+    "🎁 免费赠送艾灸护理",
     "",
     "护理包含：",
     "✅ 专业胸部健康评估",
@@ -128,7 +137,7 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
       "，全程约1小时30分钟。具体名额需要由门店确认哦 😊 " + dayQuestion(now);
   }
   if (INCLUDES_QUESTION.test(text)) {
-    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理，以及胸部日常护理建议；全程约1小时30分钟。" +
+    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理、胸部日常护理建议，并免费赠送艾灸护理；全程合计约1小时30分钟。" +
       "这项护理不等于医院的乳腺癌筛查或医学诊断 😊";
   }
   if (AMOUNT_QUESTION.test(text)) {
@@ -139,7 +148,7 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
       "名额以门店确认为准 😊";
   }
   if (DURATION_QUESTION.test(text)) {
-    return "这个 RM68 胸部健康评估 + 脉冲波舒缓护理活动，全程约1小时30分钟，活动日期为" +
+    return "这个 RM68 胸部健康评估 + 脉冲波舒缓护理活动，包含赠送的艾灸护理，全程合计约1小时30分钟，活动日期为" +
       dates + "。想预约可以先告诉我们方便的日期，由门店确认名额哦 😊";
   }
   return "您之前咨询的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，活动日期为" +
@@ -199,7 +208,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
 module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
-  firstReply, isCampaignOpening, hasCampaignConversation,
+  firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, campaignContextReply, guardCampaignPriceConflicts,
   candidateIsCampaign, campaignFollowUp,
 };
