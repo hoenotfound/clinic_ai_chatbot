@@ -474,6 +474,36 @@ const EXTENDED_SESSION_SQL=`
   ORDER BY reply.created_at,origin.id LIMIT 1
  ) qualified_session ON TRUE
 `;
+// An earlier Day4/Day6 attempt cancelled *before Meta* must not suppress
+// a different future slot. Only sender-bound proof that the saved message
+// was never sent may clear this blocker. Unknown outcomes and actual provider
+// failures retain all normal review and one-shot protections.
+const PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL=`
+ bad.status='blocked'
+ AND bad.error_code='secondary_pre_provider_cancelled'
+ AND EXISTS (
+   SELECT 1 FROM messages cancelled
+   JOIN whatsapp_sender_billing_attempts rejected
+     ON rejected.sender_id=bad.sender_id
+     AND rejected.contact_id=bad.contact_id
+     AND rejected.message_id=cancelled.id
+   WHERE cancelled.id=bad.message_id
+     AND cancelled.contact_id=bad.contact_id
+     AND cancelled.role='assistant'
+     AND cancelled.delivery_status='cancelled'
+     AND cancelled.whatsapp_message_id IS NULL
+     AND cancelled.whatsapp_accepted_at IS NULL
+     AND rejected.state='rejected' AND rejected.wamid IS NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM whatsapp_sender_status_receipts receipt
+       WHERE receipt.sender_id=rejected.sender_id
+         AND receipt.reservation_id=rejected.reservation_id
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM outbound_message_evidence outbound
+       WHERE outbound.message_id=cancelled.id
+     )
+ )`;
 const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  // Preserve the independent fixed Day4/Day6 ad-session deadlines.
  .replaceAll(ORDINARY_MARKETING_DUE_SQL,"first_reply.at+rule.slot_hours*INTERVAL '1 hour'")
@@ -492,6 +522,11 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
   "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
  .replace("bad.anchor_message_id=inbound.id","bad.anchor_message_id IS NOT NULL")
+ // Preserve the single-attempt ban for the *same* slot below. The shared
+ // session blocker applies only to genuinely uncertain/unsent-unverified rows.
+ .replace("bad.status IN('unknown','blocked')",
+   "bad.status IN('unknown','blocked') AND NOT ("+
+     PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL+")")
  .replace("attempted.anchor_message_id=inbound.id",
   "attempted.anchor_message_id=qualified_session.origin_id")
  .replace("ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
@@ -798,8 +833,11 @@ async function runOnce({
      },
      preSendCheck:async()=>await current() && Boolean(await validateTemplate()),
      dispatchTransport:async transport=>{
+      // No Graph API call has happened when this final authorization fails.
+      // Return an explicit pre-provider cancellation, never an ambiguous
+      // provider outcome that would create a false billing hold.
       if(!await current() || !await validateTemplate())
-       return{success:false,ambiguous:true,retryable:false};
+       return{success:false,preProviderCancelled:true,retryable:false};
       return transport.sendTemplatePayload(template.name,template.language,[]);
      },
    },{database,env,fetchImpl});
@@ -868,6 +906,7 @@ function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  ORDINARY_MARKETING_DUE_SQL,ORDINARY_NEWER_DUE_SQL,
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+ PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
  approvedStaticMarketingTemplate,finishProvenMarketingPreProviderCancellation,runOnce,nextPotentialDueAt,start,stop,
