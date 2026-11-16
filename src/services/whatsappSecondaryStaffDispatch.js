@@ -354,14 +354,32 @@ async function sendSecondaryStaffText({
       reservationId: reserved.reservationId,
     }, { database, env }).catch(() => {});
   };
+  // Only automated marketing uses this narrow proof of NO Meta request.
+  // AI/staff/other ambiguous outcomes retain their existing protective holds.
+  const cancelProvenMarketingBeforeProvider = async (code) => {
+    const outcome = await billingRepo.recordSecondaryProviderOutcome({
+      reservationId: reserved.reservationId, definitivelyRejected: true,
+    }, { database, env }).catch(() => null);
+    if (outcome?.recorded === true && outcome.state === "rejected") {
+      return { ...block(code), cancelled: true, preProviderCancelled: true };
+    }
+    await markUnknown();
+    return { ...block(code), unknown: true, ambiguous: true };
+  };
   try {
     const fresh = await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
+      if (origin === "marketing_followup") {
+        return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
+      }
       await markUnknown();
       return { ...block("secondary_send_cancelled_after_reservation"),
         unknown: true, ambiguous: true };
     }
     if (fresh.policyAllowed !== true) {
+      if (origin === "marketing_followup") {
+        return cancelProvenMarketingBeforeProvider(fresh.code || "secondary_staff_policy_changed");
+      }
       await markUnknown();
       return block(fresh.code || "secondary_staff_policy_changed");
     }
@@ -376,6 +394,9 @@ async function sendSecondaryStaffText({
       return block("secondary_staff_reservation_unverified");
     }
     if (!await stillEligible()) {
+      if (origin === "marketing_followup") {
+        return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
+      }
       await markUnknown();
       return {...block("secondary_ads_only_contact_ineligible"),unknown:true,ambiguous:true};
     }
@@ -384,6 +405,9 @@ async function sendSecondaryStaffText({
     // possible point before calling Meta. The consumed billing hold stays
     // unknown even when cancellation prevents the provider call.
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
+      if (origin === "marketing_followup") {
+        return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_before_provider");
+      }
       await markUnknown();
       return {...block("secondary_send_cancelled_before_provider"),
         unknown:true, ambiguous:true};
