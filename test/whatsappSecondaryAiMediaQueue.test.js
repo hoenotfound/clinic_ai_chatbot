@@ -146,6 +146,47 @@ test("private before/after image loads trusted DB bytes and uploads through seco
  assert.deepEqual(request,{type:"image",id:"77777",options:{caption:job.caption}});
  assert.equal(args.calls.filter(c=>c.wamid).length,1);
 });
+test("late English request swaps queued result to approved English artwork and caption",async()=>{
+ const chinese="https://clinic.example/result-zh.jpg";
+ const english="https://clinic.example/result-en.jpg";
+ const args=mocks({jobImageUrl:chinese});
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql.includes("FROM messages newer")
+   ? {rows:[{content:"In English please"}]}
+   : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:chinese,caption:"中文案例",
+     mediaTranslations:{en:{imageUrl:english,caption:"English result example"}}}]}]});
+ args.send=async payload=>{
+   assert.equal(payload.text,"English result example");
+   return payload.dispatchTransport({sendImageByUrl:async(url,caption)=>{
+     assert.equal(url,english);
+     assert.equal(caption,"English result example");
+     return {success:true,wamid:"wamid.localized"};
+   }});
+ };
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,1);
+ const outbound=args.calls.find(entry=>entry.appended)?.appended;
+ assert.equal(outbound?.[2],"English result example");
+ assert.equal(outbound?.[5],english);
+});
+
+test("late English request with no approved localized artwork suppresses optional media",async()=>{
+ const chinese="https://clinic.example/result-zh.jpg";
+ const args=mocks({jobImageUrl:chinese});
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql.includes("FROM messages newer")
+   ? {rows:[{content:"In English please"}]}
+   : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:chinese,caption:"中文案例"}]}]});
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,0);
+ assert.equal(args.calls.filter(entry=>entry.appended || entry.send).length,0);
+ assert.ok(args.calls.some(entry=>entry.sql?.includes("state=$2")&&entry.args?.[1]==="expired"));
+});
+
 test("missing private image never falls back to private HTTP URL or sends a Graph message",async()=>{
  const url="/api/config/result-media/image/78";
  const args=mocks({jobImageUrl:url});
