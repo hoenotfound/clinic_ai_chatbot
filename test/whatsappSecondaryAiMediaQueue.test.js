@@ -574,6 +574,23 @@ test("solicited pricing is recorded durably, while normal promotions and results
   }
 });
 
+test("fresh signed Before & After images are eligible overnight without relaxing safety gates",()=>{
+ for(const sql of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+   assert.match(sql,/job\.media_kind='result' AND inbound\.whatsapp_message_id IS NOT NULL/);
+   assert.match(sql,/inbound\.created_at BETWEEN NOW\(\) - INTERVAL '2 hours' AND NOW\(\)/);
+   assert.match(sql,/job\.created_at >= inbound\.created_at/);
+   assert.match(sql,/job\.created_at <= inbound\.created_at \+ INTERVAL '5 minutes'/);
+   assert.match(sql,/job\.media_kind='promotion' AND job\.solicited_pricing=TRUE/);
+   assert.match(sql,/whatsapp_opt_out_at IS NULL/);
+   assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
+   assert.match(sql,/job\.expires_at>NOW\(\)/);
+   assert.match(sql,/sent_by_username IS NOT NULL/);
+ }
+ assert.match(worker.READY_SQL,/inbound\.whatsapp_message_id IS NOT NULL/);
+ assert.match(worker.READY_SQL,/mc\.conversation_id=sc\.id/);
+ assert.match(worker.STILL_VALID_SQL,/job\.state='claimed'/);
+});
+
 test("server can mark a solicited image only from approved pricing authority",()=>{
   const fs=require("node:fs");
   const path=require("node:path");
