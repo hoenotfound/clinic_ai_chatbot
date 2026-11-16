@@ -163,6 +163,31 @@ function staffLanguageHandoff(original, language) {
   };
 }
 
+// A nonclinical translation failure is not itself a request for staff. Do not
+// release the rejected draft or its price/media/booking intentions. The
+// customer's next message still goes through the ordinary guarded AI path.
+function ordinaryLanguageFallback(original, language) {
+  const message = language === "ms"
+    ? "Baik 😊 Saya akan balas dalam Bahasa Malaysia. Boleh beritahu apa yang anda ingin tahu?"
+    : language === "zh"
+      ? "好的 😊 接下来我会用中文回复您。请问您想进一步了解什么呢？"
+      : "Of course 😊 I'll continue in English. What would you like to know?";
+  return {
+    ...original,
+    text: message,
+    outcome: "normal",
+    flagged: false,
+    reviewRequired: false,
+    bookingReady: false,
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    packageQuery: false,
+    details: null,
+    languageCorrectionFailed: true,
+  };
+}
+
 // The clinic booking-ready outcome contains staff-facing appointment evidence.
 // Do not ask a second generative model to rewrite a scheduling acknowledgement.
 // Only replace the customer-facing text with a fixed, unconfirmed acknowledgement,
@@ -198,6 +223,13 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
     if (isUsableCorrection(original, correction, language, options)) {
       return { ...original, text: correction.text };
     }
+    if (correction && sameIntent(original, correction) &&
+        correctionPreservesClaims(original, correction, options) &&
+        clearReplyLanguageMismatch(correction.text, language, options)) {
+      // A second response that is still in the wrong language is a benign
+      // formatting failure, not proof that a human must take over.
+      return ordinaryLanguageFallback(original, language);
+    }
     if (typeof onCorrectionError === "function") {
       const error = new Error("Language correction failed intent or fact validation.");
       error.code = "AI_LANGUAGE_CORRECTION_UNSAFE";
@@ -205,6 +237,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
     }
   } catch (error) {
     if (typeof onCorrectionError === "function") onCorrectionError(error);
+    return ordinaryLanguageFallback(original, language);
   }
 
   // Unlike information review, a true handoff cannot be silently cleared by

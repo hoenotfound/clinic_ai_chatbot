@@ -11,6 +11,8 @@ const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGate");
 const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
+const {latestQueuedLanguagePreference,resolveQueuedMediaLanguage}=
+  require("../utils/queuedMediaLanguage");
 const configRepo=require("../db/configRepo");
 const {createAdaptiveWorkerTimer}=require("../utils/adaptiveWorkerTimer");
 const realtimeEvents=require("../utils/realtimeEvents");
@@ -515,6 +517,16 @@ async function runOnce({
         contact.whatsapp_number!==job.whatsapp_number){
        await update("unknown");continue;
      }
+     // A customer can request English while a Chinese image is waiting for
+     // billing, quiet hours or the previous message receipt. Re-select the
+     // configured artwork at dispatch time, never send stale-language media.
+     const requestedLanguage=await latestQueuedLanguagePreference(
+       database,job.contact_id,job.inbound_message_id);
+     const media=resolveQueuedMediaLanguage({
+       imageUrl:job.image_url,caption:job.caption,kind:job.media_kind,
+       language:requestedLanguage,config:getConfig(),
+     });
+     if(!media){await update("expired");continue;}
      const preSendCheck=async()=>{
        const check=await database.query(STILL_VALID_SQL,[
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -538,6 +550,9 @@ async function runOnce({
        try{return isAuthorizedImage({
          imageUrl:job.image_url,kind:job.media_kind,config:getConfig(),
          now:new Date(),
+       })===true && isAuthorizedImage({
+         imageUrl:media.imageUrl,kind:job.media_kind,config:getConfig(),
+         now:new Date(),
        })===true;}catch{return false;}
      };
      if(!imageApproved() || !await preSendCheck()){
@@ -546,7 +561,7 @@ async function runOnce({
      let messageId=job.outbound_message_id;
      if(!messageId){
        const saved=await store.appendMessageForContact(
-         contact.id,"assistant",job.caption,null,null,job.image_url,null,
+         contact.id,"assistant",media.caption,null,null,media.imageUrl,null,
          {publish:false,
           whatsappTemplate:{automatedSecondaryAiMedia:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -573,16 +588,16 @@ async function runOnce({
        [messageId,"Secondary image send started; Meta acceptance not confirmed."]
      );
      const result=await send({
-       contact,messageId,text:job.caption||"[automatic image]",
+       contact,messageId,text:media.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,anchorMessageId:job.inbound_message_id,
        dispatchTransport:async(transport)=>{
          if(!imageApproved() || !await preSendCheck())
            return {success:false,unknown:true,ambiguous:true,retryable:false};
-         if(clinicImage.storedClinicImageRef(job.image_url)){
+         if(clinicImage.storedClinicImageRef(media.imageUrl)){
            // Never pass a private before/after preview URL to Meta.
            // Download only a matching-purpose configured image from Neon,
            // then upload it using the SECONDARY phone's Graph transport.
-           const image=await loadClinicImage(job.image_url);
+           const image=await loadClinicImage(media.imageUrl);
            if(!image)return {success:false,unknown:true,ambiguous:true,retryable:false};
            const uploaded=await transport.uploadMedia(
              image.buffer,image.mimeType,image.filename);
@@ -590,11 +605,11 @@ async function runOnce({
              return {success:false,unknown:true,ambiguous:true,retryable:false};
            if(!imageApproved() || !await preSendCheck())
              return {success:false,unknown:true,ambiguous:true,retryable:false};
-           return transport.sendMediaById("image",uploaded.mediaId,{caption:job.caption});
+           return transport.sendMediaById("image",uploaded.mediaId,{caption:media.caption});
          }
          if(!imageApproved() || !await preSendCheck())
            return {success:false,unknown:true,ambiguous:true,retryable:false};
-         return transport.sendImageByUrl(job.image_url,job.caption);
+         return transport.sendImageByUrl(media.imageUrl,media.caption);
        },
      },{env,database});
      if(result?.success===true && result?.unknown!==true &&
