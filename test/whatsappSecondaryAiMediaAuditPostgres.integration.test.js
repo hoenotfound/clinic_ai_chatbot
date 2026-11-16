@@ -270,7 +270,7 @@ test("real all-contact PostgreSQL queue chooses newest plan, preserves benign qu
      allEnv.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT,
      "all_contacts",allEnv.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT];
    // Exercise priority independently of the actual Malaysia clock. The
-   // production READY_SQL still forbids all sends during 00:00-06:59 MYT.
+   // READY_SQL keeps the ordinary overnight pause; fresh verified result images are excepted.
    const quietHoursRule=
      "EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23";
    assert.ok(queue.READY_SQL.includes(quietHoursRule));
