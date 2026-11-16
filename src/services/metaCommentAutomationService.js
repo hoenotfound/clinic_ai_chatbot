@@ -747,7 +747,8 @@ function createMetaCommentAutomationService({
 
   function scheduleJob(jobOrId) {
     // Webhook arrivals run immediately. Only failed jobs need a timed retry.
-    const task = scheduledJobChain.then(() => processJob(jobOrId));
+    const task = require("../utils/migrationLifecycle").lifecycle.run("Meta comment job",
+      () => scheduledJobChain.then(() => processJob(jobOrId)));
     scheduledJobChain = task.catch(() => {});
     task.then(
       (job) => { if (job?.status === "failed") recoveryWorker?.wake(0); },

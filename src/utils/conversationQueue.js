@@ -7,6 +7,7 @@
 const queues = new Map();
 const replyQueues = new Map();
 const bursts = new Map();
+const { lifecycle } = require("./migrationLifecycle");
 
 const DEFAULT_BURST_DELAY_MS = 1200;
 const MAX_BURST_DELAY_MS = 3000;
@@ -15,7 +16,7 @@ const MAX_BURST_ITEMS = 20;
 function enqueueOn(queueMap, key, task) {
   const queueKey = String(key || "unknown");
   const previous = queueMap.get(queueKey) || Promise.resolve();
-  const current = previous.catch(() => {}).then(task);
+  const current = lifecycle.run("conversation queue", () => previous.catch(() => {}).then(task));
 
   queueMap.set(queueKey, current);
   current
@@ -94,7 +95,7 @@ function enqueueConversationBurst(
   }
 
   entry.items.push(item);
-  return new Promise((resolve, reject) => {
+  return lifecycle.run("conversation burst", () => new Promise((resolve, reject) => {
     entry.waiters.push({ resolve, reject });
 
     const shouldFlushNow = entry.items.length >= MAX_BURST_ITEMS;
@@ -108,7 +109,7 @@ function enqueueConversationBurst(
       () => flushBurst(queueKey, entry),
       normalizeDelay(delayMs)
     );
-  });
+  }));
 }
 
 module.exports = {

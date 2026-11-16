@@ -2,15 +2,13 @@
 
 ## Status and limits
 
-Preparation only. Nothing in this change is wired into normal startup. Do not
-merge, deploy, pause production or update Render variables without the owner's
-explicit production approval. Automatic deployments were off when inspected.
-
-The initial copy is verified, and a second full-copy rehearsal passed. **The
-production switch remains blocked by the absence of a tested application-wide
-stop-claim and drain procedure.** The holding server prevents a *new* process
-from starting chatbot workers. It cannot drain or prove retirement of the old
-process. A successful health check or quiet SQL sample does not establish that.
+Preparation only. Do not merge, deploy, pause production or update Render
+variables without explicit production approval. Automatic deployments were off
+when inspected. The initial copy and a second full-copy rehearsal are verified.
+The opt-in planned pause control is implemented and locally tested in this PR.
+It is not deployed. Production still lacks this control, and the destination
+copy is stale. A live transition and actual provider retry delivery remain
+unverified. This document does not authorize the production switch.
 
 | Resource | Value |
 | --- | --- |
@@ -126,25 +124,58 @@ other source client is connected, then verifies source contents again after
 the restore. Prevent reconnecting writers throughout the maintenance window.
 The script never changes Render or starts the application.
 
-## Required before requesting cutover approval
+## Planned pause control and remaining release gates
 
-1. Establish and test a complete stop-claim and drain mechanism covering normal
-   HTTP handlers, detached inbound work, startup jobs, all schedulers, retry
-   workers and external sends. Current startup has multiple independent
-   workers and no application-wide shutdown handler. Stopping only the adaptive
-   timers is insufficient.
-2. Test the transition from the existing application to holding mode with
-   dispatch disabled and synthetic events. Prove old work settles, no new work
-   starts, callback failures remain retryable, and the migration shell remains
-   available after old-instance retirement. The current local hold tests and
-   live copy rehearsal do not prove that combined transition.
-3. Establish the maintenance time limit and recovery path if active sends
-   cannot be settled. The observed historical unknown gates/attempts must
-   remain protected. New uncertain sends require receipt reconciliation; do
-   not mark them pending or retry them to make the audit pass.
-4. Recheck source consumers, deployed commit, destinations and free storage
-   capacity immediately before the approved window. Do not silently include
-   later application changes.
+`NEUTRO_MIGRATION_CONTROL=20261116` enables the reviewed Neutro-only control.
+It defaults off, validates client identity, source/destination database host and
+name, and refuses one-off recovery send/reencode jobs or PR395 staging mode.
+There is no public control endpoint. From the trusted Render shell, inspect
+`/tmp/neutro-migration-drain-status.json`, verify its PID belongs to the current
+application process, then send SIGUSR2 to that exact PID. Never signal a PID
+from an older deployment. The initial file must report enabled and running.
+
+The signal makes Neutro ingress return 503, stops new timer work and waits for
+tracked HTTP handlers, queued replies, detached receipt/recovery continuations,
+provider sends and subsequent outcome writes. This includes handlers that have
+already acknowledged HTTP or whose client disconnected. SSE streams close.
+The application pool closes only after tracked work completes. Other-client
+shared-router traffic uses its separate pool and stays available. Mixed
+batches containing Neutro fail before any forwarding. GET / remains healthy
+and explicitly reports draining or holding; this is not chatbot readiness.
+
+The private status file contains no credentials or customer identifiers. Require
+fresh consecutive heartbeats (under five seconds old), the current PID, phase
+held, active=0, faults=0 and safeToRetire=true before retirement. The process
+remains alive. This status is local evidence only: separately check source
+connections, protected attempts and Render instance retirement. A late denied
+database operation changes safeToRetire to false. Never override a failure or
+set readiness by hand. There is no automatic timeout, resume or send replay.
+This is a planned SIGUSR2 pause, not a generic SIGTERM shutdown handler.
+
+The first deployment of this code cannot retroactively drain the currently
+running old code. It needs a separately approved, monitored preparatory rollout
+against the existing source, with a quiet-job check and inspection of any
+interrupted or uncertain sends. Do not combine that rollout with DATABASE_URL
+changes. A failed rollout must leave the original source authoritative.
+
+Before final cutover approval:
+
+1. Require passing CI, including the real PostgreSQL drain test. Review and
+   approve the preparatory rollout separately; check the running code identity
+   and private status before attempting any pause.
+2. Verify a holding process with a usable migration shell and actual Render
+   retirement evidence. Synthetic local HTTP/process tests do not prove Render
+   process replacement or Meta redelivery. Establish the verified callback
+   retry procedure or an independent durable ingress path before the pause.
+3. Define the operational maintenance budget after measuring deploy duration.
+   If drain stalls or fails, stop the procedure, keep the original source and
+   inspect active tasks/receipts. Never force-close active sends or clear unknown
+   holds to meet a deadline. Resume only through one reviewed source-backed
+   process after proving the old dispatcher is retired and reconciling any new
+   uncertain sends. Escalate rather than silently extending the pause.
+4. Recheck source consumers, deployed commit, free storage and protected send
+   records immediately before the approved window. Quiet SQL alone cannot
+   establish that no external send is active or that no writer will reconnect.
 
 ## Conditional production procedure after those checks and owner approval
 
@@ -193,56 +224,30 @@ provider receipts and uncertain sends before any worker resumes. Never replay
 completed follow-ups or release historical billing holds. Keep the original
 project and all existing backups throughout.
 
-## Validation
+## Validation and observed production state
 
-60 tests passed across the migration hold, boundary/copy guards, existing Meta
-router, embedded router, WhatsApp default relay and relay-deadline suites.
-There was no deployment, live shutdown rehearsal, end-to-end AI check or
-post-cutover monitoring because no production switch occurred.
+The final local full suite passed 4,283 tests with zero failures; 169 tests were
+skipped because their database or external test prerequisites were unavailable.
+A separate PostgreSQL-backed drain test is included for CI. Targeted coverage
+includes a real child process receiving SIGUSR2, a pending synthetic receipt,
+HTTP 503 during drain, database closure before ready, client disconnect, late
+secondary commits after HTTP timeout, and a signed mixed-client router batch.
+All dispatch in these tests is synthetic; no customer messages are sent.
 
-### Follow-up shutdown and recovery check, 13:51 UTC
+Earlier copy/holding tests and the live copy rehearsal remain valid. At 13:51:11
+UTC, read-only source inspection found no open inbound/receipt jobs, scheduled
+messages, AI generation claims or pricing preflight retries. Six application
+connections were idle. Historical unknowns included two gates, four billing
+attempts, 12 service-follow-up attempts and two marketing-follow-up attempts.
+None was reset or replayed. This is an earlier sample, not a current boundary.
 
-123 focused tests passed across inbound recovery, receipt recovery, scheduled
-messages, timer behavior, callback durability, shared routing, the hold server
-and copy/boundary guards. These include synthetic failure, duplicate and
-out-of-order recovery cases. Tests using fake repositories are not a live Meta
-redelivery test or a production stop/restart rehearsal.
-
-A controlled local probe of the actual adaptive timer demonstrated that
-`stop()` returns immediately while its current async run is still active. It
-rejects new wakes and does not reschedule, but exposes no promise that waits for
-the run to finish. The active work completed only after the probe explicitly
-released it. Startup ignores returned stop functions for inbound recovery,
-receipt recovery and retry workers; the scheduled-message bootstrap discards
-its underlying stop function. Preload timers need separate coverage. The main
-chatbot has no SIGTERM/SIGINT handler; the signal handlers in the standalone
-router and operations service are not a chatbot shutdown mechanism.
-
-At 13:51:11 UTC, read-only production inspection found zero open inbound jobs,
-zero open receipt jobs, zero scheduled messages, zero AI generation leases and
-zero pricing preflight retries. Receipt jobs were 51 completed and five failed
-with terminal state. Six source connections belonged to the live chatbot and
-were idle at that instant. An idle connection does not prove its process has
-stopped or that no external request is in flight.
-
-The state inspection also found two unknown billing gates, four unknown billing
-attempts, 12 unknown service-follow-up attempts and two unknown marketing
-follow-up attempts. No state was reset, released or replayed.
-
-The prepared boundary checker initially omitted `processing_status`, which is
-used by delivery receipt jobs, and leases without a state column. This check
-corrected that omission and added regression tests. The checker now reports
-receipt processing states, AI generation leases, pricing retry counts, manual
-template claim counts, open receipts and terminal receipts. It still never
-authorizes a cutover or claims process retirement.
-
-Result: database recovery safeguards and synthetic callback failure handling
-passed their checks; application-wide shutdown and provider redelivery during
-a real pause remain unverified. Keep production and DATABASE_URL unchanged.
+Render was rechecked during this implementation and still runs commit
+6d313523466935b82fd9601b3536fd1155f1fbce, deployment
+dep-dbtdo9mtlv9c73f2iuhg. No production rollout, pause, URL change, live callback
+retry test, end-to-end AI check or post-cutover monitoring occurred.
 
 Vendor references:
 
-- https://render.com/docs/maintenance-mode (does not stop the process)
-- https://render.com/docs/deploys (old/new process overlap and deploy lifecycle)
+- https://render.com/docs/maintenance-mode
+- https://render.com/docs/deploys
 - https://developers.facebook.com/docs/graph-api/webhooks/getting-started/
-  (failed callback retry behavior)

@@ -131,7 +131,7 @@ test("legacy safety checks are positioned before the durable webhook claims", ()
   const parse = code.indexOf("whatsapp.parseIncomingMessages(webhookBody)", start);
   const durableClaim = code.indexOf("await durablyClaimIncoming(", start);
   const ack = code.indexOf("res.sendStatus(200)", start);
-  const mixedAudit = code.indexOf("void recordQuarantinedWhatsAppChanges", ack);
+  const mixedAudit = code.indexOf('void lifecycle.run("quarantine audit continuation", () => recordQuarantinedWhatsAppChanges', ack);
   assert.ok(start >= 0 && start < boundary && boundary < durableAudit
     && durableAudit < parse && parse < durableClaim && durableClaim < ack
     && ack < mixedAudit);

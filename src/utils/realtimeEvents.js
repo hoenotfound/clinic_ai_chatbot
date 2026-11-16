@@ -1,5 +1,12 @@
 const clients = new Set();
 const listeners = new Map();
+const { lifecycle } = require("./migrationLifecycle");
+lifecycle.registerStop(clients, () => {
+  for (const client of clients) {
+    try { client.res.end(); } catch (_) {}
+  }
+  clients.clear();
+});
 const { recordSseLifecycle } = require("./refreshWakeDiagnostics");
 
 function normalizeAccess(res) {

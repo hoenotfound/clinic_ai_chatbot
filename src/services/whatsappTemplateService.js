@@ -643,3 +643,5 @@ module.exports = {
   templateConfig,
   validateTemplateValues,
 };
+require("../utils/migrationLifecycle").trackMethods(module.exports,
+  ["sendApprovedTemplate"], "primary template send");

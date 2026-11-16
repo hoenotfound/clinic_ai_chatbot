@@ -1,5 +1,6 @@
 const { withDatabaseActivitySource } = require("./databaseActivityContext");
 const { recordWorkerRun } = require("./workerActivityMetrics");
+const { lifecycle: migrationLifecycle } = require("./migrationLifecycle");
 
 function normalizeDelay(delayMs) {
   if (delayMs === null || delayMs === undefined) return null;
@@ -17,6 +18,7 @@ function createAdaptiveWorkerTimer({
   now = Date.now,
   setTimeoutImpl = setTimeout,
   clearTimeoutImpl = clearTimeout,
+  lifecycle = migrationLifecycle,
 } = {}) {
   if (typeof run !== "function") {
     throw new TypeError("createAdaptiveWorkerTimer requires a run function.");
@@ -31,6 +33,7 @@ function createAdaptiveWorkerTimer({
   let stopped = true;
   let pendingWakeDelay = null;
   let runCount = 0;
+  let unregisterStop = () => {};
 
   function clearScheduledTimer() {
     if (timer) clearTimeoutImpl(timer);
@@ -69,7 +72,7 @@ function createAdaptiveWorkerTimer({
   }
 
   async function execute() {
-    if (stopped) return;
+    if (stopped || !lifecycle.accepting()) return;
     clearScheduledTimer();
 
     if (running) {
@@ -84,7 +87,7 @@ function createAdaptiveWorkerTimer({
     let failed = false;
 
     try {
-      result = await withDatabaseActivitySource(label, run);
+      result = await lifecycle.run(label, () => withDatabaseActivitySource(label, run));
     } catch (err) {
       failed = true;
       logger.error?.(`${label} failed:`, err);
@@ -118,15 +121,18 @@ function createAdaptiveWorkerTimer({
   }
 
   function start(initialDelayMs = 0) {
+    if (!lifecycle.accepting()) return stop;
     if (!stopped) return stop;
     stopped = false;
     runCount = 0;
     pendingWakeDelay = null;
+    unregisterStop = lifecycle.registerStop(stop, stop);
     schedule(initialDelayMs);
     return stop;
   }
 
   function stop() {
+    unregisterStop();
     stopped = true;
     pendingWakeDelay = null;
     clearScheduledTimer();

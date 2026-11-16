@@ -118,9 +118,9 @@ async function hydrateSocialContactRow(row) {
       // Profile data is presentation-only. Never hold the Inbox/Contacts API
       // open for Meta longer than a short grace period. If Meta finishes later,
       // persist the result and publish an Inbox refresh event in the background.
-      profilePromise
+      require("../utils/migrationLifecycle").lifecycle.run("social profile continuation", () => profilePromise
         .then((profile) => persistSocialProfile(row, profile))
-        .catch((err) => logSocialEnrichmentError(row, err));
+        .catch((err) => logSocialEnrichmentError(row, err)));
       return row;
     }
 

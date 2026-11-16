@@ -167,7 +167,7 @@ function createWhatsAppDeliveryStatusService({
       wakeResultMedia(0);
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
-      Promise.resolve().then(() => reconcileFreeOnlyGate())
+      require("../utils/migrationLifecycle").lifecycle.run("receipt gate reconciliation", () => Promise.resolve().then(() => reconcileFreeOnlyGate())
         .then((released) => {
           if (released) {
             wakeResultMedia(0);
@@ -176,13 +176,13 @@ function createWhatsAppDeliveryStatusService({
             publishPricingEvidence();
           }
         })
-        .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err));
+        .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err)));
     }
     // Never delay a webhook or drop persisted pricing evidence if Telegram
     // is unavailable. Durable alerts will be retried by recovery.
     if (updates?.some((update) => update?.pricingBillable === true)) {
-      Promise.resolve().then(() => billingAlerts.flush()).catch((err) =>
-        logger.error("[WhatsApp free-only] Billing-alert attempt failed:", err));
+      require("../utils/migrationLifecycle").lifecycle.run("receipt billing alert", () => Promise.resolve().then(() => billingAlerts.flush()).catch((err) =>
+        logger.error("[WhatsApp free-only] Billing-alert attempt failed:", err)));
     }
     return stored;
   }

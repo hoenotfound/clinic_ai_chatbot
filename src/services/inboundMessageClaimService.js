@@ -453,8 +453,8 @@ function createInboundMessageClaimService({
         await rotationAudit([notice],database);
         // Only optional notification delivery is asynchronous. The database
         // audit must finish before ACK; failure retries the signed webhook.
-        void Promise.resolve().then(()=>rotationNotify([notice])).catch(
-          ()=>console.warn("[WhatsApp identity rotation] operator alert unavailable"));
+        void require("../utils/migrationLifecycle").lifecycle.run("identity rotation alert", () => Promise.resolve().then(()=>rotationNotify([notice])).catch(
+          ()=>console.warn("[WhatsApp identity rotation] operator alert unavailable")));
       }
       // No customer turn, AI, opt-in, service window or follow-up is created.
       console.info("[WhatsApp identity rotation]",result.updated

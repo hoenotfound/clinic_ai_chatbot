@@ -1,4 +1,7 @@
 const { bootstrapAdminUser } = require("../db/bootstrapAdmin");
+const { lifecycle } = require("../utils/migrationLifecycle");
+const { trackedInterval } = require("../utils/migrationScheduledWork");
+const { installMigrationControl } = require("./migrationControlService");
 const configRepo = require("../db/configRepo");
 const followUpMediaReferencesRepo = require("../db/followUpMediaReferencesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
@@ -118,7 +121,7 @@ async function pruneStaleTemporaryMediaSafely() {
   }
 }
 
-async function startApplication({
+async function startApplicationImpl({
   app,
   port,
   processIncomingBatch,
@@ -128,6 +131,9 @@ async function startApplication({
   if (typeof processIncomingBatch !== "function") {
     throw new Error("startApplication requires processIncomingBatch.");
   }
+  installMigrationControl();
+  const rawSetInterval = setIntervalFn;
+  setIntervalFn = (fn, ms) => trackedInterval(fn, ms, rawSetInterval);
 
   console.log(
     `[Startup] Opening HTTP server on 0.0.0.0:${port} before initialization...`
@@ -218,7 +224,7 @@ async function startApplication({
 
     // Repair rare crash windows only once per process, without another
     // periodic Neon poll or any customer outbound activity.
-    void customerMutations.reconcilePendingOnStartup()
+    void lifecycle.run("startup mutation recovery", () => customerMutations.reconcilePendingOnStartup())
       .catch((error) => console.error("Customer mutation startup recovery failed:", error));
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
@@ -244,7 +250,8 @@ async function startApplication({
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
-    startMetaAdsInsightsSync();
+    const insightsWorker = startMetaAdsInsightsSync();
+    if (insightsWorker?.stop) lifecycle.registerStop(insightsWorker, insightsWorker.stop);
     // Read only configured feature flags. These labels reveal which optional
     // Neon recovery workers actually start; no SQL, secrets or contact data.
     console.info("[Neon idle-worker configuration]", JSON.stringify({
@@ -275,6 +282,10 @@ async function startApplication({
     await closeHttpServer(server);
     throw err;
   }
+}
+
+function startApplication(options) {
+  return lifecycle.run("application startup", () => startApplicationImpl(options));
 }
 
 module.exports = {

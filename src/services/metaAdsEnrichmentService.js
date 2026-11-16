@@ -245,9 +245,10 @@ function createMetaAdsEnrichmentService({
     immediateSweepQueued = true;
     const immediate = setImmediateImpl(async () => {
       immediateSweepQueued = false;
+      if (!require("../utils/migrationLifecycle").lifecycle.accepting()) return;
       try {
         if (worker) worker.wake(0);
-        else await runSweep();
+        else await require("../utils/migrationLifecycle").lifecycle.run("Meta enrichment immediate", runSweep);
       } catch (err) {
         logger.error?.("Failed to run immediate Meta Ads enrichment sweep:", err);
       }

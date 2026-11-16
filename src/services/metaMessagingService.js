@@ -1056,3 +1056,5 @@ module.exports = {
   resolveMessageEditEvents,
   downloadMedia,
 };
+require("../utils/migrationLifecycle").trackMethods(module.exports,
+  ["sendText", "sendImage", "replyToComment", "sendPrivateReplyToComment"], "Meta channel send");

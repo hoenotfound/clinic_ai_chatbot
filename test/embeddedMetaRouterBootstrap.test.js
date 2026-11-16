@@ -217,3 +217,34 @@ test("normal npm start preloads the optional embedded router bootstrap", () => {
     /-r \.\/src\/services\/embeddedMetaRouterBootstrap\.js/,
   );
 });
+
+test("drained embedded router refuses a mixed signed batch before forwarding other clients", async () => {
+  const { createMigrationLifecycle } = require("../src/utils/migrationLifecycle");
+  const migrationController = createMigrationLifecycle({ enabled: true });
+  const forwarded = [];
+  const env = { META_ROUTER_ENABLED: "true", META_ROUTER_DATABASE_URL: "postgres://synthetic/router",
+    META_APP_SECRET: "synthetic-signing-secret", META_VERIFY_TOKEN: "synthetic-verify" };
+  const embedded = prepareEmbeddedMetaRouter({ env, migrationController,
+    poolFactory: () => ({ query: async () => ({ rows: [] }) }),
+    repoFactory: () => ({ getRoutes: async (_channel, ids) => ids.map(id => ({
+      clientSlug: id === "neutro" ? "neutro-sense-tcm" : "other-client", channel: "facebook",
+      assetId: id, enabled: true, targetBaseUrl: "https://synthetic.example.test",
+    })) }),
+    appFactory: options => createMetaRouterApp({ ...options, fetchImpl: async url => {
+      forwarded.push(url); return { ok: true, status: 200 };
+    } }),
+  });
+  await migrationController.drain();
+  await withServer(embedded.routerApp, async base => {
+    async function send(ids) {
+      const raw = Buffer.from(JSON.stringify({ object: "page", entry: ids.map(id => ({ id,
+        messaging: [{ message: { mid: "synthetic-id", text: "synthetic" } }],
+      })) }));
+      const response = await fetch(base + "/meta-webhook", { method: "POST", body: raw,
+        headers: { "Content-Type": "application/json", "X-Hub-Signature-256": expectedMetaSignature(env.META_APP_SECRET, raw) } });
+      await response.text(); return response.status;
+    }
+    assert.equal(await send(["other", "neutro"]), 503); assert.equal(forwarded.length, 0);
+    assert.equal(await send(["other"]), 200); assert.equal(forwarded.length, 1);
+  });
+});

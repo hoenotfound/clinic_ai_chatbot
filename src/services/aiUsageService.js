@@ -124,11 +124,11 @@ function failureKind(error) {
 
 function queueUsage(event, { database = pool, repository = aiUsageRepo } = {}) {
   if (!process.env.DATABASE_URL && database === pool) return;
-  Promise.resolve()
+  require("../utils/migrationLifecycle").lifecycle.run("AI usage write", () => Promise.resolve()
     .then(() => repository.recordAiUsage(event, database))
     .catch((err) => {
       console.warn("Could not save AI usage metrics:", err?.message || err);
-    });
+    }));
 }
 
 function failedUsageEvent({ model, purpose, latencyMs, error }) {

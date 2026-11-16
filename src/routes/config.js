@@ -1772,7 +1772,7 @@ router.post(
       // Keep prior settings videos that are still referenced in historical
       // messages (Inbox playback and Retry). Never prune when the DB check
       // fails; a periodic worker can safely retry later.
-      followUpMediaReferencesRepo.listReferencedFollowUpConfigVideoKeys()
+      require("../utils/migrationLifecycle").lifecycle.run("configuration media prune", () => followUpMediaReferencesRepo.listReferencedFollowUpConfigVideoKeys()
         .then((referencedKeys) => mediaStorage.pruneStaleFollowUpConfigVideos({
           referencedKeys: [
             ...followUpVideoKeys(configRepo.getConfig().automatedFollowUp),
@@ -1782,7 +1782,7 @@ router.post(
         }))
         .catch((err) => {
           console.error("Failed to prune stale follow-up videos after upload:", err);
-        });
+        }));
       return res.status(201).json({
         key,
         filename,

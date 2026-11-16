@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { lifecycle } = require("../utils/migrationLifecycle");
 
 const { pool } = require("../db/db");
 const { start } = require("./metaAdsEnrichmentService");
@@ -6,7 +7,7 @@ const { start } = require("./metaAdsEnrichmentService");
 let workerStarted = false;
 
 async function startWhenSchemaIsReady() {
-  if (workerStarted || !process.env.META_MARKETING_ACCESS_TOKEN) return;
+  if (!lifecycle.accepting() || workerStarted || !process.env.META_MARKETING_ACCESS_TOKEN) return;
   try {
     // Preloads run before server.js calls initSchema(). A database that already
     // deployed PR #65 can have lead_attributions before the enrichment columns
@@ -21,10 +22,16 @@ async function startWhenSchemaIsReady() {
       "Meta Ads enrichment worker is waiting for database schema:",
       err?.message || err
     );
-    const retryTimer = setTimeout(startWhenSchemaIsReady, 5000);
+    const retryTimer = setTimeout(runStartup, 5000);
+    lifecycle.registerStop(retryTimer, () => clearTimeout(retryTimer));
     retryTimer.unref?.();
   }
 }
 
-const startTimer = setTimeout(startWhenSchemaIsReady, 1000);
+function runStartup() {
+  if (!lifecycle.accepting()) return;
+  return lifecycle.run("Meta enrichment startup", startWhenSchemaIsReady);
+}
+const startTimer = setTimeout(runStartup, 1000);
+lifecycle.registerStop(startTimer, () => clearTimeout(startTimer));
 startTimer.unref?.();

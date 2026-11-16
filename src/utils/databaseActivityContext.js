@@ -1,6 +1,7 @@
 "use strict";
 
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { lifecycle } = require("./migrationLifecycle");
 
 // Static operational labels only. Never use contact IDs, phones, SQL, URLs or
 // user-provided values as sources. This module creates no timers or queries.
@@ -16,7 +17,8 @@ function normalizedDatabaseActivitySource(source) {
 
 function withDatabaseActivitySource(source, run) {
   if (typeof run !== "function") throw new TypeError("Database activity scope needs a function");
-  return activitySource.run(normalizedDatabaseActivitySource(source), run);
+  return lifecycle.run(normalizedDatabaseActivitySource(source),
+    () => activitySource.run(normalizedDatabaseActivitySource(source), run));
 }
 
 function currentDatabaseActivitySource() {

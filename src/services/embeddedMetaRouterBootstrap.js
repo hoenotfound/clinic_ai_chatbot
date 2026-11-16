@@ -3,6 +3,7 @@ require("dotenv").config();
 const { createMetaRouterPool } = require("../metaRouter/db");
 const { createMetaWebhookRouteRepo } = require("../metaRouter/routeRepo");
 const { createMetaRouterApp } = require("../metaRouter/server");
+const { lifecycle } = require("../utils/migrationLifecycle");
 
 const DEFAULT_META_ROUTER_MOUNT_PATH = "/meta-router";
 
@@ -44,6 +45,7 @@ function prepareEmbeddedMetaRouter({
   poolFactory = createMetaRouterPool,
   repoFactory = createMetaWebhookRouteRepo,
   appFactory = createMetaRouterApp,
+  migrationController = lifecycle,
 } = {}) {
   if (!parseEnabled(env.META_ROUTER_ENABLED)) return null;
 
@@ -60,11 +62,23 @@ function prepareEmbeddedMetaRouter({
   const mountPath = normalizeMountPath(env.META_ROUTER_MOUNT_PATH);
   const pool = poolFactory(env, { allowOpsFallback: false });
   const repo = repoFactory(pool);
+  if (migrationController.enabled) {
+    const getRoutes = repo.getRoutes.bind(repo);
+    repo.getRoutes = async (...args) => {
+      const routes = await getRoutes(...args);
+      if (!migrationController.accepting() && routes.some(route => route.clientSlug === "neutro-sense-tcm" ||
+          /^https:\/\/(neutrosense\.dasmarketingsolution\.com|da-chatbot-neutro-sense-tcm\.onrender\.com)([/:]|$)/i.test(route.targetBaseUrl))) {
+        throw Error("Neutro callbacks are temporarily paused; retry required.");
+      }
+      return routes;
+    };
+  }
   const routerApp = appFactory({
     repo,
     env,
     healthCheck: () => pool.query("SELECT 1"),
   });
+  routerApp.migrationSharedRouter = true;
 
   return {
     mountPath,

@@ -8,6 +8,7 @@ const { partitionLegacyWhatsAppWebhook } = require("../src/services/whatsappLega
 const { partitionSecondaryInboxWebhook } = require("../src/services/whatsappSecondaryInboxBoundary");
 const { extractSecondaryLifecycle } = require("../src/services/whatsappCoexistenceAccountUpdateService");
 const whatsapp = require("../src/services/whatsappService");
+const { createMigrationLifecycle } = require("../src/utils/migrationLifecycle");
 
 const NEUTRO = "100000000000001";
 const ARIEL = "100000000000002";
@@ -37,7 +38,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   echoFailure = false, secondaryInboundFailure = false, secondaryInboundHang = false,
   secondaryInboundLate = false, receiptHang = false, historyHang = false, echoHang = false,
   echoLate = false,
-  lifecycleFailure = false } = {}) {
+  lifecycleFailure = false, migrationController = createMigrationLifecycle() } = {}) {
   let handler = null;
   const claims = [];
   const scheduled = [];
@@ -58,6 +59,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   const route = source.slice(start, end);
   const noop = () => Promise.resolve();
   const context = {
+    lifecycle: migrationController,
     app: {
       get(_path, ...handlers) {},
       post(_path, ...middlewareAndHandler) {
@@ -165,11 +167,11 @@ function webhookHarness({ failAudit = false, dualInbox = false,
           return this;
         },
       };
-      await handler({
+      await migrationController.run("synthetic webhook handler", () => handler({
         body,
         whatsappSignedRawBody: Buffer.from(JSON.stringify(body)),
         headers: { "x-hub-signature-256": "sha256=synthetic" },
-      }, response);
+      }, response));
       await new Promise(resolve => setImmediate(resolve));
       return response.statusCode;
     },
@@ -469,4 +471,20 @@ test("an unresolved staff echo timeout remains protected against competing AI",a
   assert.equal(await h.send(body),503);
   assert.ok(h.pendingEchoes.has("wamid.staff-stall"),
     "must fail closed while the DB operation is unresolved");
+});
+
+test("migration drain waits for a late secondary commit and its reply scheduling", async () => {
+  const control = createMigrationLifecycle({ enabled: true });
+  const h = webhookHarness({ dualInbox: true, secondaryInboundLate: true, migrationController: control });
+  const body = { object: "whatsapp_business_account", entry: [
+    { id: "200000000000001", changes: [event(NEUTRO, "wamid.primary-drain")] },
+    { id: "200000000000002", changes: [event(ARIEL, "wamid.secondary-drain")] },
+  ] };
+  assert.equal(await h.send(body), 503);
+  const draining = control.drain();
+  assert.equal(control.status().safeToRetire, false);
+  assert.ok(control.status().active > 0);
+  await draining;
+  assert.equal(h.scheduled.length, 2);
+  assert.equal(control.status().safeToRetire, true);
 });

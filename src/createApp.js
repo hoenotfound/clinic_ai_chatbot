@@ -14,7 +14,7 @@ const {
   extractSecondaryLifecycle, persistSecondaryLifecycle,
 } = require("./services/whatsappCoexistenceAccountUpdateService");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
-const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
+const { notifyWhatsAppSenderQuarantine: rawNotifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
 const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
 const secondaryQaBridge = require("./services/whatsappPaidDefaultSecondaryBridge");
@@ -53,6 +53,10 @@ const preidentityReceiver = require("./services/pr395PreidentityReceiver");
 const legacyLifecycleReceiver = require("./services/pr395LegacyLifecycleReceiver");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { withDatabaseActivitySource } = require("./utils/databaseActivityContext");
+const { lifecycle } = require("./utils/migrationLifecycle");
+const { migrationIngress, trackExpressHandlers } = require("./utils/migrationHttp");
+const notifyWhatsAppSenderQuarantine = (...args) => lifecycle.run("quarantine notification",
+  () => rawNotifyWhatsAppSenderQuarantine(...args));
 const { httpDatabaseActivitySource } = require("./utils/httpDatabaseActivitySource");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -99,6 +103,7 @@ function createApp({
   assertSenderIngressSafety(process.env);
   const app = express();
   app.disable("x-powered-by");
+  app.use(migrationIngress());
 
   // Trust only the known proxy hop count. On Render this defaults to one hop,
   // which keeps req.protocol/req.ip correct without trusting arbitrary
@@ -314,7 +319,7 @@ function createApp({
           error.code = "SECONDARY_WEBHOOK_TIMEOUT";
           reject(error);
         }, timeoutMs);
-        Promise.resolve().then(operation).then((result) => {
+        lifecycle.run("secondary webhook operation", () => Promise.resolve().then(operation).then((result) => {
           if (expired) {
             if (onLateSuccess) {
               try { onLateSuccess(result); } catch (error) {
@@ -332,7 +337,7 @@ function createApp({
           }
           clearTimeout(timer);
           reject(error);
-        });
+        }));
       });
     }
     // Write a disconnect before processing secondary customer turns in this
@@ -451,7 +456,7 @@ function createApp({
                   (lateClaim) => {
                     // The delayed original can now be matched with an earlier
                     // edit/delete. Repair only after its durable claim commits.
-                    void customerMutations.reconcileAfterInbound(incoming)
+                    void lifecycle.run("late inbound mutation recovery", () => customerMutations.reconcileAfterInbound(incoming))
                       .catch((error) => console.error("Late customer mutation repair failed:", error));
                     if (lateClaim) {
                       scheduleDurableClaim(queueKey, lateClaim).catch((error) => {
@@ -464,7 +469,7 @@ function createApp({
               // A successful durable claim is the earliest safe point to
               // match a mutation to its original message. A parallel mutation
               // insert also calls applyOne, so either arrival order is covered.
-              void customerMutations.reconcileAfterInbound(incoming)
+              void lifecycle.run("inbound mutation recovery", () => customerMutations.reconcileAfterInbound(incoming))
                 .catch((error) => console.error("Customer mutation repair failed:", error));
               // The event is HMAC-verified and durably saved before this log.
               // Record only an identity TYPE, never a phone, BSUID, username,
@@ -518,7 +523,8 @@ function createApp({
                   // After a timeout the normal result array no longer includes
                   // this echo, so still run any post-persist side effects.
                   if (lateEcho) {
-                    Promise.resolve().then(() => whatsappCoexistence.finalizeBusinessAppEcho(lateEcho))
+                    lifecycle.run("late Business App echo", () =>
+                      Promise.resolve().then(() => whatsappCoexistence.finalizeBusinessAppEcho(lateEcho)))
                       .catch((lateError) => console.error("Late Business App echo finalization failed:", lateError));
                   }
                 },
@@ -718,7 +724,7 @@ function createApp({
           console.error("Failed to schedule durable WhatsApp inbound work:", err);
         });
       }
-      processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
+      lifecycle.run("stored delivery receipts", () => processStoredDeliveryStatuses(durableStatusJobs)).catch((err) => {
         console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
       });
     }
@@ -730,14 +736,14 @@ function createApp({
     // audit is best effort in mixed batches, with an operator notification.
     if (isolated.quarantined.length && !quarantineOnly) {
       let auditFailed = false;
-      void recordQuarantinedWhatsAppChanges(isolated.quarantined)
+      void lifecycle.run("quarantine audit continuation", () => recordQuarantinedWhatsAppChanges(isolated.quarantined)
         .catch((err) => {
           auditFailed = true;
           console.error("WhatsApp quarantine audit failed after valid work was accepted:", err);
         })
         .finally(() => {
           void notifyWhatsAppSenderQuarantine(isolated.quarantined, { auditFailed });
-        });
+        }));
     }
 
     if (passiveSync.historyChunks || passiveSync.appStateItems) {
@@ -959,7 +965,7 @@ function createApp({
       });
     }
 
-    metaMessaging.resolveMessageEditEvents(req.body)
+    lifecycle.run("Meta edit resolution", () => metaMessaging.resolveMessageEditEvents(req.body)
       .then((resolvedEditMessages) => Promise.all(
         resolvedEditMessages.map((incoming) =>
           queueIncomingForReply(
@@ -967,7 +973,7 @@ function createApp({
             incoming
           )
         )
-      ))
+      )))
       .catch((err) => {
         console.error("Failed to process Meta message-edit event(s):", err);
       });
@@ -1026,6 +1032,7 @@ function createApp({
   // receive tiny 404/429 responses rather than sending index.html repeatedly.
   app.get(/^(?!\/(webhook|meta-webhook|api)).*/, createPortalFallback(portalBuildPath));
 
+  trackExpressHandlers(app);
   return app;
 }
 

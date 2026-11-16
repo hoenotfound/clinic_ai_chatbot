@@ -1191,3 +1191,6 @@ module.exports = {
   parseBusinessAppEchoes,
   parseStatusUpdates,
 };
+require("../utils/migrationLifecycle").trackMethods(module.exports,
+  ["sendMessage", "sendInteractiveButtons", "sendImage", "sendImageById",
+    "sendVideoById", "sendDocumentById", "sendStickerById", "sendVoiceById"], "primary WhatsApp send");
