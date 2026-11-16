@@ -21,17 +21,17 @@ test("Day4/Day6 pre-send checks exempt only the claimed message's own reservatio
   const candidate = marketing.EXTENDED_CANDIDATES_SQL;
   const recheck = marketing.EXTENDED_RECHECK_SQL;
   // Discovery must not admit any active gate.
-  assert.doesNotMatch(candidate,/own\\.message_id=gate\\.message_id/);
+  assert.doesNotMatch(candidate,/own\.message_id=gate\.message_id/);
   // The final recheck must still reject another message's reservation.
-  assert.match(recheck,/gate\\.state IN \\('reserved','awaiting_pricing'\\)/);
-  assert.match(recheck,/AND NOT \\(gate\\.state='reserved' AND EXISTS \\(/);
-  assert.match(recheck,/own\\.sender_id=sa\\.id AND own\\.contact_id=c\\.id/);
-  assert.match(recheck,/own\\.anchor_message_id=qualified_session\\.origin_id/);
-  assert.match(recheck,/own\\.slot_hours=rule\\.slot_hours AND own\\.status='claimed'/);
-  assert.match(recheck,/own\\.message_id IS NOT NULL AND own\\.message_id=gate\\.message_id/);
+  assert.match(recheck,/gate\.state IN \('reserved','awaiting_pricing'\)/);
+  assert.match(recheck,/AND NOT \(gate\.state='reserved' AND EXISTS \(/);
+  assert.match(recheck,/own\.sender_id=sa\.id AND own\.contact_id=c\.id/);
+  assert.match(recheck,/own\.anchor_message_id=qualified_session\.origin_id/);
+  assert.match(recheck,/own\.slot_hours=rule\.slot_hours AND own\.status='claimed'/);
+  assert.match(recheck,/own\.message_id IS NOT NULL AND own\.message_id=gate\.message_id/);
   // A different contact, message or awaiting-pricing gate remains excluded.
-  assert.match(recheck,/gate\\.owner_contact_id=c\\.id/);
-  assert.match(recheck,/gate\\.state='reserved'/);
+  assert.match(recheck,/gate\.owner_contact_id=c\.id/);
+  assert.match(recheck,/gate\.state='reserved'/);
 });
 
 test("proven pre-Meta marketing cancellations cannot be replayed or marked delivered",async()=>{
@@ -39,8 +39,8 @@ test("proven pre-Meta marketing cancellations cannot be replayed or marked deliv
  let calls=0;
  const database={query:async(sql,args)=>{
   calls++;
-  assert.match(sql,/bill\\.state='rejected' AND bill\\.wamid IS NULL/);
-  assert.match(sql,/m\\.whatsapp_message_id IS NULL AND m\\.whatsapp_accepted_at IS NULL/);
+  assert.match(sql,/bill\.state='rejected' AND bill\.wamid IS NULL/);
+  assert.match(sql,/m\.whatsapp_message_id IS NULL AND m\.whatsapp_accepted_at IS NULL/);
   assert.match(sql,/whatsapp_sender_status_receipts receipt/);
   assert.match(sql,/outbound_message_evidence outbound/);
   assert.match(sql,/FOR UPDATE OF a,m/);
