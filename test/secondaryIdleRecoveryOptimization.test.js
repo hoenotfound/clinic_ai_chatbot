@@ -615,3 +615,34 @@ test("solicited price images recover in quiet hours without waking ordinary medi
  assert.match(media.RECOVERY_DEADLINE_SQL,/next_solicited_at/);
  assert.match(media.RECOVERY_DEADLINE_SQL,/job\.media_kind='promotion' AND job\.solicited_pricing=TRUE/);
 });
+
+
+test("fresh customer-requested result pictures wake overnight without polling stale media",()=>{
+ const at=s=>Date.parse(s),MIN=60*1000,HOUR=60*MIN;
+ const quiet=at("2026-11-16T17:05:00Z"); // 01:05 Malaysia
+ const state={
+   has_claimed:false,has_pending:true,
+   next_pending_at:"2026-11-16T17:04:00Z",
+   has_fresh_result_pending:true,
+   next_fresh_result_at:"2026-11-16T17:04:00Z",
+ };
+ assert.equal(media.nextMediaRecoveryDelay(state,quiet),MIN,
+   "fresh result images should retry promptly even after midnight");
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,next_fresh_result_at:"2026-11-16T17:12:00Z",
+ },quiet),7*MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,has_fresh_result_pending:false,next_fresh_result_at:null,
+ },quiet),HOUR,"stale overnight result images retain hourly recovery");
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...state,has_solicited_pending:true,next_solicited_at:"2026-11-16T17:08:00Z",
+   next_fresh_result_at:"2026-11-16T17:10:00Z",
+ },quiet),3*MIN,"earliest authorized media wins");
+ assert.throws(()=>media.nextMediaRecoveryDelay({
+   ...state,next_fresh_result_at:null,
+ },quiet),/unavailable/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/has_fresh_result_pending/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/next_fresh_result_at/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/LEFT JOIN messages inbound/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/job\.media_kind='result' AND inbound\.whatsapp_message_id IS NOT NULL/);
+});
