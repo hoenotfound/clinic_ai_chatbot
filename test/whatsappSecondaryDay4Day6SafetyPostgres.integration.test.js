@@ -85,8 +85,8 @@ test("PostgreSQL: a provably unsent Day4 does not block Day6, but uncertain send
   assert.equal(await count(),0);
   await admin.query(
    "INSERT INTO whatsapp_sender_status_receipts "+
-   "(fingerprint,sender_id,reservation_id,wamid_hash,delivery_status,meta_phone_number_id,meta_account_id) "+
-   "VALUES('synthetic-receipt',$1,$2,$3,'sent','100000000000002','200000000000002')",
+   "(fingerprint,sender_id,reservation_id,wamid,wamid_hash,delivery_status,meta_phone_number_id,meta_account_id,matched) "+
+   "VALUES('synthetic-receipt',$1,$2,'wamid.synthetic.provider',$3,'sent','100000000000002','200000000000002',TRUE)",
    [sender,reservation,"f".repeat(64)]);
   assert.equal(await count(),1,"a provider receipt forbids cancellation proof");
   await admin.query("DELETE FROM whatsapp_sender_status_receipts WHERE fingerprint='synthetic-receipt'");
