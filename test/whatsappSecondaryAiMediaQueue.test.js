@@ -151,9 +151,11 @@ test("late English request swaps queued result to approved English artwork and c
  const english="https://clinic.example/result-en.jpg";
  const args=mocks({jobImageUrl:chinese});
  const originalQuery=args.database.query;
- args.database.query=async(sql,params)=>sql.includes("FROM messages newer")
-   ? {rows:[{content:"In English please"}]}
-   : originalQuery(sql,params);
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
+   : sql.includes("FROM messages newer")
+     ? {rows:[{content:"In English please"}]}
+     : originalQuery(sql,params);
  args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
    items:[{imageUrl:chinese,caption:"中文案例",
      mediaTranslations:{en:{imageUrl:english,caption:"English result example"}}}]}]});
@@ -176,9 +178,11 @@ test("late English request with no approved localized artwork suppresses optiona
  const chinese="https://clinic.example/result-zh.jpg";
  const args=mocks({jobImageUrl:chinese});
  const originalQuery=args.database.query;
- args.database.query=async(sql,params)=>sql.includes("FROM messages newer")
-   ? {rows:[{content:"In English please"}]}
-   : originalQuery(sql,params);
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
+   : sql.includes("FROM messages newer")
+     ? {rows:[{content:"In English please"}]}
+     : originalQuery(sql,params);
  args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
    items:[{imageUrl:chinese,caption:"中文案例"}]}]});
  const r=await worker.runOnce({...args,env:approved});
