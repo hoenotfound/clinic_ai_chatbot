@@ -706,3 +706,85 @@ test("secondary consent quick-reply uses one existing follow-up message and cann
   assert.equal(calls.reserved,1);
  }
 });
+
+
+test("Secondary marketing pre-Meta callback cancellation releases only its own reservation",async()=>{
+ const templateTools=require("../src/services/whatsappTemplateService");
+ const raw={name:"safe_day6_test",language:"en_US",status:"APPROVED",category:"MARKETING",
+  components:[{type:"BODY",text:"Ready to discuss your care?"}]};
+ const signature=templateTools.templateSignature(templateTools.normalizeTemplate(raw));
+ const secondaryEnv={...aiOnlyEnv,
+  WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true",
+  WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+  WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true",
+  WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED:"true",
+  WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"true",
+  WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
+ };
+ const secondaryContact={...contact,whatsapp_sender_key:"neutro_secondary"};
+ const input={...data,contact:secondaryContact,text:"[approved-marketing-template]",
+  origin:"marketing_followup",anchorMessageId:900,
+  templateRequest:{
+   name:raw.name,languageCode:raw.language,expectedSignature:signature,
+   billingConfirmed:true,automatedMarketingApproved:true,
+  },preSendCheck:async()=>true,
+ };
+ const testContext=({recordResult,dispatchTransport})=>{
+  const {opts,calls}=setup({recordResult});
+  const originalSender=opts.conversationRepo.senderForContact;
+  return {calls,context:{...opts,env:secondaryEnv,
+   policyService:{...opts.policyService,
+    previewSecondaryTemplatePolicy:async()=>({
+     policyAllowed:true,template:{definition:raw},
+    }),
+   },
+   conversationRepo:{...opts.conversationRepo,
+    senderForContact:async()=>({
+     ...(await originalSender()),sender_key:"neutro_secondary",
+    }),
+   },
+  },input:{...input,dispatchTransport}};
+ };
+ const cancelled=testContext({
+  recordResult:{recorded:true,state:"rejected"},
+  dispatchTransport:async()=>({
+   success:false,preProviderCancelled:true,retryable:false,
+  }),
+ });
+ const ok=await sendSecondaryStaffText(cancelled.input,cancelled.context);
+ assert.equal(ok.preProviderCancelled,true);
+ assert.notEqual(ok.unknown,true); // explicitly non-ambiguous
+ assert.notEqual(ok.ambiguous,true);
+ assert.equal(cancelled.calls.reserved,1);
+ assert.equal(cancelled.calls.send.length,0);
+ assert.deepEqual(cancelled.calls.mark,[{
+  reservationId,definitivelyRejected:true,
+ }]);
+ const uncertain=testContext({
+  recordResult:{recorded:true,state:"unknown"},
+  dispatchTransport:async()=>({
+   success:false,ambiguous:true,retryable:false,
+  }),
+ });
+ const unknown=await sendSecondaryStaffText(uncertain.input,uncertain.context);
+ assert.equal(unknown.unknown,true);
+ assert.equal(unknown.preProviderCancelled,undefined);
+ assert.equal(uncertain.calls.send.length,0);
+ assert.deepEqual(uncertain.calls.mark,[{
+  reservationId,acceptedWamid:null,definitivelyRejected:false,
+ }]);
+ const cannotReconcile=testContext({
+  recordResult:{recorded:false},
+  dispatchTransport:async()=>({
+   success:false,preProviderCancelled:true,retryable:false,
+  }),
+ });
+ const failed=await sendSecondaryStaffText(
+  cannotReconcile.input,cannotReconcile.context);
+ assert.equal(failed.unknown,true,
+  "failed cancellation record must preserve unknown protection");
+ assert.equal(failed.preProviderCancelled,undefined);
+ assert.equal(cannotReconcile.calls.send.length,0);
+});
