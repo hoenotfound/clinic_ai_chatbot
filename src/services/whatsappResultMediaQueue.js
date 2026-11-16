@@ -369,10 +369,14 @@ async function runOne({
       await closeItem(row,"skipped","language_media_variant_unavailable",{db});
       return true;
     }
-    if (await messagesRepo.wasMediaRecentlySent(row.contact_id,row.image_url) ||
-        await messagesRepo.hasUnconfirmedMediaDelivery(row.contact_id,row.image_url)) {
-      await closeItem(row,"skipped","duplicate_or_unconfirmed_media",{db});
-      return true;
+    // The translated artwork may have a different URL from the queued
+    // original. Deduplicate against both to avoid sending a second copy.
+    for (const url of new Set([row.image_url, media.imageUrl])) {
+      if (await messagesRepo.wasMediaRecentlySent(row.contact_id,url) ||
+          await messagesRepo.hasUnconfirmedMediaDelivery(row.contact_id,url)) {
+        await closeItem(row,"skipped","duplicate_or_unconfirmed_media",{db});
+        return true;
+      }
     }
     // Optional images are lower priority than live WhatsApp customer replies.
     // Never take the account-wide RM0 reservation while another inbound
