@@ -32,9 +32,10 @@ function containsUrl(item, url) {
   );
 }
 
-// Never translate artwork by replacing only its caption. If the customer
-// explicitly switched languages after the image was queued, use a configured
-// image for that language or omit the optional picture entirely.
+// Never invent translated copy. If the customer switched languages after
+// enqueue, use the operator-approved localized caption and image, where
+// configured. A caption-only translation can accompany the original approved
+// Before & After photo; absent any translation, skip optional media.
 function resolveQueuedMediaLanguage({
   imageUrl, caption = "", kind, language = null, config, now = new Date(),
 } = {}) {
@@ -62,12 +63,13 @@ function resolveQueuedMediaLanguage({
   const source = items.find(item => containsUrl(item, imageUrl));
   if (!source) return null;
   const translated = source.mediaTranslations?.[language];
-  if (!translated || typeof translated.imageUrl !== "string" ||
-      !translated.imageUrl.trim()) return null;
-  const translatedImageUrl = translated.imageUrl.trim();
-  const translatedCaption = typeof translated.caption === "string"
-    ? translated.caption.trim()
-    : String(source.caption || "").trim();
+  const imageTranslation = String(translated?.imageUrl || "").trim();
+  const captionTranslation = typeof translated?.caption === "string"
+    ? translated.caption.trim() : "";
+  if (!imageTranslation && !captionTranslation) return null;
+  const translatedImageUrl = imageTranslation || imageUrl;
+  const translatedCaption = captionTranslation ||
+    String(source.caption || "").trim();
   // A selected English image can retain a base caption only if that caption
   // is not Chinese. Otherwise send no caption rather than a mismatched one.
   const safeCaption = language !== "zh" &&
