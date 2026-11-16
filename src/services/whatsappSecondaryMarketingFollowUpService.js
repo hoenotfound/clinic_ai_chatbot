@@ -543,7 +543,19 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
        AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed'
    )`
 );
+// Candidate discovery rejects every unsettled reservation. Rechecking an
+// already-claimed slot must allow only its own new reservation, never another.
 const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
+ "AND gate.state IN ('reserved','awaiting_pricing'))",
+ `AND gate.state IN ('reserved','awaiting_pricing')
+       AND NOT (gate.state='reserved' AND EXISTS (
+         SELECT 1 FROM whatsapp_sender_marketing_followup_attempts own
+         WHERE own.sender_id=sa.id AND own.contact_id=c.id
+           AND own.anchor_message_id=qualified_session.origin_id
+           AND own.slot_hours=rule.slot_hours AND own.status='claimed'
+           AND own.message_id IS NOT NULL AND own.message_id=gate.message_id
+       )))`
+).replace(
  `   AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
@@ -558,6 +570,58 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
        AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed'
    )`
 );
+// Only a durably rejected billing reservation with no provider evidence can
+// be marked cancelled. Keep the slot blocked so it is never blindly replayed.
+async function finishProvenMarketingPreProviderCancellation({
+ database,attemptId,messageId,contactId,result,
+}){
+ if(result?.preProviderCancelled!==true || result?.success!==false ||
+    result?.unknown===true || result?.ambiguous===true || result?.wamid ||
+    !Number.isSafeInteger(Number(attemptId)) ||
+    !Number.isSafeInteger(Number(messageId)) ||
+    !Number.isSafeInteger(Number(contactId)))return false;
+ try{
+  const done=await database.query(`
+   WITH eligible AS MATERIALIZED (
+     SELECT a.id
+     FROM whatsapp_sender_marketing_followup_attempts a
+     JOIN messages m ON m.id=a.message_id AND m.contact_id=a.contact_id
+     JOIN whatsapp_sender_billing_attempts bill
+       ON bill.message_id=m.id AND bill.contact_id=a.contact_id
+       AND bill.sender_id=a.sender_id
+     WHERE a.id=$1 AND a.message_id=$2 AND a.contact_id=$3
+       AND a.status='claimed' AND m.role='assistant'
+       AND m.delivery_status='unknown'
+       AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+       AND bill.state='rejected' AND bill.wamid IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_status_receipts receipt
+         WHERE receipt.sender_id=bill.sender_id
+           AND receipt.reservation_id=bill.reservation_id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM outbound_message_evidence outbound
+         WHERE outbound.message_id=m.id
+       )
+     FOR UPDATE OF a,m
+   ), cancelled AS (
+     UPDATE messages m
+     SET delivery_status='cancelled',
+         delivery_error='Secondary marketing follow-up cancelled before Meta send.'
+     WHERE m.id=$2 AND EXISTS(SELECT 1 FROM eligible)
+     RETURNING m.id
+   ), finished AS (
+     UPDATE whatsapp_sender_marketing_followup_attempts a
+     SET status='blocked',error_code='secondary_pre_provider_cancelled',
+         completed_at=NOW()
+     WHERE a.id=$1 AND a.status='claimed'
+       AND EXISTS(SELECT 1 FROM cancelled)
+     RETURNING a.id
+   )
+   SELECT id FROM finished`,[Number(attemptId),Number(messageId),Number(contactId)]);
+  return done.rows?.length===1;
+ }catch{return false;}
+}
 function approvedStaticMarketingTemplate(definition,expectedSignature){
  const normalized=tools.normalizeTemplate(definition);
  return normalized.status==="APPROVED" && normalized.category==="MARKETING" &&
@@ -749,6 +813,10 @@ async function runOnce({
     // A signed failed receipt may have moved a claimed slot to unknown
     // before Meta HTTP acceptance reached this worker.
     if(finalized.rowCount===1)accepted++;
+   }else if(await finishProvenMarketingPreProviderCancellation({
+     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
+   })){
+     // No Meta send was attempted; preserve the historical slot.
    }else if(await deferProvenUnsent({
      database,table:"whatsapp_sender_marketing_followup_attempts",
      attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
@@ -802,5 +870,5 @@ module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
- approvedStaticMarketingTemplate,runOnce,nextPotentialDueAt,start,stop,
+ approvedStaticMarketingTemplate,finishProvenMarketingPreProviderCancellation,runOnce,nextPotentialDueAt,start,stop,
 };
