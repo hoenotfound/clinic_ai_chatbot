@@ -20,6 +20,15 @@ test("a newer explicit English request overrides older Chinese ad media",async()
    imageUrl:zh,caption:"脉冲波调理效果参考",kind:"result",language:"en",config:cfg,
  }),{imageUrl:en,caption:"Pulse wave treatment example"});
 });
+test("a configured English caption can accompany the original approved photo",()=>{
+ const translatedCaption="Individual Before & After example; results vary.";
+ const onlyCaptions={resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:zh,caption:"中文案例",
+     mediaTranslations:{en:{caption:translatedCaption}}}]}]};
+ assert.deepEqual(resolveQueuedMediaLanguage({
+   imageUrl:zh,caption:"中文案例",kind:"result",language:"en",config:onlyCaptions,
+ }),{imageUrl:zh,caption:translatedCaption});
+});
 test("no language switch leaves queued media unchanged and adds no new artwork",()=>{
  assert.deepEqual(resolveQueuedMediaLanguage({
    imageUrl:zh,caption:"原始说明",kind:"result",config:cfg,
