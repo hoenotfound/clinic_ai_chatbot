@@ -26,7 +26,7 @@ function fixture() {
     async query(sql) {
       this.queries.push(sql);
       assert.match(sql,/^(BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY|ROLLBACK|SELECT )/);
-      if(sql === SUMMARY_SQL) return {rows:[f.summary]};
+      if(sql === SUMMARY_SQL) return {rows:[{...f.summary,database:this.options.database}]};
       if(sql.includes('FROM whatsapp_sender_accounts')) return {rows:f.senders};
       if(sql.includes('FROM migration_archive.production_dump')) {
         if(f.changeDeploy) f.deploy='dep-concurrent';
@@ -79,4 +79,14 @@ for(const [name,change] of [
   assert.equal(f.calls.every(c=>c.method==='GET'),true);
   assert.equal(f.clients.every(c=>c.ended),true);
   assert.equal(f.events.some(e=>e.phase==='read_only_data_access_verified'),false);
+});
+
+
+test('final preparation checks the retained original destination without requiring data in the empty target',async()=>{
+ const f=fixture();f.referenceDatabase='neutro_initial_20261117';await dataCheck(f);
+ assert.deepEqual(f.clients.map(c=>c.options.database),['neondb','neutro_initial_20261117','neutro_backup_20261116']);
+ assert.equal(f.events.at(-1).cutoverReady,false);
+});
+test('unreviewed reference databases are refused before access',async()=>{
+ const f=fixture();f.referenceDatabase='other';await assert.rejects(dataCheck(f),/Unreviewed/);assert.equal(f.clients.length,0);
 });

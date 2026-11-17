@@ -165,3 +165,24 @@ test('idle pool cleanup is scoped to observed PIDs and repeats idle and transact
  assert.deepEqual(calls[1].args,['neondb',[42]]);
  for(const text of ['pid=ANY','application_name=','state=','xact_start IS NULL','datname=$1'])assert(calls[1].sql.includes(text));
 });
+
+test('API-prepared database validation refuses populated targets without overwriting',async()=>{
+ const connect=async(_url,_host,database,_readonly,fn)=>fn({query:async(sql)=>{
+  if(sql.includes('sum(pg_database_size'))return {rows:[{bytes:'10000000'}]};
+  if(sql.includes('pg_get_userbyid'))return {rows:[{owner:'neondb_owner',encoding:'UTF8',datlocprovider:'b',datlocale:'C.UTF-8'}]};
+  if(sql.includes('SELECT pid'))return {rows:[]};
+  if(sql.includes('count(*)::int count'))return {rows:[{count:0}]};
+  if(sql.includes('count(*)::int n'))return {rows:[{n:115}]};
+  throw Error('Unexpected SQL');
+ }});
+ await assert.rejects(prepareDatabase(DESTINATION,'rehearsal',()=>{},connect),/not empty/);
+});
+test('final preparation requires the retained initial database',async()=>{
+ const connect=async(_url,_host,_db,_readonly,fn)=>fn({query:async(sql)=>{
+  if(sql.includes('sum(pg_database_size'))return {rows:[{bytes:'10000000'}]};
+  if(sql.includes('pg_get_userbyid'))return {rows:[{owner:'neondb_owner',encoding:'UTF8',datlocprovider:'b',datlocale:'C.UTF-8'}]};
+  if(sql.includes('neutro_initial_20261117'))return {rows:[]};
+  throw Error('Unexpected SQL');
+ }});
+ await assert.rejects(prepareDatabase(DESTINATION,'final',()=>{},connect),/Preserved/);
+});

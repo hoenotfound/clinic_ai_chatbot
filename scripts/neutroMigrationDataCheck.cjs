@@ -55,17 +55,18 @@ async function withReadOnly(Client, options, fn) {
   } finally { await client.end(); }
 }
 
-function validateSummary(summary, senders) {
-  if (!summary || summary.database !== "neondb" || summary.server_version < 180000 || summary.server_version >= 190000 ||
+function validateSummary(summary, senders, database = "neondb") {
+  if (!summary || summary.database !== database || summary.server_version < 180000 || summary.server_version >= 190000 ||
       summary.tables !== 115 || summary.migrations !== 133 || summary.sequences !== 53 ||
       summary.unvalidated_foreign_keys !== 0 || summary.orphan_messages !== 0)
     throw Error("Database schema or relationship checks differ from reviewed baseline.");
   if (JSON.stringify(senders) !== JSON.stringify(EXPECTED_SENDERS)) throw Error("WhatsApp sender registration mismatch.");
 }
 
-async function dataCheck({ request, destinationUrl, Client, emit, fetchImpl = global.fetch }) {
+async function dataCheck({ request, destinationUrl, Client, emit, fetchImpl = global.fetch, referenceDatabase = "neondb" }) {
   if (!destinationUrl) throw Error("Protected destination connection is not configured.");
-  const destination = clientOptions(destinationUrl, DESTINATION_HOST);
+  if (!["neondb","neutro_initial_20261117"].includes(referenceDatabase)) throw Error("Unreviewed reference database.");
+  const destination = clientOptions(destinationUrl, DESTINATION_HOST, referenceDatabase);
   const before = await inspect(request);
   await verifyRecoveredSource({ request, expectedDeploy: before.liveDeploy, emit, fetchImpl });
   const env = await request("/env-vars/DATABASE_URL");
@@ -75,7 +76,7 @@ async function dataCheck({ request, destinationUrl, Client, emit, fetchImpl = gl
     summaries.push(await withReadOnly(Client, options, async client => {
       const summary = (await client.query(SUMMARY_SQL)).rows[0];
       const senders = (await client.query("SELECT sender_key,meta_phone_number_id,meta_account_id,state,coexistence_enabled FROM whatsapp_sender_accounts ORDER BY sender_key")).rows;
-      validateSummary(summary, senders);
+      validateSummary(summary, senders, options.database);
       return summary;
     }));
   }

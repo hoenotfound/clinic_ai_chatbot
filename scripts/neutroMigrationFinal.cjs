@@ -48,8 +48,7 @@ async function runFinal({request,approved,expectedDeploy,emit,preflight,prepareD
   await inspectPhase(request,expectedDeploy,false,'npm start');
   await preflight();
   if(await readRuntime()!=='running') throw Error('Source must be healthy before destination preparation.');
-  // Retain the stale destination under a unique name, create an empty neondb,
-  // and prove the copy tooling before any production pause.
+  // Validate the API-prepared empty destination before any production pause.
   await prepareDestination();
   await inspectPhase(request,expectedDeploy,false,'npm start');
   if(await readRuntime()!=='running') throw Error('Source must be healthy before arming.');
@@ -172,29 +171,25 @@ function assertNoActiveClaims(boundary) {
   // never authorize a resend, release or reset of a provider reservation.
 }
 
-async function prepareDatabase(destinationUrl,mode,emit,stamp=new Date().toISOString().replace(/\D/g,'').slice(0,14)) {
+async function prepareDatabase(destinationUrl,mode,emit,connect=pg) {
   if(!['rehearsal','final'].includes(mode))throw Error('Unknown database preparation mode.');
   const target=mode==='rehearsal'?REHEARSAL:'neondb';
-  const preserved=`neutro_initial_${stamp}`;
-  await pg(destinationUrl,DESTINATION_HOST,'postgres',false,async c=>{
+  // Neon database creation/preservation is completed through its management API
+  // before this runner starts. Never clone a busy managed template with SQL.
+  await connect(destinationUrl,DESTINATION_HOST,'postgres',true,async c=>{
     const sizes=(await c.query("SELECT sum(pg_database_size(oid))::text bytes FROM pg_database")).rows[0];
     if(Number(sizes.bytes)+110*1024*1024>500*1024*1024)throw Error('Conservative free storage budget would be exceeded.');
-    if(mode==='rehearsal') {
-      if((await c.query('SELECT 1 FROM pg_database WHERE datname=$1',[target])).rows.length)throw Error('Rehearsal target already exists. Nothing overwritten.');
-    } else {
-      const meta=(await c.query("SELECT pg_get_userbyid(datdba) owner,pg_encoding_to_char(encoding) encoding,datlocprovider,datlocale FROM pg_database WHERE datname='neondb'")).rows[0];
-      if(meta?.owner!=='neondb_owner'||meta.encoding!=='UTF8'||meta.datlocprovider!=='b'||meta.datlocale!=='C.UTF-8')throw Error('Unexpected destination database settings.');
-      await closeIdlePoolClients(c,'neondb');
-      if((await c.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname='neondb' AND backend_type='client backend'")).rows[0].n!==0)throw Error('Destination has other clients.');
-      if(!/^neutro_initial_[0-9]{14}$/.test(preserved))throw Error('Invalid archive database name.');
-      emit({phase:'before_preserve_destination',preservedDatabase:preserved});
-      await c.query(`ALTER DATABASE neondb RENAME TO "${preserved}"`);
-    }
-    emit({phase:'before_create_empty_destination',database:target});
-    await c.query(`CREATE DATABASE "${target}" OWNER neondb_owner TEMPLATE template1`);
-    await c.query(`GRANT ALL PRIVILEGES ON DATABASE "${target}" TO neon_superuser`);
+    const meta=(await c.query("SELECT pg_get_userbyid(datdba) owner,pg_encoding_to_char(encoding) encoding,datlocprovider,datlocale FROM pg_database WHERE datname=$1",[target])).rows[0];
+    if(meta?.owner!=='neondb_owner'||meta.encoding!=='UTF8'||meta.datlocprovider!=='b'||meta.datlocale!=='C.UTF-8')throw Error('Prepared destination missing or settings differ.');
+    if(mode==='final'&&!(await c.query("SELECT 1 FROM pg_database WHERE datname='neutro_initial_20261117'")).rows.length)throw Error('Preserved initial database missing.');
+    if(!await closeIdlePoolClients(c,target))throw Error('Prepared destination has active or unrelated clients.');
   });
-  emit({phase:'empty_destination_prepared',database:target,...(mode==='rehearsal'?{}:{preservedDatabase:preserved})});
+  await connect(destinationUrl,DESTINATION_HOST,target,true,async c=>{
+    await require('./neutroMigrationCopy.cjs').assertNoOtherClients(c);
+    const objects=(await c.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','S','v','m','f')")).rows[0].n;
+    if(objects!==0)throw Error('Prepared destination is not empty. Nothing overwritten.');
+  });
+  emit({phase:'empty_destination_prepared',database:target,createdThroughNeonApi:true});
   return target;
 }
 
@@ -243,15 +238,14 @@ async function main() {
   const request=recovery.api(process.env.RENDER_API_KEY),destinationRaw=process.env.NEUTRO_MIGRATION_DESTINATION_URL;
   clientOptions(destinationRaw,DESTINATION_HOST);
   const emit=journal('neutro-final-journal.json');
-  const preflight=()=>dataCheck({request,destinationUrl:destinationRaw,Client:require('pg').Client,emit});
+  const preflight=()=>dataCheck({request,destinationUrl:destinationRaw,Client:require('pg').Client,emit,referenceDatabase:mode==='--final-cutover'?'neutro_initial_20261117':'neondb'});
   await preflight();
   const current=await recovery.inspect(request);
   const env=await request('/env-vars/DATABASE_URL'),sourceUrl=(env.envVar||env).value;
   clientOptions(sourceUrl,SOURCE_HOST);
   if(mode==='--copy-rehearsal') {
-    const target=await prepareDatabase(destinationRaw,'rehearsal',emit);
-    let evidence;
-    try{evidence=await runCopy(sourceUrl,destinationRaw,target,cp.spawn,600000,phase=>emit({phase:'copy_'+phase}));}
+    let evidence,target;
+    try{target=await prepareDatabase(destinationRaw,'rehearsal',emit);evidence=await runCopy(sourceUrl,destinationRaw,target,cp.spawn,600000,phase=>emit({phase:'copy_'+phase}));}
     finally{await recovery.verifyRecoveredSource({request,expectedDeploy:current.liveDeploy,emit});}
     emit({...evidence,workdir:undefined,phase:'independent_copy_rehearsal_verified',cutoverPerformed:false});return;
   }
@@ -283,5 +277,5 @@ async function main() {
       });
     },destinationUrl:destination.toString()});
 }
-if(require.main===module)main().catch(error=>{const reason=['copy_deadline','copy_failed'].includes(error.code)?error.code:'guard_or_provider_failure';console.error('FINAL_RUNNER_STOPPED: '+reason+'. Inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
+if(require.main===module)main().catch(error=>{const reason=['copy_deadline','copy_failed'].includes(error.code)?error.code:/^[0-9A-Z]{5}$/.test(error.code||'')?'postgres_'+error.code:'guard_or_provider_failure';console.error('FINAL_RUNNER_STOPPED: '+reason+'. Inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
 module.exports={APPROVAL,REHEARSAL,runFinal,inspectPhase,checkTools,prepareDatabase,runCopy,assertNoActiveClaims,closeIdlePoolClients};
