@@ -1135,7 +1135,7 @@ test("signed failed secondary receipt stops a claimed follow-up, alerts once, an
  });
 });
 
-test("two-reviewer settlement releases only the confirmed secondary gate and its matching attention",{
+test("single-operator settlement releases only the confirmed secondary gate and matching attention",{
  skip:!connectionString,
 },async()=>{
  const manual=require("../src/services/whatsappSecondaryUnknownHoldReviewService");
@@ -1157,7 +1157,7 @@ test("two-reviewer settlement releases only the confirmed secondary gate and its
     WHATSAPP_SECONDARY_MANUAL_UNKNOWN_HOLD_RELEASE_ENABLED:"true"};
   const result=await manual.releaseReviewedSecondaryUnknownHold({
     reservationId:reservation.reservationId,releaseBasis:"signed_failed",
-    firstReviewer:"test_operator_one",secondReviewer:"test_operator_two",
+    operatorId:"test_operator_one",
     evidenceTicket:"TEST_20261113_VERIFIED",
     billingHubNoChargeChecked:true,businessAppReviewed:true,
     oldMessageRetryProhibited:true,
@@ -1184,7 +1184,8 @@ test("two-reviewer settlement releases only the confirmed secondary gate and its
     "FROM whatsapp_sender_unknown_hold_releases WHERE reservation_id=$1",
     [reservation.reservationId]);
   assert.equal(history.rowCount,1);
-  assert.notEqual(history.rows[0].first_reviewer,history.rows[0].second_reviewer);
+  assert.equal(history.rows[0].first_reviewer,"test_operator_one");
+  assert.equal(history.rows[0].second_reviewer,null);
   assert.equal((await db.query(
     "SELECT delivery_status FROM messages WHERE id=$1",
     [messageId])).rows[0].delivery_status,"failed",
