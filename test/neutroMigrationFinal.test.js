@@ -55,6 +55,35 @@ test('final switch occurs only after retirement, full copy, durable archive and 
  assert(f.calls.filter(c=>c.method==='POST').every(c=>c.body.commitId===COMMIT));
  assert(!JSON.stringify(f.events).includes('synthetic'));
 });
+test('holding deployment waits for public routing without repeating mutations',async()=>{
+ const f=fixture(),read=f.readRuntime;let pending=3;
+ f.readRuntime=async()=>{
+  if(f.runtime==='standalone'&&pending-- >0) {
+   if(pending===1)throw Error('temporary public response');
+   return 'drained';
+  }
+  return read();
+ };
+ await runFinal(f);
+ assert.equal(f.db,DESTINATION);
+ assert.equal(f.events.filter(e=>e.phase==='holding_readiness_wait').length,3);
+ assert.equal(f.calls.filter(c=>c.method==='POST').length,2);
+});
+test('holding readiness expiry cannot start copying or change database',async()=>{
+ const f=fixture(),read=f.readRuntime;let reads=0;
+ f.readRuntime=async()=>f.runtime==='standalone'&&reads++<31?'drained':read();
+ await assert.rejects(runFinal(f),/readiness deadline/);
+ assert.equal(f.db,SOURCE);
+ assert(!f.events.some(e=>e.phase==='retired'));
+ assert(!f.calls.some(c=>c.method==='PUT'));
+});
+test('running application during holding transition cannot authorize a copy',async()=>{
+ const f=fixture(),read=f.readRuntime;
+ f.readRuntime=async()=>f.runtime==='standalone'?'running':read();
+ await assert.rejects(runFinal(f),/Unexpected runtime/);
+ assert(!f.events.some(e=>e.phase==='retired'));
+ assert(!f.calls.some(c=>c.method==='PUT'));
+});
 for(const [name,mutate] of [
  ['approval',f=>f.approved=''],['source deploy',f=>f.expectedDeploy='dep-other'],
  ['destination identity',f=>f.destinationUrl=SOURCE],['source identity',f=>f.db=DESTINATION],
@@ -186,3 +215,4 @@ test('final preparation requires the retained initial database',async()=>{
  }});
  await assert.rejects(prepareDatabase(DESTINATION,'final',()=>{},connect),/Preserved/);
 });
+
