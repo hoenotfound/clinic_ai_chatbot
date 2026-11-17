@@ -1,7 +1,7 @@
 "use strict";
 // Offline operator action only. Never imported by the web server or scheduler.
-// Do not invoke until two real people independently checked Meta billing and
-// the Business App. CLI flags are human attestations, not API verification.
+// One identified operator checks Meta billing and the Business App.
+// CLI flags are human attestations, not independent API verification.
 require("dotenv").config();
 const {pool}=require("../src/db/db");
 const {releaseReviewedSecondaryUnknownHold}=
@@ -19,14 +19,13 @@ for(let i=2;i<process.argv.length;i++){
 }
 async function main(){
  if(!args.get("--apply")){
-  console.log("Read-only: no gate was released. Supply --apply after two independent external reviews.");
+  console.log("Read-only: no gate was released. Supply --apply only after the operator checks billing and the Business App.");
   return;
  }
  const result=await releaseReviewedSecondaryUnknownHold({
   reservationId:args.get("--reservation-id"),
   releaseBasis:args.get("--release-basis"),
-  firstReviewer:args.get("--first-reviewer"),
-  secondReviewer:args.get("--second-reviewer"),
+  operatorId:args.get("--operator-id"),
   evidenceTicket:args.get("--evidence-ticket"),
   billingHubNoChargeChecked:args.get("--confirm-billing-no-charge")===true,
   businessAppReviewed:args.get("--confirm-business-app-reviewed")===true,
