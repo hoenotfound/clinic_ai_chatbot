@@ -1,0 +1,49 @@
+name: Neutro independent database copy rehearsal
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: neutro-production-migration
+  cancel-in-progress: false
+jobs:
+  copy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: neutro-migration-recovery
+    steps:
+      - name: Fetch reviewed migration runner
+        uses: actions/checkout@v7
+        with:
+          ref: d9059a986985edb88000edea7b4553a4c950f2ec
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --omit=dev
+      - name: Verify guards without production credentials
+        run: node --test test/neutroMigration*.test.js
+      - name: Install PostgreSQL 18 clients before database access
+        run: |
+          if [ ! -x /usr/lib/postgresql/18/bin/pg_dump ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client-18
+          fi
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/18/bin/pg_dump --version
+          /usr/lib/postgresql/18/bin/pg_restore --version
+      - name: Copy to isolated destination and verify archive and original readiness
+        env:
+          RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
+          NEUTRO_MIGRATION_DESTINATION_URL: ${{ secrets.NEUTRO_MIGRATION_DESTINATION_URL }}
+        run: node scripts/neutroMigrationFinal.cjs --copy-rehearsal
+      - name: Retain metadata journal only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: neutro-copy-rehearsal-journal
+          path: neutro-final-journal.json
+          retention-days: 30
+          if-no-files-found: ignore
