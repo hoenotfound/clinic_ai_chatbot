@@ -11,8 +11,8 @@ const env={
  WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
 };
 const approved={
- reservationId,releaseBasis:"signed_failed",firstReviewer:"operator_one",
- secondReviewer:"operator_two",evidenceTicket:"CASE_20261113_VIDEO",
+ reservationId,releaseBasis:"signed_failed",operatorId:"operator_one",
+ evidenceTicket:"CASE_20261113_VIDEO",
  billingHubNoChargeChecked:true,businessAppReviewed:true,
  oldMessageRetryProhibited:true,
 };
@@ -58,9 +58,9 @@ test("manual unknown hold releases default OFF and never authorize sends",async(
  assert.equal(result.oldMessageRetryAllowed,false);
  assert.equal(f.calls.length,0);
 });
-test("requires two distinct reviewers and human external no-charge checks",async()=>{
+test("requires one operator and verified external no-charge attestations",async()=>{
  for(const patch of [
-  {secondReviewer:"OPERATOR_ONE"},{billingHubNoChargeChecked:false},
+  {operatorId:""},{operatorId:"XX"},{billingHubNoChargeChecked:false},
   {businessAppReviewed:false},{oldMessageRetryProhibited:false},
   {evidenceTicket:"../phone.number"},{releaseBasis:"invented"},
  ]){
@@ -71,7 +71,7 @@ test("requires two distinct reviewers and human external no-charge checks",async
   assert.equal(f.calls.length,0);
  }
 });
-test("a signed failed receipt can release only the exact gate after independent review",async()=>{
+test("a signed failed receipt can release only the exact gate after single-operator attestation",async()=>{
  const f=mock();
  const result=await review.releaseReviewedSecondaryUnknownHold(approved,{
   database:f.database,env});
@@ -80,7 +80,11 @@ test("a signed failed receipt can release only the exact gate after independent 
  assert.equal(result.oldMessageRetryAllowed,false);
  assert.equal(result.originalAttemptStillUnknown,true);
  assert.equal(f.released,true);
- assert.ok(f.calls.find(x=>x.sql.includes("INSERT INTO whatsapp_sender_unknown_hold_releases")));
+ const audit=f.calls.find(x=>x.sql.includes("INSERT INTO whatsapp_sender_unknown_hold_releases"));
+ assert.ok(audit);
+ assert.match(audit.sql,/\$6,NULL,\$7/,"never fabricate a second reviewer");
+ assert.deepEqual(audit.args,[reservationId,2,9001,19111,"signed_failed",
+  "operator_one","CASE_20261113_VIDEO"]);
  assert.ok(f.calls.find(x=>x.sql.includes("UPDATE whatsapp_sender_billing_gates")));
  assert.ok(f.calls.find(x=>x.sql==="COMMIT"));
  assert.equal(f.calls.some(x=>x.sql.includes("UPDATE whatsapp_sender_billing_attempts")),false,
@@ -97,7 +101,7 @@ test("a signed failed receipt can release only the exact gate after independent 
  assert.equal(result.deliveryAttentionResolved,true);
  assert.equal(f.calls.some(x=>x.sql.includes("messages SET")),false);
 });
-test("an unconfirmed send with no WAMID requires separate human review",async()=>{
+test("an unconfirmed send with no WAMID requires one operator with external proof",async()=>{
  const f=mock({wamid:null,receiptCount:0,failures:0});
  const result=await review.releaseReviewedSecondaryUnknownHold({
   ...approved,releaseBasis:"unconfirmed_no_wamid"},{database:f.database,env});
