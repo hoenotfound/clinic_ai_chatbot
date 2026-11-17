@@ -150,3 +150,18 @@ test('copy progress forwards only approved phase names and never payload fields'
  await runCopy(SOURCE,DESTINATION,target,fake,5000,phase=>phases.push(phase));
  assert.deepEqual(phases,['source_dumped']);
 });
+
+test('idle pool cleanup never terminates active transactions or unrelated clients',async()=>{
+ const {closeIdlePoolClients}=require('../scripts/neutroMigrationFinal.cjs');
+ for(const unsafe of [{pid:1,application_name:'pgbouncer',state:'active',xact_start:null},{pid:1,application_name:'pgbouncer',state:'idle in transaction',xact_start:'time'},{pid:1,application_name:'other',state:'idle',xact_start:null}]){
+  const calls=[];const c={query:async(sql,args)=>{calls.push({sql,args});return {rows:[unsafe]};}};
+  assert.equal(await closeIdlePoolClients(c,'neondb'),false);assert.equal(calls.length,1);
+ }
+});
+test('idle pool cleanup is scoped to observed PIDs and repeats idle and transaction predicates',async()=>{
+ const {closeIdlePoolClients}=require('../scripts/neutroMigrationFinal.cjs');const calls=[];
+ const c={query:async(sql,args)=>{calls.push({sql,args});return {rows:calls.length===1?[{pid:42,application_name:'pgbouncer',state:'idle',xact_start:null}]:[]};}};
+ assert.equal(await closeIdlePoolClients(c,'neondb'),true);
+ assert.deepEqual(calls[1].args,['neondb',[42]]);
+ for(const text of ['pid=ANY','application_name=','state=','xact_start IS NULL','datname=$1'])assert(calls[1].sql.includes(text));
+});

@@ -142,12 +142,24 @@ async function pg(raw,host,database,readonly,fn) {
   try{await c.connect();return await fn(c);}finally{await c.end();}
 }
 
-async function sourceQuiet(sourceUrl,wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now) {
+async function closeIdlePoolClients(c,database) {
+  const sessions=(await c.query("SELECT pid,application_name,state,xact_start FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid() AND backend_type='client backend'",[database])).rows;
+  if(sessions.some(s=>s.application_name!=='pgbouncer'||s.state!=='idle'||s.xact_start!==null))return false;
+  if(sessions.length)await c.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid=ANY($2::int[]) AND pid<>pg_backend_pid() AND backend_type='client backend' AND application_name='pgbouncer' AND state='idle' AND xact_start IS NULL",[database,sessions.map(s=>s.pid)]);
+  return true;
+}
+
+async function sourceQuiet(sourceUrl,wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,retired=false) {
   const deadline=now()+60000;
   while(true) {
-    const count=await pg(sourceUrl,SOURCE_HOST,'neondb',true,async c=>(await c.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'")).rows[0].n);
+    const count=await pg(sourceUrl,SOURCE_HOST,'neondb',true,async c=>{
+      // Only the initial retirement boundary may close idle pool backends.
+      // Render retirement and clean drain are independently proved first.
+      if(retired)await closeIdlePoolClients(c,'neondb');
+      return (await c.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'")).rows[0].n;
+    });
     if(count===0)return;
-    if(now()>=deadline)throw Error('Source clients remain. No clients were terminated.');
+    if(now()>=deadline)throw Error('Source clients remain. Active or non-pool clients were not terminated.');
     await wait(3000);
   }
 }
@@ -172,6 +184,7 @@ async function prepareDatabase(destinationUrl,mode,emit,stamp=new Date().toISOSt
     } else {
       const meta=(await c.query("SELECT pg_get_userbyid(datdba) owner,pg_encoding_to_char(encoding) encoding,datlocprovider,datlocale FROM pg_database WHERE datname='neondb'")).rows[0];
       if(meta?.owner!=='neondb_owner'||meta.encoding!=='UTF8'||meta.datlocprovider!=='b'||meta.datlocale!=='C.UTF-8')throw Error('Unexpected destination database settings.');
+      await closeIdlePoolClients(c,'neondb');
       if((await c.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname='neondb' AND backend_type='client backend'")).rows[0].n!==0)throw Error('Destination has other clients.');
       if(!/^neutro_initial_[0-9]{14}$/.test(preserved))throw Error('Invalid archive database name.');
       emit({phase:'before_preserve_destination',preservedDatabase:preserved});
@@ -249,7 +262,7 @@ async function main() {
     expectedDeploy:process.env.NEUTRO_EXPECTED_SOURCE_DEPLOY,emit,preflight:async()=>{},
     prepareDestination:()=>prepareDatabase(destinationRaw,'final',emit),
     verifyRetirement:async()=>{
-      await sourceQuiet(sourceUrl);
+      await sourceQuiet(sourceUrl,undefined,undefined,true);
       const boundary=await pg(sourceUrl,SOURCE_HOST,'neondb',true,c=>require('./neutroMigrationBoundary.cjs').inspect(c));
       assertNoActiveClaims(boundary);
       emit({phase:'source_claims_checked',activeClaims:0,historicalHoldsPreserved:true});
@@ -271,4 +284,4 @@ async function main() {
     },destinationUrl:destination.toString()});
 }
 if(require.main===module)main().catch(error=>{const reason=['copy_deadline','copy_failed'].includes(error.code)?error.code:'guard_or_provider_failure';console.error('FINAL_RUNNER_STOPPED: '+reason+'. Inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
-module.exports={APPROVAL,REHEARSAL,runFinal,inspectPhase,checkTools,prepareDatabase,runCopy,assertNoActiveClaims};
+module.exports={APPROVAL,REHEARSAL,runFinal,inspectPhase,checkTools,prepareDatabase,runCopy,assertNoActiveClaims,closeIdlePoolClients};
