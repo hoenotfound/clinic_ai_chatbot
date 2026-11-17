@@ -16,7 +16,7 @@ async function runtime(fetchImpl = global.fetch) {
   const body = await response.text();
   let state;
   try { state = JSON.parse(body); } catch (_) {
-    if (/<!doctype html|<html[\s>]/i.test(body)) return "running";
+    if (body.trim() === "AI messaging bot is running.") return "running";
     throw Error("Unrecognized public runtime response.");
   }
   if (state.mode === "migration_hold" && state.chatbotRunning === false) return "standalone";

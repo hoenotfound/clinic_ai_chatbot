@@ -65,13 +65,15 @@ async function probe(fetchImpl, holding, allowDrainedApplication = false) {
   if (r.status !== 200) throw Error("Public health check failed.");
   const body = await r.text();
   let data;
-  try { data = JSON.parse(body); } catch (_) { /* Normal application returns HTML. */ }
+  try { data = JSON.parse(body); } catch (_) { /* Normal root returns a fixed readiness message. */ }
   const isHold = data?.mode === "migration_hold" && data.chatbotRunning === false;
   const drainedApp = data?.mode === "migration_hold" && data.acceptingWork === false &&
     data.activeTasks === 0 && data.drained === true;
   const paused = data?.mode === "migration_hold" || data?.mode === "migration_draining" || data?.acceptingWork === false;
   if (holding ? !(isHold || (allowDrainedApplication && drainedApp)) : paused)
     throw Error("Public holding state does not match the expected phase.");
+  if (!holding && body.trim() !== "AI messaging bot is running.")
+    throw Error("Normal application readiness response was not observed.");
 }
 
 async function recover({ request, expectedDeploy, approved, emit, fetchImpl = global.fetch,

@@ -28,7 +28,7 @@ function fixture() {
     if (path === "/deploys/dep-recovery") return live("dep-recovery");
     throw Error("Unexpected test request.");
   };
-  f.fetchImpl = async () => ({ status: 200, text: async () => f.holding ? JSON.stringify({ mode: "migration_hold", chatbotRunning: false }) : "<!doctype html><html>Login</html>" });
+  f.fetchImpl = async () => ({ status: 200, text: async () => f.holding ? JSON.stringify({ mode: "migration_hold", chatbotRunning: false }) : "AI messaging bot is running." });
   f.emit = event => f.events.push(event);
   return f;
 }

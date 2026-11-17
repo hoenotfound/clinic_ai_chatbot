@@ -13,7 +13,7 @@ function fixture() {
   f.wait = async ms => { f.clock += ms; if (f.runtime === 'running' && !f.restored) f.runtime = 'drained'; };
   f.emit = e => f.events.push(e);
   f.readRuntime = async () => { f.samples++; return f.runtime; };
-  f.fetchImpl = async () => ({ status: 200, text: async () => f.runtime === 'running' ? '<!doctype html><html></html>' :
+  f.fetchImpl = async () => ({ status: 200, text: async () => f.runtime === 'running' ? 'AI messaging bot is running.' :
     JSON.stringify(f.runtime === 'standalone' ? { mode: 'migration_hold', chatbotRunning: false } :
       { mode: 'migration_hold', acceptingWork: false, activeTasks: 0, drained: true }) });
   f.request = async (path, method = 'GET', body) => {
@@ -139,5 +139,27 @@ for(const body of [
 test('runtime parser refuses unknown JSON and failed public response',async()=>{
   await assert.rejects(runtime(async()=>({status:200,text:async()=>'{"ok":true}'})));
   await assert.rejects(runtime(async()=>({status:503,text:async()=>''})));
-  assert.equal(await runtime(async()=>({status:200,text:async()=>'<html>Login</html>'})),'running');
+  assert.equal(await runtime(async()=>({status:200,text:async()=>'AI messaging bot is running.'})),'running');
+});
+
+test('controller and recovery agree with the actual application readiness handler', async()=>{
+  const readiness = require('../src/services/startupReadinessService');
+  try {
+    for (const ready of [false, true, false]) {
+      if (ready) readiness.markReady(); else readiness.markFailed();
+      const response = { statusCode: null, body: null, status(n){this.statusCode=n;return this;}, send(body){this.body=body;return this;} };
+      readiness.rootReadinessHandler({},response);
+      const fetchImpl=async()=>({status:response.statusCode,text:async()=>response.body});
+      if (ready) { assert.equal(await runtime(fetchImpl),'running'); await probe(fetchImpl,false); }
+      else { await assert.rejects(runtime(fetchImpl)); await assert.rejects(probe(fetchImpl,false)); }
+    }
+  } finally { readiness.resetForTests(); }
+});
+
+test('unrelated HTML, liveness JSON and startup failure text cannot prove normal operation',async()=>{
+  for(const body of ['<html>Login</html>', '{"status":"alive"}', 'AI messaging bot startup failed.', 'AI messaging bot is starting.', '']) {
+    const fetchImpl=async()=>({status:200,text:async()=>body});
+    await assert.rejects(runtime(fetchImpl));
+    await assert.rejects(probe(fetchImpl,false));
+  }
 });
