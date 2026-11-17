@@ -1192,3 +1192,78 @@ test("single-operator settlement releases only the confirmed secondary gate and 
     "manual review must not replay or rewrite the failed message");
  });
 });
+
+test("zero-operator signed FAILED nonbillable secondary receipt releases only its exact old gate",{
+ skip:!connectionString,
+},async()=>{
+ const automatic=require("../src/services/whatsappSecondaryVerifiedFailedAutoReleaseService");
+ await withSchema(async({db,database})=>{
+  const {ids,contacts,messages,reservation}=await seededSend(db,database);
+  const contactId=contacts[1].id,messageId=messages[1].id;
+  await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{status:"failed",errors:[{code:131052}],
+      pricing:{type:"free_entry_point",billable:false,category:"service"}})),
+    {database,env});
+  await db.query("UPDATE whatsapp_sender_accounts "+
+    "SET sender_key='neutro_secondary' WHERE id=$1",[ids.ariel]);
+  await db.query("UPDATE whatsapp_sender_billing_gates "+
+    "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1 "+
+    "AND owner_contact_id=$2",[ids.ariel,contactId]);
+  const autoEnv={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    WHATSAPP_SECONDARY_VERIFIED_FAILED_AUTO_RELEASE_ENABLED:"true"};
+  const result=await automatic.releaseVerifiedNonbillableFailure({
+    reservationId:reservation.reservationId},{database,env:autoEnv});
+  assert.equal(result.gateReleased,true,JSON.stringify(result));
+  assert.equal(result.oldMessageRetryAllowed,false);
+  assert.equal(result.sendAuthorized,false);
+  assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_gates "+
+    "WHERE sender_id=$1 AND owner_contact_id=$2",
+    [ids.ariel,contactId])).rows[0].state,"idle");
+  assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+    [reservation.reservationId])).rows[0].state,"unknown");
+  assert.equal((await db.query(
+    "SELECT delivery_status FROM messages WHERE id=$1",
+    [messageId])).rows[0].delivery_status,"failed");
+  const audit=await db.query(
+    "SELECT proof_receipt_fingerprint,original_message_retry_prohibited "+
+    "FROM whatsapp_sender_automatic_unknown_hold_releases WHERE reservation_id=$1",
+    [reservation.reservationId]);
+  assert.equal(audit.rowCount,1);
+  assert.equal(audit.rows[0].proof_receipt_fingerprint.length,64);
+  assert.equal(audit.rows[0].original_message_retry_prohibited,true);
+  const duplicate=await automatic.releaseVerifiedNonbillableFailure({
+    reservationId:reservation.reservationId},{database,env:autoEnv});
+  assert.equal(duplicate.gateReleased,false);
+ });
+});
+
+test("zero-operator recovery never clears a missing or unpriced Meta receipt",{
+ skip:!connectionString,
+},async()=>{
+ const automatic=require("../src/services/whatsappSecondaryVerifiedFailedAutoReleaseService");
+ await withSchema(async({db,database})=>{
+  const {ids,contacts,messages,reservation}=await seededSend(db,database);
+  const contactId=contacts[1].id;
+  await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{status:"failed",errors:[{code:131052}],
+      pricing:{type:"free_entry_point",category:"service"}})),
+    {database,env});
+  await db.query("UPDATE whatsapp_sender_accounts "+
+    "SET sender_key='neutro_secondary' WHERE id=$1",[ids.ariel]);
+  await db.query("UPDATE whatsapp_sender_billing_gates "+
+    "SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1 "+
+    "AND owner_contact_id=$2",[ids.ariel,contactId]);
+  const autoEnv={...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    WHATSAPP_SECONDARY_VERIFIED_FAILED_AUTO_RELEASE_ENABLED:"true"};
+  const outcome=await automatic.releaseVerifiedNonbillableFailure({
+    reservationId:reservation.reservationId},{database,env:autoEnv});
+  assert.equal(outcome.gateReleased,false);
+  assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_gates "+
+    "WHERE sender_id=$1 AND owner_contact_id=$2",
+    [ids.ariel,contactId])).rows[0].state,"unknown");
+  assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM "+
+    "whatsapp_sender_automatic_unknown_hold_releases")).rows[0].n,0);
+ });
+});
