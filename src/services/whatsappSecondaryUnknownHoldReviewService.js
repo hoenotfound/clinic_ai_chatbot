@@ -1,6 +1,6 @@
 "use strict";
 
-// Offline, single-operator hold release. No API route, scheduler,
+// Offline, two-reviewer operator-only hold release. No API route, scheduler,
 // webhook or sender imports this module. It NEVER sends or retries a message.
 // A release is not evidence that Meta delivered or that the message was free.
 const {pool}=require("../db/db");
@@ -53,20 +53,22 @@ const EXACT_RECEIPT_EVIDENCE_SQL=`
 `;
 
 async function releaseReviewedSecondaryUnknownHold({
-  reservationId,releaseBasis,operatorId,evidenceTicket,
+  reservationId,releaseBasis,firstReviewer,secondReviewer,evidenceTicket,
   billingHubNoChargeChecked=false,businessAppReviewed=false,
   oldMessageRetryProhibited=false,
 }, {database=pool,env=process.env}={}){
   if(!enabled(env))return denied("secondary_unknown_review_disabled");
   const reservation=clean(reservationId);
-  const operator=clean(operatorId),ticket=clean(evidenceTicket);
+  const first=clean(firstReviewer),second=clean(secondReviewer),ticket=clean(evidenceTicket);
   if(!UUID.test(reservation) ||
      !["signed_failed","unconfirmed_no_wamid"].includes(releaseBasis) ||
-     !/^[A-Za-z0-9._-]{3,80}$/.test(operator) || !TICKET.test(ticket) ||
+     !/^[A-Za-z0-9._-]{3,80}$/.test(first) ||
+     !/^[A-Za-z0-9._-]{3,80}$/.test(second) ||
+     first.toLowerCase()===second.toLowerCase() || !TICKET.test(ticket) ||
      billingHubNoChargeChecked!==true || businessAppReviewed!==true ||
      oldMessageRetryProhibited!==true ||
      typeof database?.connect!=="function")
-     return denied("secondary_unknown_review_operator_attestation_required");
+     return denied("secondary_unknown_review_two_independent_checks_required");
   let client,tx=false;
   try{
     client=await database.connect();
@@ -118,17 +120,15 @@ async function releaseReviewedSecondaryUnknownHold({
       await client.query("ROLLBACK");tx=false;
       return denied("secondary_unknown_review_unconfirmed_not_proven");
     }
-    // Written audit stores the sole operator in first_reviewer and SQL NULL
-    // in second_reviewer. Never invent a second reviewer's identity.
-    // The audit must commit atomically with ONLY this contact's gate.
+    // Written audit must commit atomically with ONLY this contact's gate.
     await client.query(
       `INSERT INTO whatsapp_sender_unknown_hold_releases
         (reservation_id,sender_id,contact_id,message_id,release_basis,
          billing_hub_no_charge_checked,business_app_reviewed,
          old_message_retry_prohibited,first_reviewer,second_reviewer,evidence_ticket)
-       VALUES($1,$2,$3,$4,$5,TRUE,TRUE,TRUE,$6,NULL,$7)`,
+       VALUES($1,$2,$3,$4,$5,TRUE,TRUE,TRUE,$6,$7,$8)`,
       [reservation,senderId,attempt.contact_id,attempt.message_id,
-       releaseBasis,operator,ticket]);
+       releaseBasis,first,second,ticket]);
     const changed=await client.query(
       `UPDATE whatsapp_sender_billing_gates
        SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,
@@ -149,7 +149,7 @@ async function releaseReviewedSecondaryUnknownHold({
         "AND status IN ('claimed','accepted')",
         [senderId,attempt.contact_id,attempt.message_id]);
     }
-    // The operator attested to this EXACT delivery-related attention,
+    // The two reviewers resolved this EXACT delivery-related attention,
     // not an unrelated staff, booking or clinical task. Preserve pending
     // AI-review work and never change the staff/AI takeover mode.
     const attention=await client.query(
