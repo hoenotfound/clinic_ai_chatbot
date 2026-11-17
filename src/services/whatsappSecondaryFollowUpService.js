@@ -33,6 +33,7 @@ const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
+const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
 
@@ -61,7 +62,7 @@ const SLOW_QUERY_WARNING_MS=3000;
 // bound parameters or provider identifiers. Does not change retry behaviour.
 async function monitoredFollowUpRead(database,sql,params,label){
  const started=performance.now();
- try{return await database.query(sql,params);}
+ try{return await runFollowUpRead(database,pool,sql,params);}
  finally {
    const elapsedMs=Math.round(performance.now()-started);
    if(elapsedMs>=SLOW_QUERY_WARNING_MS)
