@@ -191,8 +191,25 @@ test('idle pool cleanup is scoped to observed PIDs and repeats idle and transact
  const {closeIdlePoolClients}=require('../scripts/neutroMigrationFinal.cjs');const calls=[];
  const c={query:async(sql,args)=>{calls.push({sql,args});return {rows:calls.length===1?[{pid:42,application_name:'pgbouncer',state:'idle',xact_start:null}]:[]};}};
  assert.equal(await closeIdlePoolClients(c,'neondb'),true);
- assert.deepEqual(calls[1].args,['neondb',[42]]);
+ assert.deepEqual(calls[1].args,['neondb',[42],false]);
  for(const text of ['pid=ANY','application_name=','state=','xact_start IS NULL','datname=$1'])assert(calls[1].sql.includes(text));
+});
+
+test('named chatbot pool clients can be closed only after source retirement',async()=>{
+ const {closeIdlePoolClients}=require('../scripts/neutroMigrationFinal.cjs');
+ const base={pid:42,application_name:'da-chatbot-neutro-sense-tcm',state:'idle',xact_start:null,usename:'neondb_owner',client_host:'::1'};
+ for(const [retired,database,changes,allowed] of [
+  [false,'neondb',{},false],[true,'other',{},false],[true,'neondb',{},true],
+  [true,'neondb',{client_host:'127.0.0.1'},true],[true,'neondb',{client_host:'192.0.2.1'},false],
+  [true,'neondb',{usename:'other'},false],[true,'neondb',{state:'active'},false],
+  [true,'neondb',{xact_start:'time'},false],[true,'neondb',{application_name:'another-service'},false],
+ ]) {
+  const calls=[];const c={query:async(sql,args)=>{calls.push({sql,args});return {rows:calls.length===1?[{...base,...changes}]:[]};}};
+  assert.equal(await closeIdlePoolClients(c,database,retired),allowed);
+  assert.equal(calls.length,allowed?2:1);
+  if(allowed){assert.deepEqual(calls[1].args,['neondb',[42],true]);
+   for(const clause of ['usename=','host(client_addr)','state=','xact_start IS NULL','pid=ANY','$3::boolean'])assert(calls[1].sql.includes(clause));}
+ }
 });
 
 test('API-prepared database validation refuses populated targets without overwriting',async()=>{
