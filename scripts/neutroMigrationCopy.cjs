@@ -10,6 +10,7 @@ const {
   connectionIdentity,
 } = require("./neutroMigrationHold.cjs");
 const q = (s) => '"' + s.replace(/"/g, '""') + '"';
+const progress = phase => { if(process.send)process.send({phase}); };
 const sha = (x) =>
   crypto
     .createHash("sha256")
@@ -153,16 +154,11 @@ async function manifest(c) {
       "SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind IN ('r','p') ORDER BY 1",
     )
   ).rows;
-  for (const { relname: name } of names) {
-    const r = (
-      await c.query(
-        "SELECT count(*)::text rows,md5(coalesce(string_agg(md5(row_to_json(t)::text),'' ORDER BY md5(row_to_json(t)::text)),'')) digest FROM ONLY public." +
-          q(name) +
-          " t",
-      )
-    ).rows[0];
-    m.tables.push({ name, ...r });
-  }
+  // One request preserves the same per-table digest while avoiding one
+  // Singapore network round trip for each of 115 tables.
+  if(names.length)m.tables=(await c.query(names.map(({relname:name},i)=>
+    `SELECT $${i+1}::text name,count(*)::text rows,md5(coalesce(string_agg(md5(row_to_json(t)::text),'' ORDER BY md5(row_to_json(t)::text)),'')) digest FROM ONLY public.${q(name)} t`
+  ).join(' UNION ALL ')+' ORDER BY name',names.map(x=>x.relname))).rows;
   m.largeObjects = (
     await c.query(
       "SELECT loid,pageno,md5(data) digest FROM pg_largeobject ORDER BY loid,pageno",
@@ -224,7 +220,9 @@ async function main() {
       pgEnv(src, true),
       dir,
     );
+    progress('source_dumped');
     expected = await manifest(s);
+    progress('source_manifest_checked');
     await s.query("ROLLBACK");
   } finally {
     await s.end();
@@ -277,6 +275,7 @@ async function main() {
       )
     ).rows[0].n;
     if (n !== 0) throw Error("Target is not empty; nothing removed");
+    progress('restore_started');
     await command(
       "pg_restore",
       [
@@ -289,8 +288,10 @@ async function main() {
       pgEnv(dst, false),
       dir,
     );
+    progress('restore_finished');
     await d.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     actual = await manifest(d);
+    progress('destination_manifest_checked');
     const diff = differences(expected, actual);
     for (const x of seq) {
       if (!/^public\.[a-zA-Z0-9_]+$/.test(x.relation))
@@ -329,6 +330,7 @@ async function main() {
     }
     await d.query("ROLLBACK");
     if (diff.length) throw Error("Verification mismatch: " + diff.join(","));
+    progress('destination_sequences_checked');
   } finally {
     await d.end();
   }
@@ -405,6 +407,7 @@ async function main() {
       throw Error("Durable archive checksum mismatch");
     await backup.query("COMMIT");
     evidence.archiveId = id;
+    progress('archive_verified');
   } finally {
     await backup.end();
   }

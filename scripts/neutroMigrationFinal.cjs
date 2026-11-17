@@ -185,15 +185,17 @@ async function prepareDatabase(destinationUrl,mode,emit,stamp=new Date().toISOSt
   return target;
 }
 
-function runCopy(sourceUrl,destinationUrl,target,spawn=cp.spawn,timeoutMs=120000) {
+function runCopy(sourceUrl,destinationUrl,target,spawn=cp.spawn,timeoutMs=300000,onProgress=()=>{}) {
   return new Promise((resolve,reject)=>{
     const env={...process.env,DATABASE_URL:sourceUrl,MIGRATION_DEST_URL:destinationUrl};
     delete env.RENDER_API_KEY;delete env.NEUTRO_MIGRATION_DESTINATION_URL;
     if(target==='neondb'){env.NEUTRO_FINAL_COPY_APPROVED='20261116';env.NEUTRO_OLD_INSTANCE_RETIRED='confirmed';}
-    const child=spawn(process.execPath,[path.join(__dirname,'neutroMigrationCopy.cjs'),target],{env,detached:true,stdio:['ignore','pipe','pipe']});
-    let out='',failed=false,killTimer;
+    const child=spawn(process.execPath,[path.join(__dirname,'neutroMigrationCopy.cjs'),target],{env,detached:true,stdio:['ignore','pipe','pipe','ipc']});
+    const allowed=new Set(['source_dumped','source_manifest_checked','restore_started','restore_finished','destination_manifest_checked','destination_sequences_checked','archive_verified']);
+    child.on('message',x=>{if(allowed.has(x?.phase))onProgress(x.phase);});
+    let out='',failed=false,timedOut=false,killTimer;
     const stop=()=>{if(failed)return;failed=true;try{process.kill(-child.pid,'SIGTERM');}catch(_){}killTimer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch(_){}},5000);};
-    const timer=setTimeout(stop,timeoutMs);
+    const timer=setTimeout(()=>{timedOut=true;stop();},timeoutMs);
     child.stdout.on('data',x=>{out+=x;if(out.length>100000)stop();});
     // Diagnostics can contain customer data. Do not forward or upload them.
     child.stderr.on('data',()=>{});
@@ -212,7 +214,7 @@ function runCopy(sourceUrl,destinationUrl,target,spawn=cp.spawn,timeoutMs=120000
         }
         if(alive){const e=Error('Copy descendants could not be confirmed stopped.');e.copyChildrenUncertain=true;reject(e);return;}
       }
-      if(failed||code!==0){reject(Error('Copy runner failed or exceeded its deadline.'));return;}
+      if(failed||code!==0){const e=Error('Copy runner failed or exceeded its deadline.');e.code=timedOut?'copy_deadline':'copy_failed';reject(e);return;}
       try{const e=JSON.parse(out.trim());if(!e.verified||e.target!==target||!e.archiveId)throw Error();resolve(e);}
       catch(_){reject(Error('Copy runner evidence invalid.'));}
     });
@@ -235,8 +237,9 @@ async function main() {
   clientOptions(sourceUrl,SOURCE_HOST);
   if(mode==='--copy-rehearsal') {
     const target=await prepareDatabase(destinationRaw,'rehearsal',emit);
-    const evidence=await runCopy(sourceUrl,destinationRaw,target);
-    await recovery.verifyRecoveredSource({request,expectedDeploy:current.liveDeploy,emit});
+    let evidence;
+    try{evidence=await runCopy(sourceUrl,destinationRaw,target,cp.spawn,600000,phase=>emit({phase:'copy_'+phase}));}
+    finally{await recovery.verifyRecoveredSource({request,expectedDeploy:current.liveDeploy,emit});}
     emit({...evidence,workdir:undefined,phase:'independent_copy_rehearsal_verified',cutoverPerformed:false});return;
   }
   const destination=new URL(destinationRaw);
@@ -250,7 +253,7 @@ async function main() {
       const boundary=await pg(sourceUrl,SOURCE_HOST,'neondb',true,c=>require('./neutroMigrationBoundary.cjs').inspect(c));
       assertNoActiveClaims(boundary);
       emit({phase:'source_claims_checked',activeClaims:0,historicalHoldsPreserved:true});
-    },copy:()=>runCopy(sourceUrl,destinationRaw,'neondb'),
+    },copy:()=>runCopy(sourceUrl,destinationRaw,'neondb',cp.spawn,300000,phase=>emit({phase:'copy_'+phase})),
     verifyBoundary:async evidence=>{
       await sourceQuiet(sourceUrl);
       // Re-read the verified archive's manifests, then recheck source under one
@@ -267,5 +270,5 @@ async function main() {
       });
     },destinationUrl:destination.toString()});
 }
-if(require.main===module)main().catch(()=>{console.error('FINAL_RUNNER_STOPPED: inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
+if(require.main===module)main().catch(error=>{const reason=['copy_deadline','copy_failed'].includes(error.code)?error.code:'guard_or_provider_failure';console.error('FINAL_RUNNER_STOPPED: '+reason+'. Inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
 module.exports={APPROVAL,REHEARSAL,runFinal,inspectPhase,checkTools,prepareDatabase,runCopy,assertNoActiveClaims};

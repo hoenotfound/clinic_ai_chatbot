@@ -6,6 +6,8 @@ Scope: source steep-forest-44509907/main/neondb to existing destination delicate
 
 The protected workflow creates neutro_rehearsal_20261117 in the existing destination, copies a consistent PostgreSQL snapshot with PG18 pg_dump/pg_restore, compares all application records/schema/sequences, persists and rehashes a recoverable archive in neutro_backup_20261116, and verifies original production readiness. No production pause, Render write, customer test message or app deployment. Existing copies remain intact. An existing rehearsal database causes refusal, never overwrite.
 
+The independent rehearsal permits up to 10 minutes for the copy; the production copy has a 5-minute limit. It reports only approved phase names. Table fingerprints are fetched in one request to avoid hundreds of cross-region round trips. A timeout is a failed verification, never evidence of success.
+
 ## Final operation, approval required
 
 The owner must explicitly approve the production pause, final full synchronization, single DATABASE_URL update, and two exact-commit Render deployments. The existing dedicated Render key additionally needs environment-variable write access for this operation. Do not change its scope before approval. Keep automatic deployments off and exclude concurrent operators/deployments throughout.

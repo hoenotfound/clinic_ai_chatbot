@@ -141,3 +141,12 @@ test('active claims block copying while historical unknown holds are preserved',
  assert.doesNotThrow(()=>assertNoActiveClaims({requiresReview:[{value:'unknown',count:6},{value:'ambiguous',count:1}]}));
  assert.throws(()=>assertNoActiveClaims({}));
 });
+
+test('copy progress forwards only approved phase names and never payload fields',async()=>{
+ const {spawn}=require('node:child_process');const target='neutro_rehearsal_20261117',phases=[];
+ const evidence={verified:true,target,archiveId:'test'};
+ const code=`process.send({phase:'private customer text'});process.send({phase:'source_dumped',private:'hidden'});console.log(${JSON.stringify(JSON.stringify(evidence))});`;
+ const fake=(_exe,_args,options)=>spawn(process.execPath,['-e',code],options);
+ await runCopy(SOURCE,DESTINATION,target,fake,5000,phase=>phases.push(phase));
+ assert.deepEqual(phases,['source_dumped']);
+});
