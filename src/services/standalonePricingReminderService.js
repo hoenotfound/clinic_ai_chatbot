@@ -17,6 +17,7 @@ const {inferConfiguredServiceFromText,normalizeServiceText}=require("../utils/se
 const {hasClinicalMediaRisk}=require("../utils/aiReviewPolicy");
 const {quietHoursStatus,normalizeQuietHours}=require("../utils/quietHours");
 const realtimeEvents=require("../utils/realtimeEvents");
+const verifiedFailureRecovery=require("./whatsappSecondaryVerifiedFailedAutoReleaseService");
 
 const PRIMARY="neutro";
 const SECONDARY="neutro_secondary";
@@ -339,7 +340,8 @@ async function sendOne(candidate,offer,options,allOffers){
 }
 // Periodically recheck unknown holds, rather than only once at startup:
 // a video failure can arrive hours after the service was deployed.
-// This read-only discovery never releases or retries an outbound message.
+// The existing five-minute wake also runs strict, evidence-only reconciliation.
+// It never retries an outbound message or bypasses customer policy.
 const UNKNOWN_HOLD_REVIEW_INTERVAL_MS=5*60*1000;
 let lastUnknownHoldReviewMs=0;
 let unknownHoldReviewInFlight=false;
@@ -348,6 +350,13 @@ async function reviewUnknownSecondaryBillingHoldsOnce(nowMs=Date.now()){
      nowMs-lastUnknownHoldReviewMs<UNKNOWN_HOLD_REVIEW_INTERVAL_MS)return;
   unknownHoldReviewInFlight=true;
   try {
+  // No staff is required for a release proven by a signed, explicitly
+  // non-billable Meta failure. Missing and unpriced receipts remain held.
+  // This reuses the existing five-minute worker and adds no new timer.
+  const recovered=await verifiedFailureRecovery.sweepVerifiedNonbillableFailures();
+  if(recovered.released)console.info(
+    '[Standalone pricing] Automatically cleared '+recovered.released+
+    ' non-billable signed failed hold(s); no message retried.');
   const holds=await repo.listUnresolvedSecondaryBillingHolds();
   for(const hold of holds){
     // The error code comes only from the saved HMAC-verified Meta failure.
