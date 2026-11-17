@@ -427,4 +427,4 @@ if (require.main === module)
     );
     process.exitCode = 1;
   });
-module.exports = { targetName, connection, comparable, differences, assertSequenceValues };
+module.exports = { targetName, connection, comparable, differences, assertSequenceValues, assertNoOtherClients, manifest };
