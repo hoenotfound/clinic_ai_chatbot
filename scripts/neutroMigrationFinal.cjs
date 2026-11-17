@@ -130,7 +130,8 @@ async function runFinal({request,approved,expectedDeploy,emit,preflight,prepareD
       'Standalone holding readiness deadline exceeded.','Original deployment retirement not confirmed.',
       'An active or unknown deployment blocks recovery.','Live code differs from the reviewed recovery version.',
       'Live deployment changed; recovery blocked.','Unexpected start command.',
-      'Active send or worker claims require reconciliation before copying.']);
+      'Active send or worker claims require reconciliation before copying.',
+      'Source clients remain. Active or non-pool clients were not terminated.']);
     emit({phase:'final_guard_failed',reason:guards.has(error.message)?error.message:
       /^[0-9A-Z]{5}$/.test(error.code||'')?'postgres_'+error.code:'unclassified_guard_or_provider_failure'});
     if(activationStarted) {emit({phase:'manual_destination_recovery_required',automaticSourceRecoveryForbidden:true});throw error;}
@@ -163,10 +164,12 @@ async function pg(raw,host,database,readonly,fn) {
   try{await c.connect();return await fn(c);}finally{await c.end();}
 }
 
-async function closeIdlePoolClients(c,database) {
-  const sessions=(await c.query("SELECT pid,application_name,state,xact_start FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid() AND backend_type='client backend'",[database])).rows;
-  if(sessions.some(s=>s.application_name!=='pgbouncer'||s.state!=='idle'||s.xact_start!==null))return false;
-  if(sessions.length)await c.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid=ANY($2::int[]) AND pid<>pg_backend_pid() AND backend_type='client backend' AND application_name='pgbouncer' AND state='idle' AND xact_start IS NULL",[database,sessions.map(s=>s.pid)]);
+async function closeIdlePoolClients(c,database,retiredSource=false) {
+  const sessions=(await c.query("SELECT pid,application_name,state,xact_start,usename,host(client_addr) client_host FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid() AND backend_type='client backend'",[database])).rows;
+  const retiredApp=s=>retiredSource&&database==='neondb'&&s.application_name==='da-chatbot-neutro-sense-tcm'&&
+    s.usename==='neondb_owner'&&['127.0.0.1','::1'].includes(s.client_host);
+  if(sessions.some(s=>(s.application_name!=='pgbouncer'&&!retiredApp(s))||s.state!=='idle'||s.xact_start!==null))return false;
+  if(sessions.length)await c.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid=ANY($2::int[]) AND pid<>pg_backend_pid() AND backend_type='client backend' AND (application_name='pgbouncer' OR ($3::boolean AND datname='neondb' AND application_name='da-chatbot-neutro-sense-tcm' AND usename='neondb_owner' AND host(client_addr) IN ('127.0.0.1','::1'))) AND state='idle' AND xact_start IS NULL",[database,sessions.map(s=>s.pid),retiredSource]);
   return true;
 }
 
@@ -176,7 +179,7 @@ async function sourceQuiet(sourceUrl,wait=ms=>new Promise(r=>setTimeout(r,ms)),n
     const count=await pg(sourceUrl,SOURCE_HOST,'neondb',true,async c=>{
       // Only the initial retirement boundary may close idle pool backends.
       // Render retirement and clean drain are independently proved first.
-      if(retired)await closeIdlePoolClients(c,'neondb');
+      if(retired)await closeIdlePoolClients(c,'neondb',true);
       return (await c.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'")).rows[0].n;
     });
     if(count===0)return;
