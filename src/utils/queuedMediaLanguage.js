@@ -78,4 +78,24 @@ function resolveQueuedMediaLanguage({
   return { imageUrl: translatedImageUrl, caption: safeCaption };
 }
 
-module.exports = { latestQueuedLanguagePreference, resolveQueuedMediaLanguage };
+// Re-read customer language at the actual send boundary, not merely at the
+// time the worker first claimed the picture. Do not allow queued caption or
+// artwork to become stale while billing and uploads are being verified.
+async function queuedMediaLanguageStillCurrent({
+  database, contactId, inboundMessageId, imageUrl, caption, kind,
+  selectedMedia, getConfig,
+} = {}) {
+  const latestLanguage = await latestQueuedLanguagePreference(
+    database, contactId, inboundMessageId);
+  const current = resolveQueuedMediaLanguage({
+    imageUrl, caption, kind, language: latestLanguage, config: getConfig(),
+  });
+  return Boolean(current &&
+    current.imageUrl === selectedMedia?.imageUrl &&
+    current.caption === selectedMedia?.caption);
+}
+
+module.exports = {
+  latestQueuedLanguagePreference, resolveQueuedMediaLanguage,
+  queuedMediaLanguageStillCurrent,
+};
