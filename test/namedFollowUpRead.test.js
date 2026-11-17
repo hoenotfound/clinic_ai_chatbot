@@ -1,0 +1,56 @@
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { runFollowUpRead, preparedNameForSql } =
+  require("../src/utils/namedFollowUpRead");
+
+test("follow-up reads default to exact unchanged SQL and parameters", async () => {
+  const calls = [];
+  const pool = { query(...args) { calls.push(args); return Promise.resolve({ rows: [1] }); } };
+  const sql = "SELECT $1::integer AS value";
+  const params = [7];
+  const result = await runFollowUpRead(pool, pool, sql, params, { env: {} });
+  assert.deepEqual(result.rows, [1]);
+  assert.deepEqual(calls, [[sql, params]]);
+});
+
+test("only enabled real-pool reads use stable per-SQL named statements", async () => {
+  const calls = [];
+  const pool = { query(...args) { calls.push(args); return Promise.resolve({ rows: [] }); } };
+  const env = { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED: "true" };
+  const sql = "SELECT $1::integer AS value", other = "SELECT $1::text AS value";
+  await runFollowUpRead(pool, pool, sql, [7], { env });
+  await runFollowUpRead(pool, pool, sql, [8], { env });
+  await runFollowUpRead(pool, pool, other, ["x"], { env });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].length, 1);
+  assert.deepEqual(calls[0][0], { text: sql, values: [7], name: preparedNameForSql(sql) });
+  assert.deepEqual(calls[1][0], { text: sql, values: [8], name: calls[0][0].name });
+  assert.notEqual(calls[2][0].name, calls[0][0].name);
+  assert.ok(calls[0][0].name.length < 63);
+});
+
+test("injected databases and disabled switches preserve query interface", async () => {
+  const calls = [];
+  const pool = {};
+  const testDb = { query(...args) { calls.push(args); return Promise.resolve({ rows: [] }); } };
+  const sql = "SELECT now()", values = [];
+  await runFollowUpRead(testDb, pool, sql, values,
+    { env: { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED: "true" } });
+  await runFollowUpRead(testDb, pool, sql, values,
+    { env: { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED: "false" } });
+  assert.deepEqual(calls, [[sql, values], [sql, values]]);
+});
+
+test("database failures propagate and never cause automatic replays", async () => {
+  let calls = 0;
+  const error = Object.assign(new Error("prepared statement unavailable"), { code: "0A000" });
+  const pool = { query() { calls++; return Promise.reject(error); } };
+  await assert.rejects(runFollowUpRead(pool, pool, "SELECT 1", [],
+    { env: { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED: "true" } }), e => e === error);
+  assert.equal(calls, 1);
+});
+
+test("different SQL text always produces different names", () => {
+  assert.notEqual(preparedNameForSql("SELECT 1"), preparedNameForSql("SELECT 2"));
+});
