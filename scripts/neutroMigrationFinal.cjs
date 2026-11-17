@@ -78,10 +78,24 @@ async function runFinal({request,approved,expectedDeploy,emit,preflight,prepareD
     await inspectPhase(request,expectedDeploy,false,recovery.HOLD);
     if(await readRuntime()!=='drained') throw Error('Drain readiness changed after holding config.');
     holdingDeploy=await deployPinned(request,emit,wait,now,'hold');
-    await inspectPhase(request,holdingDeploy,false,recovery.HOLD);
-    if(await readRuntime()!=='standalone') throw Error('Standalone holding process not observed.');
+    emit({phase:'holding_deploy_live',deployId:holdingDeploy});
+    // Provider "live" can precede public routing convergence. Recheck identity
+    // each time and wait only for readiness; never repeat a deployment.
+    const holdingDeadline=now()+60000;
+    while(true) {
+      await inspectPhase(request,holdingDeploy,false,recovery.HOLD);
+      let observed;
+      try { observed=await readRuntime(); } catch (_) { observed='unavailable'; }
+      if(observed==='standalone') break;
+      if(!['drained','unavailable'].includes(observed)) throw Error('Unexpected runtime during holding transition.');
+      if(now()>=holdingDeadline) throw Error('Standalone holding readiness deadline exceeded.');
+      emit({phase:'holding_readiness_wait',observed});
+      await wait(2000);
+    }
+    emit({phase:'holding_readiness_verified'});
     const retired=unwrap(await request(`/deploys/${expectedDeploy}`));
     if(retired.status!=='deactivated' || retired.commit?.id!==recovery.COMMIT) throw Error('Original deployment retirement not confirmed.');
+    emit({phase:'original_deploy_deactivated'});
     await verifyRetirement();
     emit({phase:'source_retirement_verified',oldDeploy:expectedDeploy,holdDeploy:holdingDeploy});
     const evidence=await copy(); // Must settle or terminate all child processes before rejecting.
@@ -111,6 +125,14 @@ async function runFinal({request,approved,expectedDeploy,emit,preflight,prepareD
     await inspectPhase(request,liveDeploy,true,'npm start');
     emit({phase:'destination_live',liveDeploy,archiveId:evidence.archiveId,cutoverPerformed:true,customerDeliveryVerified:false});
   } catch(error) {
+    // Emit only known static guard messages, never provider bodies or SQL data.
+    const guards=new Set(['Standalone holding process not observed.','Unexpected runtime during holding transition.',
+      'Standalone holding readiness deadline exceeded.','Original deployment retirement not confirmed.',
+      'An active or unknown deployment blocks recovery.','Live code differs from the reviewed recovery version.',
+      'Live deployment changed; recovery blocked.','Unexpected start command.',
+      'Active send or worker claims require reconciliation before copying.']);
+    emit({phase:'final_guard_failed',reason:guards.has(error.message)?error.message:
+      /^[0-9A-Z]{5}$/.test(error.code||'')?'postgres_'+error.code:'unclassified_guard_or_provider_failure'});
     if(activationStarted) {emit({phase:'manual_destination_recovery_required',automaticSourceRecoveryForbidden:true});throw error;}
     if(!drainSeen || error.copyChildrenUncertain) throw error;
     // Never retire a draining/faulted process or repeat an uncertain POST.
