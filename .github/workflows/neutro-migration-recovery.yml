@@ -1,0 +1,54 @@
+name: Neutro migration recovery
+
+# Inert until reviewed, available on the default branch, and manually invoked.
+# Do not start another production pause merely because this workflow exists.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Read-only access check or separately approved source-only recovery
+        type: choice
+        options: [check, recover-source]
+        default: check
+        required: true
+      holding_deploy:
+        description: Exact live holding deployment ID, required for recovery
+        type: string
+        default: ""
+      source_recovery_approval:
+        description: Approved recovery requires source-only-before-any-destination-writes
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neutro-production-migration
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: neutro-migration-recovery
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify recovery guards without production access
+        run: node --test test/neutroMigrationRecovery.test.js
+      - name: Inspect or perform explicitly approved recovery
+        env:
+          RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
+          OPERATION: ${{ inputs.operation }}
+          NEUTRO_EXPECTED_HOLD_DEPLOY: ${{ inputs.holding_deploy }}
+          NEUTRO_SOURCE_RECOVERY_APPROVED: ${{ inputs.source_recovery_approval }}
+        shell: bash
+        run: |
+          case "$OPERATION" in
+            check) node scripts/neutroMigrationRecovery.cjs --check ;;
+            recover-source) node scripts/neutroMigrationRecovery.cjs --recover-source ;;
+            *) exit 2 ;;
+          esac
