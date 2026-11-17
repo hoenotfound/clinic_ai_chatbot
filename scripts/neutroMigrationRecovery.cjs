@@ -146,14 +146,22 @@ async function recover({ request, expectedDeploy, approved, emit, fetchImpl = gl
   throw Error("Recovery monitoring deadline reached; inspect the recorded deployment, do not blindly redeploy.");
 }
 
+async function verifySource(options) {
+  const state = await inspect(options.request);
+  await verifyRecoveredSource({ ...options, expectedDeploy: state.liveDeploy });
+  options.emit({ phase: "read_only_source_verified", ...state, cutoverReady: false, customerDeliveryVerified: false });
+}
+
 async function main() {
   const mode = process.argv[2] || "--check";
-  if (!["--check", "--recover-source"].includes(mode)) throw Error("Use --check or --recover-source.");
+  if (!["--check", "--verify-source", "--recover-source"].includes(mode)) throw Error("Use --check, --verify-source or --recover-source.");
   if (process.env.RENDER_SERVICE_ID) throw Error("Run recovery outside the production Render service.");
   const request = api(process.env.RENDER_API_KEY);
   const emit = data => console.log(JSON.stringify({ at: new Date().toISOString(), ...data }));
   if (mode === "--check") {
     emit({ phase: "read_only_check", ...(await inspect(request)), cutoverReady: false });
+  } else if (mode === "--verify-source") {
+    await verifySource({ request, emit });
   } else {
     await recover({ request, expectedDeploy: process.env.NEUTRO_EXPECTED_HOLD_DEPLOY,
       approved: process.env.NEUTRO_SOURCE_RECOVERY_APPROVED, emit });
@@ -165,4 +173,4 @@ if (require.main === module) main().catch(error => {
     /^[A-Za-z0-9 .,;:_/?-]+$/.test(error.message) ? error.message : "Check private runner diagnostics."));
   process.exitCode = 1;
 });
-module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, probe, recover, verifyRecoveredSource };
+module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, probe, recover, verifyRecoveredSource, verifySource };

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, recover } = require("../scripts/neutroMigrationRecovery.cjs");
+const { verifySource } = require("../scripts/neutroMigrationRecovery.cjs");
 const SOURCE = "postgresql://test:private@ep-patient-queen-b31tib05-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb";
 const service = () => ({ id: SERVICE, ownerId: WORKSPACE, type: "web_service",
   repo: "https://github.com/hoenotfound/clinic_ai_chatbot", autoDeployTrigger: "off",
@@ -149,4 +150,36 @@ test("a normal public response cannot mask a concurrent database identity change
   await assert.rejects(recover(f),/identity or configuration/);
   assert.equal(f.events.some(e=>e.phase==='source_deploy_live'),false);
   assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+});
+
+test("standalone source verification pins the observed deployment and performs only reads", async () => {
+  const f = fixture();
+  f.service.serviceDetails.envSpecificDetails.startCommand = "npm start";
+  f.holding = false;
+  await verifySource(f);
+  assert.equal(f.calls.every(c => c.method === "GET"), true);
+  assert.equal(f.events.at(-1).phase, "read_only_source_verified");
+  assert.equal(f.events.at(-1).liveDeploy, "dep-hold");
+  assert.equal(f.events.at(-1).cutoverReady, false);
+  assert.equal(f.events.at(-1).customerDeliveryVerified, false);
+  assert.equal(JSON.stringify(f.events).includes("private"), false);
+});
+
+test("standalone verification refuses holding and concurrent deployment changes without mutation", async () => {
+  for (const changeDeployment of [false, true]) {
+    const f = fixture();
+    if (changeDeployment) {
+      f.service.serviceDetails.envSpecificDetails.startCommand = "npm start";
+      f.holding = false;
+      const probe = f.fetchImpl;
+      f.fetchImpl = async () => {
+        const response = await probe();
+        f.deploys[0].deploy.id = "dep-changed";
+        return response;
+      };
+    }
+    await assert.rejects(verifySource(f), /identity or configuration/);
+    assert.equal(f.calls.every(c => c.method === "GET"), true);
+    assert.equal(f.events.some(e => e.phase === "read_only_source_verified"), false);
+  }
 });
