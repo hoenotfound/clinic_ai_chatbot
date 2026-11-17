@@ -101,3 +101,52 @@ test("API failures never echo credentials or provider bodies and forbid redirect
   assert.equal(seen.redirect, "error");
   assert.throws(() => api(""), /missing/);
 });
+
+test("recovery tolerates a briefly stale holding response after live without another deployment", async () => {
+  const f = fixture(), originalFetch=f.fetchImpl;
+  let postLiveSamples=0,clock=0;
+  f.now=()=>clock; f.wait=async ms=>{clock+=ms;};
+  f.fetchImpl=async()=>{
+    if(f.posted && postLiveSamples++===0) return {status:200,text:async()=>JSON.stringify({mode:'migration_hold',chatbotRunning:false})};
+    return originalFetch();
+  };
+  await recover(f);
+  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+  assert.equal(f.events.some(e=>e.phase==='source_readiness_wait'),true);
+  assert.equal(f.events.at(-1).phase,'source_deploy_live');
+});
+
+test("permanent readiness failure has a bounded read-only wait and never reports recovery success",async()=>{
+  const f=fixture(),originalFetch=f.fetchImpl; let clock=0;
+  f.now=()=>clock; f.wait=async ms=>{clock+=ms;};
+  f.fetchImpl=async()=>f.posted?{status:503,text:async()=>'private provider body'}:originalFetch();
+  await assert.rejects(recover(f),/readiness verification deadline/);
+  assert.equal(clock,60000);
+  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+  assert.equal(f.events.some(e=>e.phase==='source_deploy_live'),false);
+  assert.equal(JSON.stringify(f.events).includes('private'),false);
+});
+
+test("source identity change during readiness wait aborts without retrying mutations",async()=>{
+  const f=fixture(),originalFetch=f.fetchImpl;
+  f.fetchImpl=async()=>{
+    if(f.posted){f.db='postgresql://test:synthetic@example.test/neondb';return {status:503,text:async()=>''};}
+    return originalFetch();
+  };
+  f.wait=async()=>{};
+  await assert.rejects(recover(f),/identity or configuration/);
+  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+  assert.deepEqual(f.events.at(-1),{phase:'source_verification_failed',reason:'source_identity_or_configuration'});
+});
+
+test("a normal public response cannot mask a concurrent database identity change",async()=>{
+  const f=fixture(),originalFetch=f.fetchImpl;
+  f.fetchImpl=async()=>{
+    const response=await originalFetch();
+    if(f.posted)f.db='postgresql://test:synthetic@example.test/neondb';
+    return response;
+  };
+  await assert.rejects(recover(f),/identity or configuration/);
+  assert.equal(f.events.some(e=>e.phase==='source_deploy_live'),false);
+  assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
+});

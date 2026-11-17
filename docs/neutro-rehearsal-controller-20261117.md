@@ -1,5 +1,32 @@
 # Independent source-only recovery rehearsal
 
+## November 17 live observation
+
+The owner approved one source-only rehearsal. Run 44058860931 stopped before
+arming because the helper expected HTML rather than the application's exact
+readiness text. That was corrected in helper 2033a3fd and workflow-only PR #660.
+The corrected run 44060690234 drained the source, deployed holding, and requested
+source recovery automatically. SIGUSR2 was sent at 10:02:24.340 UTC; Render marked
+the restored original-code deployment dep-dbu2d0jm8hqs73dtp0tg live at
+10:04:33.633 UTC, 129.293 seconds later. No database URL changed.
+
+The workflow nevertheless failed at 10:04:35 during final verification. Its old
+generic error message does not identify which final read failed. A transient
+public response during routing transition is a possibility, not an established
+root cause. Subsequent HTTP checks returned the exact normal response, startup
+logs showed workers started and schema 133 already current, and the independent
+read-only access run 44062055123 passed against the new source deployment.
+A natural secondary follow-up had a delivered receipt. No primary live traffic
+or complete redelivery inventory was demonstrated by this sample.
+
+The draft now journals final identity/readiness phases and waits up to 60 seconds
+between failed public readiness observations (plus an in-flight request timeout).
+Identity/configuration is checked before and after health observations, and any
+identity failure aborts immediately. The wait performs only reads and never
+retries a deployment. This draft revision is tested but is not yet the workflow
+checkout pin. Do not mark the live rehearsal fully passed or repeat a pause merely
+to clear a failed workflow badge. The full migration remains blocked.
+
 This preparation does not authorize a production pause or database switch.
 Production is pinned to ac3f8b281b9f3643504c9a9214af931f7a080a35. Do not deploy the
 head of this branch. Its checkout is for the external controller only.
@@ -122,7 +149,8 @@ their stored SHA-256 values. These checks do not refresh the stale destination.
 
 ## Validation
 
-68 local tests passed with zero failures or skips, including real local HTTP and
-process-signal tests. Controller API mutations are mocked. No live rehearsal,
-production deployment, pause, database switch, plan change or customer send was
-performed by this preparation.
+74 local tests passed with zero failures or skips after the live observations,
+including real local HTTP/process-signal tests and the application readiness
+handler. Controller API mutations are mocked. The approved live rehearsal and
+its limitations are recorded above; there was no database switch, plan change
+or customer test send.

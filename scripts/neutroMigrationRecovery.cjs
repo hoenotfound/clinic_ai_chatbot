@@ -76,6 +76,43 @@ async function probe(fetchImpl, holding, allowDrainedApplication = false) {
     throw Error("Normal application readiness response was not observed.");
 }
 
+async function verifyRecoveredSource({ request, expectedDeploy, emit, fetchImpl = global.fetch,
+  now = Date.now, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const deadline = now() + 60000;
+  emit({ phase: "source_verification_started", deployId: expectedDeploy });
+  async function checkIdentity() {
+    try {
+      const state = await inspect(request, expectedDeploy);
+      if (state.startCommand !== "npm start") throw Error("Unexpected source command.");
+    } catch (_) {
+      emit({ phase: "source_verification_failed", reason: "source_identity_or_configuration" });
+      throw Error("Source verification identity or configuration check failed.");
+    }
+  }
+  while (true) {
+    // Identity/configuration failures stop immediately. Only public readiness
+    // observations may be retried; this function never writes or redeploys.
+    await checkIdentity();
+    let ready = false;
+    try {
+      await probe(fetchImpl, false);
+      ready = true;
+    } catch (_) {
+      if (now() >= deadline) {
+        emit({ phase: "source_verification_failed", reason: "public_readiness_deadline" });
+        throw Error("Source public readiness verification deadline exceeded.");
+      }
+      emit({ phase: "source_readiness_wait", deployId: expectedDeploy });
+      await wait(2000);
+    }
+    if (ready) {
+      await checkIdentity();
+      emit({ phase: "source_readiness_verified", deployId: expectedDeploy });
+      return;
+    }
+  }
+}
+
 async function recover({ request, expectedDeploy, approved, emit, fetchImpl = global.fetch,
   now = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), allowDrainedApplication = false }) {
   if (approved !== "source-only-before-any-destination-writes" || !/^dep-[a-z0-9]+$/.test(expectedDeploy || ""))
@@ -99,9 +136,7 @@ async function recover({ request, expectedDeploy, approved, emit, fetchImpl = gl
     const d = unwrap(await request(`/deploys/${deployment.id}`));
     if (d.commit?.id !== COMMIT) throw Error("Unexpected recovery deployment commit.");
     if (d.status === "live") {
-      const state = await inspect(request, deployment.id);
-      if (state.startCommand !== "npm start") throw Error("Start command changed during recovery.");
-      await probe(fetchImpl, false);
+      await verifyRecoveredSource({ request, expectedDeploy: deployment.id, emit, fetchImpl, now, wait });
       emit({ phase: "source_deploy_live", deployId: d.id, commit: COMMIT, customerDeliveryVerified: false });
       return;
     }
@@ -130,4 +165,4 @@ if (require.main === module) main().catch(error => {
     /^[A-Za-z0-9 .,;:_/?-]+$/.test(error.message) ? error.message : "Check private runner diagnostics."));
   process.exitCode = 1;
 });
-module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, probe, recover };
+module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, probe, recover, verifyRecoveredSource };
