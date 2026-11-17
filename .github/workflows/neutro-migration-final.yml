@@ -25,7 +25,7 @@ jobs:
       - name: Fetch reviewed migration runner
         uses: actions/checkout@v7
         with:
-          ref: 3457adc580dd268283687ac1774f4370d2d75331
+          ref: 031da1685115de6a73f0a04c8fa7825e86bd8ea0
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
