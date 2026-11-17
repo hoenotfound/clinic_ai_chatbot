@@ -18,8 +18,8 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { resultSupersessionSql } = require("../utils/resultMediaSupersessionSql");
 const configRepo = require("../db/configRepo");
-const { latestQueuedLanguagePreference, resolveQueuedMediaLanguage } =
-  require("../utils/queuedMediaLanguage");
+const { latestQueuedLanguagePreference, resolveQueuedMediaLanguage,
+  queuedMediaLanguageStillCurrent } = require("../utils/queuedMediaLanguage");
 
 const RETRY_MS = 2000;
 const SPACING_MS = 1000;
@@ -446,7 +446,15 @@ async function runOne({
         const livePolicy=await whatsappPolicy.checkFreeformAllowed(contact,new Date(),{
           purpose:"service",
         });
-        return livePolicy.allowed === true;
+        if (livePolicy.allowed !== true) return false;
+        // A language switch during billing/upload must cancel the old
+        // caption before Meta receives any image message.
+        return queuedMediaLanguageStillCurrent({
+          database: db, contactId: row.contact_id,
+          inboundMessageId: row.inbound_message_id,
+          imageUrl: row.image_url, caption: row.caption, kind: row.media_kind,
+          selectedMedia: media, getConfig: () => configRepo.getConfig(),
+        });
       },
     });
     if (providerResult?.success && providerResult.wamid) {
