@@ -121,6 +121,7 @@ function resolveFixedAdFirstReply({
   language,
   metaAdContext,
   metaAdCreativeService,
+  currentAdReferral = null,
   keywordReason,
   hasStaffHandoff = false,
   hasExistingBooking = false,
@@ -135,21 +136,39 @@ function resolveFixedAdFirstReply({
     if (config?.enabled === true && typeof onSkip === "function") onSkip(reason);
     return null;
   };
-  if (config?.enabled !== true || isFirstMessage !== true ||
-      !Array.isArray(conversationHistory) || conversationHistory.length !== 1 ||
-      conversationHistory[0]?.role !== "user" || keywordReason || hasStaffHandoff ||
-      hasExistingBooking || !isTextMessage) {
+  // Only a provider-supplied referral on THIS incoming message can reopen
+  // the RM68 campaign greeting for a returning customer. Old CRM attribution,
+  // copied text or a different Meta ad must never authorize that exception.
+  const liveMetaAd = currentAdReferral?.source === "meta_ads" &&
+    String(currentAdReferral.sourceType || "").toLowerCase() === "ad" &&
+    Boolean(String(currentAdReferral.adId || "").trim());
+  const liveRm68Ad = liveMetaAd &&
+    campaignCreativeMatches(currentAdReferral);
+  const firstTurn = isFirstMessage === true &&
+    Array.isArray(conversationHistory) && conversationHistory.length === 1 &&
+    conversationHistory[0]?.role === "user";
+  const returningRm68 = isFirstMessage === false && liveRm68Ad &&
+    isNeutro(businessName) && isExactPrefill(customerText) &&
+    Array.isArray(conversationHistory) && conversationHistory.length > 1 &&
+    conversationHistory.at(-1)?.role === "user" &&
+    conversationHistory.at(-1)?.content === customerText;
+  if (config?.enabled !== true || (!firstTurn && !returningRm68) ||
+      keywordReason || hasStaffHandoff || hasExistingBooking || !isTextMessage) {
     return skip("not_first_eligible_text");
   }
   const replies = Array.isArray(config.replies) ? config.replies : [];
   const adTimestamp = Date.parse(metaAdContext?.attributedAt || "");
-  if (!Number.isFinite(adTimestamp) || adTimestamp > now + 60_000 ||
-      now - adTimestamp > MAX_AD_CONTEXT_AGE_MS) return skip("missing_or_stale_attribution");
-  // The exact RM68 availability prefill is an intentional exception to the
-  // normal price/booking-question exclusion, after first-turn, safety,
-  // verified-ad and staff/booking guards have all passed.
+  const freshSavedAttribution = Number.isFinite(adTimestamp) &&
+    adTimestamp <= now + 60_000 &&
+    now - adTimestamp <= MAX_AD_CONTEXT_AGE_MS;
+  if (!freshSavedAttribution && !liveRm68Ad)
+    return skip("missing_or_stale_attribution");
+  // A current provider referral outranks any older saved lead attribution.
+  // Exact campaign prefills are allowed, but never edited medical questions.
   if (!hasClinicalMediaRisk(customerText) && isNeutro(businessName) &&
-      isExactPrefill(customerText) && campaignCreativeMatches(metaAdContext)) {
+      isExactPrefill(customerText) &&
+      (liveMetaAd ? liveRm68Ad :
+        freshSavedAttribution && campaignCreativeMatches(metaAdContext))) {
     return {
       reply: firstReply(now),
       treatment: null,
@@ -158,6 +177,9 @@ function resolveFixedAdFirstReply({
       campaignKey: CAMPAIGN_KEY,
     };
   }
+  // No other treatment gets a returning-customer scripted greeting.
+  if (!firstTurn) return skip("returning_non_campaign_enquiry");
+  if (!freshSavedAttribution) return skip("missing_or_stale_attribution");
   if (!isStandardAdPrefill(customerText, { services, serviceAliases, businessName }) ||
       hasCustomerPriceEnquiry(standardPrefillInterestText(customerText)) ||
       hasExplicitPackageOptionsRequest(standardPrefillInterestText(customerText)) ||
