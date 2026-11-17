@@ -64,7 +64,7 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
     "✅ 脉冲波舒缓护理，帮助放松胸部周围组织",
     "✅ 胸部日常护理建议",
     "",
-    "💗 名额有限，需要提前预约哦！",
+    "💗 具体名额需要由门店确认，建议提前预约哦！",
     "",
     "请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊",
   ].join("\n");
@@ -105,6 +105,56 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
       conversationHistory: [{ role: "user", content: edited }],
     })?.campaignKey, undefined, "other or edited enquiries must not use the campaign: " + edited);
   }
+});
+
+test("returning RM68 Meta-ad enquiry uses THIS signed referral instead of old lead attribution", () => {
+  const customerText = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
+  const campaignNow = Date.parse("2026-11-17T15:10:38Z");
+  const currentAdReferral = {
+    source: "meta_ads", sourceType: "ad", adId: "verified-ad-789",
+    headline: "由 KKM 认证中医师操作",
+    body: "Neutro Sense TCM 胸部护理限时体验，只需 RM68！12月5日 & 6日",
+  };
+  const history = [
+    { role: "assistant", content: "7月份的旧聊天记录" },
+    { role: "user", content: customerText },
+  ];
+  const run = (overrides = {}) => attempt({
+    isFirstMessage: false, conversationHistory: history,
+    customerText, now: campaignNow, metaAdContext: null,
+    metaAdCreativeService: null, currentAdReferral, ...overrides,
+  });
+  assert.equal(run()?.campaignKey, "neutro_breast_rm68_2026");
+  assert.match(run()?.reply || "", /首次体验只需 RM68/);
+  assert.match(run()?.reply || "", /具体名额需要由门店确认/);
+  assert.doesNotMatch(run()?.reply || "", /RM388/);
+  assert.equal(run()?.serviceQuery, false);
+  assert.equal(run()?.treatment, null);
+  assert.equal(run({ currentAdReferral: null }), null);
+  assert.equal(run({ currentAdReferral: { ...currentAdReferral, adId: null } }), null);
+  assert.equal(run({ currentAdReferral: { ...currentAdReferral, source: "direct" } }), null);
+  assert.equal(run({ currentAdReferral: { ...currentAdReferral, sourceType: "post" } }), null);
+  assert.equal(run({ currentAdReferral: { ...currentAdReferral,
+    body: "一般黄金脉冲技术 RM388", headline: "黄金脉冲技术" } }), null);
+  assert.equal(run({ currentAdReferral: null, metaAdContext: {
+    attributedAt: new Date(campaignNow).toISOString(),
+    headline: "胸部护理 RM68",
+  } }), null, "old lead ad cannot reopen a returning conversation");
+  assert.equal(run({ hasExistingBooking: true }), null);
+  assert.equal(run({ hasStaffHandoff: true }), null);
+  assert.equal(run({ keywordReason: "complaint" }), null);
+  assert.equal(run({ businessName: "Other Clinic" }), null);
+  assert.equal(run({ isTextMessage: false }), null);
+  assert.equal(run({ conversationHistory: [
+    ...history.slice(0, -1), { role: "user", content: "不同的消息" },
+  ] }), null);
+  const edited = customerText + " 我怀孕了可以做吗？";
+  assert.equal(run({ customerText: edited, conversationHistory: [
+    history[0], { role: "user", content: edited },
+  ] }), null, "medical questions must reach the normal clinical path");
+  assert.equal(run({ customerText: "Hi～我对骨盆调理有兴趣",
+    conversationHistory: [history[0], { role: "user", content: "Hi～我对骨盆调理有兴趣" }],
+  }), null, "other treatments never use the returning RM68 exception");
 });
 
 test("new Neutro RM68 opt-in-style CTWA prefill preserves campaign intro and guards", () => {
@@ -444,7 +494,8 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const text = options.text;
     const wasFirstMessage = options.wasFirstMessage;
     const verifiedFirstReadableAd = options.verifiedFirstReadableAd === true;
-    const history = [{ role: "user", content: text }];
+    const history = options.history || [{ role: "user", content: text }];
+    const incoming = options.incoming || { attribution: null };
     const replyHistory = history;
     const isFirstMessage = history.length === 1;
     const generateFirstIntro = false;
@@ -470,7 +521,8 @@ test("actual server decision branch skips Gemini for valid first ad message and 
   })`, {
     // Pin the synthetic attribution clock so this test does not expire after 7 real days.
     resolveFixedAdFirstReply: options => resolveFixedAdFirstReply({ ...options, now }),
-    clinicConfig: { adFirstReply: config, services, serviceAliases: aliases },
+    clinicConfig: { adFirstReply: config, services, serviceAliases: aliases,
+      businessName: "Neutro Sense TCM" },
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
     correctReplyLanguage: async draft => draft,
@@ -490,6 +542,23 @@ test("actual server decision branch skips Gemini for valid first ad message and 
   const historical = await runtime({ text: optIn, wasFirstMessage: false, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
   assert.equal(historical.aiReply, "MODEL ANSWER");
   assert.equal(aiCalls, 2, "a one-item filtered model history cannot bypass durable first-message evidence");
+  const rm68Returning = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
+  const returning = await runtime({
+    text: rm68Returning, wasFirstMessage: false,
+    metaAdContext: null, metaAdCreativeService: null,
+    incoming: { attribution: {
+      source: "meta_ads", sourceType: "ad", adId: "live-verified-456",
+      body: "胸部护理 RM68 体验 12月5日与6日",
+    } },
+    history: [
+      { role: "assistant", content: "old session" },
+      { role: "user", content: rm68Returning },
+    ],
+  });
+  assert.equal(returning.fixedAdFirstReply?.campaignKey, "neutro_breast_rm68_2026");
+  assert.match(returning.aiReply, /首次体验只需 RM68/);
+  assert.equal(aiCalls, 2, "actual returning Meta referral bypasses Gemini");
+
   const genericNameOnly = await runtime({ text: "Hi, I'd like to know more about this", language: "en", wasFirstMessage: true, metaAdContext: { ...ad, serviceHintSource: "ad_name" }, metaAdCreativeService: null });
   assert.equal(genericNameOnly.aiReply, "MODEL ANSWER");
   assert.equal(aiCalls, 3, "generic enquiry with ad-name-only hint requires AI");

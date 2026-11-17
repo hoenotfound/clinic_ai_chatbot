@@ -80,7 +80,7 @@ function firstReply(now = Date.now()) {
     "✅ 脉冲波舒缓护理，帮助放松胸部周围组织",
     "✅ 胸部日常护理建议",
     "",
-    "💗 名额有限，需要提前预约哦！",
+    "💗 具体名额需要由门店确认，建议提前预约哦！",
     "",
     dayQuestion(now),
   ].join("\n");
@@ -121,6 +121,9 @@ function stillDiscussingCampaign(history) {
   return opener >= 0 && !messages.slice(opener + 1, -1).some(
     row => row?.role === "user" && isOtherTreatmentQuery(row.content)
   );
+}
+function isCampaignAvailabilityQuestion(text) {
+  return DATE_QUESTION.test(String(text || ""));
 }
 function campaignContextReply({ history, customerText, now = Date.now() } = {}) {
   if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
@@ -209,6 +212,7 @@ module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
-  isOtherTreatmentQuery, stillDiscussingCampaign, campaignContextReply, guardCampaignPriceConflicts,
+  isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
+  campaignContextReply, guardCampaignPriceConflicts,
   candidateIsCampaign, campaignFollowUp,
 };

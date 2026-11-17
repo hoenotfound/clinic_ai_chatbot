@@ -79,7 +79,7 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { campaignContextReply, guardCampaignPriceConflicts,
-  configuredFirstReplyImage } =
+  configuredFirstReplyImage, isCampaignAvailabilityQuestion } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -1355,6 +1355,9 @@ async function processIncomingMessage(
             language: mediaLanguage,
             metaAdContext,
             metaAdCreativeService,
+            // This fresh, signed Meta webhook may carry a new ad click even
+            // when an older lead has no saved current-ad attribution.
+            currentAdReferral: channel === "whatsapp" ? incoming?.attribution : null,
             keywordReason,
             isTextMessage: !mediaType || mediaType === "text",
             hasExistingBooking: Boolean(acceptedStaffOffer ||
@@ -2282,6 +2285,44 @@ async function processIncomingMessage(
           reviewContinuationTextOnly = true;
           console.info("[Neutro review continuity] contact=" + contact.id +
             " inbound=" + savedInbound.id + " kind=" + continuity.kind);
+        }
+      }
+    }
+
+    // An RM68 campaign slot enquiry is answerable without confirming a slot.
+    // Recover only an INFORMATION review anchored to a verified prior
+    // campaign opener, and only if the database has no unresolved clinical
+    // review. Never silently clear a cancellation, complaint or safety issue.
+    if (flagged && reviewRequired && reviewType === "information" &&
+        channel === "whatsapp" && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+        isCampaignAvailabilityQuestion(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const rm68AvailabilityAnswer = campaignContextReply({
+        history, customerText: text,
+      });
+      if (rm68AvailabilityAnswer) {
+        const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (reviewEvidence?.pendingClinicalReview === false) {
+          reply = rm68AvailabilityAnswer;
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          clinicalAcknowledgement = null;
+          priceQuery = false;
+          packageQuery = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          details = null;
+          reviewContinuationTextOnly = true;
+          console.info("[RM68 availability review recovery] contact=" +
+            contact.id + " inbound=" + savedInbound.id);
         }
       }
     }

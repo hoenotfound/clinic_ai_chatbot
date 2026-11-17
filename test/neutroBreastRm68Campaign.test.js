@@ -3,10 +3,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
+const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+const { isDefiniteAppointmentCancellation } = require("../src/utils/appointmentCancellationSafety");
 const {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, campaignCreativeMatches,
   campaignDay, firstReply, hasCampaignConversation, isOtherTreatmentQuery,
-  campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
+  isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
   campaignFollowUp,
 } = require("../src/utils/neutroBreastRm68Campaign");
 
@@ -105,6 +108,75 @@ test("RM68 final reply guard removes cross-campaign RM388 terms only for relevan
   assert.match(check("首次体验 RM68", "这个价钱多少？", expired), /活动已于12月6日结束/);
   assert.doesNotMatch(check("12月5日有位", "活动哪天？", dec6), /12月5日/);
   assert.match(check("12月5日有位", "活动哪天？", dec6), /12月6日/);
+});
+
+test("RM68 event availability wording never guarantees a slot", () => {
+  assert.match(firstReply(early), /具体名额需要由门店确认/);
+  assert.match(run("还有名额吗？"), /具体名额需要由门店确认/);
+  assert.equal(isCampaignAvailabilityQuestion("还有名额吗？"), true);
+  assert.equal(isCampaignAvailabilityQuestion("RM68 有位吗？"), true);
+  assert.equal(isCampaignAvailabilityQuestion("这个多少钱？"), false);
+});
+
+test("verified RM68 availability review can recover without silencing clinical reviews", async () => {
+  const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const start = server.indexOf("    // An RM68 campaign slot enquiry is answerable");
+  const end = server.indexOf("    // A non-urgent urinary symptom", start);
+  assert.ok(start > 0 && end > start, "review recovery precedes staff review persistence");
+  const fragment = server.slice(start, end);
+  const runReview = vm.runInNewContext(`(async function(input) {
+    const text = input.text;
+    const history = input.history;
+    const channel = "whatsapp";
+    const clinicConfig = { businessType: "tcm_clinic", businessName: "Neutro Sense TCM" };
+    const contact = { id: 8701 };
+    const savedInbound = { id: 20787 };
+    const keywordReason = input.keywordReason || null;
+    const urgentSafety = false;
+    const marketingStopQuestion = null;
+    let flagged = true, reviewRequired = true;
+    let reviewType = input.reviewType || "information";
+    let reply = "model asked for staff review";
+    let bookingReady = false, clinicalAcknowledgement = null;
+    let priceQuery = false, packageQuery = false, serviceQuery = false;
+    let serviceQuerySource = null, details = null, reviewContinuationTextOnly = false;
+    const contactsRepo = {
+      getTcmReviewEvidence: async () => ({ pendingClinicalReview: input.pendingClinicalReview === true }),
+    };
+    ${fragment}
+    return { flagged, reviewRequired, reply, reviewContinuationTextOnly };
+  })`, {
+    isActiveSafetyConcern: text => /urgent|emergency/iu.test(text),
+    hasClinicalMediaRisk,
+    isExplicitStaffRequest: text => /人工|staff/iu.test(text),
+    isDefiniteAppointmentCancellation,
+    isCampaignAvailabilityQuestion,
+    campaignContextReply: ({ history, customerText }) =>
+      campaignContextReply({ history, customerText, now: early }),
+    console: { info: () => {} },
+  });
+  const getHistory = text => [...history, { role: "user", content: text }];
+  const recovered = await runReview({ text: "还有名额吗？", history: getHistory("还有名额吗？") });
+  assert.equal(recovered.flagged, false);
+  assert.equal(recovered.reviewRequired, false);
+  assert.equal(recovered.reviewContinuationTextOnly, true);
+  assert.match(recovered.reply, /具体名额需要由门店确认/);
+  const blockedClinical = await runReview({
+    text: "还有名额吗？", history: getHistory("还有名额吗？"), pendingClinicalReview: true,
+  });
+  assert.equal(blockedClinical.reviewRequired, true);
+  const clinicalOutcome = await runReview({
+    text: "还有名额吗？", history: getHistory("还有名额吗？"), reviewType: "clinical",
+  });
+  assert.equal(clinicalOutcome.reviewRequired, true);
+  const medicalQuestion = "我怀孕了还有名额吗？";
+  assert.equal((await runReview({ text: medicalQuestion,
+    history: getHistory(medicalQuestion) })).reviewRequired, true);
+  const cancellation = "我想取消预约，还有名额吗？";
+  assert.equal((await runReview({ text: cancellation,
+    history: getHistory(cancellation) })).reviewRequired, true);
+  assert.equal((await runReview({ text: "还有名额吗？",
+    history: getHistory("还有名额吗？"), keywordReason: "complaint" })).reviewRequired, true);
 });
 
 test("RM68 follow-ups require anchored customer campaign and are text-only", () => {
