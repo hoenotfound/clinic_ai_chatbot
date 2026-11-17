@@ -260,7 +260,7 @@ async function main() {
       const boundary=await pg(sourceUrl,SOURCE_HOST,'neondb',true,c=>require('./neutroMigrationBoundary.cjs').inspect(c));
       assertNoActiveClaims(boundary);
       emit({phase:'source_claims_checked',activeClaims:0,historicalHoldsPreserved:true});
-    },copy:()=>runCopy(sourceUrl,destinationRaw,'neondb',cp.spawn,300000,phase=>emit({phase:'copy_'+phase})),
+    },copy:()=>runCopy(sourceUrl,destinationRaw,'neondb',cp.spawn,600000,phase=>emit({phase:'copy_'+phase})),
     verifyBoundary:async evidence=>{
       await sourceQuiet(sourceUrl);
       // Re-read the verified archive's manifests, then recheck source under one
@@ -279,3 +279,4 @@ async function main() {
 }
 if(require.main===module)main().catch(error=>{const reason=['copy_deadline','copy_failed'].includes(error.code)?error.code:/^[0-9A-Z]{5}$/.test(error.code||'')?'postgres_'+error.code:'guard_or_provider_failure';console.error('FINAL_RUNNER_STOPPED: '+reason+'. Inspect the last phase and current service; never blindly retry or repoint after activation.');process.exitCode=1;});
 module.exports={APPROVAL,REHEARSAL,runFinal,inspectPhase,checkTools,prepareDatabase,runCopy,assertNoActiveClaims,closeIdlePoolClients};
+
