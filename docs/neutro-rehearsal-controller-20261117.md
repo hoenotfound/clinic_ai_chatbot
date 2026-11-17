@@ -46,9 +46,11 @@ credentials, message content, contact IDs or phone numbers.
 2. Dispatch the manual source-only rehearsal on main, supplying the exact live
    source deployment and the explicit approval phrase. Approve only this protected
    environment run. Wait for its `armed` log before any signal.
-3. In the current Render shell, verify two fresh private drain-status heartbeats,
-   enabled/running state and the current PID's actual command. Signal SIGUSR2 to
-   that exact application PID. Do not reuse a PID from an earlier deploy.
+3. In the current Render shell, verify the private status identifies the enabled
+   application and inspect that PID's actual command, reviewed commit and signal
+   handler. Before pausing, the file is a startup snapshot, not a live heartbeat.
+   Signal SIGUSR2 only to that verified PID. Then require fresh drain-status
+   heartbeats showing no faults and safe retirement. Do not reuse an earlier PID.
 4. Let the independent runner perform holding and restoration. Do not cancel it,
    change Render settings, launch a second deployment or start a copy.
 5. Verify source_deploy_live and rehearsal_complete, then confirm source identity,
