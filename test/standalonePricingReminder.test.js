@@ -205,3 +205,14 @@ test("new secondary billing holds are periodically discovered without repeated a
  assert.match(scanner,/c\.attention_reason LIKE 'Delivery unconfirmed:%'/);
  assert.match(scanner,/attempt\.state='unknown'/);
 });
+
+test("pricing reminders route Neutro full promo URLs through the secondary upload path",()=>{
+ const helper=require("../src/services/whatsappSecondaryClinicImage");
+ const url="https://da-chatbot-neutro-sense-tcm.onrender.com/promo-images/30";
+ assert.deepEqual(helper.storedClinicImageRef(url),{id:30,purpose:"public_config"});
+ const src=require("node:fs").readFileSync(require("node:path").join(__dirname,
+  "../src/services/standalonePricingReminderService.js"),"utf8");
+ assert.match(src,/if\(clinicImage\.storedClinicImageRef\(offer\.imageUrl\)\)/);
+ assert.match(src,/transport\.uploadMedia\(/);
+ assert.match(src,/transport\.sendMediaById\("image",uploaded\.mediaId/);
+});

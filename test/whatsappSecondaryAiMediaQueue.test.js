@@ -581,3 +581,17 @@ test("server can mark a solicited image only from approved pricing authority",()
   assert.match(s,/solicitedPricing:Boolean\(secondaryAiConversation &&[\s\S]{0,130}approvedPricingDecision\?\.type === "price"/);
   assert.match(s,/kind:"promotion",[\s\S]{0,370}solicitedPricing:Boolean/);
 });
+
+test("Neutro absolute promo image uses secondary Meta upload, not Render link fetch",async()=>{
+ const url="https://da-chatbot-neutro-sense-tcm.onrender.com/promo-images/30";
+ const args=mocks({jobImageUrl:url});
+ args.loadClinicImage=async value=>{
+  assert.equal(value,url);
+  return{buffer:Buffer.from("approved-jpeg"),mimeType:"image/jpeg",filename:"clinic-promo.jpg"};
+ };
+ const result=await worker.runOnce({...args,env:approved});
+ assert.equal(result.accepted,1);
+ assert.equal(args.calls.filter(x=>x.upload).length,1);
+ assert.equal(args.calls.filter(x=>x.sendMediaById).length,1);
+ assert.equal(args.calls.find(x=>x.sendMediaById)?.sendMediaById.type,"image");
+});

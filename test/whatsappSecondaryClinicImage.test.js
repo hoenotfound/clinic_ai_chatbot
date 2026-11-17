@@ -47,3 +47,52 @@ test("private media never falls back to public image or cross-purpose record",as
  assert.equal(await helper.loadOwnedClinicImage("https://untrusted.example/x.jpg",{repository:noLookup}),null);
  assert.equal(noLookup.requested,0);
 });
+
+test("trusted production promo URLs resolve to owned database image bytes",async()=>{
+ const urls=[
+  "https://da-chatbot-neutro-sense-tcm.onrender.com/promo-images/30",
+  "https://neutrosense.dasmarketingsolution.com/promo-images/37",
+ ];
+ const repo=repository({purpose:"public_config",mime_type:"image/jpeg"});
+ for(const [i,url] of urls.entries()){
+  assert.deepEqual(helper.storedClinicImageRef(url),
+   {id:i===0?30:37,purpose:"public_config"});
+  const image=await helper.loadOwnedClinicImage(url,{repository:repo});
+  assert.equal(image.mimeType,"image/jpeg");
+  assert.equal(image.filename,"clinic-promo.jpg");
+ }
+ assert.equal(repo.requested,2);
+});
+test("full URL recognition is exact-origin, image-only and never exposes private previews",()=>{
+ const origin="https://da-chatbot-neutro-sense-tcm.onrender.com";
+ for(const url of [
+  origin+"/api/config/result-media/image/72",
+  origin+"/promo-images/30?token=secret",
+  origin+"/promo-images/30#fragment",
+  origin+"/promo-images/../30",
+  origin+"/promo-images/0",
+  origin+"/promo-images/30/other",
+  "http://da-chatbot-neutro-sense-tcm.onrender.com/promo-images/30",
+  "https://da-chatbot-neutro-sense-tcm.onrender.com.evil.example/promo-images/30",
+  "https://da-chatbot-neutro-sense-tcm.onrender.com@evil.example/promo-images/30",
+  "https://da-chatbot-neutro-sense-tcm.onrender.com:8443/promo-images/30",
+  "https://evil.example/promo-images/30",
+ ]){
+  assert.equal(helper.storedClinicImageRef(url),null,url);
+ }
+});
+test("configured HTTPS public origin may resolve clinic promos but never private URLs",()=>{
+ const previous=process.env.PUBLIC_BASE_URL;
+ try{
+  process.env.PUBLIC_BASE_URL="https://neutro-custom.example";
+  assert.deepEqual(helper.storedClinicImageRef(
+   "https://neutro-custom.example/promo-images/30"),{id:30,purpose:"public_config"});
+  assert.equal(helper.storedClinicImageRef(
+   "https://neutro-custom.example/api/config/result-media/image/72"),null);
+  process.env.PUBLIC_BASE_URL="http://neutro-custom.example";
+  assert.equal(helper.storedClinicImageRef("https://neutro-custom.example/promo-images/30"),null);
+ }finally{
+  if(previous===undefined)delete process.env.PUBLIC_BASE_URL;
+  else process.env.PUBLIC_BASE_URL=previous;
+ }
+});
