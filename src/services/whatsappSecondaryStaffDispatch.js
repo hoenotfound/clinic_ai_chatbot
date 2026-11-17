@@ -421,8 +421,18 @@ async function sendSecondaryStaffText({
         : await transport.sendText(text.trim(), { replyToProviderMessageId });
     // This signal is produced only by our marketing follow-up callback
     // before it invokes sendTemplatePayload. It is NOT a Meta HTTP result.
-    // Never treat ambiguous responses, timeouts or provider WAMIDs as proof
-    // of cancellation or use this path for staff/AI sends.
+    // The callback is the only code able to prove no WhatsApp SEND
+    // occurred. A queued AI image whose caption became stale may cancel
+    // only with this exact marker before the provider send. All other AI,
+    // staff and uncertain Meta outcomes still keep their billing holds.
+    if (origin === "ai_media" && typeof dispatchTransport === "function" &&
+        send?.code === "secondary_ai_media_language_changed" &&
+        send?.preProviderCancelled === true && send?.success === false &&
+        !send?.wamid && send?.unknown !== true && send?.ambiguous !== true) {
+      return cancelProvenMarketingBeforeProvider(
+        "secondary_ai_media_language_changed");
+    }
+    // Marketing's existing narrow no-provider proof remains unchanged.
     if (origin === "marketing_followup" &&
         typeof dispatchTransport === "function" &&
         send?.preProviderCancelled === true &&
