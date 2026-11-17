@@ -1,8 +1,8 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {latestQueuedLanguagePreference,resolveQueuedMediaLanguage}=
-  require("../src/utils/queuedMediaLanguage");
+const {latestQueuedLanguagePreference,resolveQueuedMediaLanguage,
+  queuedMediaLanguageStillCurrent} = require("../src/utils/queuedMediaLanguage");
 const zh="/api/config/result-media/image/38";
 const en="/api/config/result-media/image/138";
 const cfg={resultMedia:[{enabled:true,triggerMode:"service_enquiry",
@@ -53,4 +53,36 @@ test("promotions use currently active language-specific artwork only",()=>{
    imageUrl:"https://example.test/promo-zh.jpg",kind:"promotion",language:"en",
    config:conf,now:new Date("2026-11-17T02:00:00Z"),
  }),{imageUrl:"https://example.test/promo-en.jpg",caption:"Special offer"});
+});
+
+test("final check cancels a selected English image when customer changes to Malay", async()=>{
+  const requested=["In English please","Bahasa Melayu"];
+  let calls=0;
+  const database={query:async()=>({rows:[{content:requested[calls++]}]})};
+  const selected=resolveQueuedMediaLanguage({imageUrl:zh,caption:"原本的文字",
+    kind:"result",language:"en",config:cfg});
+  assert.equal(await queuedMediaLanguageStillCurrent({
+    database,contactId:9120,inboundMessageId:20316,
+    imageUrl:zh,caption:"原本的文字",kind:"result",
+    selectedMedia:selected,getConfig:()=>cfg,
+  }),true);
+  assert.equal(await queuedMediaLanguageStillCurrent({
+    database,contactId:9120,inboundMessageId:20316,
+    imageUrl:zh,caption:"原本的文字",kind:"result",
+    selectedMedia:selected,getConfig:()=>cfg,
+  }),false);
+  assert.equal(calls,2);
+});
+
+test("final check fails closed when approved caption or image is revoked",async()=>{
+  const database={query:async()=>({rows:[{content:"In English please"}]})};
+  const selected=resolveQueuedMediaLanguage({imageUrl:zh,caption:"原文",
+    kind:"result",language:"en",config:cfg});
+  const revoked={resultMedia:[{enabled:false,triggerMode:"service_enquiry",
+    items:cfg.resultMedia[0].items}]};
+  assert.equal(await queuedMediaLanguageStillCurrent({
+    database,contactId:12,inboundMessageId:13,
+    imageUrl:zh,caption:"原文",kind:"result",
+    selectedMedia:selected,getConfig:()=>revoked,
+  }),false);
 });
