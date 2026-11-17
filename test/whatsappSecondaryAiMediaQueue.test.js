@@ -191,6 +191,39 @@ test("late English request with no approved localized artwork suppresses optiona
  assert.ok(args.calls.some(entry=>entry.sql?.includes("state=$2")&&entry.args?.[1]==="expired"));
 });
 
+test("language switch after image upload cancels without sending the media message",async()=>{
+ const base="/api/config/result-media/image/78";
+ const args=mocks({jobImageUrl:base});
+ let languageChecks=0,uploads=0,providerSends=0,cancellations=0;
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),
+      rows:[{...job,image_url:base,media_kind:"result"}]}
+   : sql.includes("SELECT newer.content")
+     ? {rows:[{content:++languageChecks<=2?"In English please":"Bahasa Melayu"}]}
+     : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:base,caption:"中文案例",
+     mediaTranslations:{en:{caption:"Customer result example"}}}]}]});
+ args.loadClinicImage=async()=>({buffer:Buffer.from("example"),
+   mimeType:"image/png",filename:"example.png"});
+ args.send=async payload=>{
+   const cancelled=await payload.dispatchTransport({
+     uploadMedia:async()=>{uploads++;return{success:true,mediaId:"7788"}},
+     sendMediaById:async()=>{providerSends++;return{success:true,wamid:"wamid.should-not-send"}},
+   });
+   if(cancelled.preProviderCancelled)cancellations++;
+   return cancelled;
+ };
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,0);
+ assert.equal(uploads,1);
+ assert.equal(providerSends,0);
+ assert.equal(cancellations,1);
+ assert.equal(languageChecks,3);
+ assert.ok(args.calls.some(e=>e.sql?.includes("state=$2")&&e.args?.[1]==="expired"));
+});
+
 test("missing private image never falls back to private HTTP URL or sends a Graph message",async()=>{
  const url="/api/config/result-media/image/78";
  const args=mocks({jobImageUrl:url});
