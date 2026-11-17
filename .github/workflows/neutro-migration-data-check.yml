@@ -1,0 +1,33 @@
+name: Neutro migration data access check
+# Read-only. Destination access must be approved before adding its secret.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: neutro-production-migration
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: neutro-migration-recovery
+    steps:
+      - name: Fetch reviewed data checker
+        uses: actions/checkout@v7
+        with:
+          ref: d7599fd8d41dcfc0573d9f302ee0d9893b723cf3
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify guards without production credentials
+        run: node --test test/neutroMigrationDataCheck.test.js test/neutroMigrationCopy.test.js test/neutroMigrationRecovery.test.js test/neutroMigrationRehearsal.test.js
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --omit=dev
+      - name: Verify database access without writes or deployment
+        env:
+          RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
+          NEUTRO_MIGRATION_DESTINATION_URL: ${{ secrets.NEUTRO_MIGRATION_DESTINATION_URL }}
+        run: node scripts/neutroMigrationDataCheck.cjs --read-only
