@@ -2300,7 +2300,7 @@ async function processIncomingMessage(
         !isDefiniteAppointmentCancellation(text) && !bookingReady &&
         isCampaignAvailabilityQuestion(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const rm68AvailabilityAnswer = campaignContextReply({
         history, customerText: text,
       });
