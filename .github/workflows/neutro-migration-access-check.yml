@@ -16,14 +16,14 @@ jobs:
       - name: Fetch reviewed migration helpers
         uses: actions/checkout@v7
         with:
-          ref: 2033a3fdab1df6cc8e744659ffa30a4b54e5e32f
+          ref: bcc23aaa3a1e280e5447b9df2da6004f780d4a02
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Verify guards without production credentials
         run: node --test test/neutroMigrationCopy.test.js test/neutroMigrationRecovery.test.js test/neutroMigrationRehearsal.test.js
-      - name: Check Render access without changing production
+      - name: Verify source identity and public readiness without changing production
         env:
           RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
-        run: node scripts/neutroMigrationRecovery.cjs --check
+        run: node scripts/neutroMigrationRecovery.cjs --verify-source
