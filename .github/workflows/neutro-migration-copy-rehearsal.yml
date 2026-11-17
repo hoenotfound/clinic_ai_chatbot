@@ -16,7 +16,7 @@ jobs:
       - name: Fetch reviewed migration runner
         uses: actions/checkout@v7
         with:
-          ref: 3457adc580dd268283687ac1774f4370d2d75331
+          ref: b10631473a6d7335d47c661ab1cd91c96410c612
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
@@ -43,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: neutro-copy-rehearsal-journal
+          name: neutro-copy-rehearsal-journal-${{ github.run_attempt }}
           path: neutro-final-journal.json
           retention-days: 30
           if-no-files-found: ignore
