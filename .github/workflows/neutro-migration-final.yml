@@ -1,0 +1,60 @@
+name: Neutro approved final database cutover
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Owner-approved final pause, copy, verify and switch'
+        required: true
+        type: string
+      source_deploy:
+        description: 'Freshly verified live source deployment ID'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: neutro-production-migration
+  cancel-in-progress: false
+jobs:
+  copy:
+    if: github.ref == 'refs/heads/main' && inputs.approval == 'neutro-final-copy-verify-and-cutover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: neutro-migration-recovery
+    steps:
+      - name: Fetch reviewed migration runner
+        uses: actions/checkout@v7
+        with:
+          ref: d9059a986985edb88000edea7b4553a4c950f2ec
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --omit=dev
+      - name: Verify guards without production credentials
+        run: node --test test/neutroMigration*.test.js
+      - name: Install PostgreSQL 18 clients before database access
+        run: |
+          if [ ! -x /usr/lib/postgresql/18/bin/pg_dump ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client-18
+          fi
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/18/bin/pg_dump --version
+          /usr/lib/postgresql/18/bin/pg_restore --version
+      - name: Arm approved final copy, verify, and activate destination
+        env:
+          RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
+          NEUTRO_MIGRATION_DESTINATION_URL: ${{ secrets.NEUTRO_MIGRATION_DESTINATION_URL }}
+          NEUTRO_FINAL_CUTOVER_APPROVED: ${{ inputs.approval }}
+          NEUTRO_EXPECTED_SOURCE_DEPLOY: ${{ inputs.source_deploy }}
+        run: node scripts/neutroMigrationFinal.cjs --final-cutover
+      - name: Retain metadata journal only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: neutro-final-cutover-journal
+          path: neutro-final-journal.json
+          retention-days: 30
+          if-no-files-found: ignore
