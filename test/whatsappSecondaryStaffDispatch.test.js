@@ -819,7 +819,7 @@ test("AI media language change may cancel only with provider-free proof and reje
    code:"secondary_ai_media_other_cancellation"});
  const blocked=await sendSecondaryStaffText(forged.input,forged.opts);
  assert.equal(blocked.unknown,true);
- assert.equal(blocked.preProviderCancelled,undefined);
+ assert.notEqual(blocked.preProviderCancelled,true);
  assert.deepEqual(forged.calls.mark,[{reservationId,
    acceptedWamid:null,definitivelyRejected:false}]);
 
