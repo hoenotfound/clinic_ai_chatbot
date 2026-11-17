@@ -490,7 +490,7 @@ async function sendSecondaryStaffText({
     };
     return { ...send, success: false, wamid: null,
       unknown: true, ambiguous: true, retryable: false,
-      preProviderCancelled: false, cancelled: false,
+      preProviderCancelled: undefined, cancelled: undefined,
       code: "secondary_staff_provider_outcome_unverified",
       error: "Delivery needs staff review; do not resend." };
   } catch {
