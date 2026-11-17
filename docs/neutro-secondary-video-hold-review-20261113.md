@@ -45,3 +45,15 @@ The placeholders above are not executable inputs. The CLI does not independently
 ## Single-operator procedure (migration 134)
 
 Only the distinct second-staff-reviewer requirement has been removed. Historical audit rows retain both reviewer identifiers; new rows store the responsible operator in `first_reviewer` and SQL `NULL` in `second_reviewer`. The original message and billing attempt remain UNKNOWN and must never be replayed. Exact sender/contact/billing-gate matches, receipt proof, no-charge and Business App checks, explicit offline opt-in, a durable evidence ticket and no-original-retry acknowledgment still apply. If the operator cannot inspect either external source, the hold must remain unresolved. Release does not restart expired follow-ups, authorize templates or override opt-outs.
+
+## Zero-operator release for explicit nonbillable Meta failures (migration 135)
+
+A second, **fully automatic** release path requires **no staff reviewer, operator ID, approval, attestation, or manual shell command**. It reuses the existing five-minute standalone-pricing billing-hold check, not a new polling worker. The scope is the active `neutro_secondary` sender only, gated by `WHATSAPP_SECONDARY_VERIFIED_FAILED_AUTO_RELEASE_ENABLED=true`; it is OFF until this flag is deliberately enabled after release validation.
+
+A held reservation is released automatically only after at least 30 minutes with an exact Meta signed, sender/account/WAMID-matched **failed** receipt that explicitly reports `pricing.billable=false`. Every recorded receipt for that reservation must match the sender and WAMID and report `pricing.billable=false`; no delivered/read receipt, unknown pricing, billable receipt, sender-wide billing alarm, ownership mismatch, or ambiguous delivery is permitted.
+
+Migration 135 records the exact reservation, contact, message and signed receipt fingerprint in a separate append-only release table, without pretending a human checked Billing Hub or the Business App. The old billing attempt and original failed message remain unchanged. No message is resent, no template is authorized, no follow-up window reopens and no opt-out, booking, handoff or provider billing safeguard is bypassed.
+
+**Important for Peggy1017 (#9053) and shili (#8930):** Peggy's saved signed failed receipt does not contain an explicit non-billable pricing value; shili has neither a WAMID nor a signed receipt. Both correctly stay on hold with no operator-free release unless authoritative Meta proof arrives. No-receipt is not proof of no charge or no delivery.
+
+The existing single-operator manual path from migration 134 is optional for externally verified exceptional cases, not a prerequisite for this automatic path. Do not set the new feature flag until CI, migration 135, sender identity and the existing production follow-up worker are verified.
