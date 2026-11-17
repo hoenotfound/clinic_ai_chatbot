@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { runFollowUpRead, preparedNameForSql } =
+const { runFollowUpRead, preparedNameForSql, compactReadSql } =
   require("../src/utils/namedFollowUpRead");
 
 test("follow-up reads default to exact unchanged SQL and parameters", async () => {
@@ -72,4 +72,50 @@ test("real PostgreSQL reuses the same named SELECT with new parameter bindings",
   } finally {
     await pool.end();
   }
+});
+
+test("SQL formatting reduction keeps quoted values, identifiers and inline comments", () => {
+  const input = [
+    "  SELECT 'hello -- literal' AS label,",
+    '         "a -- quoted identifier" AS field',
+    "    -- remove only this whole comment",
+    "  FROM t -- preserve this inline comment",
+  ].join("\n");
+  assert.equal(compactReadSql(input), [
+    "SELECT 'hello -- literal' AS label,",
+    '"a -- quoted identifier" AS field',
+    "",
+    "FROM t -- preserve this inline comment",
+  ].join("\n"));
+});
+
+test("multiline literals and dollar quotes remain byte-for-byte unchanged", () => {
+  const input = [
+    "  SELECT 'line one",
+    "  -- a literal line",
+    "   line three' AS text,",
+    "  $tag$",
+    "  -- another literal",
+    "  $tag$ AS source;",
+  ].join("\n");
+  const output = compactReadSql(input);
+  assert.match(output, /'line one\n  -- a literal line\n   line three'/);
+  assert.match(output, /\$tag\$\n  -- another literal\n  \$tag\$/);
+  assert.ok(output.startsWith("SELECT "));
+});
+
+test("unknown or incomplete literal syntax falls back to original SQL", () => {
+  const input = "    SELECT 'not closed\n    -- not removable";
+  assert.equal(compactReadSql(input), input);
+});
+
+test("enabled read sends compact SQL and the name matches the compact text", async () => {
+  const calls = [];
+  const db = {query(...args){ calls.push(args); return Promise.resolve({rows:[]}); }};
+  const sql = "  SELECT $1::int\n    -- unneeded SQL comment\n    AS value";
+  await runFollowUpRead(db, db, sql, [8],
+    {env: { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED:"true" }});
+  assert.equal(calls[0].length, 1);
+  assert.equal(calls[0][0].text, "SELECT $1::int\n\nAS value");
+  assert.equal(calls[0][0].name, preparedNameForSql(calls[0][0].text));
 });
