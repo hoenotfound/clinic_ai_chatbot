@@ -54,3 +54,22 @@ test("database failures propagate and never cause automatic replays", async () =
 test("different SQL text always produces different names", () => {
   assert.notEqual(preparedNameForSql("SELECT 1"), preparedNameForSql("SELECT 2"));
 });
+
+// PostgreSQL CI verifies node-postgres' real prepared-query protocol; no writes.
+test("real PostgreSQL reuses the same named SELECT with new parameter bindings", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const { Pool } = require("pg");
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL,
+    ssl: false, max: 1, idleTimeoutMillis: 1000 });
+  const env = { NEUTRO_NAMED_FOLLOWUP_READS_ENABLED: "true" };
+  const sql = "SELECT $1::integer AS value";
+  try {
+    const first = await runFollowUpRead(pool, pool, sql, [17], { env });
+    const next = await runFollowUpRead(pool, pool, sql, [29], { env });
+    assert.equal(first.rows[0].value, 17);
+    assert.equal(next.rows[0].value, 29);
+  } finally {
+    await pool.end();
+  }
+});
