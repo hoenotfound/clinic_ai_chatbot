@@ -63,3 +63,15 @@ test('final source boundary detects sequence-only changes and called-state drift
   await assert.rejects(assertSequenceValues(client({ last_value: '100', is_called: false }), sequences), /Sequence changed/);
   await assert.rejects(assertSequenceValues(client({}), [{...sequences[0],relation:'public.seq; SELECT 1'}]), /identifier/);
 });
+
+test('archive jsonb property order preserves equality while value and array changes fail',()=>{
+ const original={schema:{tables:[{relname:'a',owner:'owner',options:{b:2,a:1}},{relname:'b',owner:'owner'}]},tables:[{name:'a',rows:'2',digest:'abc'}],largeObjects:[]};
+ const reordered={largeObjects:[],tables:[{digest:'abc',rows:'2',name:'a'}],schema:{tables:[{options:{a:1,b:2},owner:'owner',relname:'a'},{owner:'owner',relname:'b'}]}};
+ assert.deepEqual(differences(original,reordered),[]);
+ const changed=structuredClone(reordered);changed.tables[0].digest='changed';
+ assert.deepEqual(differences(original,changed),['table-data']);
+ const reversed=structuredClone(reordered);reversed.schema.tables.reverse();
+ assert.deepEqual(differences(original,reversed),['schema:tables']);
+ const nested=structuredClone(reordered);nested.schema.tables[0].options.a=3;
+ assert.deepEqual(differences(original,nested),['schema:tables']);
+});
