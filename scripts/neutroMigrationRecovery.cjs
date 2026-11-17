@@ -60,25 +60,29 @@ async function inspect(request, expectedDeploy, requireHold = false) {
   return validate(service, (env.envVar || env).value, deploys, expectedDeploy, requireHold);
 }
 
-async function probe(fetchImpl, holding) {
+async function probe(fetchImpl, holding, allowDrainedApplication = false) {
   const r = await fetchImpl(ROOT, { redirect: "error", signal: AbortSignal.timeout(15000), headers: { "Cache-Control": "no-cache" } });
   if (r.status !== 200) throw Error("Public health check failed.");
   const body = await r.text();
   let data;
   try { data = JSON.parse(body); } catch (_) { /* Normal application returns HTML. */ }
   const isHold = data?.mode === "migration_hold" && data.chatbotRunning === false;
-  if (holding !== isHold) throw Error("Public holding state does not match the expected phase.");
+  const drainedApp = data?.mode === "migration_hold" && data.acceptingWork === false &&
+    data.activeTasks === 0 && data.drained === true;
+  const paused = data?.mode === "migration_hold" || data?.mode === "migration_draining" || data?.acceptingWork === false;
+  if (holding ? !(isHold || (allowDrainedApplication && drainedApp)) : paused)
+    throw Error("Public holding state does not match the expected phase.");
 }
 
 async function recover({ request, expectedDeploy, approved, emit, fetchImpl = global.fetch,
-  now = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)) }) {
+  now = Date.now, wait = ms => new Promise(r => setTimeout(r, ms)), allowDrainedApplication = false }) {
   if (approved !== "source-only-before-any-destination-writes" || !/^dep-[a-z0-9]+$/.test(expectedDeploy || ""))
     throw Error("Explicit source-only recovery approval and holding deployment ID required.");
-  await inspect(request, expectedDeploy, true);
-  await probe(fetchImpl, true);
+  await inspect(request, expectedDeploy, !allowDrainedApplication);
+  await probe(fetchImpl, true, allowDrainedApplication);
   // Recheck immediately before the first write. Render has no atomic compare-
   // and-swap across config and deploy APIs. Exclusive operator control is required.
-  await inspect(request, expectedDeploy, true);
+  await inspect(request, expectedDeploy, !allowDrainedApplication);
   emit({ phase: "before_start_command_change", expectedDeploy, commit: COMMIT });
   await request("", "PATCH", { serviceDetails: { envSpecificDetails: { startCommand: "npm start" } } });
   const checked = await inspect(request, expectedDeploy);
@@ -124,4 +128,4 @@ if (require.main === module) main().catch(error => {
     /^[A-Za-z0-9 .,;:_/?-]+$/.test(error.message) ? error.message : "Check private runner diagnostics."));
   process.exitCode = 1;
 });
-module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, recover };
+module.exports = { SERVICE, WORKSPACE, COMMIT, HOLD, api, validate, inspect, probe, recover };

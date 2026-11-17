@@ -189,6 +189,15 @@ async function assertNoOtherClients(c) {
   if (r.rows[0].count)
     throw Error("Other source clients still connected; final copy blocked");
 }
+async function assertSequenceValues(c, sequences) {
+  for (const sequence of sequences) {
+    if (!/^public\.[a-zA-Z0-9_]+$/.test(sequence.relation))
+      throw Error("Unexpected sequence identifier");
+    const value = (await c.query("SELECT last_value::text,is_called FROM " + sequence.relation)).rows[0];
+    if (!value || value.last_value !== sequence.value || value.is_called !== sequence.called)
+      throw Error("Sequence changed after snapshot: " + sequence.relation);
+  }
+}
 async function main() {
   const target = targetName(process.argv[2], process.env),
     final = target === "neondb";
@@ -330,6 +339,9 @@ async function main() {
       await assertNoOtherClients(check);
       if (differences(expected, await manifest(check)).length)
         throw Error("Source changed during final copy");
+      // nextval is not transactional: identical table rows do not prove an
+      // unused/reserved sequence value stayed unchanged during the copy.
+      await assertSequenceValues(check, seq);
       await check.query("ROLLBACK");
     } finally {
       await check.end();
@@ -415,4 +427,4 @@ if (require.main === module)
     );
     process.exitCode = 1;
   });
-module.exports = { targetName, connection, comparable, differences };
+module.exports = { targetName, connection, comparable, differences, assertSequenceValues };

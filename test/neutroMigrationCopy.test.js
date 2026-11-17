@@ -53,3 +53,13 @@ test('unrelated constraints and large-object data still require exact matches', 
   target.largeObjects = [{ loid: 1, pageno: 0, digest: 'changed' }];
   assert.deepEqual(differences(source, target), ['schema:constraints', 'large-objects']);
 });
+
+test('final source boundary detects sequence-only changes and called-state drift', async () => {
+  const { assertSequenceValues } = require('../scripts/neutroMigrationCopy.cjs');
+  const sequences = [{ relation: 'public.messages_id_seq', value: '100', called: true }];
+  const client = row => ({ query: async () => ({ rows: [row] }) });
+  await assertSequenceValues(client({ last_value: '100', is_called: true }), sequences);
+  await assert.rejects(assertSequenceValues(client({ last_value: '101', is_called: true }), sequences), /Sequence changed/);
+  await assert.rejects(assertSequenceValues(client({ last_value: '100', is_called: false }), sequences), /Sequence changed/);
+  await assert.rejects(assertSequenceValues(client({}), [{...sequences[0],relation:'public.seq; SELECT 1'}]), /identifier/);
+});
