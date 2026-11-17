@@ -10,12 +10,12 @@
 
 1. Future HMAC-verified secondary `failed` callbacks save only the numerical Meta error code in `messages.delivery_error`. No raw `errors`, title, media URL or customer data is added to logs or database diagnostics. New billing-hold staff alerts include that verified code when available.
 2. The secondary follow-up discovery and its final pre-send SQL now exclude a confirmed AI goodbye to a remote customer. A newly initiated customer enquiry after the closing reply is still eligible under existing rules. Existing `谢谢` / distance / explicit opt-out guards are kept.
-3. Migration 128 adds a separate append-only-style audit for an **individual, externally reviewed** unknown billing hold. `releaseReviewedSecondaryUnknownHold` is not called by any application route or worker. It is OFF by default and requires the operator to deliberately set `WHATSAPP_SECONDARY_MANUAL_UNKNOWN_HOLD_RELEASE_ENABLED=true` in an isolated trusted operator environment.
-4. The offline script only runs with `--apply`, an exact reservation ID, two distinct human reviewer identifiers, a non-sensitive internal evidence ticket, and all three affirmative human checks. It requires the matching sender/contact/message/gate and signed failure or a truly unconfirmed no-WAMID attempt. It rejects billable, delivered/read or contradictory receipts and any sender-wide alarm. It clears only the exact contact gate; the original attempt remains `unknown` to preserve late-receipt investigation. No original send, automatic follow-up catch-up or retry is triggered.
+3. Migration 128 adds an append-only-style audit for an **individual, externally reviewed** unknown billing hold. Migration 134 permits a **single identified operator**, rather than two independent staff reviewers. `releaseReviewedSecondaryUnknownHold` is not called by any application route or worker. It is OFF by default and requires the operator to deliberately set `WHATSAPP_SECONDARY_MANUAL_UNKNOWN_HOLD_RELEASE_ENABLED=true` in an isolated trusted operator environment.
+4. The offline script only runs with `--apply`, an exact reservation ID, a single operator identifier, a non-sensitive internal evidence ticket, and all three affirmative external checks. It requires the matching sender/contact/message/gate and signed failure or a truly unconfirmed no-WAMID attempt. It rejects billable, delivered/read or contradictory receipts and any sender-wide alarm. It clears only the exact contact gate; the original attempt remains `unknown` to preserve late-receipt investigation. No original send, automatic follow-up catch-up or retry is triggered.
 
 ## Operator runbook, never run without evidence
 
-Check the exact conversation and outgoing message in Inbox and the WhatsApp Business App. Check the **exact sender and period** in Meta Billing Hub, including unsettled charges. Two independent staff reviewers must record what they found. For a signed failure also verify the signed failed callback for its exact accepted WAMID; for no-WAMID uncertainty, verify that no matching receipt exists, that the attempted message is not already visible as delivered in the Business App, and confirm no charge. If any evidence conflicts or is unavailable, leave the gate `unknown` and escalate to Meta support.
+Check the exact conversation and outgoing message in Inbox and the WhatsApp Business App. Check the **exact sender and period** in Meta Billing Hub, including unsettled charges. One accountable operator must check both sources and record the findings. No independent second staff reviewer is required. For a signed failure also verify the signed failed callback for its exact accepted WAMID; for no-WAMID uncertainty, verify that no matching receipt exists, that the attempted message is not already visible as delivered in the Business App, and confirm no charge. If any evidence conflicts or is unavailable, leave the gate `unknown` and escalate to Meta support.
 
 In an authenticated, **separate** operator shell with migration 128 present and after manual approval:
 
@@ -25,13 +25,13 @@ WHATSAPP_SECONDARY_MANUAL_UNKNOWN_HOLD_RELEASE_ENABLED=true \
   node scripts/releaseNeutroSecondaryUnknownHold.js \
   --apply --reservation-id <reviewed-uuid> \
   --release-basis <signed_failed-or-unconfirmed_no_wamid> \
-  --first-reviewer <first-operator> --second-reviewer <second-operator> \
+  --operator-id <operator> \
   --evidence-ticket <internal-ticket-id> \
   --confirm-billing-no-charge --confirm-business-app-reviewed \
   --confirm-original-never-retry
 ```
 
-The placeholders above are not executable inputs. The CLI does not verify the Billing Hub or staff identity by itself, and a successful release does not prove non-delivery. It must not be exposed over HTTP. Audit rows should never be deleted or rewritten.
+The placeholders above are not executable inputs. The CLI does not independently verify Billing Hub, the Business App, or operator identity; flags are operator attestations. A successful release does not prove non-delivery. It must not be exposed over HTTP. Audit rows should never be deleted or rewritten.
 
 ## Release safety
 
@@ -41,3 +41,7 @@ The placeholders above are not executable inputs. The CLI does not verify the Bi
 - Confirm new signed provider failures display a code and hold only their originating contact.
 - Verify a simulated out-of-area goodbye blocks both follow-up discovery and the last pre-send check, while an active customer enquiry remains eligible.
 - Do not claim Peggy's actual Meta failure code or video codec was verified. Those values are not in the existing receipt ledger.
+
+## Single-operator procedure (migration 134)
+
+Only the distinct second-staff-reviewer requirement has been removed. Historical audit rows retain both reviewer identifiers; new rows store the responsible operator in `first_reviewer` and SQL `NULL` in `second_reviewer`. The original message and billing attempt remain UNKNOWN and must never be replayed. Exact sender/contact/billing-gate matches, receipt proof, no-charge and Business App checks, explicit offline opt-in, a durable evidence ticket and no-original-retry acknowledgment still apply. If the operator cannot inspect either external source, the hold must remain unresolved. Release does not restart expired follow-ups, authorize templates or override opt-outs.
