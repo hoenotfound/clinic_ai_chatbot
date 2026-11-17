@@ -1,0 +1,49 @@
+name: Neutro source-only recovery rehearsal
+# Manual source-only rehearsal. No copy or DATABASE_URL update is possible.
+on:
+  workflow_dispatch:
+    inputs:
+      initial_deploy:
+        description: Exact current live source deployment ID
+        type: string
+        required: true
+      approval:
+        description: Enter source-only-rehearsal-no-copy-no-cutover only after specific approval
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: neutro-production-migration
+  cancel-in-progress: false
+jobs:
+  rehearsal:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: neutro-migration-recovery
+    steps:
+      - name: Fetch reviewed rehearsal controller
+        uses: actions/checkout@v7
+        with:
+          ref: 2e5cd8812d11483725f1dcb50135e7041cc1a1ec
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify guards without production credentials
+        run: node --test test/neutroMigrationCopy.test.js test/neutroMigrationRecovery.test.js test/neutroMigrationRehearsal.test.js
+      - name: Arm independent source-only rehearsal
+        env:
+          RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
+          NEUTRO_EXPECTED_SOURCE_DEPLOY: ${{ inputs.initial_deploy }}
+          NEUTRO_REHEARSAL_APPROVED: ${{ inputs.approval }}
+        run: node scripts/neutroMigrationRehearsal.cjs --source-only-rehearsal
+      - name: Retain credential-free phase journal
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: neutro-source-rehearsal-${{ github.run_id }}
+          path: neutro-rehearsal-journal.json
+          if-no-files-found: ignore
+          retention-days: 14

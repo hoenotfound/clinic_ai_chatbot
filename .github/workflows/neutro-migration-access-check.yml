@@ -1,16 +1,11 @@
 name: Neutro migration access check
-
-# Manual read-only verification. Does not enable recovery or deploy the chatbot.
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: neutro-production-migration
   cancel-in-progress: false
-
 jobs:
   check:
     if: github.ref == 'refs/heads/main'
@@ -18,16 +13,16 @@ jobs:
     timeout-minutes: 5
     environment: neutro-migration-recovery
     steps:
-      - name: Fetch the reviewed recovery helper
+      - name: Fetch reviewed migration helpers
         uses: actions/checkout@v7
         with:
-          ref: 14718b4314f2304796ce13c8efaf54694cecb87a
+          ref: 2e5cd8812d11483725f1dcb50135e7041cc1a1ec
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Verify guards without production credentials
-        run: node --test test/neutroMigrationRecovery.test.js
+        run: node --test test/neutroMigrationCopy.test.js test/neutroMigrationRecovery.test.js test/neutroMigrationRehearsal.test.js
       - name: Check Render access without changing production
         env:
           RENDER_API_KEY: ${{ secrets.NEUTRO_RECOVERY_RENDER_API_KEY }}
