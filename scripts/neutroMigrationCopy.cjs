@@ -11,10 +11,14 @@ const {
 } = require("./neutroMigrationHold.cjs");
 const q = (s) => '"' + s.replace(/"/g, '""') + '"';
 const progress = phase => { if(process.send)process.send({phase}); };
+// PostgreSQL jsonb reorders object properties on archive round trips. Object
+// order is not data; array order and every value must remain significant.
+const canonical = value => Array.isArray(value) ? value.map(canonical) :
+  value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])) : value;
 const sha = (x) =>
   crypto
     .createHash("sha256")
-    .update(Buffer.isBuffer(x) || typeof x === "string" ? x : JSON.stringify(x))
+    .update(Buffer.isBuffer(x) || typeof x === "string" ? x : JSON.stringify(canonical(x)))
     .digest("hex");
 function connection(raw, expected, database) {
   const id = connectionIdentity(raw);
@@ -431,3 +435,4 @@ if (require.main === module)
     process.exitCode = 1;
   });
 module.exports = { targetName, connection, comparable, differences, assertSequenceValues, assertNoOtherClients, manifest };
+
