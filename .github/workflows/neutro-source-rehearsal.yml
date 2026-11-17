@@ -26,7 +26,7 @@ jobs:
       - name: Fetch reviewed rehearsal controller
         uses: actions/checkout@v7
         with:
-          ref: 2e5cd8812d11483725f1dcb50135e7041cc1a1ec
+          ref: 2033a3fdab1df6cc8e744659ffa30a4b54e5e32f
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
