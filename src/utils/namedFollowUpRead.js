@@ -29,7 +29,7 @@ function compactReadSql(sql) {
     for (let i = 0; i < line.length; i++) {
       const char = line[i], next = line[i + 1];
       if (mode === "single") {
-        if (char === "\\\\" && escapeSingle) { i++; continue; }
+        if (char === "\\" && escapeSingle) { i++; continue; }
         if (char === "'" && next === "'") { i++; continue; }
         if (char === "'") { mode = "normal"; escapeSingle = false; }
         continue;
@@ -58,7 +58,7 @@ function compactReadSql(sql) {
       }
       if (char === '"') { mode = "double"; continue; }
       if (char === "$") {
-        const match = /^\\$([a-z_][a-z0-9_]*)?\\$/i.exec(line.slice(i));
+        const match = /^\$([a-z_][a-z0-9_]*)?\$/i.exec(line.slice(i));
         if (match) {
           dollarTag = match[0];
           mode = "dollar"; i += dollarTag.length - 1;
@@ -68,11 +68,11 @@ function compactReadSql(sql) {
   };
   let output = "";
   for (const line of lines) {
-    if (mode === "normal" && /^[ \\t]*--/.test(line)) {
-      if (line.endsWith("\\n")) output += "\\n";
+    if (mode === "normal" && /^[ \t]*--/.test(line)) {
+      if (line.endsWith("\n")) output += "\n";
       continue;
     }
-    const next = mode === "normal" ? line.replace(/^[ \\t]+/, "") : line;
+    const next = mode === "normal" ? line.replace(/^[ \t]+/, "") : line;
     output += next;
     scan(next);
   }
