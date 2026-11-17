@@ -20,14 +20,14 @@ function ownedImagePath(value,env=process.env){
     parsed.search || parsed.hash || parsed.href!==value)return null;
  // Only public Settings promotions may be trusted as absolute URLs.
  // Private Before/After previews remain relative and never go to Meta by URL.
- if(!/^\\/promo-images\\/[1-9][0-9]{0,9}\\/?$/.test(parsed.pathname))return null;
+ if(!/^\/promo-images\/[1-9][0-9]{0,9}\/?$/.test(parsed.pathname))return null;
  const configured=env.PUBLIC_BASE_URL;
  if(typeof configured==="string" && configured){
   try{
    const base=new URL(configured);
    if(base.protocol==="https:" && !base.username && !base.password &&
       !base.search && !base.hash && base.pathname==="/" &&
-      base.href.replace(/\\/$/,"")===base.origin &&
+      base.href.replace(/\/$/,"")===base.origin &&
       parsed.origin===base.origin)return parsed.pathname;
   }catch{ /* Invalid configuration never widens the trusted origins. */ }
  }
@@ -36,7 +36,7 @@ function ownedImagePath(value,env=process.env){
 function storedClinicImageRef(url){
  const path=ownedImagePath(url);
  if(!path)return null;
- const match=/^\\/(promo-images|api\\/config\\/result-media\\/image)\\/([1-9][0-9]{0,9})\\/?$/.exec(path);
+ const match=/^\/(promo-images|api\/config\/result-media\/image)\/([1-9][0-9]{0,9})\/?$/.exec(path);
  if(!match)return null;
  const id=Number(match[2]);
  if(!Number.isSafeInteger(id)||id<=0)return null;
