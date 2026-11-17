@@ -1,4 +1,5 @@
 "use strict";
+const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 // Never share primary Neutro marketing templates, opt-in or billing entries.
 // Exact one-shot sender, contact, inbound and template authorization required.
 const {pool}=require("../db/db");
@@ -684,14 +685,14 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env)];
- const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
+ const candidates=(await runFollowUpRead(database,pool,CANDIDATES_SQL,params,{env})).rows||[];
  if(generalSql.enabled(env)){
-   const generic=(await database.query(generalSql.CANDIDATES_SQL,
-     [...params,generalSql.activation(env)])).rows||[];
+   const generic=(await runFollowUpRead(database,pool,generalSql.CANDIDATES_SQL,
+     [...params,generalSql.activation(env)],{env})).rows||[];
    candidates.push(...generic);
  }
  if(extendedEnabled(env)){
-   const extra=(await database.query(EXTENDED_CANDIDATES_SQL,params)).rows||[];
+   const extra=(await runFollowUpRead(database,pool,EXTENDED_CANDIDATES_SQL,params,{env})).rows||[];
    candidates.push(...extra);
  }
  let attempted=0,accepted=0;
@@ -883,12 +884,12 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
  ];
- const ordinary=(await database.query(POTENTIAL_DUE_SQL,params)).rows?.[0]||null;
+ const ordinary=(await runFollowUpRead(database,pool,POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null;
  const extended=extendedEnabled(env)
-   ?(await database.query(EXTENDED_POTENTIAL_DUE_SQL,params)).rows?.[0]||null:null;
+   ?(await runFollowUpRead(database,pool,EXTENDED_POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null:null;
  const generic=generalSql.enabled(env)
-   ?(await database.query(generalSql.POTENTIAL_DUE_SQL,
-     [...params,generalSql.activation(env)])).rows?.[0]||null:null;
+   ?(await runFollowUpRead(database,pool,generalSql.POTENTIAL_DUE_SQL,
+     [...params,generalSql.activation(env)],{env})).rows?.[0]||null:null;
  const dueTimes=[ordinary?.next_due_at,extended?.next_due_at,generic?.next_due_at]
    .filter(Boolean).map(value=>new Date(value).getTime())
    .filter(Number.isFinite);

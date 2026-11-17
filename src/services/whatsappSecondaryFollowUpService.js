@@ -33,6 +33,7 @@ const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
+const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
 
@@ -59,9 +60,9 @@ const MAX_MEDIA=16*1024*1024;
 const SLOW_QUERY_WARNING_MS=3000;
 // Report only materially slow SQL; never log contact IDs, message bodies,
 // bound parameters or provider identifiers. Does not change retry behaviour.
-async function monitoredFollowUpRead(database,sql,params,label){
+async function monitoredFollowUpRead(database,sql,params,label,env=process.env){
  const started=performance.now();
- try{return await database.query(sql,params);}
+ try{return await runFollowUpRead(database,pool,sql,params,{env});}
  finally {
    const elapsedMs=Math.round(performance.now()-started);
    if(elapsedMs>=SLOW_QUERY_WARNING_MS)
@@ -799,7 +800,7 @@ async function runOnce({
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
-  ],"candidate")).rows||[];
+  ],"candidate",env)).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
@@ -1101,7 +1102,7 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
    serviceFollowupParityActivation(env),
- ],"due-time hint");
+ ],"due-time hint",env);
  return result.rows?.[0]||null;
 }
 
