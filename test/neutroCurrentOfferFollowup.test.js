@@ -197,6 +197,22 @@ test("staff ownership, conflicting treatments and an unverified ad cannot resurr
   ], { modelOfferQuery: true })), null);
 });
 
+test("future Package B permission cannot narrow a current general pelvic offer", () => {
+  const text = "现在有骨盆优惠吗？以后Package B有优惠也发我";
+  const hist = [
+    h("user", "我想了解骨盆调理", 120000),
+    h("assistant", "骨盆调理可以先做评估", 110000),
+    h("user", text, 1000),
+  ];
+  const shadow = resolveShadowPriceException(opts(text, hist));
+  assert.equal(shadow?.treatment, "骨盆调理");
+  assert.deepEqual(shadow?.prices?.map(p => p.name), ["Package A", "Package B"]);
+  const enabled = resolveAiPricingDecision(opts(text, hist, {
+    packageQuery: true, priceQuery: false,
+  }));
+  assert.deepEqual(enabled?.prices?.map(p => p.name), ["Package A", "Package B"]);
+});
+
 test("actual pricing decision controls text and graphical queue eligibility", async () => {
   const text = "现在有什么体验活动？";
   const history = conversation(text);
