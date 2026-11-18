@@ -20,6 +20,7 @@ const {
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
+const { resolveCurrentOfferService } = require("./currentOfferEnquiry");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -276,6 +277,23 @@ function resolveShadowPriceException({
     text, complimentaryAssessmentExperienceEnabled, session
   ) || session.some(turn => turn.role === "user" &&
     hasClinicalMediaRisk(pricingMessageText(turn)))) return null;
+
+  // A current First Trial/offer request is not necessarily a monetary question.
+  // Only a customer-named, acknowledged treatment in this fresh session can
+  // authorize its verified price and matching media. Shadow model guesses
+  // are still observational, not authorizations.
+  const currentOfferService = allowOfferEnquiries === true
+    ? resolveCurrentOfferService({
+        customerText: text, conversationHistory: session,
+        services, serviceAliases, now,
+      }) : null;
+  if (currentOfferService) {
+    const offer = shadowVerifiedPrice({
+      source: "customer_current_offer", treatment: currentOfferService.name,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (offer) return offer;
+  }
 
   // A customer may refuse one quotation and ask for a DIFFERENT treatment
   // in one message. Its service comes only from the verified current clause.
