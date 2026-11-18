@@ -153,6 +153,19 @@ test("current named treatment is authoritative, not a stale model or ad guess", 
   assert.deepEqual(decision?.prices.map(p => p.price), ["RM488"]);
 });
 
+test("a freshly named offer cannot bypass recent staff intervention or missing timestamps", () => {
+  const offer = "3D小颜术有first trial优惠吗？";
+  const withStaff = [
+    t("user", "我想了解9D", 50000),
+    t("assistant", "[Verified STAFF message] 我帮你确认", 40000, true),
+    t("user", offer, 1000),
+  ];
+  assert.equal(resolveCurrentOfferService(opts(offer, withStaff)), null);
+  assert.equal(resolveCurrentOfferService(opts(offer, [
+    { role: "user", content: offer },
+  ])), null);
+});
+
 test("pelvic current-offer enquiry preserves both Package A and B graphics", async () => {
   const history = [
     t("user", "我想了解骨盆调理", 110000),
