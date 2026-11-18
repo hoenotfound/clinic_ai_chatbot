@@ -6,6 +6,7 @@ const { verifiedMetaAdPriceAnchor, resolveAiPricingDecision } =
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 
 const now = Date.now();
 const services = [
@@ -89,6 +90,15 @@ test("contact #9185: generic session fee follows verified pelvic ad, both curren
   assert.deepEqual(decision?.prices.map(p => p.price), ["RM388", "RM268"]);
   const approved = approve(text, jinfei, decision);
   assert.equal(approved.reason, "approved");
+  const answer = ensureVerifiedPriceReply({
+    customerText: text, conversationHistory: jinfei,
+    reply: "好的，我们先了解你的体态", treatment: decision.treatment,
+    pricingDecision: approved.decision, services, serviceAliases,
+    promotions, language: "zh", priceOnlyResponse: true,
+  });
+  assert.match(answer.reply, /如果你问的是我们广告里的骨盆调理/u);
+  assert.match(answer.reply, /RM388/u);
+  assert.match(answer.reply, /RM268/u);
   const images = await resolvePricePromotionForReply({
     priceQuery: true, packageQuery: false,
     pricingDecision: approved.decision, aiPricingEnabled: true,
