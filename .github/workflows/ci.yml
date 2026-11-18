@@ -90,8 +90,17 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      - name: Audit portal dependencies (retry registry errors)
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-retry.sh" --audit-level=moderate
+      # All production dependencies remain strictly audited. A full dev-tool
+      # audit follows, and accepts ONLY the single time-limited, dev-only
+      # picomatch GHSA-fc5q-39xc-vjpf exception with exact lockfile validation.
+      # No known production vulnerability, new advisory or registry error may
+      # produce a green status. Remove the exception when upstream is patched.
+      - name: Audit portal production dependencies (required)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-retry.sh" --omit=dev --audit-level=moderate
+      - name: Test fail-closed frontend audit policy
+        run: node --test "$GITHUB_WORKSPACE/.github/scripts/audit-portal-exception.test.cjs"
+      - name: Audit all portal dependencies with expiring known dev-only exception
+        run: node "$GITHUB_WORKSPACE/.github/scripts/audit-portal-exception.cjs"
 
   portal-playwright:
     name: playwright-${{ matrix.label }}
