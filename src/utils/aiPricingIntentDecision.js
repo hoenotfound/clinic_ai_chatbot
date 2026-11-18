@@ -198,7 +198,7 @@ const AD_MALAY_SESSION_PRICE = /^(?:berapa\s+(?:harga\s+)?(?:untuk\s+)?(?:satu|1
 // "请问整骨价钱是怎么算呢" can refer to the verified advertised service.
 const AD_NATURAL_TREATMENT_FEE = /(?:通常|一般|大概|请问|請問|想问|想問|hello|halo|hi|这个|這個|广告|廣告|(?:一|1)\s*(?:个|個|次)?)?.{0,20}(?:整骨|徒手|调理|調理|护理|護理|疗程|療程|session|treatment).{0,25}(?:多少钱|多少錢|几多钱|幾多錢|价钱|價錢|价格|價格|费用|費用|怎么\s*(?:算|收费|收費)|怎麼\s*(?:算|收費))\s*(?:呢|吗|嗎|[?？])?/iu;
 
-function isShortAdTreatmentPriceQuestion(text) {
+function isShortAdTreatmentPriceQuestion(text, { allowNaturalFee = false } = {}) {
   const current = String(text || "").normalize("NFKC").trim();
   if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
       AD_UNRELATED_FEE.test(current)) return false;
@@ -208,7 +208,7 @@ function isShortAdTreatmentPriceQuestion(text) {
   // A price objection, free assessment fee or broad catalogue enquiry does
   // not become a treatment-price question merely by mentioning "价钱".
   return isStandalonePriceQuestion(current) ||
-    (AD_NATURAL_TREATMENT_FEE.test(current) &&
+    (allowNaturalFee === true && AD_NATURAL_TREATMENT_FEE.test(current) &&
       hasExplicitPriceRequest(current) && !isPurePriceObjection(current)) ||
     AD_TREATMENT_PRICE_QUESTION.test(current) ||
     AD_ENGLISH_SESSION_PRICE.test(current) ||
@@ -296,7 +296,8 @@ function verifiedMetaAdPriceAnchor({
   const pelvicMention = /(?:骨盆|盆骨|\b(?:pelvic|pelvis)\b)/iu;
   if (name === "骨盆调理" &&
       differentBodyService.test(current) && !pelvicMention.test(current)) return null;
-  if (!isShortAdTreatmentPriceQuestion(current) || UNRELATED.test(current) ||
+  if (!isShortAdTreatmentPriceQuestion(current, { allowNaturalFee: true }) ||
+      UNRELATED.test(current) ||
       hasClinicalMediaRisk(current) || REFUSAL.test(current) ||
       RESET.test(current) || AD_BROAD_TOPIC.test(current) ||
       AD_NEGATED_TOPIC.test(current) || SPECIFIC_ADMIN_FEE.test(current))
