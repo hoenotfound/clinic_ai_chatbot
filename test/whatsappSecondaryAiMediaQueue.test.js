@@ -518,8 +518,11 @@ test("promotion supersession distinguishes continued pelvis questions from real 
   assert.match(promo,/stop\|unsubscribe\|opt/);
   assert.match(promo,/不用了|不需要了/);
   assert.match(promo,/其他疗程|another treatment/);
-  assert.doesNotMatch(promo,/谢谢|thank you|terima kasih/,
-    "a polite acknowledgement cannot cancel independently requested pricing graphics");
+  const {COURTESY_CLOSING_PATTERN}=require("../src/utils/resultMediaSupersessionSql");
+  assert.equal(promo.includes(COURTESY_CLOSING_PATTERN),false,
+    "standalone thanks cannot cancel independently requested pricing graphics");
+  assert.match(promo,/no thanks|no thank you/,
+    "an actual decline still cancels unsent promotions");
   assert.match(promo,/newer\.media_url IS NOT NULL/);
   assert.match(promo,/newer\.media_mime_type IS NOT NULL/);
   // Keep the result and promotion predicates identical across all three
