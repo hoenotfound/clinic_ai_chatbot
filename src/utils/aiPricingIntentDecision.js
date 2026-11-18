@@ -16,7 +16,7 @@ const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
-const { resolveCurrentOfferService } = require("./currentOfferEnquiry");
+const { resolveCurrentOfferService, isCurrentOfferEnquiry } = require("./currentOfferEnquiry");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
 const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|不需要(?:报价|報價|价格|價格|價錢|价钱)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
@@ -296,7 +296,8 @@ function resolveAiPricingDecision({
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
-      (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
+      (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current) &&
+        !(allowOfferEnquiries && isCurrentOfferEnquiry(current))) ||
       isComplimentaryAssessmentFeeQuestion(
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
@@ -317,12 +318,13 @@ function resolveAiPricingDecision({
     ? resolveCurrentOfferService({
         customerText: current, conversationHistory, services, serviceAliases, now,
       }) : null;
-  const monetary = Boolean(currentOfferService || clarifiedPriceService || concernContinuation || bothContinuation) ||
+  const monetary = Boolean((currentOfferService && !explicitOptions) || clarifiedPriceService || concernContinuation || bothContinuation) ||
     (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
     (isStandalonePriceQuestion(current) && priceQuery === true) ||
     (isContinuedTreatmentPriceQuestion(current) && hasExplicitPriceRequest(current));
   const type = monetary ? "price" :
-    packageQuery === true && allowOfferEnquiries && explicitOptions
+    allowOfferEnquiries && explicitOptions &&
+    (packageQuery === true || Boolean(currentOfferService))
       ? "package_options" : null;
   if (!type) return null;
   const stripped = stripFutureFollowUpPermission(current);
