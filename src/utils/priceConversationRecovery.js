@@ -608,7 +608,9 @@ function canRecoverTwoPriceInformationReview({
   quote = null, flagged = false, reviewRequired = false,
   reviewType = null, pendingClinicalReview = null,
 } = {}) {
-  return Boolean(quote?.prices?.length === 2 &&
+  return Boolean((quote?.prices?.length === 2 ||
+    (quote?.source === "verified_discussed_treatment_price_options" &&
+      quote?.prices?.length === 1)) &&
     flagged === true && reviewRequired === true &&
     reviewType === "information" && pendingClinicalReview === false);
 }

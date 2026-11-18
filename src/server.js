@@ -37,6 +37,7 @@ const { resolveShadowPriceException, recentVerifiedPricingSession } = require(".
 const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPriceContext");
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
+const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartumBudgetQuote");
 const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
@@ -1742,7 +1743,23 @@ async function processIncomingMessage(
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
-        }) || resolveFacialCategoryPriceReply({
+        }) || (clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+          // An independently approved customer-selected service takes the
+          // normal single-price route, preserving its eligible pricing graphic.
+          // This text-only recovery is for ambiguous multi-service discussions
+          // and for single-service questions the usual authority rejected.
+          !(shadowPriceException &&
+            safeServiceFromCustomer(text, clinicConfig.services,
+              clinicConfig.serviceAliases)?.name === shadowPriceException.treatment)
+          ? resolveNeutroPostpartumBudgetQuote({
+              customerText: text,
+              session: recentVerifiedPricingSession(history, text),
+              services: clinicConfig.services,
+              serviceAliases: clinicConfig.serviceAliases,
+              promotions: clinicConfig.promotions,
+              language: mediaLanguage,
+            }) : null) || resolveFacialCategoryPriceReply({
           customerText: text,
           session: recentVerifiedPricingSession(history, text),
           services: clinicConfig.services,
