@@ -221,7 +221,8 @@ function isShortAdTreatmentPriceQuestion(text) {
 
 function verifiedMetaAdPriceAnchor({
   customerText, conversationHistory, services = [], serviceAliases = [],
-  promotions = [], metaAdContext, now = Date.now(),
+  promotions = [], metaAdContext, allowCreativeEcho = false,
+  now = Date.now(),
 } = {}) {
   if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource))
     return null;
@@ -258,9 +259,9 @@ function verifiedMetaAdPriceAnchor({
   const headlineMentions = new Set(matchingMetaAdCreativeServices(
     { headline: metaAdContext.headline, body: "" }, services, serviceAliases
   ));
-  const echoServices = matches.filter(m =>
+  const echoServices = allowCreativeEcho === true ? matches.filter(m =>
     m !== name && !activePriced.has(m) && headlineMentions.has(m)
-  );
+  ) : [];
   const candidates = serviceCandidates(services, serviceAliases);
   // The customer might say "整骨" because the headline of this *same* ad
   // says "徒手整骨". This is not a new choice of a competing treatment.
@@ -315,7 +316,7 @@ function resolveAiPricingDecision({
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
-  now = Date.now(),
+  allowVerifiedAdPricing = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
   // A different treatment's refused quotation cannot veto a clearly
@@ -410,7 +411,8 @@ function resolveAiPricingDecision({
         });
         const ad = verifiedMetaAdPriceAnchor({
           customerText: current, conversationHistory, services, serviceAliases,
-          promotions, metaAdContext, now,
+          promotions, metaAdContext,
+          allowCreativeEcho: allowVerifiedAdPricing, now,
         });
         // A customer naming a different treatment always wins. The only
         // exception is a generic service word copied from this ad's own
