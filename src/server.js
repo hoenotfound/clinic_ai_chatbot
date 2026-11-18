@@ -1744,7 +1744,14 @@ async function processIncomingMessage(
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
         }) || (clinicConfig.businessType === "tcm_clinic" &&
-          /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
+          /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+          // An independently approved customer-selected service takes the
+          // normal single-price route, preserving its eligible pricing graphic.
+          // This text-only recovery is for ambiguous multi-service discussions
+          // and for single-service questions the usual authority rejected.
+          !(shadowPriceException &&
+            safeServiceFromCustomer(text, clinicConfig.services,
+              clinicConfig.serviceAliases)?.name === shadowPriceException.treatment)
           ? resolveNeutroPostpartumBudgetQuote({
               customerText: text,
               session: recentVerifiedPricingSession(history, text),
