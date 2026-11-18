@@ -57,7 +57,7 @@ test("falls back to English when no recent message reveals a language", () => {
 
 test("language-only requests take priority over configured greeting language", () => {
   const intro = "Hi 你好 👋 欢迎来到 Neutro Sense TCM~";
-  for (const text of ["English", "English please", "Hi, English", "Please reply in English"]) {
+  for (const text of ["English", "English please", "In English please", "In English pls", "Please in English", "Hi, English", "Please reply in English"]) {
     assert.equal(detectMessageLanguage(text), "en");
     assert.equal(isGreetingOrLanguageOnly(text), true);
     assert.equal(shouldGenerateLocalizedIntro(text, intro), true);
@@ -96,6 +96,9 @@ test("short price/location questions keep an established Chinese or Malay reply 
   assert.equal(detectConversationLanguage(["price ?"]), "en");
   assert.equal(detectConversationLanguage([
     "Please reply in English", "想了解 9D 护理",
+  ]), "en");
+  assert.equal(detectReplyConversationLanguage([
+    "In English please", "Hi～我对黄金脉冲技术有兴趣",
   ]), "en");
   assert.equal(detectConversationLanguage([
     "How much is the current price?", "想了解 9D 护理",
