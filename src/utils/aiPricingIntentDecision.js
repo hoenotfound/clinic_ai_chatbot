@@ -219,11 +219,64 @@ function isShortAdTreatmentPriceQuestion(text) {
       !RESET.test(current));
 }
 
+// Keep the established ad-only price path unchanged for other clients.
+// Neutro's generic creative-headline exception is a separate opt-in below.
+function legacyMetaAdPriceAnchor({
+  customerText, conversationHistory, services = [], serviceAliases = [],
+  metaAdContext, now = Date.now(),
+} = {}) {
+  if (!metaAdContext ||
+      !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
+  const adService = services.filter(s =>
+    String(s?.name || "").trim() === metaAdContext.serviceHint);
+  if (adService.length !== 1) return null;
+  const name = adService[0].name;
+  const attributedAtMs = Date.parse(String(metaAdContext.attributedAt || ""));
+  if (!Number.isFinite(attributedAtMs) || !Number.isFinite(now) ||
+      attributedAtMs > now || now - attributedAtMs > META_AD_PRICE_MAX_AGE_MS) return null;
+  const current = String(customerText || "").trim();
+  const candidates = serviceCandidates(services, serviceAliases);
+  if (!isShortAdTreatmentPriceQuestion(current) ||
+      UNRELATED.test(current) ||
+      findServicesInText(current, candidates).length > 0) return null;
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  let skippedCurrent = false, previousCustomerTurns = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i];
+    if (entry?.role === "assistant") {
+      if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
+      continue;
+    }
+    if (entry?.role !== "user") continue;
+    const prior = String(entry.content || "").trim();
+    if (!skippedCurrent && prior === current) {
+      skippedCurrent = true;
+      continue;
+    }
+    previousCustomerTurns += 1;
+    if (previousCustomerTurns > 4 || !prior || RESET.test(prior) ||
+        REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior) ||
+        AD_NEGATED_TOPIC.test(prior)) return null;
+    const mentions = [...new Set(findServicesInText(prior, candidates))];
+    if (mentions.length > 1 ||
+        (mentions.length === 1 && mentions[0] !== name)) return null;
+    if (mentions.length &&
+        !safeServiceFromCustomer(prior, services, serviceAliases)) return null;
+  }
+  return { treatment: name, source: "meta_ad" };
+}
+
 function verifiedMetaAdPriceAnchor({
   customerText, conversationHistory, services = [], serviceAliases = [],
   promotions = [], metaAdContext, allowCreativeEcho = false,
   now = Date.now(),
 } = {}) {
+  if (allowCreativeEcho !== true) {
+    return legacyMetaAdPriceAnchor({
+      customerText, conversationHistory, services, serviceAliases,
+      metaAdContext, now,
+    });
+  }
   if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource))
     return null;
   const adService = services.filter(s =>
@@ -236,6 +289,13 @@ function verifiedMetaAdPriceAnchor({
     return null;
 
   const current = String(customerText || "").trim();
+  // An explicitly different body area/technique overrides an old pelvic ad,
+  // even if the clinic has no separate priced package for it.
+  const differentBodyService =
+    /(?:筋膜|肩[颈頸膀部]|[颈頸]肩|筋膜枪|筋膜槍|\b(?:myofascial|fascia|neck|shoulder)\b)/iu;
+  const pelvicMention = /(?:骨盆|盆骨|\b(?:pelvic|pelvis)\b)/iu;
+  if (name === "骨盆调理" &&
+      differentBodyService.test(current) && !pelvicMention.test(current)) return null;
   if (!isShortAdTreatmentPriceQuestion(current) || UNRELATED.test(current) ||
       hasClinicalMediaRisk(current) || REFUSAL.test(current) ||
       RESET.test(current) || AD_BROAD_TOPIC.test(current) ||
