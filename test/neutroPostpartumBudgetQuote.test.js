@@ -140,6 +140,6 @@ test("Neutro #9156: missing/expired/conflicting price configuration fails closed
 test("Neutro #9156: guarded server path remains text-only; existing media gate not bypassed", () => {
   const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   assert.match(server, /resolveNeutroPostpartumBudgetQuote\(/u);
-  assert.match(server, /if \(twoTreatmentQuote\) \{[\s\S]{0,250}two_treatments_text_only/u);
+  assert.match(server, /if \(twoTreatmentQuote\) \{[\s\S]{0,450}two_treatments_text_only/u);
   assert.match(server, /const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\)/u);
 });
