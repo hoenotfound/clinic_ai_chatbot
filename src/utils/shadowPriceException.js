@@ -245,7 +245,8 @@ function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false,
-  allowOfferEnquiries = false, allowReturningTrialPrice = false,
+  allowOfferEnquiries = false, modelOfferQuery = false,
+  allowReturningTrialPrice = false,
   returningPricingHistory = undefined, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
@@ -285,7 +286,7 @@ function resolveShadowPriceException({
   const currentOfferService = allowOfferEnquiries === true
     ? resolveCurrentOfferService({
         customerText: text, conversationHistory: session,
-        services, serviceAliases, now,
+        services, serviceAliases, modelOfferQuery, now,
       }) : null;
   if (currentOfferService) {
     const offer = shadowVerifiedPrice({
