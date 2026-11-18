@@ -242,6 +242,7 @@ test("a verified single-option price can resolve only a safe information review"
 test("guarded server path keeps this branch text-only and information reviews fail closed", () => {
   const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   assert.match(server, /resolveNeutroPostpartumBudgetQuote\(/u);
+  assert.match(server, /!\(shadowPriceException &&\s*safeServiceFromCustomer\(/u);
   assert.match(server, /if \(twoTreatmentQuote\) \{[\s\S]{0,450}two_treatments_text_only/u);
   assert.match(server, /const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\)/u);
 });
