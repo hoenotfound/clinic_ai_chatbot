@@ -518,7 +518,8 @@ test("promotion supersession distinguishes continued pelvis questions from real 
   assert.match(promo,/stop\|unsubscribe\|opt/);
   assert.match(promo,/不用了|不需要了/);
   assert.match(promo,/其他疗程|another treatment/);
-  assert.match(promo,/谢谢|thank you|terima kasih/);
+  assert.doesNotMatch(promo,/谢谢|thank you|terima kasih/,
+    "a polite acknowledgement cannot cancel independently requested pricing graphics");
   assert.match(promo,/newer\.media_url IS NOT NULL/);
   assert.match(promo,/newer\.media_mime_type IS NOT NULL/);
   // Keep the result and promotion predicates identical across all three
@@ -529,6 +530,28 @@ test("promotion supersession distinguishes continued pelvis questions from real 
     assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
   }
   assert.match(worker.PROMOTION_MEDIA_SUPERSESSION_SQL,/job\.caption/);
+});
+
+test("fresh verified customer-triggered result images may send overnight, never stale or unverified ones",()=>{
+  const gate=worker.RECENT_DIRECT_RESULT_SQL;
+  assert.match(gate,/job\.media_kind='result'/);
+  assert.match(gate,/inbound\.whatsapp_message_id IS NOT NULL/);
+  assert.match(gate,/inbound\.created_at BETWEEN NOW\(\)-INTERVAL '2 hours' AND NOW\(\)/);
+  assert.match(gate,/job\.created_at >= inbound\.created_at/);
+  assert.match(gate,/job\.created_at <= inbound\.created_at\+INTERVAL '5 minutes'/);
+  for(const query of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+    assert.ok(query.includes(gate), "the same exact gate applies to claim and final send check");
+    assert.match(query,/job\.expires_at>NOW\(\)/);
+    assert.match(query,/job\.state='pending'|job\.state='claimed'/);
+    assert.match(query,/c\.whatsapp_opt_out_at IS NULL/);
+    assert.match(query,/c\.whatsapp_marketing_opt_out_at IS NULL/);
+    assert.match(query,/sent_by_username IS NOT NULL/);
+    assert.match(query,/secondaryAutomationEligibleSql|sender_key=\$[12]/);
+    assert.match(query,/NOT EXISTS\(/);
+  }
+  assert.doesNotMatch(gate,/job\.media_kind='promotion'/);
+  assert.match(worker.RECOVERY_DEADLINE_SQL,/has_direct_result_pending/);
+  assert.match(worker.RECOVERY_DEADLINE_SQL,/next_direct_result_at/);
 });
 
 test("solicited pricing is recorded durably, while normal promotions and results stay quiet",async()=>{
