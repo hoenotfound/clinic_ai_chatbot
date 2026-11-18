@@ -297,7 +297,8 @@ function resolveAiPricingDecision({
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current) &&
-        !(allowOfferEnquiries && isCurrentOfferEnquiry(current))) ||
+        !(allowOfferEnquiries && isCurrentOfferEnquiry(current,
+          { modelOfferQuery: packageQuery === true }))) ||
       isComplimentaryAssessmentFeeQuestion(
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
@@ -316,7 +317,8 @@ function resolveAiPricingDecision({
   // Gemini misses them; natural cost wording still works when Gemini sees it.
   const currentOfferService = allowOfferEnquiries === true
     ? resolveCurrentOfferService({
-        customerText: current, conversationHistory, services, serviceAliases, now,
+        customerText: current, conversationHistory, services, serviceAliases,
+        modelOfferQuery: packageQuery === true, now,
       }) : null;
   const monetary = Boolean((currentOfferService && !explicitOptions) || clarifiedPriceService || concernContinuation || bothContinuation) ||
     (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
@@ -328,7 +330,10 @@ function resolveAiPricingDecision({
       ? "package_options" : null;
   if (!type) return null;
   const stripped = stripFutureFollowUpPermission(current);
-  if (stripped.hasFuturePermission && !hasExplicitPriceRequest(stripped.text)) return null;
+  // A separate current-offer request remains valid beside future marketing
+  // permission. Never interpret future consent alone as current pricing.
+  if (stripped.hasFuturePermission && !hasExplicitPriceRequest(stripped.text) &&
+      !currentOfferService) return null;
 
   const continued = type === "price" ? resolveContinuedTreatmentPriceService({
     customerText: current, conversationHistory, services, serviceAliases, promotions,
