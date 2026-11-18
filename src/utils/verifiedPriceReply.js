@@ -3,7 +3,7 @@
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { isContextualPriceReference, resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
-const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
+const { hasTreatmentPriceContent, hasCommercialReplyContent, safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 const clinicConfig = require("../config/clinicConfig");
@@ -534,7 +534,18 @@ function ensureVerifiedPriceReply({
         ? "Would you like to know what's included, or shall I help you arrange an assessment? 😊"
         : "想了解优惠包含什么，还是我帮你看看方便安排评估的时间呢？😊"
     : "";
-  return { reply: [explanation, quote, bothQuestion, acknowledgement, offerInvitation].filter(Boolean).join("\n\n"), restored: true };
+  // When a general service word in the ad (e.g. 徒手整骨) anchors a
+  // specifically advertised pelvic promotion, make that scope explicit.
+  // This is price context, NOT a claim that the treatment fits symptoms.
+  const adScope = aiLed && pricingDecision.source === "meta_ad" &&
+    safeServiceFromCustomer(customerText, services, serviceAliases)?.name !== treatment
+    ? locale.startsWith("ms")
+      ? `Jika awak maksudkan rawatan ${treatment} dalam iklan kami, ini harga pakej yang ditawarkan 😊`
+      : locale.startsWith("en")
+        ? `If you're asking about ${treatment} in our advertisement, these are its current package prices 😊`
+        : `如果你问的是我们广告里的${treatment}，目前有这些配套可以参考哦 😊`
+    : "";
+  return { reply: [adScope, explanation, quote, bothQuestion, acknowledgement, offerInvitation].filter(Boolean).join("\n\n"), restored: true };
 }
 
 // A model draft can claim "Here are the regular prices:" yet contain no
