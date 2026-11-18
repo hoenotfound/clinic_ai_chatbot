@@ -17,6 +17,9 @@ const { getAiOwnedContact } = require("./automaticReplyGuard");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { resultSupersessionSql } = require("../utils/resultMediaSupersessionSql");
+const configRepo = require("../db/configRepo");
+const { latestQueuedLanguagePreference, resolveQueuedMediaLanguage,
+  queuedMediaLanguageStillCurrent } = require("../utils/queuedMediaLanguage");
 
 const RETRY_MS = 2000;
 const SPACING_MS = 1000;
@@ -354,10 +357,26 @@ async function runOne({
       await closeItem(row,"skipped","conversation_changed_or_staff_review",{db});
       return true;
     }
-    if (await messagesRepo.wasMediaRecentlySent(row.contact_id,row.image_url) ||
-        await messagesRepo.hasUnconfirmedMediaDelivery(row.contact_id,row.image_url)) {
-      await closeItem(row,"skipped","duplicate_or_unconfirmed_media",{db});
+    // Pending strict-RM0 media can outlive an explicit language switch.
+    // Use approved artwork for the new language or skip the optional image.
+    const language = await latestQueuedLanguagePreference(
+      db,row.contact_id,row.inbound_message_id);
+    const media = resolveQueuedMediaLanguage({
+      imageUrl:row.image_url,caption:row.caption,kind:row.media_kind,
+      language,config:configRepo.getConfig(),
+    });
+    if (!media) {
+      await closeItem(row,"skipped","language_media_variant_unavailable",{db});
       return true;
+    }
+    // The translated artwork may have a different URL from the queued
+    // original. Deduplicate against both to avoid sending a second copy.
+    for (const url of new Set([row.image_url, media.imageUrl])) {
+      if (await messagesRepo.wasMediaRecentlySent(row.contact_id,url) ||
+          await messagesRepo.hasUnconfirmedMediaDelivery(row.contact_id,url)) {
+        await closeItem(row,"skipped","duplicate_or_unconfirmed_media",{db});
+        return true;
+      }
     }
     // Optional images are lower priority than live WhatsApp customer replies.
     // Never take the account-wide RM0 reservation while another inbound
@@ -402,7 +421,7 @@ async function runOne({
     const cancellationKey = aiReplyCancellation.keyForContact(contact);
     const cancellationEpoch = aiReplyCancellation.snapshot(cancellationKey);
     message = await conversationStore.appendMessageForContact(
-      row.contact_id,"assistant",row.caption,null,null,row.image_url,
+      row.contact_id,"assistant",media.caption,null,null,media.imageUrl,
       null,{publish:false}
     );
     // Link the placeholder BEFORE contacting Meta. A delivery callback may
@@ -416,7 +435,7 @@ async function runOne({
     );
     if (linked.rowCount!==1) throw new Error("Lost optional-image send lease");
     let finalExpiry = false;
-    providerResult = await sender(contact,row.image_url,row.caption,{
+    providerResult = await sender(contact,media.imageUrl,media.caption,{
       currentMessageId:message.id,
       preSendCheck:async()=>{
         if (queueExpired(row)) { finalExpiry=true; return false; }
@@ -427,7 +446,15 @@ async function runOne({
         const livePolicy=await whatsappPolicy.checkFreeformAllowed(contact,new Date(),{
           purpose:"service",
         });
-        return livePolicy.allowed === true;
+        if (livePolicy.allowed !== true) return false;
+        // A language switch during billing/upload must cancel the old
+        // caption before Meta receives any image message.
+        return queuedMediaLanguageStillCurrent({
+          database: db, contactId: row.contact_id,
+          inboundMessageId: row.inbound_message_id,
+          imageUrl: row.image_url, caption: row.caption, kind: row.media_kind,
+          selectedMedia: media, getConfig: () => configRepo.getConfig(),
+        });
       },
     });
     if (providerResult?.success && providerResult.wamid) {
