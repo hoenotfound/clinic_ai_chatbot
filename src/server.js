@@ -37,6 +37,7 @@ const { resolveShadowPriceException, recentVerifiedPricingSession } = require(".
 const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPriceContext");
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
+const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartumBudgetQuote");
 const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
@@ -1742,7 +1743,16 @@ async function processIncomingMessage(
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
-        }) || resolveFacialCategoryPriceReply({
+        }) || (clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
+          ? resolveNeutroPostpartumBudgetQuote({
+              customerText: text,
+              session: recentVerifiedPricingSession(history, text),
+              services: clinicConfig.services,
+              serviceAliases: clinicConfig.serviceAliases,
+              promotions: clinicConfig.promotions,
+              language: mediaLanguage,
+            }) : null) || resolveFacialCategoryPriceReply({
           customerText: text,
           session: recentVerifiedPricingSession(history, text),
           services: clinicConfig.services,
