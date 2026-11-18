@@ -514,7 +514,7 @@ function ensureVerifiedPriceReply({
   const explanation = recoveryGuidance ||
     (hasClinicalMediaRisk(customerText) ||
       ((priceOnlyResponse === true ||
-        (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
+        (aiLed && ["meta_ad", "customer_current_offer"].includes(pricingDecision.source))) && !independentServiceQuestion)
       ? "" : safeNonPriceExplanation(customerText, original, language));
   const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
     ? (locale.startsWith("ms")
@@ -524,7 +524,17 @@ function ensureVerifiedPriceReply({
         : "先给你这项疗程的核实价格 😊 你说的两项是指两种不同疗程，还是想改善的两个部位呢？")
     : "";
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
-  return { reply: [explanation, quote, bothQuestion, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
+  // An independently approved current promotion request deserves a clear
+  // answer and one next-step invitation, not the earlier generic AI fallback.
+  const offerInvitation = aiLed && pricingDecision.source === "customer_current_offer" &&
+    !independentServiceQuestion
+    ? locale.startsWith("ms")
+      ? "Nak tahu apa yang termasuk, atau mahu saya bantu semak masa untuk penilaian? 😊"
+      : locale.startsWith("en")
+        ? "Would you like to know what's included, or shall I help you arrange an assessment? 😊"
+        : "想了解优惠包含什么，还是我帮你看看方便安排评估的时间呢？😊"
+    : "";
+  return { reply: [explanation, quote, bothQuestion, acknowledgement, offerInvitation].filter(Boolean).join("\n\n"), restored: true };
 }
 
 // A model draft can claim "Here are the regular prices:" yet contain no
