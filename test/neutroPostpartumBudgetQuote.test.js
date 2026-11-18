@@ -8,6 +8,8 @@ const { resolveNeutroPostpartumBudgetQuote } =
   require("../src/utils/neutroPostpartumBudgetQuote");
 const { recentVerifiedPricingSession } =
   require("../src/utils/shadowPriceException");
+const { canRecoverTwoPriceInformationReview } =
+  require("../src/utils/priceConversationRecovery");
 
 const now = Date.now();
 const turn = (role, content, secondsBefore, staff = false) => ({
@@ -211,6 +213,29 @@ test("missing, expired and contradictory offers fail closed", () => {
   }));
   assert.equal(quote(future, question, promotions, afterExpiry), null,
     "Nov 30 voucher offers must never be sent in December");
+});
+
+test("a verified single-option price can resolve only a safe information review", () => {
+  const text = "我不要做骨盆，只想知道脉冲波的价格和budget";
+  const single = quote(productionConversation(text), text);
+  assert.ok(single && single.prices.length === 1);
+  const conditions = { quote: single, flagged: true,
+    reviewRequired: true, reviewType: "information" };
+  assert.equal(canRecoverTwoPriceInformationReview({
+    ...conditions, pendingClinicalReview: false,
+  }), true);
+  assert.equal(canRecoverTwoPriceInformationReview({
+    ...conditions, pendingClinicalReview: true,
+  }), false);
+  assert.equal(canRecoverTwoPriceInformationReview({
+    ...conditions, pendingClinicalReview: null,
+  }), false);
+  assert.equal(canRecoverTwoPriceInformationReview({
+    ...conditions, reviewType: "clinical", pendingClinicalReview: false,
+  }), false);
+  assert.equal(canRecoverTwoPriceInformationReview({
+    ...conditions, flagged: false, pendingClinicalReview: false,
+  }), false);
 });
 
 test("guarded server path keeps this branch text-only and information reviews fail closed", () => {
