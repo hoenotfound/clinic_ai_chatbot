@@ -90,6 +90,8 @@ const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
   detectConversationLanguage,
   detectReplyConversationLanguage,
+  detectExplicitLanguagePreference,
+  isGreetingOrLanguageOnly,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
@@ -1388,6 +1390,17 @@ async function processIncomingMessage(
         details = { treatment: fixedAdFirstReply.treatment };
         console.info("[Fixed ad first reply] contact=" + contact.id +
           " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
+      } else if (isGreetingOrLanguageOnly(text) && detectExplicitLanguagePreference(text)) {
+        // A language-only request is an administrative preference, not a
+        // clinical question or a reason to send images or transfer to staff.
+        // Keep existing urgent safety and explicit staff-request guards above.
+        const requested = detectExplicitLanguagePreference(text);
+        aiReply = requested === "en"
+          ? "Of course 😊 I'll reply in English from now on. What would you like to know about our treatments?"
+          : requested === "ms"
+            ? "Boleh 😊 Selepas ini saya akan balas dalam Bahasa Malaysia. Apa yang anda ingin tahu tentang rawatan kami?"
+            : "好的 😊 接下来我会用中文回复您。您想进一步了解哪项护理呢？";
+        console.info("[Reply language] preference acknowledged without AI handoff contact=" + contact.id);
       } else {
         const modelReplyHistory = verifiedFirstReadableAd
           ? replyHistory.slice(-1) : replyHistory;

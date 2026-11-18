@@ -615,3 +615,33 @@ test("solicited price images recover in quiet hours without waking ordinary medi
  assert.match(media.RECOVERY_DEADLINE_SQL,/next_solicited_at/);
  assert.match(media.RECOVERY_DEADLINE_SQL,/job\.media_kind='promotion' AND job\.solicited_pricing=TRUE/);
 });
+
+test("signed and newly selected result images wake overnight without polling stale media",()=>{
+ const at=value=>Date.parse(value), MIN=60*1000;
+ const now=at("2026-11-15T18:05:00Z"); // 02:05 Malaysia time
+ const base={
+   has_claimed:false,has_pending:true,
+   next_pending_at:"2026-11-15T18:04:00Z",
+   has_solicited_pending:false,next_solicited_at:null,
+ };
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...base,has_direct_result_pending:true,
+   next_direct_result_at:"2026-11-15T18:04:00Z",
+ },now),MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...base,has_direct_result_pending:true,
+   next_direct_result_at:"2026-11-15T18:09:00Z",
+ },now),4*MIN);
+ assert.equal(media.nextMediaRecoveryDelay({
+   ...base,has_direct_result_pending:false,
+   next_direct_result_at:null,
+ },now),60*MIN,
+ "stale and unverified images must not keep the database awake");
+ assert.throws(()=>media.nextMediaRecoveryDelay({
+   ...base,has_direct_result_pending:true,next_direct_result_at:null,
+ },now),/unavailable/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/inbound.whatsapp_message_id IS NOT NULL/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/inbound.created_at BETWEEN NOW\(\)-INTERVAL '2 hours' AND NOW\(\)/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/job.created_at BETWEEN inbound.created_at/);
+ assert.match(media.RECOVERY_DEADLINE_SQL,/sender.sender_key=\$1/);
+});

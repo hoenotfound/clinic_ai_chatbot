@@ -788,3 +788,45 @@ test("Secondary marketing pre-Meta callback cancellation releases only its own r
  assert.equal(failed.preProviderCancelled,undefined);
  assert.equal(cannotReconcile.calls.send.length,0);
 });
+
+test("AI media language change may cancel only with provider-free proof and rejected billing reservation",async()=>{
+ const permitted={...aiOnlyEnv,
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-11-01T15:30:00Z",
+   WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+ };
+ const context=({recordResult,code,unknown=false})=>{
+   const {opts,calls}=setup({recordResult});
+   return {calls,opts:{...opts,env:permitted},
+     input:{...data,origin:"ai_media",anchorMessageId:110,
+       dispatchTransport:async()=>({success:false,wamid:null,
+         code,preProviderCancelled:true,unknown,retryable:false}),
+     }};
+ };
+ const safe=context({recordResult:{recorded:true,state:"rejected"},
+   code:"secondary_ai_media_language_changed"});
+ const result=await sendSecondaryStaffText(safe.input,safe.opts);
+ assert.equal(result.preProviderCancelled,true);
+ assert.equal(result.cancelled,true);
+ assert.notEqual(result.unknown,true);
+ assert.equal(safe.calls.reserved,1);
+ assert.equal(safe.calls.send.length,0);
+ assert.deepEqual(safe.calls.mark,[{reservationId,definitivelyRejected:true}]);
+
+ const forged=context({recordResult:{recorded:true,state:"unknown"},
+   code:"secondary_ai_media_other_cancellation"});
+ const blocked=await sendSecondaryStaffText(forged.input,forged.opts);
+ assert.equal(blocked.unknown,true);
+ assert.notEqual(blocked.preProviderCancelled,true);
+ assert.deepEqual(forged.calls.mark,[{reservationId,
+   acceptedWamid:null,definitivelyRejected:false}]);
+
+ const unverified=context({recordResult:{recorded:false},
+   code:"secondary_ai_media_language_changed"});
+ const uncertain=await sendSecondaryStaffText(unverified.input,unverified.opts);
+ assert.equal(uncertain.unknown,true);
+ assert.equal(uncertain.preProviderCancelled,undefined);
+ assert.equal(unverified.calls.send.length,0);
+});

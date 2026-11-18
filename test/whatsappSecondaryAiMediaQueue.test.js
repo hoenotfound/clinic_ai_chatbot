@@ -146,6 +146,84 @@ test("private before/after image loads trusted DB bytes and uploads through seco
  assert.deepEqual(request,{type:"image",id:"77777",options:{caption:job.caption}});
  assert.equal(args.calls.filter(c=>c.wamid).length,1);
 });
+test("late English request swaps queued result to approved English artwork and caption",async()=>{
+ const chinese="https://clinic.example/result-zh.jpg";
+ const english="https://clinic.example/result-en.jpg";
+ const args=mocks({jobImageUrl:chinese});
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
+   : sql.includes("SELECT newer.content")
+     ? {rows:[{content:"In English please"}]}
+     : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:chinese,caption:"中文案例",
+     mediaTranslations:{en:{imageUrl:english,caption:"English result example"}}}]}]});
+ args.send=async payload=>{
+   assert.equal(payload.text,"English result example");
+   return payload.dispatchTransport({sendImageByUrl:async(url,caption)=>{
+     assert.equal(url,english);
+     assert.equal(caption,"English result example");
+     return {success:true,wamid:"wamid.localized"};
+   }});
+ };
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,1);
+ const outbound=args.calls.find(entry=>entry.appended)?.appended;
+ assert.equal(outbound?.[2],"English result example");
+ assert.equal(outbound?.[5],english);
+});
+
+test("late English request with no approved localized artwork suppresses optional media",async()=>{
+ const chinese="https://clinic.example/result-zh.jpg";
+ const args=mocks({jobImageUrl:chinese});
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),rows:[{...job,image_url:chinese,media_kind:"result"}]}
+   : sql.includes("SELECT newer.content")
+     ? {rows:[{content:"In English please"}]}
+     : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:chinese,caption:"中文案例"}]}]});
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,0);
+ assert.equal(args.calls.filter(entry=>entry.appended || entry.send).length,0);
+ assert.ok(args.calls.some(entry=>entry.sql?.includes("state=$2")&&entry.args?.[1]==="expired"));
+});
+
+test("language switch after image upload cancels without sending the media message",async()=>{
+ const base="/api/config/result-media/image/78";
+ const args=mocks({jobImageUrl:base});
+ let languageChecks=0,uploads=0,providerSends=0,cancellations=0;
+ const originalQuery=args.database.query;
+ args.database.query=async(sql,params)=>sql===worker.READY_SQL
+   ? {...await originalQuery(sql,params),
+      rows:[{...job,image_url:base,media_kind:"result"}]}
+   : sql.includes("SELECT newer.content")
+     ? {rows:[{content:++languageChecks<=2?"In English please":"Bahasa Melayu"}]}
+     : originalQuery(sql,params);
+ args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",
+   items:[{imageUrl:base,caption:"中文案例",
+     mediaTranslations:{en:{caption:"Customer result example"}}}]}]});
+ args.loadClinicImage=async()=>({buffer:Buffer.from("example"),
+   mimeType:"image/png",filename:"example.png"});
+ args.send=async payload=>{
+   const cancelled=await payload.dispatchTransport({
+     uploadMedia:async()=>{uploads++;return{success:true,mediaId:"7788"}},
+     sendMediaById:async()=>{providerSends++;return{success:true,wamid:"wamid.should-not-send"}},
+   });
+   if(cancelled.preProviderCancelled)cancellations++;
+   return cancelled;
+ };
+ const r=await worker.runOnce({...args,env:approved});
+ assert.equal(r.accepted,0);
+ assert.equal(uploads,1);
+ assert.equal(providerSends,0);
+ assert.equal(cancellations,1);
+ assert.equal(languageChecks,3);
+ assert.ok(args.calls.some(e=>e.sql?.includes("state=$2")&&e.args?.[1]==="expired"));
+});
+
 test("missing private image never falls back to private HTTP URL or sends a Graph message",async()=>{
  const url="/api/config/result-media/image/78";
  const args=mocks({jobImageUrl:url});
@@ -518,7 +596,11 @@ test("promotion supersession distinguishes continued pelvis questions from real 
   assert.match(promo,/stop\|unsubscribe\|opt/);
   assert.match(promo,/不用了|不需要了/);
   assert.match(promo,/其他疗程|another treatment/);
-  assert.match(promo,/谢谢|thank you|terima kasih/);
+  const {COURTESY_CLOSING_PATTERN}=require("../src/utils/resultMediaSupersessionSql");
+  assert.equal(promo.includes(COURTESY_CLOSING_PATTERN),false,
+    "standalone thanks cannot cancel independently requested pricing graphics");
+  assert.match(promo,/no thanks|no thank you/,
+    "an actual decline still cancels unsent promotions");
   assert.match(promo,/newer\.media_url IS NOT NULL/);
   assert.match(promo,/newer\.media_mime_type IS NOT NULL/);
   // Keep the result and promotion predicates identical across all three
@@ -529,6 +611,28 @@ test("promotion supersession distinguishes continued pelvis questions from real 
     assert.match(sql,/whatsapp_marketing_opt_out_at IS NULL/);
   }
   assert.match(worker.PROMOTION_MEDIA_SUPERSESSION_SQL,/job\.caption/);
+});
+
+test("fresh verified customer-triggered result images may send overnight, never stale or unverified ones",()=>{
+  const gate=worker.RECENT_DIRECT_RESULT_SQL;
+  assert.match(gate,/job\.media_kind='result'/);
+  assert.match(gate,/inbound\.whatsapp_message_id IS NOT NULL/);
+  assert.match(gate,/inbound\.created_at BETWEEN NOW\(\)-INTERVAL '2 hours' AND NOW\(\)/);
+  assert.match(gate,/job\.created_at >= inbound\.created_at/);
+  assert.match(gate,/job\.created_at <= inbound\.created_at\+INTERVAL '5 minutes'/);
+  for(const query of [worker.READY_SQL,worker.STILL_VALID_SQL]){
+    assert.ok(query.includes(gate), "the same exact gate applies to claim and final send check");
+    assert.match(query,/job\.expires_at>NOW\(\)/);
+    assert.match(query,/job\.state='pending'|job\.state='claimed'/);
+    assert.match(query,/c\.whatsapp_opt_out_at IS NULL/);
+    assert.match(query,/c\.whatsapp_marketing_opt_out_at IS NULL/);
+    assert.match(query,/sent_by_username IS NOT NULL/);
+    assert.match(query,/secondaryAutomationEligibleSql|sender_key=\$[12]/);
+    assert.match(query,/NOT EXISTS\(/);
+  }
+  assert.doesNotMatch(gate,/job\.media_kind='promotion'/);
+  assert.match(worker.RECOVERY_DEADLINE_SQL,/has_direct_result_pending/);
+  assert.match(worker.RECOVERY_DEADLINE_SQL,/next_direct_result_at/);
 });
 
 test("solicited pricing is recorded durably, while normal promotions and results stay quiet",async()=>{

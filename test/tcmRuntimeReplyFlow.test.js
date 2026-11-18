@@ -14,6 +14,8 @@ const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { correctReplyLanguage } = require("../src/utils/replyLanguageGuard");
+const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference } =
+  require("../src/utils/chatLanguage");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");
 const { isSimpleVisitTimingQuestion, safeVisitTimingReply } = require("../src/utils/plainVisitSchedulingReply");
@@ -112,6 +114,7 @@ function harness({ failDelivery = false } = {}) {
     },
     detectConversationLanguage: () => "en",
     detectReplyConversationLanguage: () => "en",
+    isGreetingOrLanguageOnly, detectExplicitLanguagePreference,
     // The primary TCM runtime has no secondary 131060 recovery proof.
     // Its real handler still invokes the prompt-only helper on every turn.
     readableHistoryForRecoverySelection: (history) => history,
