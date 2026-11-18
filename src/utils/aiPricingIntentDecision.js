@@ -14,6 +14,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
 } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
+const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
 const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
@@ -193,8 +194,11 @@ const SPECIFIC_ADMIN_FEE = /(?:订金|訂金|定金|按金|押金|手续费|手�
 const AD_TREATMENT_PRICE_QUESTION = /^(?:(?:请问|請問|想问|想問)\s*)?(?:(?:这个|這個|这项|這項|这种|這種)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:(?:要|是|大概|大约|大約|收费|收費|花)\s*)?(?:多少(?:钱|錢)?|[几幾]多(?:钱|錢)?)[\s?？。!！]*$/iu;
 const AD_ENGLISH_SESSION_PRICE = /^(?:how much\s+(?:is it\s+)?(?:per|for)\s+(?:(?:one|a|1)\s+)?(?:session|treatment)|(?:what(?:'s| is)?|how much is)\s+(?:the\s+)?(?:price|cost|fee)\s+(?:for|per)\s+(?:(?:one|a|1)\s+)?(?:session|treatment))[\s?？.!！]*$/iu;
 const AD_MALAY_SESSION_PRICE = /^(?:berapa\s+(?:harga\s+)?(?:untuk\s+)?(?:satu|1)\s+sesi|harga\s+(?:untuk\s+)?(?:satu|1)\s+sesi\s+berapa|berapa\s+(?:untuk\s+)?sekali\s+rawatan)[\s?？.!！]*$/iu;
+// Natural WhatsApp wording such as "通常一个疗程多少钱呢" and
+// "请问整骨价钱是怎么算呢" can refer to the verified advertised service.
+const AD_NATURAL_TREATMENT_FEE = /(?:通常|一般|大概|请问|請問|想问|想問|hello|halo|hi|这个|這個|广告|廣告|(?:一|1)\s*(?:个|個|次)?)?.{0,20}(?:整骨|徒手|调理|調理|护理|護理|疗程|療程|session|treatment).{0,25}(?:多少钱|多少錢|几多钱|幾多錢|价钱|價錢|价格|價格|费用|費用|怎么\s*(?:算|收费|收費)|怎麼\s*(?:算|收費))\s*(?:呢|吗|嗎|[?？])?/iu;
 
-function isShortAdTreatmentPriceQuestion(text) {
+function isShortAdTreatmentPriceQuestion(text, { allowNaturalFee = false } = {}) {
   const current = String(text || "").normalize("NFKC").trim();
   if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
       AD_UNRELATED_FEE.test(current)) return false;
@@ -204,6 +208,8 @@ function isShortAdTreatmentPriceQuestion(text) {
   // A price objection, free assessment fee or broad catalogue enquiry does
   // not become a treatment-price question merely by mentioning "价钱".
   return isStandalonePriceQuestion(current) ||
+    (allowNaturalFee === true && AD_NATURAL_TREATMENT_FEE.test(current) &&
+      hasExplicitPriceRequest(current) && !isPurePriceObjection(current)) ||
     AD_TREATMENT_PRICE_QUESTION.test(current) ||
     AD_ENGLISH_SESSION_PRICE.test(current) ||
     AD_MALAY_SESSION_PRICE.test(current) ||
@@ -213,32 +219,29 @@ function isShortAdTreatmentPriceQuestion(text) {
       !RESET.test(current));
 }
 
-function verifiedMetaAdPriceAnchor({
-  customerText, conversationHistory, services, serviceAliases, modelTreatment,
+// Keep the established ad-only price path unchanged for other clients.
+// Neutro's generic creative-headline exception is a separate opt-in below.
+function legacyMetaAdPriceAnchor({
+  customerText, conversationHistory, services = [], serviceAliases = [],
   metaAdContext, now = Date.now(),
-}) {
-  if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
-  const adService = (services || []).filter((service) =>
-    String(service?.name || "").trim() === metaAdContext.serviceHint
-  );
+} = {}) {
+  if (!metaAdContext ||
+      !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
+  const adService = services.filter(s =>
+    String(s?.name || "").trim() === metaAdContext.serviceHint);
   if (adService.length !== 1) return null;
   const name = adService[0].name;
   const attributedAtMs = Date.parse(String(metaAdContext.attributedAt || ""));
   if (!Number.isFinite(attributedAtMs) || !Number.isFinite(now) ||
       attributedAtMs > now || now - attributedAtMs > META_AD_PRICE_MAX_AGE_MS) return null;
-
   const current = String(customerText || "").trim();
   const candidates = serviceCandidates(services, serviceAliases);
-  // Ad-only context is for short contextual monetary enquiries, not for an
-  // unrequested price, all-treatment price list, or a competing named service.
   if (!isShortAdTreatmentPriceQuestion(current) ||
       UNRELATED.test(current) ||
       findServicesInText(current, candidates).length > 0) return null;
-
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
-  let skippedCurrent = false;
-  let previousCustomerTurns = 0;
-  for (let i = history.length - 1; i >= 0; i -= 1) {
+  let skippedCurrent = false, previousCustomerTurns = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i];
     if (entry?.role === "assistant") {
       if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
@@ -251,17 +254,122 @@ function verifiedMetaAdPriceAnchor({
       continue;
     }
     previousCustomerTurns += 1;
-    // This is an acquisition hint, not a permanent conversation default.
     if (previousCustomerTurns > 4 || !prior || RESET.test(prior) ||
         REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior) ||
         AD_NEGATED_TOPIC.test(prior)) return null;
     const mentions = [...new Set(findServicesInText(prior, candidates))];
-    if (mentions.length > 1 || (mentions.length === 1 && mentions[0] !== name)) return null;
-    // Reject ambiguous service mentions or negated references even when they
-    // happen to contain the advertised service name.
-    if (mentions.length && !safeServiceFromCustomer(prior, services, serviceAliases)) return null;
+    if (mentions.length > 1 ||
+        (mentions.length === 1 && mentions[0] !== name)) return null;
+    if (mentions.length &&
+        !safeServiceFromCustomer(prior, services, serviceAliases)) return null;
   }
   return { treatment: name, source: "meta_ad" };
+}
+
+function verifiedMetaAdPriceAnchor({
+  customerText, conversationHistory, services = [], serviceAliases = [],
+  promotions = [], metaAdContext, allowCreativeEcho = false,
+  now = Date.now(),
+} = {}) {
+  if (allowCreativeEcho !== true) {
+    return legacyMetaAdPriceAnchor({
+      customerText, conversationHistory, services, serviceAliases,
+      metaAdContext, now,
+    });
+  }
+  if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource))
+    return null;
+  const adService = services.filter(s =>
+    String(s?.name || "").trim() === metaAdContext.serviceHint);
+  if (adService.length !== 1) return null;
+  const name = adService[0].name;
+  const attributedAtMs = Date.parse(String(metaAdContext.attributedAt || ""));
+  if (!Number.isFinite(attributedAtMs) || !Number.isFinite(now) ||
+      attributedAtMs > now || now - attributedAtMs > META_AD_PRICE_MAX_AGE_MS)
+    return null;
+
+  const current = String(customerText || "").trim();
+  // An explicitly different body area/technique overrides an old pelvic ad,
+  // even if the clinic has no separate priced package for it.
+  const differentBodyService =
+    /(?:筋膜|肩[颈頸膀部]|[颈頸]肩|筋膜枪|筋膜槍|\b(?:myofascial|fascia|neck|shoulder)\b)/iu;
+  const pelvicMention = /(?:骨盆|盆骨|\b(?:pelvic|pelvis)\b)/iu;
+  if (name === "骨盆调理" &&
+      differentBodyService.test(current) && !pelvicMention.test(current)) return null;
+  if (!isShortAdTreatmentPriceQuestion(current, { allowNaturalFee: true }) ||
+      UNRELATED.test(current) ||
+      hasClinicalMediaRisk(current) || REFUSAL.test(current) ||
+      RESET.test(current) || AD_BROAD_TOPIC.test(current) ||
+      AD_NEGATED_TOPIC.test(current) || SPECIFIC_ADMIN_FEE.test(current))
+    return null;
+
+  const activePriced = new Set(getActivePromotions(promotions)
+    .filter(p => p?.sendOnPriceQuery === true).map(p => p.linkedService));
+  if (!activePriced.has(name)) return null;
+  const creative = {
+    headline: metaAdContext.headline, body: metaAdContext.body,
+  };
+  const matches = matchingMetaAdCreativeServices(
+    creative, services, serviceAliases
+  );
+  // An ad name only establishes a priced offer when the current creative
+  // independently mentions that same priced service. Two priced offers in
+  // the same ad cannot be silently reduced to a single package.
+  if (!matches.includes(name) ||
+      matches.some(m => m !== name && activePriced.has(m))) return null;
+  const headlineMentions = new Set(matchingMetaAdCreativeServices(
+    { headline: metaAdContext.headline, body: "" }, services, serviceAliases
+  ));
+  const echoServices = allowCreativeEcho === true ? matches.filter(m =>
+    m !== name && !activePriced.has(m) && headlineMentions.has(m)
+  ) : [];
+  const candidates = serviceCandidates(services, serviceAliases);
+  // The customer might say "整骨" because the headline of this *same* ad
+  // says "徒手整骨". This is not a new choice of a competing treatment.
+  // A priced treatment or any unpriced service absent from that headline
+  // still overrides the ad and must not inherit its pelvic price.
+  const allowedMentions = (message) => {
+    const mentions = [...new Set(findServicesInText(message, candidates))];
+    if (mentions.length > 1 ||
+        mentions.some(m => m !== name && !echoServices.includes(m))) return false;
+    return true;
+  };
+  if (!allowedMentions(current)) return null;
+
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const last = history.at(-1);
+  if (last?.role !== "user" ||
+      String(last.content || "").trim() !== current ||
+      !Number.isFinite(last.pricingCreatedAtMs) ||
+      last.pricingCreatedAtMs > now + 60_000 ||
+      last.pricingCreatedAtMs < now - 24 * 60 * 60 * 1000) return null;
+
+  let previousCustomers = 0, priorTime = now + 60_000;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const turn = history[i];
+    if (turn?.role !== "assistant" && turn?.role !== "user") continue;
+    const at = turn.pricingCreatedAtMs;
+    if (!Number.isFinite(at) || at > priorTime ||
+        at < now - 24 * 60 * 60 * 1000) return null;
+    priorTime = at;
+    if (turn.role === "assistant") {
+      if (turn.pricingStaffAuthored === true ||
+          STAFF_PREFIX.test(String(turn.content || "").trim())) return null;
+      continue;
+    }
+    if (i === history.length - 1) continue;
+    previousCustomers += 1;
+    if (previousCustomers > 8) return null;
+    const prior = String(turn.content || "").trim();
+    if (!prior || RESET.test(prior) || REFUSAL.test(prior) ||
+        AD_BROAD_TOPIC.test(prior) || AD_NEGATED_TOPIC.test(prior) ||
+        hasClinicalMediaRisk(prior) || !allowedMentions(prior)) return null;
+    // A fascia/neck/shoulder-specific enquiry is not a pelvic selection
+    // even if a pelvic advertisement also mentions general posture.
+    if (/(?:筋膜|肩[颈頸膀部]|[颈頸]肩|\b(?:myofascial|fascia|neck|shoulder)\b)/iu.test(prior) &&
+        !/(?:骨盆|盆骨|\b(?:pelvis|pelvic)\b)/iu.test(prior)) return null;
+  }
+  return { treatment: name, source: "meta_ad", creativeEchoServices: echoServices };
 }
 
 function resolveAiPricingDecision({
@@ -269,7 +377,7 @@ function resolveAiPricingDecision({
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
-  now = Date.now(),
+  allowVerifiedAdPricing = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
   // A different treatment's refused quotation cannot veto a clearly
@@ -357,13 +465,23 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
-    : verifiedServiceAnchor({
-        customerText: current, conversationHistory, services, serviceAliases,
-        modelTreatment: treatment,
-      }) || verifiedMetaAdPriceAnchor({
-        customerText: current, conversationHistory, services, serviceAliases,
-        modelTreatment: treatment, metaAdContext, now,
-      });
+    : (() => {
+        const customer = verifiedServiceAnchor({
+          customerText: current, conversationHistory, services, serviceAliases,
+          modelTreatment: treatment,
+        });
+        const ad = verifiedMetaAdPriceAnchor({
+          customerText: current, conversationHistory, services, serviceAliases,
+          promotions, metaAdContext,
+          allowCreativeEcho: allowVerifiedAdPricing, now,
+        });
+        // A customer naming a different treatment always wins. The only
+        // exception is a generic service word copied from this ad's own
+        // headline, e.g. 徒手整骨 in a verified pelvic advertisement.
+        return customer && (!ad ||
+          !ad.creativeEchoServices?.includes(customer.treatment))
+          ? customer : (ad || customer);
+      })();
   if (!anchor || (clarifiedPriceService &&
       clarifiedPriceService !== anchor.treatment)) return null;
 
@@ -417,4 +535,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };

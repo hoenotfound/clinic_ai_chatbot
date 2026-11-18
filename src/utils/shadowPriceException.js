@@ -10,7 +10,7 @@ const {
   isVerifiedStaffTurn, isRecentPricingThread, pricingMessageText,
 } = require("./priceFollowUpContext");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
-const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
+const { resolveAiPricingDecision, verifiedMetaAdPriceAnchor } = require("./aiPricingIntentDecision");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
@@ -250,7 +250,7 @@ function resolveShadowPriceException({
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false,
   allowOfferEnquiries = false, modelOfferQuery = false,
-  allowReturningTrialPrice = false,
+  allowVerifiedAdPricing = false, allowReturningTrialPrice = false,
   returningPricingHistory = undefined, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
@@ -461,10 +461,30 @@ function resolveShadowPriceException({
     if (result) return result;
   }
 
+  // The ad's *current, persisted* creative can answer a customer's
+  // unambiguous session-price question without requiring them to repeat the
+  // words "骨盆". This is secondary to explicit customer-selected services.
+  // A generic term copied from the ad headline (徒手整骨) is not a new
+  // priced-service choice, but unrelated services and safety questions veto it.
+  const advertised = allowVerifiedAdPricing === true
+    ? verifiedMetaAdPriceAnchor({
+        customerText: text, conversationHistory: session,
+        services, serviceAliases, promotions, metaAdContext,
+        allowCreativeEcho: true, now,
+      }) : null;
+  if (advertised) {
+    const quote = shadowVerifiedPrice({
+      source: "meta_ad", treatment: advertised.treatment,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (quote) return quote;
+  }
+
   const decision = resolveAiPricingDecision({
     priceQuery: true, packageQuery: false, treatment: null,
     customerText: text, conversationHistory: session,
     services, serviceAliases, promotions, metaAdContext,
+    allowVerifiedAdPricing,
     complimentaryAssessmentExperienceEnabled, now,
   });
   if (!decision || decision.type !== "price" || !decision.prices?.length ||
