@@ -43,7 +43,20 @@ function resolveCurrentOfferService({
   const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
   const last = turns.at(-1);
   if (last?.role !== "user" ||
-      String(last.content || "").trim() !== String(customerText || "").trim()) return null;
+      String(last.content || "").trim() !== String(customerText || "").trim() ||
+      !Number.isFinite(last.pricingCreatedAtMs) ||
+      last.pricingCreatedAtMs > now + 60_000 ||
+      now - last.pricingCreatedAtMs > MAX_AGE_MS) return null;
+  // Even a freshly named treatment cannot override an intervening verified
+  // staff reply. A previous session outside this short window is unrelated.
+  for (let i = turns.length - 2; i >= 0; i--) {
+    const prior = turns[i];
+    if (prior?.role !== "assistant" && prior?.role !== "user") continue;
+    const at = prior.pricingCreatedAtMs;
+    if (!Number.isFinite(at) || at > now + 60_000) return null;
+    if (now - at > MAX_AGE_MS) break;
+    if (isVerifiedStaffTurn(prior)) return null;
+  }
   const candidates = serviceCandidates(services, serviceAliases);
   const current = safeServiceFromCustomer(customerText, services, serviceAliases);
   const currentMentions = [...new Set(findServicesInText(customerText, candidates))];
