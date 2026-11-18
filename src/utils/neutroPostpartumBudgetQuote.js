@@ -43,7 +43,7 @@ function explicitlyRejectedService(text) {
       ? "(?:脉冲波|脈衝波|脉冲|脈衝|黄金脉冲|黃金脈衝|pulse(?: wave)?)"
       : "(?:骨盆|盆骨|pelvic|pelvis)";
     return new RegExp(
-      "(?:不(?:想|要|需要|考虑|考慮)(?:做|了解|看)?|不做|别|別|不要这个|不要這個|not\\s+interested\\s+in|don't\\s+want|do\\s+not\\s+want|without|no)\\s*.{0,12}" + aliases,
+      "(?:不(?:想|要|需要|考虑|考慮)(?:做|了解|看)?|不做|别|別|不要这个|不要這個|not\\s+interested\\s+in|don't\\s+want|do\\s+not\\s+want|without|no)\\s*[^，,;；。!?！？\\n]{0,4}" + aliases,
       "iu"
     ).test(source);
   });
