@@ -18,7 +18,7 @@ const COMMENT_ONLY = /(?:优惠|優惠|折扣|促销|促銷).{0,14}(?:太贵|太
 const RESET = /(?:换个|換個|改聊|另一|另外|其他|其它|全部|所有|价目表|價目表|不同疗程|不同療程|不想了解|不要这个|不要這個|\b(?:instead|switch|different|another|other\s+treatments?|all\s+(?:the\s+)?(?:prices|treatments)|price\s+list|stop|unsubscribe)\b)/iu;
 // Only the current, staff-free conversation can carry a verified selection.
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const SOFT_CURRENT_OFFER = /(?:新客|新人).{0,12}(?:福利|礼遇|禮遇|體驗|体验|活动|活動|特別|特别)|(?:体验|體驗|首次|初次|首访|首訪).{0,12}(?:活动|活動|礼遇|禮遇|方案|特别|特別)|(?:最近|近期|目前|现在|現在).{0,14}(?:活动|活動|福利|礼遇|禮遇|好康)|\b(?:new[\\s-]*(?:client|customer)[\\s-]*(?:benefits?|perks?|specials?)|introductory[\\s-]*(?:offer|deal|trial)|welcome[\\s-]*offer|special[\\s-]*deal)\b/iu;
+const SOFT_CURRENT_OFFER = /(?:新客|新人).{0,12}(?:福利|礼遇|禮遇|體驗|体验|活动|活動|特別|特别)|(?:体验|體驗|首次|初次|首访|首訪).{0,12}(?:活动|活動|礼遇|禮遇|方案|特别|特別)|(?:最近|近期|目前|现在|現在).{0,14}(?:活动|活動|福利|礼遇|禮遇|好康)|\b(?:new[\s-]*(?:client|customer)[\s-]*(?:benefits?|perks?|specials?)|introductory[\s-]*(?:offer|deal|trial)|welcome[\s-]*offer|special[\s-]*deal)\b/iu;
 const REQUEST_MARKER = /(?:有(?:什么|什麼|没有|沒有)?|有没有|有沒有|可以|能|请问|請問|想知道|想了解|什么|什麼|哪些|哪种|哪種|呢|吗|嗎|发我|發我|给我|給我|\b(?:any|what|which|do|does|have|has|available|can|could|send|show|ada|boleh|nak|mahu)\b)/iu;
 
 // Split compound requests before evaluating current intent. In particular,
