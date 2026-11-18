@@ -3,7 +3,7 @@
 // A customer can request a current First Trial/promotion without asking an
 // explicit monetary question. This only supplies customer-led intent and a
 // bounded, independently selected treatment. It never supplies prices or media.
-const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission, hasExplicitPackageOptionsRequest } = require("./customerEnquiryEvidence");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
@@ -26,8 +26,9 @@ function isCurrentOfferEnquiry(message) {
       FUTURE_ONLY.test(original) || DECLINE.test(original) ||
       COMMENT_ONLY.test(original)) return false;
   const current = stripFutureFollowUpPermission(original).text.trim();
-  return Boolean(current) && OFFER.test(current) &&
-    (SHORT_OFFER.test(current) || DIRECT_REQUEST.test(current));
+  return Boolean(current) &&
+    (hasExplicitPackageOptionsRequest(current) ||
+      (OFFER.test(current) && (SHORT_OFFER.test(current) || DIRECT_REQUEST.test(current))));
 }
 
 // A model, old CRM service, or ad alone cannot choose a promotion. Require
