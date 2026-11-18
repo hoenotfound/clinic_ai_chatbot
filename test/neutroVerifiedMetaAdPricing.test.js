@@ -140,7 +140,7 @@ test("Meta ad must be recent, priced, uniquely identifiable and creative-matched
     { ...ad, attributedAt: new Date(now - 8*24*3600*1000).toISOString() },
     { ...ad, serviceHintSource: "crm" },
     { ...ad, serviceHint: "Unknown" },
-    { ...ad, body: "只有徒手整骨，没有骨盆广告" },
+    { ...ad, body: "只有徒手整骨，没有具体治疗项目" },
     { ...ad, body: ad.body + " 9D逆龄抗衰也有优惠" },
     null,
   ];
@@ -202,5 +202,5 @@ test("booking, staff, clinical, consent, review and delivery gates remain closed
 test("generic ad headline exception is disabled by default for other clinics", () => {
   const price="通常一个疗程多少钱呢";
   assert.equal(verifiedMetaAdPriceAnchor(input(price,jinfei)),null);
-  assert.equal(shadow(price,jinfei,{allowVerifiedAdPricing:false})?.source,"meta_ad" /* if context is unambiguous without echo */);
+  assert.equal(shadow(price,jinfei,{allowVerifiedAdPricing:false}),null);
 });
