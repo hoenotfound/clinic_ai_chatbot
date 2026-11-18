@@ -20,9 +20,13 @@ const {
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
-const { resolveCurrentOfferService } = require("./currentOfferEnquiry");
+const { resolveCurrentOfferService, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// A customer saying that money is irrelevant has not requested a new quote.
+// Keep this narrow: an independent later pricing question is evaluated on
+// its own subsequent inbound message instead of borrowing this turn.
+const PRICE_INDIFFERENCE_ONLY = /^(?:多少钱|多少錢|价(?:格|钱)|價(?:格|錢)|how\s+much|price).{0,35}(?:不重要|不在意|无所谓|無所謂|没关系|沒關係|doesn.t\s+matter|not\s+important)[。.!！\s]*$/iu;
 
 // Restrict every pricing exception to the current continuously timestamped
 // conversation. Old contacts may contain old staff replies; those must not
@@ -245,11 +249,12 @@ function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false,
-  allowOfferEnquiries = false, allowReturningTrialPrice = false,
+  allowOfferEnquiries = false, modelOfferQuery = false,
+  allowReturningTrialPrice = false,
   returningPricingHistory = undefined, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
-  if (!text || hasClinicalMediaRisk(text)) return null;
+  if (!text || hasClinicalMediaRisk(text) || PRICE_INDIFFERENCE_ONLY.test(text)) return null;
 
   // Neutro opt-in: a first-trial price question after 2h-6d automatic
   // follow-ups may refer to the customer's original verified treatment.
@@ -285,12 +290,13 @@ function resolveShadowPriceException({
   const currentOfferService = allowOfferEnquiries === true
     ? resolveCurrentOfferService({
         customerText: text, conversationHistory: session,
-        services, serviceAliases, now,
+        services, serviceAliases, modelOfferQuery, now,
       }) : null;
   if (currentOfferService) {
     const offer = shadowVerifiedPrice({
       source: "customer_current_offer", treatment: currentOfferService.name,
-      customerText: text, conversationHistory: session, promotions,
+      customerText: currentOfferRequestText(text, { modelOfferQuery }),
+      conversationHistory: session, promotions,
     });
     if (offer) return offer;
   }

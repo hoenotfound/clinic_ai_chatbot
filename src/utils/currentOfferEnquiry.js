@@ -16,19 +16,38 @@ const FUTURE_ONLY = /(?:以后|以後|之后|之後|将来|將來|未来|未來|
 const DECLINE = /(?:不要|不用|不需要|不想|拒绝|拒絕|别发|別發|别给|別給).{0,28}(?:优惠|優惠|促销|促銷|折扣|特价|特價|promo|offer|first[\s-]*trial)|\b(?:no|don't|do\s+not|not)\b.{0,24}\b(?:offers?|promos?|discounts?)\b/iu;
 const COMMENT_ONLY = /(?:优惠|優惠|折扣|促销|促銷).{0,14}(?:太贵|太貴|太少|不错|不錯|很好|还行|還行|已经看过|已經看過|看过了|看過了|收到了|收到啦)|(?:已经|已經|刚|剛|之前).{0,20}(?:看过|看過|收到)(?:优惠|優惠|促销|促銷)|\b(?:already\s+(?:seen|received)|too\s+expensive|looks\s+good)\b/iu;
 const RESET = /(?:换个|換個|改聊|另一|另外|其他|其它|全部|所有|价目表|價目表|不同疗程|不同療程|不想了解|不要这个|不要這個|\b(?:instead|switch|different|another|other\s+treatments?|all\s+(?:the\s+)?(?:prices|treatments)|price\s+list|stop|unsubscribe)\b)/iu;
-const MAX_AGE_MS = 3 * 60 * 60 * 1000;
+// Only the current, staff-free conversation can carry a verified selection.
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const SOFT_CURRENT_OFFER = /(?:新客|新人).{0,12}(?:福利|礼遇|禮遇|體驗|体验|活动|活動|特別|特别)|(?:体验|體驗|首次|初次|首访|首訪).{0,12}(?:活动|活動|礼遇|禮遇|方案|特别|特別)|(?:最近|近期|目前|现在|現在).{0,14}(?:活动|活動|福利|礼遇|禮遇|好康)|\b(?:new[\s-]*(?:client|customer)[\s-]*(?:benefits?|perks?|specials?)|introductory[\s-]*(?:offer|deal|trial)|welcome[\s-]*offer|special[\s-]*deal)\b/iu;
+const REQUEST_MARKER = /(?:有(?:什么|什麼|没有|沒有)?|有没有|有沒有|可以|能|请问|請問|想知道|想了解|什么|什麼|哪些|哪种|哪種|呢|吗|嗎|发我|發我|给我|給我|\b(?:any|what|which|do|does|have|has|available|can|could|send|show|ada|boleh|nak|mahu)\b)/iu;
 
-// Future follow-up permission must never be mistaken for a request to send a
-// current graphic. An explicit separate current-offer request can still pass.
-function isCurrentOfferEnquiry(message) {
+// Split compound requests before evaluating current intent. In particular,
+// "现在有First Trial吗？以后有优惠也发我" asks TWO different things.
+// Future permission, refusals and comments never authorize today's graphic.
+function currentOfferRequestText(message, { modelOfferQuery = false } = {}) {
   const original = String(message || "").normalize("NFKC").trim();
-  if (!original || original.length > 160 || hasClinicalMediaRisk(original) ||
-      FUTURE_ONLY.test(original) || DECLINE.test(original) ||
-      COMMENT_ONLY.test(original)) return false;
-  const current = stripFutureFollowUpPermission(original).text.trim();
-  return Boolean(current) &&
-    (hasExplicitPackageOptionsRequest(current) ||
-      (OFFER.test(current) && (SHORT_OFFER.test(current) || DIRECT_REQUEST.test(current))));
+  if (!original || original.length > 450 || hasClinicalMediaRisk(original)) return "";
+  const clauses = original.split(/[，,。.!！;；\n?？]+/u).map(s => s.trim()).filter(Boolean);
+  const current = clauses.filter((clause) => {
+    if (FUTURE_ONLY.test(clause) || DECLINE.test(clause) ||
+        COMMENT_ONLY.test(clause)) return false;
+    const text = stripFutureFollowUpPermission(clause).text.trim();
+    if (!text) return false;
+    return hasExplicitPackageOptionsRequest(text) ||
+      (OFFER.test(text) &&
+        (SHORT_OFFER.test(text) || DIRECT_REQUEST.test(text))) ||
+      // The existing AI packageQuery is a useful semantic hint for natural
+      // newcomer/introductory wording. It cannot invent a customer request:
+      // independently require present-tense promotional language and a
+      // customer-authored question/request, plus a separately verified service.
+      (modelOfferQuery === true && SOFT_CURRENT_OFFER.test(text) &&
+        REQUEST_MARKER.test(text));
+  });
+  return current.join("。");
+}
+
+function isCurrentOfferEnquiry(message, options = {}) {
+  return Boolean(currentOfferRequestText(message, options));
 }
 
 // A model, old CRM service, or ad alone cannot choose a promotion. Require
@@ -37,9 +56,10 @@ function isCurrentOfferEnquiry(message) {
 // All timestamp and conflict checks are fail-closed.
 function resolveCurrentOfferService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
-  now = Date.now(),
+  modelOfferQuery = false, now = Date.now(),
 } = {}) {
-  if (!isCurrentOfferEnquiry(customerText) || !Number.isFinite(now)) return null;
+  const currentRequest = currentOfferRequestText(customerText, { modelOfferQuery });
+  if (!currentRequest || !Number.isFinite(now)) return null;
   const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
   const last = turns.at(-1);
   if (last?.role !== "user" ||
@@ -58,8 +78,8 @@ function resolveCurrentOfferService({
     if (isVerifiedStaffTurn(prior)) return null;
   }
   const candidates = serviceCandidates(services, serviceAliases);
-  const current = safeServiceFromCustomer(customerText, services, serviceAliases);
-  const currentMentions = [...new Set(findServicesInText(customerText, candidates))];
+  const current = safeServiceFromCustomer(currentRequest, services, serviceAliases);
+  const currentMentions = [...new Set(findServicesInText(currentRequest, candidates))];
   if (currentMentions.length > 1 || (currentMentions.length && !current)) return null;
   if (current) return current;
 
@@ -80,7 +100,7 @@ function resolveCurrentOfferService({
       continue;
     }
     customerTurns += 1;
-    if (customerTurns > 6) return null;
+    if (customerTurns > 8) return null;
     const text = String(turn.content || "").trim();
     if (!text || RESET.test(text) || DECLINE.test(text) ||
         hasClinicalMediaRisk(text)) return null;
@@ -97,4 +117,4 @@ function resolveCurrentOfferService({
   return null;
 }
 
-module.exports = { isCurrentOfferEnquiry, resolveCurrentOfferService };
+module.exports = { isCurrentOfferEnquiry, currentOfferRequestText, resolveCurrentOfferService };
