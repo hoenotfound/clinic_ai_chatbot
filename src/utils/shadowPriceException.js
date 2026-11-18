@@ -20,7 +20,7 @@ const {
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
-const { resolveCurrentOfferService } = require("./currentOfferEnquiry");
+const { resolveCurrentOfferService, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // A customer saying that money is irrelevant has not requested a new quote.
@@ -295,7 +295,8 @@ function resolveShadowPriceException({
   if (currentOfferService) {
     const offer = shadowVerifiedPrice({
       source: "customer_current_offer", treatment: currentOfferService.name,
-      customerText: text, conversationHistory: session, promotions,
+      customerText: currentOfferRequestText(text, { modelOfferQuery }),
+      conversationHistory: session, promotions,
     });
     if (offer) return offer;
   }
