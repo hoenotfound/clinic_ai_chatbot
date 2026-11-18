@@ -112,6 +112,8 @@ test("9170: First Trial enquiry after 3D discussion authorizes correct price and
   });
   assert.equal(quote.restored, true);
   assert.match(quote.reply, /First Trial.*RM388/su);
+  assert.match(quote.reply, /想了解优惠包含什么/u);
+  assert.doesNotMatch(quote.reply, /我们继续聊|想进一步确认哪一部分/u);
 });
 
 test("9170: standalone 优惠 continues prior verified 3D, rather than repeating a question", async () => {
