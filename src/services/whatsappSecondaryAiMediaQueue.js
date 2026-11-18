@@ -210,6 +210,16 @@ async function enqueue({
   finally{client.release();}
 }
 
+// A customer-selected Before & After picture may send overnight only while
+// the same signed customer request is fresh. All existing authorization,
+// staff, opt-out, clinical, Meta receipt and billing gates still apply.
+const RECENT_DIRECT_RESULT_SQL=`(
+  job.media_kind='result'
+  AND inbound.whatsapp_message_id IS NOT NULL
+  AND inbound.created_at BETWEEN NOW()-INTERVAL '2 hours' AND NOW()
+  AND job.created_at >= inbound.created_at
+  AND job.created_at <= inbound.created_at+INTERVAL '5 minutes'
+)`;
 const READY_SQL=`
  SELECT job.*,c.whatsapp_number,c.whatsapp_sender_id,
         sa.sender_key AS whatsapp_sender_key,
@@ -232,7 +242,8 @@ const READY_SQL=`
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
-     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
+     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE)
+     OR ${RECENT_DIRECT_RESULT_SQL})
    AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND NOT EXISTS(
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -272,7 +283,8 @@ const STILL_VALID_SQL=`
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
-     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE))
+     OR (job.media_kind='promotion' AND job.solicited_pricing=TRUE)
+     OR ${RECENT_DIRECT_RESULT_SQL})
      AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4
      AND NOT EXISTS(
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -691,11 +703,26 @@ const RECOVERY_DEADLINE_SQL=`
           WHERE job.state='pending' AND job.expires_at>NOW()
             AND job.media_kind='promotion' AND job.solicited_pricing=TRUE
         ) AS next_solicited_at,
+        COALESCE(BOOL_OR(job.state='pending' AND job.expires_at>NOW()
+          AND job.media_kind='result' AND inbound.whatsapp_message_id IS NOT NULL
+          AND inbound.created_at BETWEEN NOW()-INTERVAL '2 hours' AND NOW()
+          AND job.created_at BETWEEN inbound.created_at
+            AND inbound.created_at+INTERVAL '5 minutes'),FALSE)
+          AS has_direct_result_pending,
+        MIN(job.next_attempt_at) FILTER(
+          WHERE job.state='pending' AND job.expires_at>NOW()
+            AND job.media_kind='result' AND inbound.whatsapp_message_id IS NOT NULL
+            AND inbound.created_at BETWEEN NOW()-INTERVAL '2 hours' AND NOW()
+            AND job.created_at BETWEEN inbound.created_at
+              AND inbound.created_at+INTERVAL '5 minutes'
+        ) AS next_direct_result_at,
         MIN(job.next_attempt_at) FILTER(
           WHERE job.state='pending' AND job.expires_at>NOW()
         ) AS next_pending_at
  FROM whatsapp_sender_ai_media_jobs job
  JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
+ LEFT JOIN messages inbound ON inbound.id=job.inbound_message_id
+   AND inbound.contact_id=job.contact_id AND inbound.role='user'
  WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
    AND sender.meta_account_id=$3 AND sender.state='active'
    AND job.state IN ('pending','claimed')
@@ -712,15 +739,25 @@ function nextMediaRecoveryDelay(state,nowMs=Date.now()){
    throw Error("Pending media retry deadline unavailable; retry shortly");
  const shifted=new Date(nowMs+MALAYSIA_UTC_OFFSET_MS);
  if(shifted.getUTCHours()<7){
-   // Verified current pricing graphics have their own quiet-hours deadline.
-   // Ordinary promotional and result media remain asleep until opening.
+   // Only independently customer-requested, recent result pictures and
+   // solicited price graphics may bypass the ordinary nighttime pause.
+   // A short due retry never authorizes an expired or unrelated image: READY
+   // and STILL_VALID independently recheck the signed inbound and all gates.
+   const due=[];
    if(state.has_solicited_pending===true){
      const requestedAt=new Date(state.next_solicited_at).getTime();
      if(state.next_solicited_at==null || !Number.isFinite(requestedAt))
        throw Error("Solicited pricing media deadline unavailable; retry shortly");
-     return Math.min(MEDIA_IDLE_CHECK_MS,
-       Math.max(MEDIA_ACTIVE_CHECK_MS,requestedAt-nowMs));
+     due.push(requestedAt);
    }
+   if(state.has_direct_result_pending===true){
+     const resultAt=new Date(state.next_direct_result_at).getTime();
+     if(state.next_direct_result_at==null || !Number.isFinite(resultAt))
+       throw Error("Verified direct result media deadline unavailable; retry shortly");
+     due.push(resultAt);
+   }
+   if(due.length)return Math.min(MEDIA_IDLE_CHECK_MS,
+     Math.max(MEDIA_ACTIVE_CHECK_MS,Math.min(...due)-nowMs));
    const opening=Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),
      shifted.getUTCDate(),7)-MALAYSIA_UTC_OFFSET_MS;
    // Other pending sends remain paused during quiet hours. Wake at 07:00
@@ -772,4 +809,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
 }
 function stop(){if(worker){worker.stop();worker=null;}}
 module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,
- RECOVERY_DEADLINE_SQL,nextMediaRecoveryDelay,readMediaRecoveryDelay,HARMLESS_CONTINUATION_SQL,PROMOTION_MEDIA_SUPERSESSION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
+ RECOVERY_DEADLINE_SQL,RECENT_DIRECT_RESULT_SQL,nextMediaRecoveryDelay,readMediaRecoveryDelay,HARMLESS_CONTINUATION_SQL,PROMOTION_MEDIA_SUPERSESSION_SQL,NEWER_MEDIA_PLAN_SQL,isHarmlessContinuationQuestion,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
