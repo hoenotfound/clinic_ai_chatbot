@@ -10,6 +10,7 @@ const {
   relatedPricingConflict, unpricedRelatedPrimary, configuredServiceMention,
 } = require("./relatedServicePolicy");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
+const { verifiedMetaAdPriceAnchor } = require("./aiPricingIntentDecision");
 
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -61,7 +62,9 @@ function resolveApprovedPricingAssessment({
   customerText = "", conversationHistory = [], services = [],
   serviceAliases = [], resultMedia = [], flagged = false,
   bookingReady = false, keywordReason = null,
-  marketingStopQuestion = false, allowOfferEnquiries = false, now = Date.now(),
+  marketingStopQuestion = false, allowOfferEnquiries = false,
+  allowVerifiedAdPricing = false, metaAdContext = null, promotions = [],
+  now = Date.now(),
 } = {}) {
   const rejected = reason => ({ decision: null, reason });
   if (!["shadow", "enabled"].includes(mode)) return rejected("mode_off");
@@ -119,6 +122,30 @@ function resolveApprovedPricingAssessment({
       turn?.role === "user" && turn?.content === customerText
         ? { ...turn, content: scoped.priceText } : turn
     );
+  }
+  // A verified pelvic creative may call its offer "徒手整骨". Resolve that
+  // exact generic phrase against the same current-lead ad at the final price
+  // boundary. Do not override customer-named other treatments, clinical
+  // concerns or the existing staff/booking/opt-out checks above.
+  if (candidate.source === "meta_ad" && allowVerifiedAdPricing === true) {
+    const ad = verifiedMetaAdPriceAnchor({
+      customerText, conversationHistory, services, serviceAliases,
+      promotions, metaAdContext, allowCreativeEcho: true, now,
+    });
+    if (!ad || ad.treatment !== candidate.treatment)
+      return rejected("meta_ad_price_context_unverified");
+    const generic = new Set(ad.creativeEchoServices || []);
+    if (generic.size) {
+      effectiveHistory = effectiveHistory.filter(turn =>
+        turn?.role !== "user" ||
+        !generic.has(configuredServiceMention(
+          turn.content, services, serviceAliases
+        ))
+      );
+      if (generic.has(configuredServiceMention(
+        effectiveText, services, serviceAliases
+      ))) effectiveText = "";
+    }
   }
   if (relatedPricingConflict({
     customerText: effectiveText, treatment: candidate.treatment,
