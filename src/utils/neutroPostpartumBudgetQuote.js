@@ -60,6 +60,12 @@ function verifiedOptions(treatment, promotions, turns, now, customerText = "") {
     treatment, promotions, customerText, turns, { allowTextOnlyOffers: true }
   );
   if (!priced?.length || !options.length || priced.length > 4 ||
+      // The currently configured pelvic promotion is explicitly a two-package
+      // offer. A partial or corrupted A-only/B-only config is not a complete
+      // quote for the customer's requested options.
+      (treatment === PELVIC && (options.length !== 2 ||
+        !options.some(o => o.name === "Package A") ||
+        !options.some(o => o.name === "Package B"))) ||
       priced.some(x => !/^RM[1-9]\d{0,5}$/u.test(x.price))) return null;
   const resolved = priced.map(item => {
     const option = options.find(o => o.name === item.name);
@@ -108,10 +114,22 @@ function resolveNeutroPostpartumBudgetQuote({
   promotions = [], language = "zh", now = Date.now(),
 } = {}) {
   const current = String(customerText || "").trim();
+  const rejectedNow = explicitlyRejectedService(current);
+  // The existing global detector intentionally treats "I don't want X" as
+  // potentially declining a quotation. Here a separate customer-led request
+  // for Y is explicitly priced, and only Y may be quoted.
+  const secondClause = current.split(/[，,;；。]/u).slice(1).join(" ").trim();
+  const positiveAfterRefusal = rejectedNow.length === 1 &&
+    secondClause ? customerSelection(secondClause, services, serviceAliases) : null;
+  const clearDirectPrice = hasExplicitPriceRequest(current) ||
+    (/(?:价位|價位).{0,8}(?:吗|嗎|呢|[?？]|$)/iu.test(current) &&
+      /(?:想|可以|能|请|請|给我|給我)/iu.test(current)) ||
+    Boolean(positiveAfterRefusal && !rejectedNow.includes(positiveAfterRefusal) &&
+      PRICE_WORD.test(secondClause) && REQUEST.test(secondClause));
   // Customer's present question must ask for a treatment amount, not merely
   // state a budget, complain about a price or ask the assessment fee.
   if (!current || current.length > 200 || !Number.isFinite(now) ||
-      !hasExplicitPriceRequest(current) || !PRICE_WORD.test(current) ||
+      !clearDirectPrice || !PRICE_WORD.test(current) ||
       !REQUEST.test(current) || ADMIN_OR_STOP.test(current) ||
       UNRELATED.test(current) || REPEAT.test(current) ||
       TOPIC_SWITCH.test(current) || hasClinicalMediaRisk(current) ||
@@ -159,8 +177,9 @@ function resolveNeutroPostpartumBudgetQuote({
 
   // A later customer treatment change/refusal overrides the bot's earlier
   // menu. An unrecognized refusal never permits either quote.
-  const currentRejected = explicitlyRejectedService(current);
-  const currentChoice = customerSelection(current, services, serviceAliases);
+  const currentRejected = rejectedNow;
+  const currentChoice = positiveAfterRefusal ||
+    customerSelection(current, services, serviceAliases);
   if (currentRejected.length && (!currentChoice ||
       currentRejected.includes(currentChoice))) return null;
 
