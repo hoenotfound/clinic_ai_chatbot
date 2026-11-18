@@ -16,7 +16,7 @@ const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
-const { resolveCurrentOfferService, isCurrentOfferEnquiry } = require("./currentOfferEnquiry");
+const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
 const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|不需要(?:报价|報價|价格|價格|價錢|价钱)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
@@ -371,8 +371,10 @@ function resolveAiPricingDecision({
   // the text formatter and the optional media selector. Missing/conflicting
   // prices are recorded as null and must never authorize promo media.
   const prices = verifiedPricesForService(
-    anchor.treatment, promotions, current, conversationHistory,
-    { clarifiedPriceService, allowTextOnlyOffers: true }
+    anchor.treatment, promotions,
+    currentOfferService ? currentOfferRequestText(current,
+      { modelOfferQuery: packageQuery === true }) : current,
+    conversationHistory, { clarifiedPriceService, allowTextOnlyOffers: true }
   );
   // Some clients configure prices directly on SERVICES without promotions.
   // Reuse that verified service text only when there is no active offer for
