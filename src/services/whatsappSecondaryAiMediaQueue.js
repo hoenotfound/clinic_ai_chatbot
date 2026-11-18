@@ -11,6 +11,8 @@ const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGate");
 const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
+const {latestQueuedLanguagePreference,resolveQueuedMediaLanguage,
+  queuedMediaLanguageStillCurrent}=require("../utils/queuedMediaLanguage");
 const configRepo=require("../db/configRepo");
 const {createAdaptiveWorkerTimer}=require("../utils/adaptiveWorkerTimer");
 const realtimeEvents=require("../utils/realtimeEvents");
@@ -515,6 +517,25 @@ async function runOnce({
         contact.whatsapp_number!==job.whatsapp_number){
        await update("unknown");continue;
      }
+     // A customer can request English while a Chinese image is waiting for
+     // billing, quiet hours or the previous message receipt. Re-select the
+     // configured artwork at dispatch time, never send stale-language media.
+     const requestedLanguage=await latestQueuedLanguagePreference(
+       database,job.contact_id,job.inbound_message_id);
+     const media=resolveQueuedMediaLanguage({
+       imageUrl:job.image_url,caption:job.caption,kind:job.media_kind,
+       language:requestedLanguage,config:getConfig(),
+     });
+     if(!media){await update("expired");continue;}
+     const currentLanguageSelection=()=>queuedMediaLanguageStillCurrent({
+       database,contactId:job.contact_id,inboundMessageId:job.inbound_message_id,
+       imageUrl:job.image_url,caption:job.caption,kind:job.media_kind,
+       selectedMedia:media,getConfig,
+     });
+     const languageChangedBeforeProvider=()=>({
+       success:false,preProviderCancelled:true,retryable:false,
+       code:"secondary_ai_media_language_changed",
+     });
      const preSendCheck=async()=>{
        const check=await database.query(STILL_VALID_SQL,[
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -538,6 +559,9 @@ async function runOnce({
        try{return isAuthorizedImage({
          imageUrl:job.image_url,kind:job.media_kind,config:getConfig(),
          now:new Date(),
+       })===true && isAuthorizedImage({
+         imageUrl:media.imageUrl,kind:job.media_kind,config:getConfig(),
+         now:new Date(),
        })===true;}catch{return false;}
      };
      if(!imageApproved() || !await preSendCheck()){
@@ -546,7 +570,7 @@ async function runOnce({
      let messageId=job.outbound_message_id;
      if(!messageId){
        const saved=await store.appendMessageForContact(
-         contact.id,"assistant",job.caption,null,null,job.image_url,null,
+         contact.id,"assistant",media.caption,null,null,media.imageUrl,null,
          {publish:false,
           whatsappTemplate:{automatedSecondaryAiMedia:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -573,16 +597,20 @@ async function runOnce({
        [messageId,"Secondary image send started; Meta acceptance not confirmed."]
      );
      const result=await send({
-       contact,messageId,text:job.caption||"[automatic image]",
+       contact,messageId,text:media.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,anchorMessageId:job.inbound_message_id,
        dispatchTransport:async(transport)=>{
          if(!imageApproved() || !await preSendCheck())
            return {success:false,unknown:true,ambiguous:true,retryable:false};
-         if(clinicImage.storedClinicImageRef(job.image_url)){
+         // This callback runs after the sender's final billing reservation
+         // checks. A new language request proves no image SEND has occurred.
+         if(!await currentLanguageSelection())
+           return languageChangedBeforeProvider();
+         if(clinicImage.storedClinicImageRef(media.imageUrl)){
            // Never pass a private before/after preview URL to Meta.
            // Download only a matching-purpose configured image from Neon,
            // then upload it using the SECONDARY phone's Graph transport.
-           const image=await loadClinicImage(job.image_url);
+           const image=await loadClinicImage(media.imageUrl);
            if(!image)return {success:false,unknown:true,ambiguous:true,retryable:false};
            const uploaded=await transport.uploadMedia(
              image.buffer,image.mimeType,image.filename);
@@ -590,11 +618,17 @@ async function runOnce({
              return {success:false,unknown:true,ambiguous:true,retryable:false};
            if(!imageApproved() || !await preSendCheck())
              return {success:false,unknown:true,ambiguous:true,retryable:false};
-           return transport.sendMediaById("image",uploaded.mediaId,{caption:job.caption});
+           // Uploading image bytes is not a WhatsApp message send. The
+           // customer may switch languages while those bytes upload.
+           if(!await currentLanguageSelection())
+             return languageChangedBeforeProvider();
+           return transport.sendMediaById("image",uploaded.mediaId,{caption:media.caption});
          }
          if(!imageApproved() || !await preSendCheck())
            return {success:false,unknown:true,ambiguous:true,retryable:false};
-         return transport.sendImageByUrl(job.image_url,job.caption);
+         if(!await currentLanguageSelection())
+           return languageChangedBeforeProvider();
+         return transport.sendImageByUrl(media.imageUrl,media.caption);
        },
      },{env,database});
      if(result?.success===true && result?.unknown!==true &&
@@ -616,6 +650,12 @@ async function runOnce({
          console.warn("[Secondary WhatsApp AI media] post-acceptance wake unavailable:",
            err?.message);
        }
+     }else if(result?.preProviderCancelled===true &&
+              result?.code==="secondary_ai_media_language_changed" &&
+              result?.unknown!==true && result?.ambiguous!==true){
+       // Reservation was definitively rejected with proof that no WhatsApp
+       // image send occurred. Do not leave a false unknown-send billing hold.
+       await update("expired");
      }else if(["secondary_staff_billing_blocked","secondary_billing_previous_send_unresolved",
        "secondary_billing_sender_alarm"].includes(result?.code) && !result?.unknown){
        // No provider call or billable reservation occurred. Safe to defer.
