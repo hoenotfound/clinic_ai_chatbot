@@ -119,6 +119,7 @@ test("price, fee and session-cost requests work without the English word budget"
   for (const text of [
     "请问每次多少钱？", "可以先告诉我收费大概多少吗？",
     "想知道这个疗程的费用", "可以给我一个大概价位吗？",
+    "收费如何", "价钱", "价格",
   ]) {
     const result = quote(productionConversation(text), text);
     assert.ok(result, text);
