@@ -479,7 +479,7 @@ function resolveAiPricingDecision({
         // exception is a generic service word copied from this ad's own
         // headline, e.g. 徒手整骨 in a verified pelvic advertisement.
         return customer && (!ad ||
-          !ad.creativeEchoServices.includes(customer.treatment))
+          !ad.creativeEchoServices?.includes(customer.treatment))
           ? customer : (ad || customer);
       })();
   if (!anchor || (clarifiedPriceService &&
