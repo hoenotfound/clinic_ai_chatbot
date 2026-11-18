@@ -62,7 +62,8 @@ function promotionSupersessionSql(jobAlias="job",newerAlias="newer") {
     OR ${next} ~* '${CLINICAL_REVIEW_PATTERN}'
     OR ${next} ~* '${PROMOTION_DECLINE_PATTERN}'
     OR ${next} ~* '${DIFFERENT_TOPIC_PATTERN}'
-    OR ${next} ~* '${COURTESY_CLOSING_PATTERN}'
+    // A simple thank-you does not withdraw an already requested price image.
+    // Actual opt-outs and explicit declines are checked above.
     OR (${changedTreatment})
   )`;
 }
