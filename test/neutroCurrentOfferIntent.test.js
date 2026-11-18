@@ -166,6 +166,42 @@ test("pelvic current-offer enquiry preserves both Package A and B graphics", asy
     ["Package A","Package B"]);
 });
 
+test("current pelvic package options get both images even if AI missed the package flag", async () => {
+  const customerText = "骨盆有什么配套？";
+  const history = [
+    t("user", "我想了解骨盆调理", 110000),
+    t("assistant", "骨盆调理可以先做体态评估", 107000),
+    t("user", customerText, 1000),
+  ];
+  assert.equal(isCurrentOfferEnquiry(customerText), true);
+  const shadow = resolveShadowPriceException(opts(customerText, history));
+  assert.equal(shadow?.treatment, "骨盆调理");
+  assert.deepEqual((await images(shadow, customerText, history))?.packages.map(p => p.name),
+    ["Package A", "Package B"]);
+  const enabled = resolveAiPricingDecision(opts(customerText, history, {
+    priceQuery: false, packageQuery: false, treatment: "3D 小颜术",
+  }));
+  assert.equal(enabled?.type, "package_options");
+  assert.equal(enabled?.treatment, "骨盆调理");
+  assert.equal(approve(enabled, customerText, history, "enabled").reason, "approved");
+  assert.deepEqual((await images(enabled, customerText, history))?.packages.map(p => p.name),
+    ["Package A", "Package B"]);
+});
+
+test("compound treatment duration plus current First Trial request is not rejected as non-price-only", () => {
+  const customerText = "3D做多久？有first try优惠吗？";
+  const history = [
+    t("user", "想了解3D小颜术", 100000),
+    t("assistant", "3D小颜术可以安排面部评估", 99000),
+    t("user", customerText, 1000),
+  ];
+  const enabled = resolveAiPricingDecision(opts(customerText, history, {
+    priceQuery: true, packageQuery: false,
+  }));
+  assert.equal(enabled?.treatment, "3D 小颜术");
+  assert.equal(approve(enabled, customerText, history, "enabled").reason, "approved");
+});
+
 test("duplicate graphic or unresolved provider receipt does not trigger another image", async () => {
   const history = originalHistory();
   const decision = resolveShadowPriceException(opts(question, history));
