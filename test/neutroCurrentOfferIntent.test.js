@@ -248,8 +248,8 @@ test("no customer service, clinical/staff intervention, stale context and ambigu
   const cases = [
     [t("assistant", "3D很好", 2000), t("user", "优惠", 1000)],
     [...base.slice(0,-1), t("assistant", "[Verified STAFF message] 我会回复你", 2000, true), t("user", "优惠", 1000)],
-    [t("user", "我想了解3D小颜术", 4*60*60*1000),
-      t("assistant", "3D小颜术很适合了解", 4*60*60*1000-1000),
+    [t("user", "我想了解3D小颜术", 25*60*60*1000),
+      t("assistant", "3D小颜术很适合了解", 25*60*60*1000-1000),
       t("user", "优惠", 1000)],
     [t("user", "想了解3D和9D", 100000),
       t("assistant", "3D和9D都有护理", 98000), t("user", "优惠", 1000)],
