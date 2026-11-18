@@ -1642,6 +1642,13 @@ async function processIncomingMessage(
     // current-Meta-ad pricing exception may use the legacy reply path.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
+    // This explicit clinic opt-in lets a verified current Meta creative
+    // anchor an asked-for treatment price. It never inherits unrelated ads,
+    // staff/CRM guesses or clinical suitability claims.
+    const allowVerifiedAdPricing = clinicConfig.businessType === "tcm_clinic" &&
+      /^neutro\s+sense\b/iu.test(String(
+        clinicConfig.businessName || clinicConfig.clinicName || ""
+      )) && clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true;
     // Separate 7-day/100-turn pricing evidence read. The AI prompt remains
     // capped at 20 messages. Missing or truncated evidence fails closed.
     let returningPricingHistory = null;
@@ -1673,6 +1680,7 @@ async function processIncomingMessage(
           // is only a hint; customer request, treatment and price are still
           // independently verified before text or artwork is authorised.
           modelOfferQuery: packageQuery === true,
+          allowVerifiedAdPricing,
           // Only Neutro's Shadow client can carry a customer-confirmed
           // first-trial price across its own scheduled follow-ups.
           allowReturningTrialPrice: clinicConfig.businessType === "tcm_clinic" &&
@@ -1916,6 +1924,8 @@ async function processIncomingMessage(
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
       allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
+      allowVerifiedAdPricing, metaAdContext,
+      promotions: clinicConfig.promotions,
     });
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
