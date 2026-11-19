@@ -1106,7 +1106,9 @@ export default function Inbox() {
         // Never drop a redacted/unknown permission change merely because
         // an identified conversation changes in the same debounce window.
         pendingUnknownConversationChange = true;
-        pendingUnknownThreadChange = true;
+        // Pipeline-only events still recheck the authorized list, but do not
+        // add message reads. Preserve any conversation refresh already queued.
+        pendingUnknownThreadChange ||= refreshThread;
         pendingUnknownConversationReason = sourceReason;
       }
       if (debounceTimer) clearTimeout(debounceTimer);

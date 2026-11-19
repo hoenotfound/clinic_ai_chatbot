@@ -1728,9 +1728,41 @@ test("a receipt cannot discard a pending new message or unknown permission refre
     const emit = window.__realtimeMediaTest.emit;
     emit("pipeline_changed", {});
     emit("pipeline_changed", null);
+    emit("conversation_changed", {});
     emit("conversation_changed", receipt);
   }, receipt);
   await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeList);
   await expect.poll(() => apiState.getMessageFetchCount(101)).toBeGreaterThan(beforeMessages);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("redacted pipeline-only events recheck access without extra message or delivery reads", async ({ page }) => {
+  const sent = outboundMessage();
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [inboundMessage(), sent]]]),
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByLabel("Sent")).toBeVisible();
+  const attributionCount = () => apiState.calls.filter(call => call.path.endsWith("/attribution")).length;
+  const deliveryCount = () => apiState.calls.filter(call => call.path.endsWith("/delivery-statuses")).length;
+
+  for (const payload of [{}, null]) {
+    const before = {list:apiState.getListFetches(), summary:apiState.getSummaryFetches(),
+      messages:apiState.getMessageFetchCount(101), attribution:attributionCount(), delivery:deliveryCount()};
+    await page.evaluate(payload => window.__realtimeMediaTest.emit("pipeline_changed", payload), payload);
+    await expect.poll(attributionCount).toBe(before.attribution + 1);
+    await page.waitForTimeout(500);
+    expect(apiState.getListFetches()).toBe(before.list + 1);
+    expect(apiState.getSummaryFetches()).toBe(before.summary);
+    expect(apiState.getMessageFetchCount(101)).toBe(before.messages);
+    expect(deliveryCount()).toBe(before.delivery);
+  }
+
+  // Revoking access must still remove the open conversation, even though
+  // pipeline-only events no longer reload its messages.
+  apiState.getConversations().splice(0);
+  await page.evaluate(() => window.__realtimeMediaTest.emit("pipeline_changed", {}));
+  await expect(page.getByRole("region", {name:"Conversation with Alex Customer"})).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
 });
