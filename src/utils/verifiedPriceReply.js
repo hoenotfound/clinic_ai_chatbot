@@ -453,10 +453,10 @@ function ensureVerifiedPriceReply({
               : " 这个配套包含几次护理，需要由门店确认哦。";
     const voucherNote = item.afterVoucher
       ? locale.startsWith("ms")
-        ? " Harga selepas baucar tertakluk pada kelayakan dan pengesahan pusat."
+        ? ` Harga ${item.name === "Main offer" ? treatment : item.name} adalah selepas baucar.`
         : locale.startsWith("en")
-          ? " The after-voucher price is subject to eligibility and confirmation by the centre."
-          : " 使用优惠券需符合领取及使用条件，请以门店确认为准。"
+          ? ` The listed ${item.name === "Main offer" ? treatment : item.name} price is after applying the voucher.`
+          : ` ${item.name === "Main offer" ? treatment : item.name} 的上述价格为使用优惠券后的价格。`
       : "";
     const answer = firstTrialQuote
       ? (locale.startsWith("ms")
@@ -482,10 +482,10 @@ function ensureVerifiedPriceReply({
   const voucherNames = voucherPackages.join(", ");
   const voucherNote = voucherPackages.length
     ? (locale.startsWith("ms")
-      ? `Harga ${voucherNames} adalah selepas baucar. Kelayakan dan ketersediaan baucar tertakluk kepada pengesahan pusat; tiada diskaun tambahan dijanjikan.`
+      ? `Harga ${voucherNames} adalah selepas baucar`
       : locale.startsWith("en")
-        ? `The ${voucherNames} price is after applying the voucher, subject to eligibility and availability. Our centre can confirm the voucher terms; additional discounts are not guaranteed.`
-        : `${voucherNames} 的上述价格为使用优惠券后的价格，须符合领取及使用条件；优惠券是否还有名额及能否叠加其他优惠，请以门店确认为准。`)
+        ? `The listed price for ${voucherNames} is after applying the voucher`
+        : `${voucherNames} 的上述价格为使用优惠券后的价格`)
     : "";
   const quote = firstTrialQuote
     ? (locale.startsWith("ms")
