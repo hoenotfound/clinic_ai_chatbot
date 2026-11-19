@@ -2,6 +2,7 @@
 const { randomUUID }=require("node:crypto");
 const { pool }=require("../db/db");
 const { PAST_LEAD_CANDIDATE_SQL }=require("./promotionalBlastPastLeads");
+const { expectedMediaValue }=require("./whatsappTemplateMediaService");
 const CAMPAIGN_KEY="ns_3d_1111_rm388_2026";
 const CAMPAIGN_LABEL="11.11 3D 小颜术 · RM388";
 const LANGUAGES=new Set(["zh_CN","en_US","ms"]);
@@ -273,9 +274,17 @@ function validConfiguredPackage(row,promotions) {
   ).flatMap(p=>Array.isArray(p.packages)?p.packages:[])
    .filter(option=>option.name===row.package_name &&
       /^https:\/\/[^ ]+\/promo-images\/[0-9]+$/.test(String(option.imageUrl||'')));
-  if(matches.length!==1)return {package_image_url:null,package_offer_price:null};
+  if(matches.length!==1)return {package_image_url:null,package_offer_price:null,package_template_values:null};
+  // Only the exact approved service/package label belongs in the body variable.
+  // Pricing stays on the configured poster; extra text would fail the template's
+  // existing media-to-caption check on the primary sender.
+  const package_template_values=Object.fromEntries(
+    ["zh_CN","en_US","ms"].map(language=>[language,expectedMediaValue({
+      serviceName:row.promoted_treatment,packageName:row.package_name,
+    },language)])
+  );
   return {package_image_url:matches[0].imageUrl,
-    package_offer_price:matches[0].pricing?.offer??null};
+    package_offer_price:matches[0].pricing?.offer??null,package_template_values};
 }
 async function withPackageMedia(rows,database) {
   if(!rows.some(row=>row.audience_mode==='past_leads'))return rows;
