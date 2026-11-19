@@ -70,12 +70,15 @@ function verifiedReviewPriceQuote({
   const locale = String(language || "").toLowerCase();
   const labels = prices.map(p => [p.name === "Main offer" ? "" : p.name, p.price]
     .filter(Boolean).join(": ")).join(locale.startsWith("zh") ? "；" : "; ");
-  const voucher = prices.some(p => p.afterVoucher)
+  const voucherPackages = prices.filter(p => p.afterVoucher)
+    .map(p => p.name === "Main offer" ? selected.name : p.name);
+  const voucherNames = voucherPackages.join(locale.startsWith("zh") ? "、" : ", ");
+  const voucher = voucherPackages.length
     ? (locale.startsWith("ms")
-      ? " Harga selepas baucar tertakluk pada syarat kelayakan."
+      ? ` Harga ${voucherNames} adalah selepas baucar 😊`
       : locale.startsWith("en")
-        ? " After-voucher prices are subject to eligibility."
-        : " 若为优惠券后价格，需符合优惠券使用条件。") : "";
+        ? ` The listed price for ${voucherNames} is after applying the voucher 😊`
+        : ` ${voucherNames} 的上述价格为使用优惠券后的价格 😊`) : "";
   return {
     treatment: selected.name,
     reply: locale.startsWith("ms")
