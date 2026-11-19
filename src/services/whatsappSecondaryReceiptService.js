@@ -6,6 +6,8 @@ const crypto = require("node:crypto");
 const { pool } = require("../db/db");
 const contactsRepo = require("../db/contactsRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { automatedSecondaryReceiptDoesNotChangeEligibility } =
+  require("../utils/secondaryFollowUpReceiptPolicy");
 
 // Real Meta WAMIDs may use Base64 characters and up to two trailing padding =.
 // Never accept embedded padding, arbitrary symbols or an unbounded ID.
@@ -509,7 +511,8 @@ async function recordSignedSecondaryStatusBatch({
            END
          WHERE id=$1 AND contact_id=$2 AND role='assistant'
            AND (whatsapp_message_id IS NULL OR whatsapp_message_id=$3)
-         RETURNING id,contact_id,delivery_status,
+         RETURNING id,contact_id,delivery_status,delivery_error,whatsapp_message_id,
+           role,is_automated_follow_up,
            CASE WHEN whatsapp_template->>'automatedSecondaryAiMedia'='true'
              AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}$'
            THEN (whatsapp_template->>'anchorMessageId')::bigint ELSE NULL END
@@ -520,7 +523,7 @@ async function recordSignedSecondaryStatusBatch({
       if (delivery.rowCount !== 1) {
         throw new Error("Secondary status had no verified, saved message.");
       }
-      changedMessages.push(delivery.rows[0]);
+      changedMessages.push({...delivery.rows[0], providerStatus:event.deliveryStatus});
       if (event.deliveryStatus === "failed" &&
           delivery.rows[0].delivery_status === "failed") {
         failedAlerts.push({
@@ -802,11 +805,21 @@ async function recordSignedSecondaryStatusBatch({
     ) || { channel: "whatsapp" };
     for (const message of changedMessages) {
       try {
+        // Reuse the verified write result. A billing transition anywhere in
+        // this batch still wakes both schedulers; never add a diagnostic read.
+        const followUpStateUnchanged = held === 0 && autoReconciled === 0 &&
+          automatedSecondaryReceiptDoesNotChangeEligibility({
+            message, providerStatus:message.providerStatus, senderVerified:true,
+            scope:verifiedScope, env,
+          });
         realtimeEvents.publish("conversation_changed", {
           ...verifiedScope,
           contactId: message.contact_id,
           messageId: message.id,
           deliveryStatus: message.delivery_status,
+          deliveryError: message.delivery_error,
+          whatsappMessageId: message.whatsapp_message_id,
+          ...(followUpStateUnchanged ? {followUpStateUnchanged:true} : {}),
           reason: "delivery_status",
         });
       } catch { /* Realtime is best effort after durable Meta receipt. */ }

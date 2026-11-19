@@ -116,3 +116,17 @@ export function createInboxLiveStartup({
     },
   };
 }
+
+// Only skip a message fetch when the live event fully updates a row already
+// loaded in this thread. Summary/permission refreshes are never skipped.
+export function inboxEventNeedsMessageRefresh(payload, selectedId, messages) {
+  if (payload?.reason !== "delivery_status" || payload.message != null ||
+      !Number.isSafeInteger(Number(payload.contactId)) || Number(payload.contactId) <= 0 ||
+      Number(payload.contactId) !== Number(selectedId) ||
+      !Number.isSafeInteger(Number(payload.messageId)) || Number(payload.messageId) <= 0 ||
+      !["sent", "delivered", "read"].includes(payload.deliveryStatus) ||
+      !Object.prototype.hasOwnProperty.call(payload, "deliveryError") ||
+      !Object.prototype.hasOwnProperty.call(payload, "whatsappMessageId")) return true;
+  return !Array.isArray(messages) || !messages.some(message =>
+    Number(message.id) === Number(payload.messageId) && message.role !== "user");
+}

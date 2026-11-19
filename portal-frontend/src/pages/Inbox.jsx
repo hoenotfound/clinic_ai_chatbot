@@ -20,6 +20,7 @@ import {
   createInboxLiveStartup,
   pipelineRefreshContactId,
   knownSummaryRefreshIds,
+  inboxEventNeedsMessageRefresh,
 } from "../utils/inboxRefreshPolicy";
 import {
   messagingPolicyStatus,
@@ -1089,19 +1090,23 @@ export default function Inbox() {
     let pendingUnknownConversationReason = "unknown_conversation_event";
     let pendingMessageMutation = false;
     let debounceTimer = null;
-    let pipelineListTimer = null;
-    const pipelineContactIds = new Set();
-    let pipelineNeedsFullRefresh = false;
+    const pendingThreadIds = new Set();
+    let pendingUnknownThreadChange = false;
+    let pendingAttributionRefresh = false;
 
-    function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event") {
+    function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event",
+      { refreshThread = true, refreshAttribution = false } = {}) {
+      pendingAttributionRefresh ||= refreshAttribution;
       if (sourceReason === "message_mutation") pendingMessageMutation = true;
       const id = Number(contactId);
       if (contactId != null && Number.isSafeInteger(id) && id > 0) {
         pendingContactIds.add(id);
+        if (refreshThread) pendingThreadIds.add(id);
       } else {
         // Never drop a redacted/unknown permission change merely because
         // an identified conversation changes in the same debounce window.
         pendingUnknownConversationChange = true;
+        pendingUnknownThreadChange = true;
         pendingUnknownConversationReason = sourceReason;
       }
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -1111,6 +1116,12 @@ export default function Inbox() {
         const unknownOrRedacted = pendingUnknownConversationChange;
         const unknownReason = pendingUnknownConversationReason;
         const refreshMutation = pendingMessageMutation;
+        const changedThreads = new Set(pendingThreadIds);
+        const unknownThreadChange = pendingUnknownThreadChange;
+        const refreshAttribution = pendingAttributionRefresh;
+        pendingThreadIds.clear();
+        pendingUnknownThreadChange = false;
+        pendingAttributionRefresh = false;
         pendingMessageMutation = false;
         pendingContactIds.clear();
         pendingUnknownConversationChange = false;
@@ -1139,43 +1150,30 @@ export default function Inbox() {
         const currentId = selectedIdRef.current;
         if (
           currentId != null &&
-          (unknownOrRedacted || changedContacts.has(Number(currentId)))
+          (unknownThreadChange || changedThreads.has(Number(currentId)))
         ) {
           await refreshMessagesForContact(currentId, {refreshCurrent: refreshMutation});
           if (unknownOrRedacted) {
             await reconcileLoadedDeliveryStatuses(currentId);
           }
         }
+        if (currentId != null && refreshAttribution) {
+          await refreshAcquisitionContext(currentId);
+        }
       }, REALTIME_DEBOUNCE_MS);
     }
 
     function schedulePipelineListRefresh(payload) {
       const id = pipelineRefreshContactId(payload, conversationsRef.current);
-      if (id == null) pipelineNeedsFullRefresh = true;
-      else pipelineContactIds.add(id);
-      if (pipelineListTimer) clearTimeout(pipelineListTimer);
-      pipelineListTimer = setTimeout(async () => {
-        pipelineListTimer = null;
-        const changedIds = [...pipelineContactIds];
-        const unknownOrRedacted = pipelineNeedsFullRefresh;
-        const knownIds = knownSummaryRefreshIds(changedIds);
-        pipelineContactIds.clear();
-        pipelineNeedsFullRefresh = false;
-        if (!unknownOrRedacted && knownIds) {
-          try {
-            // Every contact still uses the existing permission-checked route.
-            await Promise.all(knownIds.map(id => refreshConversationSummary(id)));
-            return;
-          } catch {
-            // An absent/unauthorized summary requires a full permission resync.
-            await refreshConversations("pipeline_summary_fallback");
-            return;
-          }
-        }
-        await refreshConversations(
-          unknownOrRedacted ? "pipeline_unknown_event" : "pipeline_multi_contact"
-        );
-      }, REALTIME_DEBOUNCE_MS);
+      const currentId = selectedIdRef.current;
+      const currentLeadId = acquisitionContextRef.current?.lead?.id;
+      const refreshAttribution = currentId != null && (id != null
+        ? Number(id) === Number(currentId)
+        : payload?.leadId == null || currentLeadId == null ||
+          Number(payload.leadId) === Number(currentLeadId));
+      // One shared debounce merges pipeline and conversation updates without
+      // dropping unknown permission changes or a pending message refresh.
+      scheduleRefresh(id, "pipeline_unknown_event", {refreshThread:false, refreshAttribution});
     }
 
     function handleConversationChanged(event) {
@@ -1230,7 +1228,10 @@ export default function Inbox() {
           );
         }
         if (payload.reason === "message_mutation") pendingMessageMutation = true;
-        scheduleRefresh(payload.contactId ?? null);
+        scheduleRefresh(payload.contactId ?? null, "unknown_conversation_event", {
+          refreshThread: inboxEventNeedsMessageRefresh(
+            payload, selectedIdRef.current, messagesRef.current),
+        });
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
         scheduleRefresh();
@@ -1248,35 +1249,6 @@ export default function Inbox() {
         // Malformed events must trigger a full refresh.
       }
       schedulePipelineListRefresh(payload);
-
-      const currentId = selectedIdRef.current;
-      if (currentId == null) return;
-      try {
-        const targetsSelectedContact =
-          payload.contactId != null
-          && Number(payload.contactId) === Number(currentId);
-
-        // A newly-created journey has a new lead ID. The contact ID lets the
-        // selected Inbox thread refresh to that new current journey instead of
-        // keeping the previous journey's acquisition context.
-        if (targetsSelectedContact) {
-          refreshAcquisitionContext(currentId);
-          return;
-        }
-
-        const currentLeadId = acquisitionContextRef.current?.lead?.id;
-        if (
-          payload.leadId != null
-          && currentLeadId != null
-          && Number(payload.leadId) !== Number(currentLeadId)
-        ) {
-          return;
-        }
-      } catch {
-        // If an event payload is malformed, a single lightweight refresh is safer
-        // than leaving the visible attribution stale.
-      }
-      refreshAcquisitionContext(currentId);
     }
 
     function handleLatestAdChanged(event) {
@@ -1309,7 +1281,6 @@ export default function Inbox() {
     return () => {
       startup.stop();
       if (debounceTimer) clearTimeout(debounceTimer);
-      if (pipelineListTimer) clearTimeout(pipelineListTimer);
       source.removeEventListener("conversation_changed", handleConversationChanged);
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.removeEventListener("inbox_latest_ad_changed", handleLatestAdChanged);

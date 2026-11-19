@@ -86,6 +86,7 @@ test("new lead journeys publish their contact id so Inbox acquisition can refres
   );
   assert.match(
     inboxSource,
-    /payload\.contactId[\s\S]*targetsSelectedContact[\s\S]*refreshAcquisitionContext\(currentId\)/
+    /pipelineRefreshContactId\(payload,[\s\S]*Number\(id\) === Number\(currentId\)[\s\S]*scheduleRefresh\(id,[\s\S]*refreshAttribution/
   );
+  assert.match(inboxSource, /if \(currentId != null && refreshAttribution\)[\s\S]*refreshAcquisitionContext\(currentId\)/);
 });
