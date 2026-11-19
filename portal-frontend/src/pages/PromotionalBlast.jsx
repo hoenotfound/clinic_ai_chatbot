@@ -153,7 +153,8 @@ export default function PromotionalBlast() {
       const fresh = new Map((checked.recipients || []).map(p => [p.contactId, p]));
       if(currentCampaign.audienceMode==='past_leads' &&
          (checked.packageImageUrl!==currentCampaign.packageImageUrl ||
-          String(checked.packageOfferPrice)!==String(currentCampaign.packageOfferPrice))) {
+          String(checked.packageOfferPrice)!==String(currentCampaign.packageOfferPrice) ||
+          JSON.stringify(checked.packageTemplateValues)!==JSON.stringify(currentCampaign.packageTemplateValues))) {
         throw new Error('The promotion changed. Refresh the campaign before sending.');
       }
       const currentGraphic=currentCampaign.audienceMode==='past_leads'
@@ -189,9 +190,29 @@ export default function PromotionalBlast() {
             throw new Error('This approved template does not support the package text field. No message sent.');
           if(!pastLead && fields.length>0)
             throw new Error('The existing blast needs a template without variables.');
-          const values=pastLead ? {body:[
-            currentCampaign.promotedTreatment+' '+currentCampaign.packageName+'（RM'+currentCampaign.packageOfferPrice+'）'
-          ],header:[]} : {};
+          // The clinic determines the exact body variable; never append the
+          // price to the approved package label (the image already shows it).
+          const packageLabel=pastLead
+            ? currentCampaign.packageTemplateValues?.[languageCode] : null;
+          if(pastLead && !packageLabel)
+            throw new Error('The current package label cannot be verified for this language.');
+          const values=pastLead ? {body:[packageLabel],header:[]} : {};
+          let selectedMediaId=null;
+          if(pastLead && person.senderId===1) {
+            // The primary Inbox only permits configured clinic media with
+            // the pricing template. It explicitly rejects a fresh file upload.
+            const currentImageId=new URL(currentCampaign.packageImageUrl)
+              .pathname.match(/^\\/promo-images\\/([0-9]+)$/)?.[1];
+            selectedMediaId=currentImageId ? 'promo:'+currentImageId : null;
+            const asset=(catalog.reusableMedia||[]).find(item=>
+              item.id===selectedMediaId &&
+              item.format==='IMAGE' &&
+              item.compatibleTemplates?.includes(currentCampaign.templateName) &&
+              item.suggestedValues?.[languageCode]===packageLabel
+            );
+            if(!asset)
+              throw new Error('The latest promo is missing from the approved clinic media list. No message sent.');
+          }
 
           const claim=await api.claimPromotionalBlastRecipient({
             campaignKey,
@@ -208,12 +229,13 @@ export default function PromotionalBlast() {
             templateName: currentCampaign.templateName,
             languageCode,
             values,
+            ...(selectedMediaId ? {mediaSelectionId:selectedMediaId} : {}),
             marketingConsentConfirmed: true,
             billingAcknowledged: true,
             billingReviewToken: token,
             blastCampaignKey: campaignKey,
             blastReservationToken: claim.reservationToken,
-          }, currentGraphic);
+          }, selectedMediaId ? null : currentGraphic);
           const accepted = Boolean(response.whatsapp_message_id) &&
             !["unknown", "failed", "cancelled"].includes(response.delivery_status);
           if (!accepted) {
