@@ -202,7 +202,7 @@ export default function PromotionalBlast() {
             // The primary Inbox only permits configured clinic media with
             // the pricing template. It explicitly rejects a fresh file upload.
             const currentImageId=new URL(currentCampaign.packageImageUrl)
-              .pathname.match(/^\\/promo-images\\/([0-9]+)$/)?.[1];
+              .pathname.match(/^\/promo-images\/([0-9]+)$/)?.[1];
             selectedMediaId=currentImageId ? 'promo:'+currentImageId : null;
             const asset=(catalog.reusableMedia||[]).find(item=>
               item.id===selectedMediaId &&
