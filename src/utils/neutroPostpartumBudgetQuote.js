@@ -98,15 +98,11 @@ function verifiedOptions(treatment, promotions, turns, now, customerText = "") {
 function lineFor(treatment, option, language) {
   const locale = String(language || "").toLowerCase();
   const name = treatment + (treatment === PELVIC ? " " + option.name : "");
-  const suffix = !option.voucher ? "" : locale.startsWith("ms")
-    ? " (selepas baucar RM100, tertakluk pada syarat dan ketersediaan)"
-    : locale.startsWith("en")
-      ? " (after RM100 voucher, subject to eligibility and availability)"
-      : "（使用 RM100 优惠券后，须符合条件及确认名额）";
+
   const booking = !option.needsBooking ? "" : locale.startsWith("ms")
     ? " (untuk tempahan)" : locale.startsWith("en")
       ? " (appointment offer)" : "（预约专享）";
-  return "• " + name + "：" + option.price + suffix + booking;
+  return "• " + name + "：" + option.price + booking;
 }
 
 function resolveNeutroPostpartumBudgetQuote({
@@ -219,14 +215,19 @@ function resolveNeutroPostpartumBudgetQuote({
   const lines = quotes.flatMap(({ treatment, verified }) =>
     verified.options.map(option => lineFor(treatment, option, locale))
   );
-  const voucher = quotes.some(({ verified }) =>
-    verified.options.some(x => x.voucher));
-  const voucherNote = voucher
+  // Keep the voucher claim scoped to options that actually have a verified
+  // coupon. This is display wording only; the RM100 discount and appointment
+  // eligibility checks still come from the current configured offers.
+  const voucherNames = quotes.flatMap(({ treatment, verified }) =>
+    verified.options.filter(option => option.voucher)
+      .map(option => treatment === PELVIC ? option.name : treatment)
+  ).join(locale.startsWith("zh") ? "、" : ", ");
+  const voucherNote = voucherNames
     ? locale.startsWith("ms")
-      ? "\nBaucar RM100 tertakluk pada kelayakan dan baki yang disahkan oleh pusat."
+      ? `\nHarga ${voucherNames} adalah selepas baucar 😊`
       : locale.startsWith("en")
-        ? "\nThe RM100 voucher is subject to eligibility and remaining availability confirmed by the clinic."
-        : "\nRM100 优惠券须符合活动条件，剩余名额由门店确认。"
+        ? `\nThe listed price for ${voucherNames} is after applying the voucher 😊`
+        : `\n${voucherNames} 的上述价格为使用优惠券后的价格 😊`
     : "";
   const reply = locale.startsWith("ms")
     ? "Boleh 😊 Untuk bajet anda, berikut harga tawaran bagi pilihan rawatan yang dibincangkan:\n" +
