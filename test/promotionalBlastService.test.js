@@ -227,7 +227,7 @@ test("past-lead blast uses the approved primary media selector, not an arbitrary
  assert.match(src,/item\.suggestedValues\?\.\[languageCode\]===packageLabel/);
  assert.match(src,/const values=pastLead \? \{body:\[packageLabel\],header:\[\]\} : \{\}/);
  assert.match(src,/selectedMediaId \? null : currentGraphic/);
- assert.match(src,/\(person\.senderId===1\)/);
+ assert.match(src,/person\.senderId===1/);
  assert.match(src,/packageTemplateValues/);
  assert.match(api,/sendWhatsAppTemplate: async \(contactId, payload, mediaFile = null\)/);
  assert.match(api,/body: JSON\.stringify\(payload\)/);
