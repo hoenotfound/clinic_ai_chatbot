@@ -100,15 +100,16 @@ function quote(history = productionConversation(), text = question,
     services, serviceAliases, promotions: offers, language, now: time,
   });
 }
-test("contact #9156 exact production dialogue including 2 result images: quotes three verified prices and voucher conditions", () => {
+test("contact #9156 original conversation quotes verified prices and a short voucher note", () => {
   const result = quote();
   assert.ok(result, "must recover real unpriced multi-treatment fee enquiry");
   assert.equal(result.source, "verified_discussed_treatment_price_options");
   assert.deepEqual(result.prices.map(p => p.treatment), ["脉冲波调理", "骨盆调理"]);
   assert.match(result.reply, /脉冲波调理：RM388/u);
-  assert.match(result.reply, /骨盆调理 Package A：RM388.*RM100 优惠券/u);
-  assert.match(result.reply, /骨盆调理 Package B：RM288.*RM100 优惠券/u);
-  assert.match(result.reply, /须符合条件及确认名额/u);
+  assert.match(result.reply, /骨盆调理 Package A：RM388/u);
+  assert.match(result.reply, /骨盆调理 Package B：RM288/u);
+  assert.match(result.reply, /Package A、Package B 的上述价格为使用优惠券后的价格 😊/u);
+  assert.doesNotMatch(result.reply, /须符合条件|确认名额|剩余名额|门店确认|叠加优惠/u);
   assert.match(result.reply, /预约专享/u);
   assert.doesNotMatch(result.reply, /RM688|RM488/u, "normal prices are not sale quotes");
   assert.equal(result.imageUrl, undefined, "no automatic media permission");
@@ -127,10 +128,12 @@ test("price, fee and session-cost requests work without the English word budget"
   }
   const en = "How much does each treatment cost?";
   const translated = quote(productionConversation(en), en, promotions, now, "en");
-  assert.match(translated?.reply || "", /after RM100 voucher/u);
+  assert.match(translated?.reply || "", /The listed price for Package A, Package B is after applying the voucher 😊/u);
+  assert.doesNotMatch(translated?.reply || "", /subject to eligibility|availability|confirmed by the clinic/iu);
   const ms = "Boleh tahu harga untuk rawatan ini?";
   const malay = quote(productionConversation(ms), ms, promotions, now, "ms");
-  assert.match(malay?.reply || "", /selepas baucar RM100/u);
+  assert.match(malay?.reply || "", /Harga Package A, Package B adalah selepas baucar 😊/u);
+  assert.doesNotMatch(malay?.reply || "", /tertakluk|kelayakan|ketersediaan|disahkan oleh pusat/iu);
 });
 
 test("a customer refusing pelvic but explicitly choosing pulse never receives pelvic pricing", () => {
@@ -245,4 +248,22 @@ test("guarded server path keeps this branch text-only and information reviews fa
   assert.match(server, /!\(shadowPriceException &&\s*safeServiceFromCustomer\(/u);
   assert.match(server, /if \(twoTreatmentQuote\) \{[\s\S]{0,450}two_treatments_text_only/u);
   assert.match(server, /const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\)/u);
+});
+
+test("latest pelvic Package B RM268 stays verified in mixed-treatment pricing", () => {
+  // New package pricing is different from contact #9156's older November quote.
+  // Keep the historical regression intact and check the latest offer separately.
+  const currentOffers = structuredClone(promotions);
+  const b = currentOffers[1].packages[1];
+  b.caption = "本月限时优惠 🔥 RM100 优惠券\\n原价 RM368\\n现在只需 RM2️⃣6️⃣8️⃣\\n限时礼遇 · 预约专享";
+  b.pricing = { currency: "MYR", offer: 268, normal: 368 };
+  b.mediaTranslations.en.caption =
+    "RM100 voucher\\nOriginal price RM368\\nNow only RM2️⃣6️⃣8️⃣\\nExclusive for appointments";
+  const result = quote(productionConversation(), question, currentOffers);
+  assert.ok(result);
+  assert.match(result.reply, /骨盆调理 Package A：RM388/u);
+  assert.match(result.reply, /骨盆调理 Package B：RM268（预约专享）/u);
+  assert.match(result.reply, /Package A、Package B 的上述价格为使用优惠券后的价格 😊/u);
+  assert.doesNotMatch(result.reply, /RM288|须符合条件|确认名额|剩余名额/u);
+  assert.equal(result.imageUrl, undefined);
 });
