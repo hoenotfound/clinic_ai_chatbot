@@ -23,6 +23,7 @@ router.get("/campaigns",async(req,res)=>{
       validUntil:row.valid_until,enabled:row.enabled,
       audienceMode:row.audience_mode||'recent_ad',packageName:row.package_name||null,
       packageImageUrl:row.package_image_url||null,packageOfferPrice:row.package_offer_price??null,
+      packageTemplateValues:row.package_template_values||null,
     }))});
   }catch(error){
     console.error("[Promotional blast] Campaign list unavailable:",error?.message);
@@ -42,6 +43,7 @@ router.post("/campaigns",async(req,res)=>{
       validUntil:record.valid_until,enabled:record.enabled,
       audienceMode:record.audience_mode||'recent_ad',packageName:record.package_name||null,
       packageImageUrl:record.package_image_url||null,packageOfferPrice:record.package_offer_price??null,
+      packageTemplateValues:record.package_template_values||null,
     });
   }catch(error){
     console.error("[Promotional blast] Campaign creation unavailable:",error?.message);
@@ -66,6 +68,7 @@ router.get("/preview",async(req,res)=>{
       promotedTreatment:campaign.promoted_treatment,validUntil:campaign.valid_until,
       audienceMode:campaign.audience_mode||'recent_ad',packageName:campaign.package_name||null,
       packageImageUrl:campaign.package_image_url||null,packageOfferPrice:campaign.package_offer_price??null,
+      packageTemplateValues:campaign.package_template_values||null,
       recipients:rows.map(row=>({
         contactId:Number(row.contact_id),senderId:Number(row.sender_id),
         name:row.contact_name,treatmentInterest:row.treatment_interest,
