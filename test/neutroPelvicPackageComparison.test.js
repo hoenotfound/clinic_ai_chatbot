@@ -76,7 +76,8 @@ test("fresh contact 8943: compare two previously quoted pelvic packages using cu
   assert.match(result.reply, /1小时30分钟/);
   assert.match(result.reply, /子宫护理/);
   assert.match(result.reply, /艾灸桶护理/);
-  assert.match(result.reply, /优惠券使用条件/);
+  assert.match(result.reply, /适合哪一种，可以先让中医师评估后再决定哦 😊/u);
+  assert.doesNotMatch(result.reply, /优惠券使用条件|向门店确认|确认名额/u);
   assert.doesNotMatch(result.reply, /无法核对准确金额/);
   assert.equal(result.imageUrl, undefined, "comparison cannot authorize image delivery");
 });
@@ -118,6 +119,8 @@ test("EN comparison uses configured English caption details without generating n
   assert.match(result.reply, /Pelvic and posture treatment/);
   assert.match(result.reply, /Meridian massage/);
   assert.match(result.reply, /Moxibustion barrel treatment/);
+  assert.match(result.reply, /Our practitioner can help you choose after an assessment/u);
+  assert.doesNotMatch(result.reply, /voucher eligibility|confirm voucher/u);
   assert.equal(result.type, "text_only");
 });
 
@@ -198,4 +201,56 @@ test("comparison remains current-config-only after manual note", () => {
     conversationHistory,
     promotions: [{...promo, validUntil: "2026-11-04"}],
   }), null, "expired offer must not be compared");
+});
+
+test("Malay package comparison does not reintroduce voucher restrictions", () => {
+  const result = compare({ language: "ms" });
+  assert.match(result.reply, /Perbezaannya ialah tempoh dan rawatan yang termasuk/u);
+  assert.doesNotMatch(result.reply, /Syarat baucar|disahkan dengan pusat/u);
+  assert.equal(result.type, "text_only");
+});
+
+test("current RM388 versus RM268 comparison works when Package B lists one inclusion", () => {
+  const currentNow = Date.parse("2026-11-20T06:00:00Z");
+  const currentPromo = structuredClone(promo);
+  currentPromo.validUntil = "2026-12-31";
+  currentPromo.packages[1] = {
+    ...currentPromo.packages[1],
+    title: "90分钟女性护理配套",
+    caption: "本月限时优惠\\nRM100 优惠券\\n原价 RM368\\n现在只需 RM268\\n✅骨盆调整与体态矫正疗程",
+    pricing: { offer: 268, normal: 368, currency: "MYR" },
+    mediaTranslations: {
+      zh: { caption: "✅骨盆调整与体态矫正疗程" },
+      en: { caption: "✅Pelvic and posture treatment" },
+    },
+  };
+  const currentText = "RM388和RM268的配套有什么分别？";
+  const currentHistory = history.map(turn => ({
+    ...turn,
+    pricingCreatedAtMs: currentNow - (now - turn.pricingCreatedAtMs),
+    content: turn.content.replaceAll("RM288", "RM268"),
+  }));
+  const result = compare({
+    customerText: currentText,
+    conversationHistory: currentHistory,
+    promotions: [currentPromo],
+    now: currentNow,
+  });
+  assert.equal(result?.type, "text_only");
+  assert.match(result.reply, /Package A \\(RM388/u);
+  assert.match(result.reply, /Package B \\(RM268/u);
+  assert.match(result.reply, /90分钟女性护理配套/u);
+  assert.doesNotMatch(result.reply, /艾灸桶护理|优惠券使用条件/u);
+  assert.equal(result.imageUrl, undefined);
+
+  // An old quote cannot authorize new pricing, regardless of wording.
+  assert.equal(compare({
+    customerText: currentText,
+    conversationHistory: history.map(turn => ({
+      ...turn,
+      pricingCreatedAtMs: currentNow - (now - turn.pricingCreatedAtMs),
+    })),
+    promotions: [currentPromo],
+    now: currentNow,
+  }), null);
 });
