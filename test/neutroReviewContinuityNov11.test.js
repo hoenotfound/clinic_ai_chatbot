@@ -225,3 +225,32 @@ test("AI reply transport forwards narrow inbound anchor; followups and media do 
   assert.match(dispatch,/origin==="ai_reply" && anchorMessageId != null/);
   assert.match(prompt,/simple affirmative to a prior question about sitting/);
 });
+
+test("verified review pricing uses short voucher language without affecting package amounts", () => {
+  const services=[{name:"骨盆调理"}];
+  const serviceAliases=[{alias:"骨盆",officialService:"骨盆调理"}];
+  const promotions=[{
+    name:"骨盆调理套餐",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    validFrom:"2026-01-01",validUntil:"2099-12-31",
+    packages:[
+      {name:"Package A",caption:"本月限时优惠 RM100 优惠券，优惠后仅需 RM388",
+        pricing:{currency:"MYR",offer:388,normal:488}},
+      {name:"Package B",caption:"本月限时优惠 原价 RM368 现在只需 RM268",
+        pricing:{currency:"MYR",offer:268,normal:368}},
+    ],
+  }];
+  const conversationHistory=[
+    {role:"user",content:"我想了解骨盆调理"},
+    {role:"assistant",content:"想了解护理过程还是价格呢？"},
+    {role:"user",content:"想了解价格先"},
+  ];
+  const response=planNeutroReviewContinuation({
+    customerText:"想了解价格先",conversationHistory,
+    language:"zh",services,serviceAliases,promotions,
+  });
+  assert.equal(response?.kind,"verified_price");
+  assert.match(response.reply,/Package A: RM388/u);
+  assert.match(response.reply,/Package B: RM268/u);
+  assert.match(response.reply,/Package A 的上述价格为使用优惠券后的价格 😊/u);
+  assert.doesNotMatch(response.reply,/须符合|使用条件|名额|叠加|门店确认为准/u);
+});
