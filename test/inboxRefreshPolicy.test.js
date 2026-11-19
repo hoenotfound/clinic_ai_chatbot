@@ -73,14 +73,15 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /pendingUnknownConversationChange = true/);
   assert.match(source, /unknownOrRedacted \? unknownReason/);
   assert.match(source, /catch\s*\{[\s\S]{0,320}?await refreshConversations\("summary_fallback"\)/);
-  assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null\)/);
+  assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null,/);
   assert.match(source, /createInboxLiveStartup\(\{/);
   assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
   assert.match(source, /startup\.stop\(\)/);
   assert.match(source, /refreshConversations\("startup"\)/);
   assert.match(source, /scheduleRefresh\(null, "reconnect"\)/);
   assert.match(source, /"pipeline_unknown_event"/);
-  assert.match(source, /"pipeline_summary_fallback"/);
+  assert.doesNotMatch(source, /pipelineListTimer/);
+  assert.match(source, /scheduleRefresh\(id, "pipeline_unknown_event", \{refreshThread:false, refreshAttribution\}\)/);
   const apiSource = fs.readFileSync(
     path.join(__dirname, "../portal-frontend/src/api.js"), "utf8"
   );
@@ -158,4 +159,27 @@ test("small known contact bursts use summaries and never suppress unknown/invali
   assert.equal(knownSummaryRefreshIds([1, 1]), null);
   assert.equal(knownSummaryRefreshIds([0]), null);
   assert.equal(knownSummaryRefreshIds([5, "invalid"]), null);
+});
+
+
+test("complete successful receipt updates avoid message reads only for an already loaded outbound row", async () => {
+  const { inboxEventNeedsMessageRefresh: needs } = await policy();
+  const event = {reason:"delivery_status",contactId:11,messageId:42,
+    deliveryStatus:"delivered",deliveryError:null,whatsappMessageId:"wamid.test"};
+  const rows = [{id:42,role:"assistant"}];
+  for (const deliveryStatus of ["sent","delivered","read"]) {
+    assert.equal(needs({...event,deliveryStatus},11,rows),false);
+  }
+  for (const change of [{reason:"message"},{reason:"message_mutation"},
+    {deliveryStatus:"failed"},{deliveryStatus:"unknown"},{message:{id:42}},
+    {messageId:43},{contactId:12},{contactId:null},{messageId:null}]) {
+    assert.equal(needs({...event,...change},11,rows),true,JSON.stringify(change));
+  }
+  for (const field of ["deliveryError","whatsappMessageId"]) {
+    const incomplete={...event};delete incomplete[field];
+    assert.equal(needs(incomplete,11,rows),true);
+  }
+  assert.equal(needs(event,11,[]),true,"receipt before message load must fetch");
+  assert.equal(needs(event,11,[{id:42,role:"user"}]),true);
+  assert.equal(needs({},11,rows),true,"redacted permission event must fetch");
 });

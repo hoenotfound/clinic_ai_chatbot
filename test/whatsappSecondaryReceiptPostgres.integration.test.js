@@ -1191,3 +1191,36 @@ test("two-reviewer settlement releases only the confirmed secondary gate and its
     "manual review must not replay or rewrite the failed message");
  });
 });
+
+
+test("signed automated receipts skip follow-up rescans only after billing reconciliation, never for first replies or failures",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {messages}=await seededSend(db,database);
+    const messageId=messages[1].id;
+    await db.query("UPDATE messages SET is_automated_follow_up=TRUE WHERE id=$1",[messageId]);
+    const events=[];
+    const unsubscribe=require("../src/utils/realtimeEvents").subscribe("conversation_changed", e=>events.push(e));
+    const autoEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    try {
+      const result=await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{status:"delivered"})),{database,env:autoEnv});
+      assert.equal(result.autoReconciled,1);
+      assert.equal(events.at(-1).followUpStateUnchanged,undefined,"billing release wakes schedulers");
+      assert.equal(events.at(-1).whatsappMessageId,"wamid.ariel-one");
+      assert.equal(events.at(-1).deliveryError,null);
+      await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{status:"read"})),{database,env:autoEnv});
+      assert.equal(events.at(-1).followUpStateUnchanged,true);
+      await db.query("UPDATE messages SET is_automated_follow_up=FALSE WHERE id=$1",[messageId]);
+      await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{status:"sent"})),{database,env:autoEnv});
+      assert.equal(events.at(-1).followUpStateUnchanged,undefined,"first reply must still wake");
+      await db.query("UPDATE messages SET is_automated_follow_up=TRUE WHERE id=$1",[messageId]);
+      await receipts.recordSignedSecondaryStatusBatch(signed(st("wamid.ariel-one",{
+        status:"failed",pricing:{type:"regular",billable:true,category:"service"},
+      })),{database,env:autoEnv});
+      assert.equal(events.at(-1).followUpStateUnchanged,undefined,"failed provider event must wake even if saved status remains read");
+    } finally {unsubscribe();}
+  });
+});

@@ -494,6 +494,7 @@ async function installApi(page, {
 
     const attributionMatch = path.match(/^\/api\/conversations\/(\d+)\/attribution$/);
     if (attributionMatch && method === "GET") {
+      record(request);
       return fulfill(route, { lead: null, attribution: null });
     }
 
@@ -1671,4 +1672,97 @@ test("signed R2 redirect streams video cross-origin without fetching Render vide
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("receipt and pipeline bursts share one summary without refetching loaded messages", async ({ page }) => {
+  const sent = outboundMessage();
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [inboundMessage(), sent]]]),
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByLabel("Sent")).toBeVisible();
+  const beforeMessages = apiState.getMessageFetchCount(101);
+  const beforeSummary = apiState.getSummaryFetches();
+  const beforeList = apiState.getListFetches();
+  const attributionCount = () => apiState.calls.filter(call => call.path.endsWith("/attribution")).length;
+  const beforeAttribution = attributionCount();
+  await page.evaluate(({id, wamid}) => {
+    const emit = window.__realtimeMediaTest.emit;
+    emit("pipeline_changed", {contactId:101, leadId:987});
+    emit("conversation_changed", {contactId:101, messageId:id, whatsappMessageId:wamid,
+      deliveryStatus:"read", deliveryError:null, reason:"delivery_status"});
+    emit("pipeline_changed", {contactId:101, leadId:987});
+  }, {id:sent.id, wamid:sent.whatsapp_message_id});
+  await expect(page.getByLabel("Read")).toBeVisible();
+  await expect.poll(attributionCount).toBe(beforeAttribution + 1);
+  await page.waitForTimeout(500);
+  expect(apiState.getSummaryFetches()).toBe(beforeSummary + 1);
+  expect(apiState.getMessageFetchCount(101)).toBe(beforeMessages);
+  expect(apiState.getListFetches()).toBe(beforeList);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("a receipt cannot discard a pending new message or unknown permission refresh", async ({ page }) => {
+  const sent = outboundMessage();
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [inboundMessage(), sent]]]),
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByLabel("Sent")).toBeVisible();
+  apiState.addMessage(101, inboundMessage({id:3, content:"New customer reply during receipt burst"}));
+  const receipt = {contactId:101, messageId:sent.id, whatsappMessageId:sent.whatsapp_message_id,
+    deliveryStatus:"read", deliveryError:null, reason:"delivery_status"};
+  await page.evaluate((receipt) => {
+    const emit = window.__realtimeMediaTest.emit;
+    emit("conversation_changed", {contactId:101, reason:"message"});
+    emit("conversation_changed", receipt);
+    emit("pipeline_changed", {contactId:101});
+  }, receipt);
+  await expect(page.getByRole("region", {name:"Conversation with Alex Customer"})
+    .getByText("New customer reply during receipt burst", {exact:true})).toBeVisible();
+  const beforeList = apiState.getListFetches();
+  const beforeMessages = apiState.getMessageFetchCount(101);
+  await page.evaluate((receipt) => {
+    const emit = window.__realtimeMediaTest.emit;
+    emit("pipeline_changed", {});
+    emit("pipeline_changed", null);
+    emit("conversation_changed", {});
+    emit("conversation_changed", receipt);
+  }, receipt);
+  await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeList);
+  await expect.poll(() => apiState.getMessageFetchCount(101)).toBeGreaterThan(beforeMessages);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("redacted pipeline-only events recheck access without extra message or delivery reads", async ({ page }) => {
+  const sent = outboundMessage();
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [inboundMessage(), sent]]]),
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByLabel("Sent")).toBeVisible();
+  const attributionCount = () => apiState.calls.filter(call => call.path.endsWith("/attribution")).length;
+  const deliveryCount = () => apiState.calls.filter(call => call.path.endsWith("/delivery-statuses")).length;
+
+  for (const payload of [{}, null]) {
+    const before = {list:apiState.getListFetches(), summary:apiState.getSummaryFetches(),
+      messages:apiState.getMessageFetchCount(101), attribution:attributionCount(), delivery:deliveryCount()};
+    await page.evaluate(payload => window.__realtimeMediaTest.emit("pipeline_changed", payload), payload);
+    await expect.poll(attributionCount).toBe(before.attribution + 1);
+    await page.waitForTimeout(500);
+    expect(apiState.getListFetches()).toBe(before.list + 1);
+    expect(apiState.getSummaryFetches()).toBe(before.summary);
+    expect(apiState.getMessageFetchCount(101)).toBe(before.messages);
+    expect(deliveryCount()).toBe(before.delivery);
+  }
+
+  // Revoking access must still remove the open conversation, even though
+  // pipeline-only events no longer reload its messages.
+  apiState.getConversations().splice(0);
+  await page.evaluate(() => window.__realtimeMediaTest.emit("pipeline_changed", {}));
+  await expect(page.getByRole("region", {name:"Conversation with Alex Customer"})).toHaveCount(0);
+  expectNoUnexpectedApi(apiState);
 });
