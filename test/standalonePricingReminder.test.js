@@ -77,6 +77,27 @@ test("quiet-hour boundary and automation gap never schedule past cutoff",()=>{
  assert.equal(feature.dueAt({...c,
    last_automation_at:"2026-11-14T23:35:00.000Z"}),null);
 });
+test("07:00 20h follow-up cannot erase the 07:43 pelvic pricing window",()=>{
+ // Actual 17 Nov 07:43 MYT customer and 18 Nov 07:00 MYT accepted nudge.
+ const c={source_at:"2026-11-16T23:43:02.000Z",
+   last_automation_at:"2026-11-17T23:00:07.000Z",
+   last_automation_slot_hours:"20"};
+ assert.equal(feature.dueAt(c).toISOString(),"2026-11-17T23:05:07.000Z");
+ assert.equal(feature.beforeEnd(c,new Date("2026-11-17T23:05:07.000Z")),true);
+ assert.equal(feature.beforeEnd(c,new Date("2026-11-17T23:13:02.000Z")),false);
+});
+test("shorter urgent gap is forbidden for other slots and too-late 20h sends",()=>{
+ const c={source_at:"2026-11-16T23:43:02.000Z",
+   last_automation_at:"2026-11-17T23:00:07.000Z"};
+ for(const slot of [null,"6","48"]){
+   assert.equal(feature.dueAt({...c,last_automation_slot_hours:slot}),null);
+ }
+ assert.equal(feature.dueAt({...c,last_automation_slot_hours:"20",
+   last_automation_at:"2026-11-17T23:12:00.000Z"}),null);
+ assert.equal(feature.dueAt({...c,last_automation_slot_hours:"20",
+   last_automation_at:"2026-11-17T22:58:00.000Z"}),null);
+ assert.match(repo.ELIGIBLE_SQL,/last_automation_slot_hours/);
+});
 test("disabled quiet hours keep the 22h due time",()=>{
  const candidate={source_at:"2026-11-11T22:00:00.000Z"};
  assert.equal(feature.dueAt(candidate,{enabled:false,start:"00:00",end:"07:00"}).toISOString(),
