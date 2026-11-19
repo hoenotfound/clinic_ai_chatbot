@@ -23,6 +23,10 @@ const SECONDARY="neutro_secondary";
 const MAX_SENDS_PER_WAKE=2;
 const SAFE_END_MINUTES=23*60+30;
 const DUE_AFTER_HOURS=22;
+// Only for a confirmed 20h follow-up sent at quiet-hour reopening, when
+// the usual 45m gap would make an otherwise eligible pricing send expire.
+const QUIET_OPEN_COLLISION_GAP_MINUTES=5;
+const QUIET_OPEN_FOLLOWUP_GRACE_MINUTES=10;
 const FLAG="NEUTRO_STANDALONE_PRICING_REMINDER_ENABLED";
 const ACTIVATION="NEUTRO_STANDALONE_PRICING_REMINDER_ACTIVATED_AT";
 
@@ -53,6 +57,7 @@ function dueAt(candidate,quietHours=normalizeQuietHours()){
   let due=source+DUE_AFTER_HOURS*3600000;
   const safeEnd=source+SAFE_END_MINUTES*60000;
   const quiet=quietHoursStatus(new Date(due),quietHours);
+  let shiftedToOpening=false;
   if(quiet.active){
     if(!quietHours.enabled || quietHours.start!=="00:00" ||
        quietHours.end!=="07:00" || !quiet.endsAt)return null;
@@ -65,9 +70,23 @@ function dueAt(candidate,quietHours=normalizeQuietHours()){
     const previousEvening=opens-(7*60+40)*60000; // 23:20 MYT
     due=previousEvening>=source+20*3600000
       ?previousEvening:opens;
+    shiftedToOpening=due===opens;
   }
   const last=candidate.last_automation_at?Date.parse(candidate.last_automation_at):NaN;
-  if(Number.isFinite(last))due=Math.max(due,last+45*60000);
+  if(Number.isFinite(last)){
+    const ordinaryDue=Math.max(due,last+45*60000);
+    // Restrict the shorter gap to a 20h service reminder accepted during the
+    // first ten minutes after reopening, and only if the normal gap cannot
+    // fit. The remaining 24h, billing, sender and promo checks are unchanged.
+    const openingCollision=shiftedToOpening &&
+      String(candidate.last_automation_slot_hours||"")==="20" &&
+      last>=due && last<=due+QUIET_OPEN_FOLLOWUP_GRACE_MINUTES*60000 &&
+      ordinaryDue>=safeEnd &&
+      last+QUIET_OPEN_COLLISION_GAP_MINUTES*60000<safeEnd;
+    due=openingCollision
+      ?Math.max(due,last+QUIET_OPEN_COLLISION_GAP_MINUTES*60000)
+      :ordinaryDue;
+  }
   // A prior accepted message may push the earliest safe send into quiet
   // hours. Use only their actual next end, never a guessed earlier time.
   const afterGap=quietHoursStatus(new Date(due),quietHours);
