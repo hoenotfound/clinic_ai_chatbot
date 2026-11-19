@@ -209,5 +209,26 @@ test("past-lead campaigns require a real current configured package image",async
  const saved=await blast.createCampaign(campaign,"admin",database);
  assert.equal(saved.package_offer_price,268);
  assert.equal(saved.package_image_url,"https://example.test/promo-images/43");
+ assert.deepEqual(saved.package_template_values,{
+  zh_CN:"骨盆调理 Package B",
+  en_US:"Pelvis Care Package B",
+  ms:"Pakej B Penjagaan Pelvis",
+ });
  assert.equal(inserted,1);
+});
+
+
+test("past-lead blast uses the approved primary media selector, not an arbitrary uploaded image",()=>{
+ const fs=require("node:fs");
+ const path=require("node:path");
+ const src=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/PromotionalBlast.jsx"),"utf8");
+ const api=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/api.js"),"utf8");
+ assert.match(src,/selectedMediaId=currentImageId \? 'promo:'\+currentImageId : null/);
+ assert.match(src,/item\.suggestedValues\?\.\[languageCode\]===packageLabel/);
+ assert.match(src,/const values=pastLead \? \{body:\[packageLabel\],header:\[\]\} : \{\}/);
+ assert.match(src,/selectedMediaId \? null : currentGraphic/);
+ assert.match(src,/\(person\.senderId===1\)/);
+ assert.match(src,/packageTemplateValues/);
+ assert.match(api,/sendWhatsAppTemplate: async \(contactId, payload, mediaFile = null\)/);
+ assert.match(api,/body: JSON\.stringify\(payload\)/);
 });
