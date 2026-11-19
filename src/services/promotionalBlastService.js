@@ -370,7 +370,10 @@ const DISPATCH_SQL=COMBINED_CANDIDATE_SQL
            "gate.contact_id=c.id AND gate.message_id IS DISTINCT FROM $6::integer AND gate.state<>'idle'")
   .replaceAll("WHERE outgoing.contact_id=c.id", "WHERE outgoing.id<>$6::integer AND outgoing.contact_id=c.id")
   .replaceAll("WHERE staff.contact_id=c.id", "WHERE staff.id<>$6::integer AND staff.contact_id=c.id")
-  .replaceAll("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id");
+  .replaceAll("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id")
+  // The past-lead path joins all identities for cross-sender dedupe. Exclude
+  // only the staged message currently being dispatched, never any old attempt.
+  .replaceAll("WHERE recipient.whatsapp_number ~", "WHERE sent_promo.id<>$6::integer AND recipient.whatsapp_number ~");
 
 // Irreversible. Call ONLY immediately before provider contact, after the media is ready.
 async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,currentMessageId,database=pool) {
