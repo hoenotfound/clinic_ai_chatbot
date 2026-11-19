@@ -1102,28 +1102,28 @@ export default function Inbox() {
     }
 
     function handleVisibilityChanged() {
-      if (deferHiddenRefresh()) {
+      if (document.visibilityState === "hidden") {
+        // Hiding alone is not a data change. Preserve an already queued read.
+        hiddenChanges ||= debounceTimer != null;
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = null;
         return;
       }
       if (!hiddenChanges) return;
       hiddenChanges = false;
-      // Revalidate access and loaded message edits/deletions after the gap.
-      // Keep SSE open; notifications and backend follow-ups are independent.
-      pendingMessageMutation = true;
-      scheduleRefresh(null, "reconnect", {refreshAttribution:true});
+      // Flush the exact changes received while hidden. Unknown permission
+      // events and reconnects still retain their full authorized-list refresh.
+      schedulePendingRefresh();
     }
 
     function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event",
       { refreshThread = true, refreshAttribution = false } = {}) {
-      if (deferHiddenRefresh()) return;
       pendingAttributionRefresh ||= refreshAttribution;
       if (sourceReason === "message_mutation") pendingMessageMutation = true;
       const id = Number(contactId);
       if (contactId != null && Number.isSafeInteger(id) && id > 0) {
-        pendingContactIds.add(id);
-        if (refreshThread) pendingThreadIds.add(id);
+        if (!pendingUnknownConversationChange) pendingContactIds.add(id);
+        if (refreshThread && !pendingUnknownThreadChange) pendingThreadIds.add(id);
       } else {
         // Never drop a redacted/unknown permission change merely because
         // an identified conversation changes in the same debounce window.
@@ -1133,6 +1133,18 @@ export default function Inbox() {
         pendingUnknownThreadChange ||= refreshThread;
         pendingUnknownConversationReason = sourceReason;
       }
+      // Bound memory for tabs left hidden through large event bursts.
+      if (pendingContactIds.size > 100 || pendingThreadIds.size > 100) {
+        pendingContactIds.clear();
+        pendingThreadIds.clear();
+        pendingUnknownConversationChange = true;
+        pendingUnknownThreadChange = true;
+      }
+      schedulePendingRefresh();
+    }
+
+    function schedulePendingRefresh() {
+      if (deferHiddenRefresh()) return;
       if (debounceTimer) clearTimeout(debounceTimer);
 
       debounceTimer = setTimeout(async () => {
@@ -1165,7 +1177,7 @@ export default function Inbox() {
             // deleted contact, backend failure or other missing summary.
             await refreshConversations("summary_fallback");
           }
-        } else {
+        } else if (unknownOrRedacted || changedContacts.size > 0) {
           // A reconnect or redacted staff SSE MUST always recheck the full
           // authorized list, even when known contacts also changed.
           await refreshConversations(
@@ -1203,9 +1215,14 @@ export default function Inbox() {
     }
 
     function handleConversationChanged(event) {
-      if (deferHiddenRefresh()) return;
       try {
         const payload = JSON.parse(event.data || "{}");
+        if (document.visibilityState === "hidden") {
+          // Inline edits/status/reaction patches are deferred too. Reload
+          // loaded rows only when this contact (or an unknown one) changed.
+          scheduleRefresh(payload.contactId ?? null, "message_mutation");
+          return;
+        }
         if (
           payload.message &&
           payload.contactId != null &&
@@ -1279,7 +1296,6 @@ export default function Inbox() {
     }
 
     function handleLatestAdChanged(event) {
-      if (deferHiddenRefresh()) return;
       // No list, message, or pipeline refresh is necessary: this notification
       // updates only the currently open chat's verified ad banner.
       const currentId = selectedIdRef.current;
@@ -1293,14 +1309,23 @@ export default function Inbox() {
         // Redacted or malformed signals are safe to recheck through the
         // permission-checked selected-contact endpoint only.
       }
+      if (document.visibilityState === "hidden") {
+        pendingAttributionRefresh = true;
+        schedulePendingRefresh();
+        return;
+      }
       void refreshAcquisitionContext(currentId);
     }
 
     const startup = createInboxLiveStartup({
       loadInitial: () => {
-        if (!deferHiddenRefresh()) void refreshConversations("startup");
+        if (document.visibilityState === "hidden") scheduleRefresh(null, "startup");
+        else void refreshConversations("startup");
       },
-      refreshOnReconnect: () => scheduleRefresh(null, "reconnect"),
+      refreshOnReconnect: () => {
+        pendingMessageMutation = true;
+        scheduleRefresh(null, "reconnect", {refreshAttribution:true});
+      },
     });
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.addEventListener("pipeline_changed", handlePipelineChanged);

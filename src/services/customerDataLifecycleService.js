@@ -5,7 +5,7 @@ const revokedMediaCleanup = require("./whatsappCustomerRevokedMediaCleanup");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
-const { alignedMaintenanceDelay } = require("../utils/maintenanceWindow");
+const { createMaintenanceSchedule } = require("../utils/maintenanceWindow");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 // Preserve immediate manual-deletion cleanup and exact due-job wake-ups.
@@ -280,12 +280,13 @@ function startCustomerDataLifecycle({
   // still cleans media immediately and can wake recovery after a failure.
   cleanupTimer.start(MEDIA_CLEANUP_INTERVAL_MS);
   function periodicMaintenance(run, intervalMs, label) {
+    const nextDelay = createMaintenanceSchedule(intervalMs, now());
     const worker = createWorkerTimer({
       run, label, now,
-      delayForResult: () => alignedMaintenanceDelay(intervalMs, now()),
+      delayForResult: () => nextDelay(now()),
       errorRetryDelayMs: intervalMs,
     });
-    worker.start(alignedMaintenanceDelay(intervalMs, now()));
+    worker.start(nextDelay(now()));
     return worker;
   }
   const retentionTimer = periodicMaintenance(runRetention, RETENTION_SWEEP_INTERVAL_MS,

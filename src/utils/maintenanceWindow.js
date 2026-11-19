@@ -9,4 +9,17 @@ function alignedMaintenanceDelay(intervalMs, nowMs = Date.now()) {
   }
   return Math.ceil((nowMs + intervalMs) / MAINTENANCE_WINDOW_MS) * MAINTENANCE_WINDOW_MS - nowMs;
 }
-module.exports = { MAINTENANCE_WINDOW_MS, alignedMaintenanceDelay };
+// Keep the first scheduled boundary as the anchor. Completion time must not
+// shift later runs; a long-running job skips missed slots instead of catching up.
+function createMaintenanceSchedule(intervalMs, startMs = Date.now()) {
+  let nextDueAt = startMs + alignedMaintenanceDelay(intervalMs, startMs);
+  const cadence = Math.ceil(intervalMs / MAINTENANCE_WINDOW_MS) * MAINTENANCE_WINDOW_MS;
+  return function nextDelay(nowMs = Date.now()) {
+    if (!Number.isFinite(nowMs)) throw new TypeError("Maintenance clock must be finite");
+    if (nextDueAt <= nowMs) {
+      nextDueAt += (Math.floor((nowMs - nextDueAt) / cadence) + 1) * cadence;
+    }
+    return nextDueAt - nowMs;
+  };
+}
+module.exports = { MAINTENANCE_WINDOW_MS, alignedMaintenanceDelay, createMaintenanceSchedule };

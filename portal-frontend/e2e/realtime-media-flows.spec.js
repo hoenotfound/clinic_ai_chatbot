@@ -295,6 +295,9 @@ async function installRealtimeHarness(page) {
       emit(type, payload) {
         for (const source of state.sources) source.emit(type, payload);
       },
+      reconnect() {
+        for (const source of state.sources) source.onopen?.();
+      },
       getUserMediaCalls() {
         return state.getUserMediaCalls;
       },
@@ -1812,5 +1815,78 @@ test("hidden Inbox defers live reads then restores messages, edits and access on
  await page.waitForTimeout(350);
  await page.evaluate(()=>{window.__testVisibility='visible';document.dispatchEvent(new Event('visibilitychange'));});
  await expect(thread).toHaveCount(0);
+ expectNoUnexpectedApi(apiState);
+});
+
+async function setInboxVisibility(page, visibility) {
+ await page.evaluate(value=>{
+  window.__testVisibility=value;
+  Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__testVisibility});
+  document.dispatchEvent(new Event('visibilitychange'));
+ },visibility);
+}
+
+test('hidden Inbox only refreshes changed data and skips unchanged tab switches',async({page})=>{
+ const apiState=await installApi(page,{initialConversations:[conversation(),conversation({contactId:202,name:'Bella Customer'})]});
+ await page.goto('/inbox');await openInboxConversation(page);await page.waitForTimeout(400);
+ const counts=()=>({list:apiState.getListFetches(),summary:apiState.getSummaryFetches(),messages:apiState.getMessageFetchCount(101),
+  attribution:apiState.calls.filter(c=>c.path.endsWith('/attribution')).length,
+  delivery:apiState.calls.filter(c=>c.path.endsWith('/delivery-statuses')).length,
+  updates:apiState.calls.filter(c=>c.path.endsWith('/updates')).length});
+ const initial=counts();
+ for(let n=0;n<2;n++){
+  await setInboxVisibility(page,'hidden');await setInboxVisibility(page,'visible');await page.waitForTimeout(350);
+ }
+ expect(counts()).toEqual(initial);
+ // Ad enrichment only reloads attribution, with no list or thread reads.
+ await setInboxVisibility(page,'hidden');
+ await page.evaluate(()=>window.__realtimeMediaTest.emit('inbox_latest_ad_changed',{contactId:101}));
+ await page.waitForTimeout(350);expect(counts()).toEqual(initial);
+ await setInboxVisibility(page,'visible');
+ await expect.poll(()=>counts().attribution).toBe(initial.attribution+1);
+ expect(counts()).toEqual({...initial,attribution:initial.attribution+1});
+ // Another contact's message refreshes only its authorized summary.
+ const beforeOther=counts();
+ await setInboxVisibility(page,'hidden');
+ await page.evaluate(()=>window.__realtimeMediaTest.emit('conversation_changed',{contactId:202,reason:'message'}));
+ await setInboxVisibility(page,'visible');
+ await expect.poll(()=>counts().summary).toBe(beforeOther.summary+1);
+ expect(counts()).toEqual({...beforeOther,summary:beforeOther.summary+1});
+ // Redacted permission/pipeline changes retain a full list/access check,
+ // without reloading the selected thread's unchanged messages.
+ const beforePipeline=counts();
+ await setInboxVisibility(page,'hidden');
+ await page.evaluate(()=>window.__realtimeMediaTest.emit('pipeline_changed',{}));
+ await setInboxVisibility(page,'visible');
+ await expect.poll(()=>counts().attribution).toBe(beforePipeline.attribution+1);
+ expect(counts()).toEqual({...beforePipeline,list:beforePipeline.list+1,attribution:beforePipeline.attribution+1});
+ expectNoUnexpectedApi(apiState);
+});
+
+test('hidden Inbox preserves a queued read and catches missed events on reconnect',async({page})=>{
+ const apiState=await installApi(page);
+ await page.goto('/inbox');await openInboxConversation(page);await page.waitForTimeout(400);
+ const before=apiState.getMessageFetchCount(101);
+ apiState.addMessage(101,inboundMessage({id:3,content:'Queued before hiding'}));
+ await page.evaluate(()=>{
+  window.__realtimeMediaTest.emit('conversation_changed',{contactId:101,reason:'message'});
+  window.__testVisibility='hidden';
+  Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__testVisibility});
+  document.dispatchEvent(new Event('visibilitychange'));
+ });
+ await page.waitForTimeout(350);expect(apiState.getMessageFetchCount(101)).toBe(before);
+ await setInboxVisibility(page,'visible');
+ const thread=page.getByRole('region',{name:'Conversation with Alex Customer'});
+ await expect(thread.getByText('Queued before hiding',{exact:true})).toBeVisible();
+ await setInboxVisibility(page,'hidden');
+ const beforeReconnect=apiState.getListFetches();
+ apiState.addMessage(101,inboundMessage({id:4,content:'Missed during disconnection'}));
+ apiState.getMessages(101)[0].content='Edit missed during disconnection';
+ await page.evaluate(()=>window.__realtimeMediaTest.reconnect());
+ await page.waitForTimeout(350);expect(apiState.getListFetches()).toBe(beforeReconnect);
+ await setInboxVisibility(page,'visible');
+ await expect(thread.getByText('Missed during disconnection',{exact:true})).toBeVisible();
+ await expect(thread.getByText('Edit missed during disconnection',{exact:true})).toBeVisible();
+ expect(apiState.getListFetches()).toBe(beforeReconnect+1);
  expectNoUnexpectedApi(apiState);
 });

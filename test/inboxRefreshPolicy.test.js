@@ -78,7 +78,7 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
   assert.match(source, /startup\.stop\(\)/);
   assert.match(source, /refreshConversations\("startup"\)/);
-  assert.match(source, /scheduleRefresh\(null, "reconnect"\)/);
+  assert.match(source, /scheduleRefresh\(null, "reconnect", \{refreshAttribution:true\}\)/);
   assert.match(source, /"pipeline_unknown_event"/);
   assert.doesNotMatch(source, /pipelineListTimer/);
   assert.match(source, /scheduleRefresh\(id, "pipeline_unknown_event", \{refreshThread:false, refreshAttribution\}\)/);

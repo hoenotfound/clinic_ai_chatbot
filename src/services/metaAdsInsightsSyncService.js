@@ -1,6 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
-const { alignedMaintenanceDelay } = require("../utils/maintenanceWindow");
+const { createMaintenanceSchedule } = require("../utils/maintenanceWindow");
 const repo = require("../db/metaAdsInsightsRepo");
 const api = require("./metaAdsInsightsApiService");
 const { marketingAccessToken } = require("./metaAdsApiService");
@@ -136,6 +136,8 @@ function createMetaAdsInsightsSyncService({
   let timer = null;
   let running = false;
   let stopped = true;
+  let maintenanceInterval;
+  let nextMaintenanceDelay;
 
   function configured() {
     return Boolean(String(tokenGetter() || "").trim()) && accountIdsGetter().length > 0;
@@ -349,7 +351,12 @@ function createMetaAdsInsightsSyncService({
       } catch (err) {
         logger.error?.("Meta Ads Insights worker failed:", err);
       } finally {
-        schedule(alignedMaintenanceDelay(syncIntervalMs(), new Date(now()).getTime()));
+        const clock = new Date(now()).getTime();
+        if (maintenanceInterval !== syncIntervalMs()) {
+          maintenanceInterval = syncIntervalMs();
+          nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, clock);
+        }
+        schedule(nextMaintenanceDelay(clock));
       }
     }, delayMs);
     timer?.unref?.();
@@ -364,6 +371,8 @@ function createMetaAdsInsightsSyncService({
     }
     if (!stopped) return { stop };
     stopped = false;
+    maintenanceInterval = syncIntervalMs();
+    nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, new Date(now()).getTime());
     schedule(0);
     logger.log?.("Meta Ads Insights sync worker started.");
     return { stop };

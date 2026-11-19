@@ -158,6 +158,7 @@ test("lifecycle recovery waits ten minutes on startup and uses adaptive retry de
   let deadlineQueries = 0;
   let retentionQueries = 0;
   let pruneCalls = 0;
+  let clock = Date.parse("2026-11-19T00:02:30Z");
 
 
   const repository = {
@@ -183,7 +184,7 @@ test("lifecycle recovery waits ten minutes on startup and uses adaptive retry de
     env: { CUSTOMER_DATA_RETENTION_DAYS: "90" },
     repository,
     storage: {},
-    now: () => Date.parse("2026-11-19T00:02:30Z"),
+    now: () => clock,
     createWorkerTimer(options) {
       const worker = {options};
       workers.push(worker);
@@ -209,8 +210,14 @@ test("lifecycle recovery waits ten minutes on startup and uses adaptive retry de
   assert.equal(deadlineQueries, 1);
   assert.equal(workerOptions.delayForResult(null), lifecycle.IDLE_MEDIA_CLEANUP_INTERVAL_MS);
 
+  const firstRetention = clock + workers[1].delay;
+  const firstPrune = clock + workers[2].delay;
   await workers[1].options.run();
   assert.equal(retentionQueries, 1);
+  clock = firstRetention + 1000;
+  assert.equal(clock + workers[1].options.delayForResult(), firstRetention + lifecycle.RETENTION_SWEEP_INTERVAL_MS);
+  clock = firstPrune + 7000;
+  assert.equal(clock + workers[2].options.delayForResult(), firstPrune + lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS);
   await workers[2].options.run();
   assert.equal(pruneCalls, 1);
 });
