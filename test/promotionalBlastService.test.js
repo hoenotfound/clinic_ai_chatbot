@@ -154,3 +154,60 @@ test("blast recovery only marks staged rows as no-provider on each sender route"
  // a new, one-shot reviewed send after recovery.
  assert.match(source,/code: "template_retry_requires_billing_review"/);
 });
+
+
+test("past-lead audience never inherits the seven-day ad rule or bypasses consent and booking safeguards",()=>{
+ const sql=blast.PAST_LEAD_CANDIDATE_SQL;
+ const required=[
+  "audience_mode='past_leads'","configured_package","consent_scope='treatment_followups_and_related_offers'",
+  "consent_service=campaign.promoted_treatment","cm.whatsapp_message_id IS NOT NULL",
+  "consent_ctx.message_id=cm.id","sc.state='bound'",
+  "c.whatsapp_marketing_opt_out_at IS NULL","c.whatsapp_opt_out_at IS NULL",
+  "lead_stage_history","other.appointment_at IS NOT NULL",
+  "inbound.created_at<now()-interval '24 hours'",
+  "inbound.created_at>now()-interval '120 days'",
+  "outgoing.created_at>now()-interval '72 hours'",
+  "whatsapp_sender_billing_alarms","gate.owner_contact_id=c.id",
+  "recipient.whatsapp_number","/promo-images/(41|42|43)",
+  "automatedFollowUp,quietHours","safe_expires_at"
+ ];
+ for(const marker of required)assert.ok(sql.includes(marker),marker);
+ assert.equal(sql.includes("whatsapp_free_entry_referrals"),false);
+ assert.match(blast.COMBINED_CANDIDATE_SQL,/UNION ALL SELECT/);
+ assert.match(blast.CANDIDATE_SQL,/audience_mode='recent_ad'/);
+ assert.match(blast.DISPATCH_SQL,/sent_promo\.id<>\$6::integer AND recipient\.whatsapp_number/);
+ assert.match(blast.DISPATCH_SQL,/outgoing\.id<>\$6::integer/);
+ assert.match(blast.DISPATCH_SQL,/gate\.message_id IS DISTINCT FROM \$6::integer/);
+});
+
+test("past-lead campaigns require a real current configured package image",async()=>{
+ const future=new Date(Date.now()+3*86400000).toISOString();
+ const campaign={
+  campaignKey:"ns_pelvic_reengagement_test",templateName:"ns_fu_pricing_graphic",
+  title:"Pelvic Package B RM268",promotedTreatment:"骨盆调理",
+  targetTreatments:["骨盆调理"],validUntil:future,
+  audienceMode:"past_leads",packageName:"Package B"
+ };
+ let inserted=0;
+ const database={async query(sql,params){
+  if(sql.includes("SELECT data->'promotions' AS promotions"))return {rows:[{
+   promotions:[{linkedService:"骨盆调理",sendOnPriceQuery:true,
+    validUntil:new Date(Date.now()+8*86400000).toISOString().slice(0,10),
+    packages:[{name:"Package B",imageUrl:"https://example.test/promo-images/43",
+      pricing:{offer:268,normal:388}}]}]
+  }]};
+  if(sql.includes("INSERT INTO whatsapp_promotional_blast_campaigns")){
+   inserted++; assert.equal(params[7],"past_leads");assert.equal(params[8],"Package B");
+   return {rows:[{campaign_key:params[0],audience_mode:"past_leads",package_name:"Package B",
+     promoted_treatment:"骨盆调理"}]};
+  }
+  throw Error("Unexpected query: "+sql.slice(0,60));
+ }};
+ assert.equal(await blast.createCampaign({...campaign,packageName:"Missing"},"admin",database),null);
+ assert.equal(await blast.createCampaign({...campaign,targetTreatments:["骨盆调理","3D 小颜术"]},"admin",database),null);
+ assert.equal(inserted,0);
+ const saved=await blast.createCampaign(campaign,"admin",database);
+ assert.equal(saved.package_offer_price,268);
+ assert.equal(saved.package_image_url,"https://example.test/promo-images/43");
+ assert.equal(inserted,1);
+});
