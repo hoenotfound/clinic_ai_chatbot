@@ -217,7 +217,7 @@ test("current RM388 versus RM268 comparison works when Package B lists one inclu
   currentPromo.packages[1] = {
     ...currentPromo.packages[1],
     title: "90分钟女性护理配套",
-    caption: "本月限时优惠\\nRM100 优惠券\\n原价 RM368\\n现在只需 RM268\\n✅骨盆调整与体态矫正疗程",
+    caption: "本月限时优惠\nRM100 优惠券\n原价 RM368\n现在只需 RM268\n✅骨盆调整与体态矫正疗程",
     pricing: { offer: 268, normal: 368, currency: "MYR" },
     mediaTranslations: {
       zh: { caption: "✅骨盆调整与体态矫正疗程" },
@@ -237,8 +237,8 @@ test("current RM388 versus RM268 comparison works when Package B lists one inclu
     now: currentNow,
   });
   assert.equal(result?.type, "text_only");
-  assert.match(result.reply, /Package A \\(RM388/u);
-  assert.match(result.reply, /Package B \\(RM268/u);
+  assert.match(result.reply, /Package A \(RM388/u);
+  assert.match(result.reply, /Package B \(RM268/u);
   assert.match(result.reply, /90分钟女性护理配套/u);
   assert.doesNotMatch(result.reply, /艾灸桶护理|优惠券使用条件/u);
   assert.equal(result.imageUrl, undefined);
