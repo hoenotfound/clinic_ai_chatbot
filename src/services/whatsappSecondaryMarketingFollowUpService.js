@@ -1,4 +1,5 @@
 "use strict";
+const { scopeSecondaryRead } = require("../utils/secondaryContactRead");
 const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 // Never share primary Neutro marketing templates, opt-in or billing entries.
 // Exact one-shot sender, contact, inbound and template authorization required.
@@ -671,7 +672,7 @@ function approvedStaticMarketingTemplate(definition,expectedSignature){
      ?normalized:null;
 }
 async function runOnce({
- env=process.env,database=pool,now=new Date(),limit=10,
+ env=process.env,database=pool,now=new Date(),limit=10,contactIds,
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
  getConfig=()=>configRepo.getConfig(),
@@ -685,14 +686,14 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env)];
- const candidates=(await runFollowUpRead(database,pool,CANDIDATES_SQL,params,{env})).rows||[];
+ const candidates=(await runFollowUpRead(database,pool,...scopeSecondaryRead(CANDIDATES_SQL,params,contactIds),{env})).rows||[];
  if(generalSql.enabled(env)){
-   const generic=(await runFollowUpRead(database,pool,generalSql.CANDIDATES_SQL,
-     [...params,generalSql.activation(env)],{env})).rows||[];
+   const generic=(await runFollowUpRead(database,pool,...scopeSecondaryRead(generalSql.CANDIDATES_SQL,
+     [...params,generalSql.activation(env)],contactIds),{env})).rows||[];
    candidates.push(...generic);
  }
  if(extendedEnabled(env)){
-   const extra=(await runFollowUpRead(database,pool,EXTENDED_CANDIDATES_SQL,params,{env})).rows||[];
+   const extra=(await runFollowUpRead(database,pool,...scopeSecondaryRead(EXTENDED_CANDIDATES_SQL,params,contactIds),{env})).rows||[];
    candidates.push(...extra);
  }
  let attempted=0,accepted=0;
@@ -874,7 +875,7 @@ async function runOnce({
  }
  return{disabled:false,attempted,accepted};
 }
-async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date(),contactIds}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
  const params=[
@@ -884,12 +885,12 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
  ];
- const ordinary=(await runFollowUpRead(database,pool,POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null;
+ const ordinary=(await runFollowUpRead(database,pool,...scopeSecondaryRead(POTENTIAL_DUE_SQL,params,contactIds),{env})).rows?.[0]||null;
  const extended=extendedEnabled(env)
-   ?(await runFollowUpRead(database,pool,EXTENDED_POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null:null;
+   ?(await runFollowUpRead(database,pool,...scopeSecondaryRead(EXTENDED_POTENTIAL_DUE_SQL,params,contactIds),{env})).rows?.[0]||null:null;
  const generic=generalSql.enabled(env)
-   ?(await runFollowUpRead(database,pool,generalSql.POTENTIAL_DUE_SQL,
-     [...params,generalSql.activation(env)],{env})).rows?.[0]||null:null;
+   ?(await runFollowUpRead(database,pool,...scopeSecondaryRead(generalSql.POTENTIAL_DUE_SQL,
+     [...params,generalSql.activation(env)],contactIds),{env})).rows?.[0]||null:null;
  const dueTimes=[ordinary?.next_due_at,extended?.next_due_at,generic?.next_due_at]
    .filter(Boolean).map(value=>new Date(value).getTime())
    .filter(Number.isFinite);

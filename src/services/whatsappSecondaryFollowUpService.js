@@ -1,4 +1,5 @@
 "use strict";
+const { scopeSecondaryRead } = require("../utils/secondaryContactRead");
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
 // Neutro's follow-up queue, template billing or retry worker.
@@ -779,7 +780,7 @@ const RECHECK_SQL=`
 
 async function runOnce({
   database=pool,env=process.env,
-  now=new Date(),limit=10,
+  now=new Date(),limit=10,contactIds,
   sendText=sendSecondaryStaffText,
   store=messagesRepo,storage=mediaStorage,contacts=contactsRepo,
  getConfig=()=>configRepo.getConfig(),
@@ -793,14 +794,14 @@ async function runOnce({
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
-  const items=(await monitoredFollowUpRead(database,CANDIDATES_SQL,[
+  const items=(await monitoredFollowUpRead(database,...scopeSecondaryRead(CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
-  ],"candidate",env)).rows||[];
+  ],contactIds),"candidate",env)).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
@@ -1092,17 +1093,17 @@ async function runOnce({
   return {disabled:false,attempted,accepted};
 }
 
-async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date(),contactIds}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
- const result=await monitoredFollowUpRead(database,POTENTIAL_DUE_SQL,[
+ const result=await monitoredFollowUpRead(database,...scopeSecondaryRead(POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
    serviceFollowupParityActivation(env),
- ],"due-time hint",env);
+ ],contactIds),"due-time hint",env);
  return result.rows?.[0]||null;
 }
 

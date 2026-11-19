@@ -1093,9 +1093,31 @@ export default function Inbox() {
     const pendingThreadIds = new Set();
     let pendingUnknownThreadChange = false;
     let pendingAttributionRefresh = false;
+    let hiddenChanges = false;
+
+    function deferHiddenRefresh() {
+      if (document.visibilityState !== "hidden") return false;
+      hiddenChanges = true;
+      return true;
+    }
+
+    function handleVisibilityChanged() {
+      if (deferHiddenRefresh()) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = null;
+        return;
+      }
+      if (!hiddenChanges) return;
+      hiddenChanges = false;
+      // Revalidate access and loaded message edits/deletions after the gap.
+      // Keep SSE open; notifications and backend follow-ups are independent.
+      pendingMessageMutation = true;
+      scheduleRefresh(null, "reconnect", {refreshAttribution:true});
+    }
 
     function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event",
       { refreshThread = true, refreshAttribution = false } = {}) {
+      if (deferHiddenRefresh()) return;
       pendingAttributionRefresh ||= refreshAttribution;
       if (sourceReason === "message_mutation") pendingMessageMutation = true;
       const id = Number(contactId);
@@ -1114,6 +1136,8 @@ export default function Inbox() {
       if (debounceTimer) clearTimeout(debounceTimer);
 
       debounceTimer = setTimeout(async () => {
+        debounceTimer = null;
+        if (deferHiddenRefresh()) return;
         const changedContacts = new Set(pendingContactIds);
         const unknownOrRedacted = pendingUnknownConversationChange;
         const unknownReason = pendingUnknownConversationReason;
@@ -1179,6 +1203,7 @@ export default function Inbox() {
     }
 
     function handleConversationChanged(event) {
+      if (deferHiddenRefresh()) return;
       try {
         const payload = JSON.parse(event.data || "{}");
         if (
@@ -1254,6 +1279,7 @@ export default function Inbox() {
     }
 
     function handleLatestAdChanged(event) {
+      if (deferHiddenRefresh()) return;
       // No list, message, or pipeline refresh is necessary: this notification
       // updates only the currently open chat's verified ad banner.
       const currentId = selectedIdRef.current;
@@ -1271,7 +1297,9 @@ export default function Inbox() {
     }
 
     const startup = createInboxLiveStartup({
-      loadInitial: () => { void refreshConversations("startup"); },
+      loadInitial: () => {
+        if (!deferHiddenRefresh()) void refreshConversations("startup");
+      },
       refreshOnReconnect: () => scheduleRefresh(null, "reconnect"),
     });
     source.addEventListener("conversation_changed", handleConversationChanged);
@@ -1279,10 +1307,12 @@ export default function Inbox() {
     source.addEventListener("inbox_latest_ad_changed", handleLatestAdChanged);
     source.onopen = () => startup.onOpen();
     source.onerror = () => {};
+    document.addEventListener("visibilitychange", handleVisibilityChanged);
 
     return () => {
       startup.stop();
       if (debounceTimer) clearTimeout(debounceTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChanged);
       source.removeEventListener("conversation_changed", handleConversationChanged);
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.removeEventListener("inbox_latest_ad_changed", handleLatestAdChanged);

@@ -1,5 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
+const { alignedMaintenanceDelay } = require("../utils/maintenanceWindow");
 const repo = require("../db/metaAdsInsightsRepo");
 const api = require("./metaAdsInsightsApiService");
 const { marketingAccessToken } = require("./metaAdsApiService");
@@ -348,7 +349,7 @@ function createMetaAdsInsightsSyncService({
       } catch (err) {
         logger.error?.("Meta Ads Insights worker failed:", err);
       } finally {
-        schedule(syncIntervalMs());
+        schedule(alignedMaintenanceDelay(syncIntervalMs(), new Date(now()).getTime()));
       }
     }, delayMs);
     timer?.unref?.();

@@ -513,6 +513,14 @@ async function installApi(page, {
       return fulfill(route, { messages: result, hasMore: false });
     }
 
+    const updatesMatch = path.match(/^\/api\/conversations\/(\d+)\/messages\/updates$/);
+    if (updatesMatch && method === "GET") {
+      record(request);
+      const ids = new Set((url.searchParams.get("ids") || "").split(",").map(Number));
+      return fulfill(route, {messages:(messagesByContact.get(Number(updatesMatch[1])) || [])
+        .filter(message => ids.has(Number(message.id)))});
+    }
+
     const deliveryMatch = path.match(
       /^\/api\/conversations\/(\d+)\/messages\/delivery-statuses$/
     );
@@ -1765,4 +1773,44 @@ test("redacted pipeline-only events recheck access without extra message or deli
   await page.evaluate(() => window.__realtimeMediaTest.emit("pipeline_changed", {}));
   await expect(page.getByRole("region", {name:"Conversation with Alex Customer"})).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
+});
+
+test("hidden Inbox defers live reads then restores messages, edits and access on return", async ({page}) => {
+ const apiState=await installApi(page,{initialMessagesByContact:new Map([[101,[inboundMessage(),outboundMessage()]]])});
+ await page.goto('/inbox');await openInboxConversation(page);
+ await expect(page.getByLabel('Sent')).toBeVisible();
+ const counts=()=>({list:apiState.getListFetches(),summary:apiState.getSummaryFetches(),messages:apiState.getMessageFetchCount(101),
+  detail:apiState.calls.filter(c=>c.path.endsWith('/delivery-statuses')||c.path.endsWith('/attribution')||c.path.endsWith('/updates')).length});
+ await page.evaluate(()=>{
+  window.__testVisibility='hidden';
+  Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__testVisibility});
+  document.dispatchEvent(new Event('visibilitychange'));
+ });
+ const before=counts();
+ apiState.addMessage(101,inboundMessage({id:3,content:'Reply received while tab was hidden'}));
+ apiState.getMessages(101)[0].content='Customer edited the earlier message';
+ await page.evaluate(()=>{
+  const emit=window.__realtimeMediaTest.emit;
+  for(let i=0;i<12;i++){
+   emit('conversation_changed',{contactId:101,reason:'message'});
+   emit('pipeline_changed',{});
+   emit('inbox_latest_ad_changed',{});
+  }
+  emit('conversation_changed',{reason:'message_mutation'});
+ });
+ await page.waitForTimeout(700);
+ expect(counts()).toEqual(before);
+ await page.evaluate(()=>{window.__testVisibility='visible';document.dispatchEvent(new Event('visibilitychange'));});
+ const thread=page.getByRole('region',{name:'Conversation with Alex Customer'});
+ await expect(thread.getByText('Reply received while tab was hidden',{exact:true})).toBeVisible();
+ await expect(thread.getByText('Customer edited the earlier message',{exact:true})).toBeVisible();
+ await expect.poll(()=>apiState.getListFetches()).toBe(before.list+1);
+ // A later hidden permission change still removes the cached open thread.
+ await page.evaluate(()=>{window.__testVisibility='hidden';document.dispatchEvent(new Event('visibilitychange'));});
+ apiState.getConversations().splice(0);
+ await page.evaluate(()=>window.__realtimeMediaTest.emit('pipeline_changed',{}));
+ await page.waitForTimeout(350);
+ await page.evaluate(()=>{window.__testVisibility='visible';document.dispatchEvent(new Event('visibilitychange'));});
+ await expect(thread).toHaveCount(0);
+ expectNoUnexpectedApi(apiState);
 });

@@ -5,6 +5,7 @@ const revokedMediaCleanup = require("./whatsappCustomerRevokedMediaCleanup");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
+const { alignedMaintenanceDelay } = require("../utils/maintenanceWindow");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 // Preserve immediate manual-deletion cleanup and exact due-job wake-ups.
@@ -223,8 +224,8 @@ async function runRetentionSweep({
 
 function startCustomerDataLifecycle({
   env = process.env,
-  setIntervalFn = setInterval,
   createWorkerTimer = createAdaptiveWorkerTimer,
+  now = Date.now,
   repository = repo,
   storage = mediaStorage,
 } = {}) {
@@ -239,7 +240,7 @@ function startCustomerDataLifecycle({
     return new Date(Math.min(new Date(nextPurge).getTime(),new Date(nextRevoked).getTime()));
   };
   const runRetention = () => {
-    withDatabaseActivitySource(
+    return withDatabaseActivitySource(
       "Customer retention sweep",
       () => runRetentionSweep({ env, repository, storage })
     )
@@ -256,7 +257,7 @@ function startCustomerDataLifecycle({
       });
   };
   const pruneJobs = () => {
-    withDatabaseActivitySource(
+    return withDatabaseActivitySource(
       "Customer purge-job prune",
       () => repository.pruneCompletedPurgeJobs()
     ).catch((err) => {
@@ -278,10 +279,19 @@ function startCustomerDataLifecycle({
   // Preserve the existing ten-minute startup grace period. Manual deletion
   // still cleans media immediately and can wake recovery after a failure.
   cleanupTimer.start(MEDIA_CLEANUP_INTERVAL_MS);
-  const retentionTimer = setIntervalFn(runRetention, RETENTION_SWEEP_INTERVAL_MS);
-  retentionTimer?.unref?.();
-  const pruneTimer = setIntervalFn(pruneJobs, PURGE_JOB_PRUNE_INTERVAL_MS);
-  pruneTimer?.unref?.();
+  function periodicMaintenance(run, intervalMs, label) {
+    const worker = createWorkerTimer({
+      run, label, now,
+      delayForResult: () => alignedMaintenanceDelay(intervalMs, now()),
+      errorRetryDelayMs: intervalMs,
+    });
+    worker.start(alignedMaintenanceDelay(intervalMs, now()));
+    return worker;
+  }
+  const retentionTimer = periodicMaintenance(runRetention, RETENTION_SWEEP_INTERVAL_MS,
+    "Customer retention sweep");
+  const pruneTimer = periodicMaintenance(pruneJobs, PURGE_JOB_PRUNE_INTERVAL_MS,
+    "Customer purge-job prune");
 
   return { cleanupTimer, retentionTimer, pruneTimer };
 }
