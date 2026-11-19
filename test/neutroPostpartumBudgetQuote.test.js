@@ -255,10 +255,10 @@ test("latest pelvic Package B RM268 stays verified in mixed-treatment pricing", 
   // Keep the historical regression intact and check the latest offer separately.
   const currentOffers = structuredClone(promotions);
   const b = currentOffers[1].packages[1];
-  b.caption = "本月限时优惠 🔥 RM100 优惠券\\n原价 RM368\\n现在只需 RM2️⃣6️⃣8️⃣\\n限时礼遇 · 预约专享";
+  b.caption = "本月限时优惠 🔥 RM100 优惠券\n原价 RM368\n现在只需 RM2️⃣6️⃣8️⃣\n限时礼遇 · 预约专享";
   b.pricing = { currency: "MYR", offer: 268, normal: 368 };
   b.mediaTranslations.en.caption =
-    "RM100 voucher\\nOriginal price RM368\\nNow only RM2️⃣6️⃣8️⃣\\nExclusive for appointments";
+    "RM100 voucher\nOriginal price RM368\nNow only RM2️⃣6️⃣8️⃣\nExclusive for appointments";
   const result = quote(productionConversation(), question, currentOffers);
   assert.ok(result);
   assert.match(result.reply, /骨盆调理 Package A：RM388/u);
