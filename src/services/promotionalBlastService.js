@@ -1,12 +1,13 @@
 "use strict";
 const { randomUUID }=require("node:crypto");
 const { pool }=require("../db/db");
+const { PAST_LEAD_CANDIDATE_SQL }=require("./promotionalBlastPastLeads");
 const CAMPAIGN_KEY="ns_3d_1111_rm388_2026";
 const CAMPAIGN_LABEL="11.11 3D 小颜术 · RM388";
 const LANGUAGES=new Set(["zh_CN","en_US","ms"]);
 const CANDIDATE_SQL=String.raw`
 WITH campaign AS (
- SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1 AND enabled AND valid_until>now()
+ SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1 AND enabled AND valid_until>now() AND audience_mode='recent_ad'
 ),
 -- Only a provably unsent, failed staged blast message is recoverable.
 -- The claim is consumed atomically *before* every Graph messages call.
@@ -259,32 +260,69 @@ candidates AS (
 )
 SELECT contact_id,sender_id,recipient_key,contact_name,treatment_interest,related_offer_review_required,campaign_key,template_name,first_reply_at,safe_expires_at,suggested_language,blocked_reason
 FROM candidates`;
+const COMBINED_CANDIDATE_SQL=`SELECT * FROM (${CANDIDATE_SQL}) recent_ad UNION ALL SELECT * FROM (${PAST_LEAD_CANDIDATE_SQL}) past_leads`;
 function validKey(value) { return /^[a-z0-9_]{3,100}$/.test(String(value||"")) ? String(value) : null; }
 
+const CAMPAIGN_FIELDS="campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled,audience_mode,package_name";
+function validConfiguredPackage(row,promotions) {
+  if(row.audience_mode!=='past_leads')return {};
+  const day=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Kuala_Lumpur',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const matches=(Array.isArray(promotions)?promotions:[]).filter(p=>
+    p.linkedService===row.promoted_treatment && p.sendOnPriceQuery===true &&
+    (!p.validFrom || p.validFrom<=day) && (!p.validUntil || p.validUntil>=day)
+  ).flatMap(p=>Array.isArray(p.packages)?p.packages:[])
+   .filter(option=>option.name===row.package_name &&
+      /^https:\/\/[^ ]+\/promo-images\/[0-9]+$/.test(String(option.imageUrl||'')));
+  if(matches.length!==1)return {package_image_url:null,package_offer_price:null};
+  return {package_image_url:matches[0].imageUrl,
+    package_offer_price:matches[0].pricing?.offer??null};
+}
+async function withPackageMedia(rows,database) {
+  if(!rows.some(row=>row.audience_mode==='past_leads'))return rows;
+  const r=await database.query("SELECT data->'promotions' AS promotions FROM clinic_config WHERE id=1");
+  const promotions=r.rows?.[0]?.promotions||[];
+  return rows.map(row=>({...row,...validConfiguredPackage(row,promotions)}));
+}
 async function getCampaign(key=CAMPAIGN_KEY,database=pool) {
   if(!validKey(key))return null;
   const r=await database.query(
-    "SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1",
+    "SELECT "+CAMPAIGN_FIELDS+" FROM whatsapp_promotional_blast_campaigns WHERE campaign_key=$1",
     [key]);
-  return r.rows?.[0]||null;
+  return (await withPackageMedia(r.rows||[],database))[0]||null;
 }
 async function listCampaigns(database=pool) {
-  const r=await database.query("SELECT campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled FROM whatsapp_promotional_blast_campaigns ORDER BY created_at DESC LIMIT 40");
-  return r.rows||[];
+  const r=await database.query("SELECT "+CAMPAIGN_FIELDS+" FROM whatsapp_promotional_blast_campaigns ORDER BY created_at DESC LIMIT 40");
+  return withPackageMedia(r.rows||[],database);
 }
 async function createCampaign(input,username,database=pool) {
   const key=validKey(input?.campaignKey), name=validKey(input?.templateName);
   const title=String(input?.title||"").trim(), promoted=String(input?.promotedTreatment||"").trim();
   const targets=Array.isArray(input?.targetTreatments)? [...new Set(input.targetTreatments.map(v=>String(v).trim()))]:[];
+  const audienceMode=String(input?.audienceMode||"recent_ad");
+  const packageName=audienceMode==='past_leads'?String(input?.packageName||'').trim():null;
   const ends=new Date(input?.validUntil), now=Date.now();
-  if(!key||!name||title.length<3||title.length>120||!promoted||promoted.length>120||
+  if(!key||!name||!['recent_ad','past_leads'].includes(audienceMode)||
+    title.length<3||title.length>120||!promoted||promoted.length>120||
     targets.length<1||targets.length>5||targets.some(v=>!v||v.length>120)||!targets.includes(promoted)||
     !Number.isFinite(ends.getTime())||ends.getTime()<=now||ends.getTime()>now+90*86400000||
     !String(username||"").trim())return null;
+  if(audienceMode==='past_leads') {
+    if(!packageName||packageName.length>120||targets.length!==1||targets[0]!==promoted)return null;
+    // Select an active configured package, never a browser-supplied URL/price.
+    const config=await database.query("SELECT data->'promotions' AS promotions FROM clinic_config WHERE id=1");
+    const promotions=config.rows?.[0]?.promotions||[];
+    const matching=promotions.filter(p=>p.linkedService===promoted && p.sendOnPriceQuery===true)
+      .flatMap(p=>(p.packages||[]).filter(option=>option.name===packageName)
+        .map(option=>({promotion:p,option})));
+    if(matching.length!==1 ||
+      !/^https:\/\/[^ ]+\/promo-images\/[0-9]+$/.test(String(matching[0].option.imageUrl||'')))return null;
+    const deadline=matching[0].promotion.validUntil;
+    if(deadline && ends.getTime()>Date.parse(deadline+'T15:59:59Z'))return null;
+  }
   const r=await database.query(
-    "INSERT INTO whatsapp_promotional_blast_campaigns (campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,created_by) VALUES ($1,$2,$3,$4,$5::text[],$6,$7) ON CONFLICT DO NOTHING RETURNING campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,enabled",
-    [key,name,title,promoted,targets,ends.toISOString(),username]);
-  return r.rows?.[0]||null;
+    "INSERT INTO whatsapp_promotional_blast_campaigns (campaign_key,template_name,title,promoted_treatment,target_treatments,valid_until,created_by,audience_mode,package_name) VALUES ($1,$2,$3,$4,$5::text[],$6,$7,$8,$9) ON CONFLICT DO NOTHING RETURNING "+CAMPAIGN_FIELDS,
+    [key,name,title,promoted,targets,ends.toISOString(),username,audienceMode,packageName]);
+  return (await withPackageMedia(r.rows||[],database))[0]||null;
 }
 async function candidates(key=CAMPAIGN_KEY,database=pool) {
   if(!validKey(key))return [];
@@ -293,7 +331,7 @@ async function candidates(key=CAMPAIGN_KEY,database=pool) {
       WHERE claim.campaign_key=$1 AND claim.recipient_key=qualified.recipient_key
         AND (claim.state='attempted' OR claim.claimed_at>now()-interval '5 minutes')
     ) AS already_claimed
-    FROM (${CANDIDATE_SQL}) qualified
+    FROM (${COMBINED_CANDIDATE_SQL}) qualified
     ORDER BY qualified.safe_expires_at,qualified.contact_id LIMIT 100`,[key]);
   return r.rows||[];
 }
@@ -308,7 +346,7 @@ async function claimRecipient(contactId,languageCode,staffUsername,{
   const r=await database.query(`INSERT INTO whatsapp_promotional_blast_claims
     (campaign_key,contact_id,recipient_key,sender_id,language_code,staff_username,reservation_token,related_offer_reviewed)
     SELECT $1,qualified.contact_id,qualified.recipient_key,qualified.sender_id,$3,$4,$5::uuid,$6
-    FROM (${CANDIDATE_SQL}) qualified
+    FROM (${COMBINED_CANDIDATE_SQL}) qualified
     WHERE qualified.contact_id=$2 AND qualified.blocked_reason IS NULL
       AND (qualified.related_offer_review_required IS FALSE OR $6 IS TRUE)
     ON CONFLICT (campaign_key,recipient_key) DO UPDATE
@@ -325,14 +363,17 @@ async function claimRecipient(contactId,languageCode,staffUsername,{
 // During dispatch a message has been staged as "unknown" but not sent.
 // Ignore ONLY that exact DB row; all other outgoing, staff, and promo messages
 // continue to block, including ones that appeared after the initial preview.
-const DISPATCH_SQL=CANDIDATE_SQL
+const DISPATCH_SQL=COMBINED_CANDIDATE_SQL
   // Secondary staff dispatch already reserved THIS message's billing gate.
   // Ignore only its matching message_id, not any earlier contact gate.
-  .replace("gate.contact_id=c.id AND gate.state<>'idle'",
+  .replaceAll("gate.contact_id=c.id AND gate.state<>'idle'",
            "gate.contact_id=c.id AND gate.message_id IS DISTINCT FROM $6::integer AND gate.state<>'idle'")
-  .replace("WHERE outgoing.contact_id=c.id", "WHERE outgoing.id<>$6::integer AND outgoing.contact_id=c.id")
-  .replace("WHERE staff.contact_id=c.id", "WHERE staff.id<>$6::integer AND staff.contact_id=c.id")
-  .replace("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id");
+  .replaceAll("WHERE outgoing.contact_id=c.id", "WHERE outgoing.id<>$6::integer AND outgoing.contact_id=c.id")
+  .replaceAll("WHERE staff.contact_id=c.id", "WHERE staff.id<>$6::integer AND staff.contact_id=c.id")
+  .replaceAll("WHERE sent_promo.contact_id=c.id", "WHERE sent_promo.id<>$6::integer AND sent_promo.contact_id=c.id")
+  // The past-lead path joins all identities for cross-sender dedupe. Exclude
+  // only the staged message currently being dispatched, never any old attempt.
+  .replaceAll("WHERE recipient.whatsapp_number ~", "WHERE sent_promo.id<>$6::integer AND recipient.whatsapp_number ~");
 
 // Irreversible. Call ONLY immediately before provider contact, after the media is ready.
 async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,currentMessageId,database=pool) {
@@ -354,5 +395,5 @@ async function consumeClaim(contactId,campaign,languageCode,staffUsername,token,
     [campaign,contactId,staffUsername,languageCode,token,currentMessageId]);
   return r.rows?.length===1;
 }
-module.exports={CAMPAIGN_KEY,CAMPAIGN_LABEL,LANGUAGES,CANDIDATE_SQL,
+module.exports={CAMPAIGN_KEY,CAMPAIGN_LABEL,LANGUAGES,CANDIDATE_SQL,PAST_LEAD_CANDIDATE_SQL,COMBINED_CANDIDATE_SQL,
   validKey,getCampaign,listCampaigns,createCampaign,candidates,claimRecipient,consumeClaim,DISPATCH_SQL};
