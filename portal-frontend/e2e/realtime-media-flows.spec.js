@@ -490,6 +490,17 @@ async function installApi(page, {
       return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
     }
 
+    const readStateMatch = path.match(/^\/api\/conversations\/(\d+)\/read-state$/);
+    if (readStateMatch && method === "PATCH") {
+      const body = request.postDataJSON();
+      record(request, body);
+      const contactId = Number(readStateMatch[1]);
+      const contact = conversations.find(item => Number(item.contact_id) === contactId);
+      if (!contact) return fulfill(route, {error: "Conversation not found"}, 404);
+      updateConversation(contactId, {is_unread: body.unread});
+      return fulfill(route, {...contact, is_unread: body.unread});
+    }
+
     const freeWindowMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-template-free-window$/);
     if (freeWindowMatch && method === "GET") {
       return fulfill(route, { verified: false });
@@ -1155,7 +1166,7 @@ test("pasted WebP is normalized to a WhatsApp-compatible image before upload", a
 
   await page.getByRole("button", { name: "Send message" }).click();
 
-  expect(apiState.mediaRequests).toHaveLength(1);
+  await expect.poll(() => apiState.mediaRequests.length).toBe(1);
   const uploaded = await page.evaluate(
     () => window.__realtimeMediaTest?.latestMediaUpload?.() || null
   );
@@ -1828,7 +1839,10 @@ async function setInboxVisibility(page, visibility) {
 
 test('hidden Inbox only refreshes changed data and skips unchanged tab switches',async({page})=>{
  const apiState=await installApi(page,{initialConversations:[conversation(),conversation({contactId:202,name:'Bella Customer'})]});
- await page.goto('/inbox');await openInboxConversation(page);await page.waitForTimeout(400);
+ await page.goto('/inbox');await openInboxConversation(page);
+ await expect(page.getByRole('region',{name:'Conversation with Alex Customer'})
+  .getByText('Hi, I would like to know more.',{exact:true})).toBeVisible();
+ await expect.poll(()=>apiState.calls.filter(c=>c.path.endsWith('/attribution')).length).toBeGreaterThan(0);
  const counts=()=>({list:apiState.getListFetches(),summary:apiState.getSummaryFetches(),messages:apiState.getMessageFetchCount(101),
   attribution:apiState.calls.filter(c=>c.path.endsWith('/attribution')).length,
   delivery:apiState.calls.filter(c=>c.path.endsWith('/delivery-statuses')).length,
@@ -1865,7 +1879,10 @@ test('hidden Inbox only refreshes changed data and skips unchanged tab switches'
 
 test('hidden Inbox preserves a queued read and catches missed events on reconnect',async({page})=>{
  const apiState=await installApi(page);
- await page.goto('/inbox');await openInboxConversation(page);await page.waitForTimeout(400);
+ await page.goto('/inbox');await openInboxConversation(page);
+ await expect(page.getByRole('region',{name:'Conversation with Alex Customer'})
+  .getByText('Hi, I would like to know more.',{exact:true})).toBeVisible();
+ await expect.poll(()=>apiState.calls.filter(c=>c.path.endsWith('/attribution')).length).toBeGreaterThan(0);
  const before=apiState.getMessageFetchCount(101);
  apiState.addMessage(101,inboundMessage({id:3,content:'Queued before hiding'}));
  await page.evaluate(()=>{
