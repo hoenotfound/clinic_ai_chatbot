@@ -153,13 +153,13 @@ test("disabled retention policy does not query customer candidates", async () =>
 
 
 test("lifecycle recovery waits ten minutes on startup and uses adaptive retry deadlines", async () => {
-  const intervals = [];
+  const workers = [];
   let cleanupClaims = 0;
   let deadlineQueries = 0;
   let retentionQueries = 0;
   let pruneCalls = 0;
-  let startupDelay = null;
-  let workerOptions;
+  let clock = Date.parse("2026-11-19T00:02:30Z");
+
 
   const repository = {
     async claimPurgeJob() {
@@ -184,27 +184,25 @@ test("lifecycle recovery waits ten minutes on startup and uses adaptive retry de
     env: { CUSTOMER_DATA_RETENTION_DAYS: "90" },
     repository,
     storage: {},
+    now: () => clock,
     createWorkerTimer(options) {
-      workerOptions = options;
+      const worker = {options};
+      workers.push(worker);
       return {
-        start(delay) { startupDelay = delay; },
+        start(delay) { worker.delay = delay; },
         wake() { return true; },
       };
-    },
-    setIntervalFn(fn, delay) {
-      const timer = { fn, delay, unref() {} };
-      intervals.push(timer);
-      return timer;
     },
   });
 
   assert.equal(cleanupClaims, 0);
   assert.equal(retentionQueries, 0);
   assert.equal(pruneCalls, 0);
-  assert.equal(startupDelay, lifecycle.MEDIA_CLEANUP_INTERVAL_MS);
-  assert.deepEqual(intervals.map((item) => item.delay), [
-    lifecycle.RETENTION_SWEEP_INTERVAL_MS,
-    lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS,
+  const workerOptions = workers[0].options;
+  assert.equal(workers[0].delay, lifecycle.MEDIA_CLEANUP_INTERVAL_MS);
+  assert.deepEqual(workers.slice(1).map(item => item.delay), [
+    lifecycle.RETENTION_SWEEP_INTERVAL_MS + 150000,
+    lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS + 150000,
   ]);
 
   assert.equal(await workerOptions.run(), null);
@@ -212,9 +210,15 @@ test("lifecycle recovery waits ten minutes on startup and uses adaptive retry de
   assert.equal(deadlineQueries, 1);
   assert.equal(workerOptions.delayForResult(null), lifecycle.IDLE_MEDIA_CLEANUP_INTERVAL_MS);
 
-  await intervals[0].fn();
+  const firstRetention = clock + workers[1].delay;
+  const firstPrune = clock + workers[2].delay;
+  await workers[1].options.run();
   assert.equal(retentionQueries, 1);
-  await intervals[1].fn();
+  clock = firstRetention + 1000;
+  assert.equal(clock + workers[1].options.delayForResult(), firstRetention + lifecycle.RETENTION_SWEEP_INTERVAL_MS);
+  clock = firstPrune + 7000;
+  assert.equal(clock + workers[2].options.delayForResult(), firstPrune + lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS);
+  await workers[2].options.run();
   assert.equal(pruneCalls, 1);
 });
 

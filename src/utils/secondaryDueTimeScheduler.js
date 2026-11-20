@@ -125,6 +125,17 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
   return true;
 }
 
+function secondaryEventContactId(type, payload, env = process.env) {
+  // Receipts can release a sender-wide billing gate. Config, pipeline and
+  // unknown events also retain full sweeps. Only ordinary, sender-identified
+  // message events are safe to narrow to one contact.
+  if (type !== "conversation_changed" || payload?.reason !== "message" ||
+      payload?.channel !== "whatsapp" || !env?.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
+      String(payload.businessPhoneNumberId || "") !== String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)) return null;
+  const id = Number(payload.contactId);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 function createSecondaryDueScheduler({
   label, run, readNextDue, events, env,
   database, createTimer = createAdaptiveWorkerTimer,
@@ -136,10 +147,16 @@ function createSecondaryDueScheduler({
   }
   let timer = null;
   let subscriptions = [];
-  function wake(delayMs=0) { return timer?.wake(delayMs) || false; }
-  const coalescedWake = createCoalescedImmediateWake(() => wake(0));
+  let fullRequested = true;
+  let fullDueAt = 0;
+  const pendingContacts = new Set();
+  function wake(delayMs=0) {
+    fullRequested = true;
+    return timer?.wake(delayMs) || false;
+  }
+  const coalescedWake = createCoalescedImmediateWake(() => timer?.wake(0));
   const coalescedReceiptWake = createCoalescedImmediateWake(
-    () => wake(DELIVERY_RECEIPT_WAKE_DELAY_MS));
+    () => timer?.wake(DELIVERY_RECEIPT_WAKE_DELAY_MS));
   const lane = label === "Secondary WhatsApp marketing followup scheduler"
     ? "secondary_marketing" : "secondary_service";
   function observeEvent(type, payload, eligible) {
@@ -149,6 +166,13 @@ function createSecondaryDueScheduler({
       recordWorkerWake(lane, type, payload, "ignored", env);
       return;
     }
+    const contactId = secondaryEventContactId(type, payload, env);
+    if (contactId == null) fullRequested = true;
+    else pendingContacts.add(contactId);
+    if (pendingContacts.size > 100) {
+      fullRequested = true;
+      pendingContacts.clear();
+    }
     const statusOnly = type === "conversation_changed" &&
       payload?.reason === "delivery_status";
     const signal = statusOnly ? coalescedReceiptWake : coalescedWake;
@@ -157,27 +181,47 @@ function createSecondaryDueScheduler({
   }
   function start() {
     if (timer && !timer.state().stopped) return false;
+    fullRequested = true;
+    fullDueAt = 0;
+    pendingContacts.clear();
     timer = createTimer({
       label,
       errorRetryDelayMs: ERROR_RETRY_MS,
       logger,
       now,
       run: async () => {
-        const outcome = await run({ env, database });
-        if (outcome?.disabled) return { disabled: true };
-        // A full batch always schedules another run in ten seconds. Its due
-        // hint is discarded by delayForResult, so avoid that expensive query
-        // until the backlog has drained. Existing one-shot send checks remain.
-        if (Number(outcome?.attempted || 0) >= 10) return { outcome, hint: null };
-        const hint = await readNextDue({ env, database, now: new Date(now()) });
-        return { outcome, hint };
+        const scoped = !fullRequested && pendingContacts.size > 0 && fullDueAt > now();
+        const scope = scoped ? { contactIds: [...pendingContacts] } : {};
+        fullRequested = false;
+        pendingContacts.clear();
+        try {
+          const outcome = await run({ env, database, ...scope });
+          if (outcome?.disabled) return { disabled: true };
+          // A full batch always schedules another run in ten seconds. Its due
+          // hint is discarded by delayForResult, so avoid that expensive query
+          // until the backlog has drained. Existing one-shot send checks remain.
+          if (Number(outcome?.attempted || 0) >= 10) return { outcome, hint: null, scoped };
+          const hint = await readNextDue({ env, database, now: new Date(now()), ...scope });
+          return { outcome, hint, scoped };
+        } catch (error) {
+          fullRequested = true;
+          // A failed scoped read must not delay another contact's known slot
+          // until the normal five-minute error retry.
+          if (scoped) timer?.wake(Math.max(0, fullDueAt - now()));
+          throw error;
+        }
       },
       delayForResult: result => {
         if (result?.disabled) return null;
         // Continue draining a genuine due batch without a five-minute poll.
         // Attempts are one-shot and remain protected by the original ledger.
-        if (Number(result?.outcome?.attempted || 0) >= 10) return BACKLOG_RECHECK_MS;
-        return nextSecondaryDueDelay(result?.hint, now());
+        const delay = Number(result?.outcome?.attempted || 0) >= 10
+          ? BACKLOG_RECHECK_MS : nextSecondaryDueDelay(result?.hint, now());
+        const nextDueAt = now() + delay;
+        // An event may bring a global deadline forward, but cannot replace
+        // or postpone an existing deadline belonging to another contact.
+        fullDueAt = result?.scoped ? Math.min(fullDueAt, nextDueAt) : nextDueAt;
+        return Math.max(0, fullDueAt - now());
       },
     });
     subscriptions = [
@@ -200,6 +244,7 @@ function createSecondaryDueScheduler({
     for (const unsubscribe of subscriptions.splice(0)) unsubscribe();
     timer?.stop();
     timer = null;
+    pendingContacts.clear();
   }
   return { start, stop, wake, state: () => timer?.state() || { stopped: true } };
 }
@@ -210,4 +255,5 @@ module.exports = {
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
   nextSecondaryDueDelay, measureSecondaryWorkerRun, createSecondaryDueScheduler,
   secondaryEventRequiresWake,
+  secondaryEventContactId,
 };

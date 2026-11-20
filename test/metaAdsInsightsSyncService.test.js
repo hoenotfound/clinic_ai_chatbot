@@ -293,3 +293,25 @@ test("worker remains idle unless both a Marketing API token and ad account are c
     rows: 0,
   });
 });
+
+test('scheduled Insights runs retain their first boundary after real work and long runs',async()=>{
+ let clock=Date.parse('2026-11-19T00:02:00Z'),duration=1000;
+ const scheduled=[];
+ const service=createMetaAdsInsightsSyncService({
+  insightsRepo:baseRepo({async tryAcquireSyncLease(){clock+=duration;return false;}}),
+  tokenGetter:()=> 'token',accountIdsGetter:()=>['123'],logger:silentLogger(),
+  now:()=>new Date(clock),
+  setTimeoutFn(fn,delay){scheduled.push({fn,due:clock+delay});return {unref(){}};},
+  clearTimeoutFn(){},
+ });
+ service.start();assert.equal(scheduled[0].due,clock,'initial sync remains immediate');
+ await scheduled.shift().fn();
+ for(const expected of ['01:05','02:05','03:05']){
+  const task=scheduled.shift();assert.equal(new Date(task.due).toISOString().slice(11,16),expected);
+  clock=task.due;await task.fn();
+ }
+ duration=2*3600000+1000;
+ const task=scheduled.shift();clock=task.due;await task.fn();
+ assert.equal(new Date(scheduled.at(-1).due).toISOString().slice(11,16),'07:05');
+ service.stop();
+});

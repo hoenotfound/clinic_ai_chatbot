@@ -411,3 +411,70 @@ test("unrelated verified events do not reschedule a genuine due slot",async()=>{
  assert.equal(runs,2,"secondary message still wakes immediately");
  scheduler.stop();
 });
+
+const secondaryEnv={WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"secondary"};
+const messageEvent=contactId=>({reason:"message",channel:"whatsapp",businessPhoneNumberId:"secondary",contactId});
+
+test("contact events narrow reads without postponing another contact's deadline",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
+ const deadline=clock.now()+120000;
+ const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async options=>{scopes.push(options.contactIds||null);return{attempted:0};},
+  readNextDue:async({contactIds})=>({next_due_at:new Date(contactIds?clock.now()+3600000:deadline),has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ events.publish("conversation_changed",messageEvent(11));
+ events.publish("conversation_changed",messageEvent(22));
+ await Promise.resolve();await clock.advance(0);
+ assert.deepEqual(scopes,[null,[11,22]]);
+ assert.equal(scheduler.state().dueAt,deadline);
+ await clock.advance(120000);
+ assert.deepEqual(scopes,[null,[11,22],null],"due timer scans all contacts, not just the most recent event");
+ scheduler.stop();
+});
+
+test("new contact deadline can advance a global timer; billing and unknown events remain global",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
+ const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async o=>{scopes.push(o.contactIds||null);return{attempted:0};},
+  readNextDue:async({contactIds})=>({next_due_at:new Date(clock.now()+(contactIds?60000:3600000)),has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
+ assert.equal(scheduler.state().dueAt,clock.now()+60000);
+ events.publish("conversation_changed",{...messageEvent(11),reason:"delivery_status"});
+ await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
+ assert.equal(scopes.at(-1),null,"billing receipt may release work for another contact");
+ events.publish("conversation_changed",messageEvent(22));
+ events.publish("pipeline_changed",{});await Promise.resolve();await clock.advance(0);
+ assert.equal(scopes.at(-1),null,"unknown/global events take precedence over contact events");
+ scheduler.stop();
+});
+
+test("scoped failure retries globally without delaying an earlier due slot",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
+ const deadline=clock.now()+60000;
+ const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
+  logger:{error(){}},createTimer:clock.createTimer,now:clock.now,
+  run:async o=>{scopes.push(o.contactIds||null);if(o.contactIds)throw Error("read failed");return{attempted:0};},
+  readNextDue:async()=>({next_due_at:new Date(deadline),has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
+ assert.equal(scheduler.state().dueAt,deadline);
+ await clock.advance(60000);assert.deepEqual(scopes,[null,[11],null]);scheduler.stop();
+});
+
+test("events arriving during a scoped read are preserved for a trailing run",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
+ const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async o=>{scopes.push(o.contactIds||null);if(o.contactIds?.includes(11))events.publish("conversation_changed",messageEvent(22));return{attempted:0};},
+  readNextDue:async()=>({next_due_at:new Date(clock.now()+3600000),has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
+ assert.deepEqual(scopes,[null,[11],[22]]);scheduler.stop();
+});

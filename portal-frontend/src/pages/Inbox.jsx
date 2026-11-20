@@ -1093,6 +1093,28 @@ export default function Inbox() {
     const pendingThreadIds = new Set();
     let pendingUnknownThreadChange = false;
     let pendingAttributionRefresh = false;
+    let hiddenChanges = false;
+
+    function deferHiddenRefresh() {
+      if (document.visibilityState !== "hidden") return false;
+      hiddenChanges = true;
+      return true;
+    }
+
+    function handleVisibilityChanged() {
+      if (document.visibilityState === "hidden") {
+        // Hiding alone is not a data change. Preserve an already queued read.
+        hiddenChanges ||= debounceTimer != null;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = null;
+        return;
+      }
+      if (!hiddenChanges) return;
+      hiddenChanges = false;
+      // Flush the exact changes received while hidden. Unknown permission
+      // events and reconnects still retain their full authorized-list refresh.
+      schedulePendingRefresh();
+    }
 
     function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event",
       { refreshThread = true, refreshAttribution = false } = {}) {
@@ -1100,8 +1122,8 @@ export default function Inbox() {
       if (sourceReason === "message_mutation") pendingMessageMutation = true;
       const id = Number(contactId);
       if (contactId != null && Number.isSafeInteger(id) && id > 0) {
-        pendingContactIds.add(id);
-        if (refreshThread) pendingThreadIds.add(id);
+        if (!pendingUnknownConversationChange) pendingContactIds.add(id);
+        if (refreshThread && !pendingUnknownThreadChange) pendingThreadIds.add(id);
       } else {
         // Never drop a redacted/unknown permission change merely because
         // an identified conversation changes in the same debounce window.
@@ -1111,9 +1133,23 @@ export default function Inbox() {
         pendingUnknownThreadChange ||= refreshThread;
         pendingUnknownConversationReason = sourceReason;
       }
+      // Bound memory for tabs left hidden through large event bursts.
+      if (pendingContactIds.size > 100 || pendingThreadIds.size > 100) {
+        pendingContactIds.clear();
+        pendingThreadIds.clear();
+        pendingUnknownConversationChange = true;
+        pendingUnknownThreadChange = true;
+      }
+      schedulePendingRefresh();
+    }
+
+    function schedulePendingRefresh() {
+      if (deferHiddenRefresh()) return;
       if (debounceTimer) clearTimeout(debounceTimer);
 
       debounceTimer = setTimeout(async () => {
+        debounceTimer = null;
+        if (deferHiddenRefresh()) return;
         const changedContacts = new Set(pendingContactIds);
         const unknownOrRedacted = pendingUnknownConversationChange;
         const unknownReason = pendingUnknownConversationReason;
@@ -1141,7 +1177,7 @@ export default function Inbox() {
             // deleted contact, backend failure or other missing summary.
             await refreshConversations("summary_fallback");
           }
-        } else {
+        } else if (unknownOrRedacted || changedContacts.size > 0) {
           // A reconnect or redacted staff SSE MUST always recheck the full
           // authorized list, even when known contacts also changed.
           await refreshConversations(
@@ -1181,6 +1217,12 @@ export default function Inbox() {
     function handleConversationChanged(event) {
       try {
         const payload = JSON.parse(event.data || "{}");
+        if (document.visibilityState === "hidden") {
+          // Inline edits/status/reaction patches are deferred too. Reload
+          // loaded rows only when this contact (or an unknown one) changed.
+          scheduleRefresh(payload.contactId ?? null, "message_mutation");
+          return;
+        }
         if (
           payload.message &&
           payload.contactId != null &&
@@ -1267,22 +1309,35 @@ export default function Inbox() {
         // Redacted or malformed signals are safe to recheck through the
         // permission-checked selected-contact endpoint only.
       }
+      if (document.visibilityState === "hidden") {
+        pendingAttributionRefresh = true;
+        schedulePendingRefresh();
+        return;
+      }
       void refreshAcquisitionContext(currentId);
     }
 
     const startup = createInboxLiveStartup({
-      loadInitial: () => { void refreshConversations("startup"); },
-      refreshOnReconnect: () => scheduleRefresh(null, "reconnect"),
+      loadInitial: () => {
+        if (document.visibilityState === "hidden") scheduleRefresh(null, "startup");
+        else void refreshConversations("startup");
+      },
+      refreshOnReconnect: () => {
+        pendingMessageMutation = true;
+        scheduleRefresh(null, "reconnect", {refreshAttribution:true});
+      },
     });
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.addEventListener("pipeline_changed", handlePipelineChanged);
     source.addEventListener("inbox_latest_ad_changed", handleLatestAdChanged);
     source.onopen = () => startup.onOpen();
     source.onerror = () => {};
+    document.addEventListener("visibilitychange", handleVisibilityChanged);
 
     return () => {
       startup.stop();
       if (debounceTimer) clearTimeout(debounceTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChanged);
       source.removeEventListener("conversation_changed", handleConversationChanged);
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.removeEventListener("inbox_latest_ad_changed", handleLatestAdChanged);

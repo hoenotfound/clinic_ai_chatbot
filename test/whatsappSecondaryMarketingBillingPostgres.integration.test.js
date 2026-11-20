@@ -6,6 +6,8 @@ const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const service=require("../src/services/whatsappSecondaryFollowUpService");
+const general=require("../src/services/neutroSecondaryGeneralMarketingSql");
+const {scopeSecondaryRead}=require("../src/utils/secondaryContactRead");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -120,6 +122,20 @@ test("approved secondary marketing billing requires one claimed attempt for each
     new Date(),"2026-11-01T00:00:00Z","ads_only",
     "2026-11-01T00:00:00Z",
   ]);
+  // Compile every contact-scoped selector against the same migrated schema.
+  const prefix=["ariel","100000000000002","200000000000002",new Date()];
+  const tail=["2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z"];
+  for(const [sql,params] of [
+    [service.CANDIDATES_SQL,[...prefix,10,...tail,null]],
+    [service.POTENTIAL_DUE_SQL,[...prefix,...tail,null]],
+    [marketing.CANDIDATES_SQL,[...prefix,10,...tail]],
+    [marketing.POTENTIAL_DUE_SQL,[...prefix,...tail]],
+    [marketing.EXTENDED_CANDIDATES_SQL,[...prefix,10,...tail]],
+    [marketing.EXTENDED_POTENTIAL_DUE_SQL,[...prefix,...tail]],
+    [general.CANDIDATES_SQL,[...prefix,10,...tail,null]],
+    [general.POTENTIAL_DUE_SQL,[...prefix,...tail,null]],
+  ]) await db.query(...scopeSecondaryRead("EXPLAIN "+sql,params,[Number(contact)]));
+
   // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
   // example; no historical attempts are opened or replayed.
   const due=await db.query(
