@@ -868,11 +868,16 @@ async function runOnce({
     // not evidence of what this 131060 customer wants.
     const generalOnly=candidate.recovery_no_selection?true:
       staffTopic?false:choice.generalOnly;
-    const effectivePolicy=followupTreatment
-      ? {ambiguous:false,treatment:followupTreatment,
-          source:staffTopic?"staff_discussed_followup":"resolved_followup"}
+    const effectivePolicy=confirmedTreatment
+      ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
       : adFollowUpPolicy;
-    candidate={...candidate,adFollowUpPolicy:effectivePolicy,
+    // Staff discussion is only the in-window copy/media topic. Keep the
+    // customer-verified policy and the persisted snapshot unchanged.
+    const discussionPolicy=staffTopic
+      ? {ambiguous:false,treatment:staffTopic.treatment,
+          source:"staff_discussed_followup"}
+      : effectivePolicy;
+    candidate={...candidate,adFollowUpPolicy:discussionPolicy,
       staff_discussed_followup_topic:staffTopic?.treatment||null};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
     // A generic "PM" provides no language evidence; fall back to the already
