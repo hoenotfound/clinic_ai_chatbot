@@ -89,6 +89,9 @@ test("PostgreSQL compiles candidate, pre-send and due-hint SQL with staff-topic 
   else process.env.NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER=oldAfter;
   delete require.cache[moduleId];
  }
+ const quietWindowMarker="   AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))";
+ assert.equal(active.CANDIDATES_SQL.split(quietWindowMarker).length-1,1,
+  "Only the original quiet-hours clause may match the due-hint derivation marker");
  assert.match(active.CANDIDATES_SQL,/previous_nudge\.slot_hours=2/);
  assert.match(active.RECHECK_SQL,/previous_nudge\.slot_hours=2/);
  const db=new Client({connectionString});
