@@ -100,8 +100,25 @@ const NEUTRAL_20H_FALLBACK=Object.freeze({
  en:"Hi 😊 If you have questions about the first assessment at Neutro Sense TCM, feel free to reply here. There is no need to decide now.",
  ms:"Hai 😊 Jika ada soalan tentang penilaian pertama di Neutro Sense TCM, boleh balas di sini bila-bila masa. Tak perlu buat keputusan sekarang.",
 });
+
+// A staff-discussed treatment is not a verified patient selection.
+// Do not inherit "you asked for X" from confirmed-treatment templates.
+function staffDiscussedFollowUpText({slot,language,treatment}={}) {
+ const name=String(treatment||"").trim();
+ if(!name || ![2,6].includes(Number(slot)))return null;
+ if(language==="zh")return Number(slot)===2
+  ? "Hi～之前我们有跟你介绍"+name+"的护理方向 😊 若想了解过程或一对一评估方式，我可以再说明。是否适合需要中医师评估哦。"
+  : "关于之前介绍的"+name+"，还有什么想了解的地方吗？😊 可以先了解评估流程，不需要急着决定。";
+ if(language==="en")return Number(slot)===2
+  ? "Hi! Our team previously discussed "+name+" as a possible care option 😊 Would you like to know about the assessment or what the visit involves? Suitability is assessed individually."
+  : "Any questions about the "+name+" option our team discussed? 😊 We can explain the first assessment, with no need to decide now.";
+ if(language==="ms")return Number(slot)===2
+  ? "Hai! Pasukan kami ada terangkan "+name+" sebagai salah satu pilihan penjagaan 😊 Nak tahu tentang penilaian atau proses lawatan? Kesesuaian bergantung pada penilaian."
+  : "Ada soalan tentang pilihan "+name+" yang kami terangkan tadi? 😊 Kami boleh jelaskan penilaian pertama dahulu, tak perlu buat keputusan sekarang.";
+ return null;
+}
 function neutral20hFallbackText(language){
  return Object.prototype.hasOwnProperty.call(NEUTRAL_20H_FALLBACK,language)
    ? NEUTRAL_20H_FALLBACK[language] : null;
 }
-module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,isBarePostpartumConcernAnswer};
+module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,staffDiscussedFollowUpText,isBarePostpartumConcernAnswer};
