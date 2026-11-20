@@ -64,7 +64,15 @@ function resolveStaffDiscussedFollowUpTopic({turns,clinicConfig,lastConfirmedMes
     const staff=ordered[index];
     if(staff.role!=="assistant" || Number(staff.id)<=confirmedId)continue;
     const treatment=staffService(staff.content,clinicConfig,candidates);
-    if(!treatment)continue;
+    if(!treatment) {
+      // A newer staff comparison supersedes an older one-service suggestion.
+      // Bundle inclusions and caption checklists are not a new comparison.
+      const named=mentioned(staff.content,candidates);
+      if(STAFF_OFFER.test(staff.content) && named.length>1 &&
+          !/(?:包含|包括|内含|內含|includes?|✅|✨)/iu.test(staff.content))
+        return null;
+      continue;
+    }
     const after=ordered.slice(index+1).filter(turn=>turn.role==="user");
     if(after.some(turn=>CANCEL.test(turn.content) ||
       mentioned(turn.content,candidates).some(name=>name!==treatment)))return null;
