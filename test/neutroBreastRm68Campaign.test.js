@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
 const { isDefiniteAppointmentCancellation } = require("../src/utils/appointmentCancellationSafety");
 const {
-  CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, campaignCreativeMatches,
+  CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches,
   campaignDay, firstReply, hasCampaignConversation, isOtherTreatmentQuery,
   isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
   campaignFollowUp,
@@ -42,6 +42,28 @@ test("RM68 creative verification fails closed for unrelated ads", () => {
   assert.equal(campaignCreativeMatches({ adName: "Breast Care RM68 Trial" }), true);
   assert.equal(campaignCreativeMatches({ campaignName: "胸部护理 RM68" }), true);
   assert.equal(campaignCreativeMatches(null), false);
+});
+
+test("RM68 first-turn recogniser supports short prefills, not unrelated or booking messages", () => {
+  for (const message of [
+    PREFILL, FOLLOWUP_PREFILL,
+    "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】",
+    "你好！我想了解【胸部专业检查 RM68体验优惠】",
+    "请问 RM68 胸部护理体验还有吗？",
+  ]) assert.equal(isSimpleRm68Enquiry(message), true, message);
+  for (const message of [
+    "你好，想了解黄金脉冲技术",
+    "我想了解 RM688 胸部护理",
+    "我对 RM68 盆骨护理有兴趣",
+    "我想了解 RM68 胸部护理，还可以预约明天吗？",
+    "我想了解 RM68 胸部护理的副作用",
+    "请问 RM68 胸部护理在哪里？",
+  ]) assert.equal(isSimpleRm68Enquiry(message), false, message);
+  const shortened = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】";
+  assert.equal(hasCampaignConversation([
+    { role: "user", content: shortened }, { role: "assistant", content: firstReply(early) },
+  ]), true, "a recognised shortened enquiry retains RM68 continuity once the welcome was sent");
+  assert.equal(hasCampaignConversation([{ role: "user", content: shortened }]), false);
 });
 
 test("RM68 date options change on Malaysian calendar without inventing a booking", () => {
