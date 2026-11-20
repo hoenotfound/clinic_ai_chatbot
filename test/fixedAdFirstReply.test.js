@@ -78,7 +78,19 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
   assert.equal(fixed?.campaignKey, "neutro_breast_rm68_2026");
   assert.equal(fixed?.serviceQuery, false, "mixed treatment ad cannot enable wrong results media");
   assert.equal(fixed?.treatment, null);
-  assert.equal(run({ metaAdContext: null }), null, "organic copy/paste is not a proven Meta ad");
+  const unattributed = run({ metaAdContext: null });
+  assert.equal(unattributed?.campaignKey, "neutro_breast_rm68_2026",
+    "an exact first-time RM68 enquiry should not be silenced by missing Meta referral");
+  assert.equal(unattributed?.reply, expected);
+  assert.equal(unattributed?.serviceQuery, false,
+    "missing ad attribution must not authorize results media or a treatment guess");
+  assert.equal(run({ metaAdContext: null, currentAdReferral: {
+    source: "meta_ads", sourceType: "ad", adId: "unrelated-ad",
+    headline: "骨盆 RM388", body: "骨盆调理优惠",
+  } }), null, "a conflicting live ad referral cannot authorize RM68");
+  assert.equal(run({ metaAdContext: { ...campaignAd,
+    headline: "骨盆 RM388", body: "骨盆调理",
+  } }), null, "a verified but unrelated saved ad cannot authorize RM68");
   assert.equal(run({ config: { ...config, enabled: false } }), null);
   assert.equal(run({ businessName: "Other Clinic" }), null);
   assert.equal(run({ isFirstMessage: false }), null);
@@ -105,6 +117,37 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
       conversationHistory: [{ role: "user", content: edited }],
     })?.campaignKey, undefined, "other or edited enquiries must not use the campaign: " + edited);
   }
+});
+
+test("unattributed secondary WhatsApp RM68 opt-in prefill answers without staff review", () => {
+  const customerText = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
+  const campaignNow = Date.parse("2026-11-19T09:13:56Z");
+  const result = attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: null, metaAdCreativeService: null, currentAdReferral: null,
+    now: campaignNow,
+  });
+  assert.equal(result?.campaignKey, "neutro_breast_rm68_2026");
+  assert.match(result?.reply || "", /首次体验只需 RM68/);
+  assert.match(result?.reply || "", /具体名额需要由门店确认/);
+  assert.match(result?.reply || "", /12月5日.*12月6日/s);
+  assert.doesNotMatch(result?.reply || "", /RM388/);
+  assert.equal(result?.serviceQuery, false);
+  assert.equal(result?.treatment, null);
+  assert.equal(attempt({
+    customerText, conversationHistory: [
+      { role: "assistant", content: "prior conversation" },
+      { role: "user", content: customerText },
+    ],
+    metaAdContext: null, metaAdCreativeService: null, currentAdReferral: null,
+    isFirstMessage: false, now: campaignNow,
+  }), null, "a returning unattributed chat must not replay the campaign opener");
+  const medical = customerText + " 我有乳房肿块可以做吗？";
+  assert.equal(attempt({
+    customerText: medical, conversationHistory: [{ role: "user", content: medical }],
+    metaAdContext: null, metaAdCreativeService: null,
+    now: campaignNow,
+  }), null, "edited clinical questions still go through medical review");
 });
 
 test("returning RM68 Meta-ad enquiry uses THIS signed referral instead of old lead attribution", () => {
@@ -176,7 +219,8 @@ test("new Neutro RM68 opt-in-style CTWA prefill preserves campaign intro and gua
   assert.match(first?.reply || "", /12月5日 & 6日/);
   assert.doesNotMatch(first?.reply || "", /RM388/);
   assert.equal(first?.treatment, null, "do not confuse RM68 chest with regular Pulse Wave");
-  assert.equal(run({ metaAdContext: null }), null);
+  assert.equal(run({ metaAdContext: null })?.campaignKey, "neutro_breast_rm68_2026",
+    "exact opted-in first enquiry can receive the approved offer without Meta referral");
   assert.equal(run({ metaAdContext: { ...campaignAd,
     headline: "黄金脉冲技术 RM388", body: "一般脉冲波护理" } }), null);
   assert.equal(run({ hasStaffHandoff: true }), null);
