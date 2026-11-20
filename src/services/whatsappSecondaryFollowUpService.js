@@ -513,7 +513,7 @@ const CANDIDATES_SQL=`
    ) AS customer_texts,
    -- Read-only, sender-bound staff/customer turns for optional service-window
    -- follow-up topic selection. Not marketing consent or customer selection.
-   ARRAY(SELECT jsonb_build_object(
+   CASE WHEN $10::boolean THEN ARRAY(SELECT jsonb_build_object(
        'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
        'created_at',topic.created_at)
      FROM messages topic
@@ -535,7 +535,7 @@ const CANDIDATES_SQL=`
          AND topic.sent_by_username<>'Follow-up automation'
          AND topic.is_automated_follow_up IS DISTINCT FROM TRUE))
      ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
-   ) AS followup_topic_turns
+   ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
@@ -828,6 +828,7 @@ async function runOnce({
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
+    staffTopicFeatureEnabled(env),
   ],"candidate",env)).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
