@@ -860,14 +860,16 @@ async function runOnce({
           turns:candidate.followup_topic_turns,clinicConfig,
           lastConfirmedMessageId:candidate.verified_treatment_source_message_id,
         }) : null;
-    const selectedFollowupTopic=staffTopic?.treatment||choice.treatment;
+    // Keep the verified customer selection distinct from a staff-led topic.
+    // Existing follow-up snapshots and cross-step checks still use ONLY this.
+    const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
+    const followupTreatment=staffTopic?.treatment||confirmedTreatment;
     // Without readable patient intent, even an old CRM/ad treatment is
     // not evidence of what this 131060 customer wants.
     const generalOnly=candidate.recovery_no_selection?true:
       staffTopic?false:choice.generalOnly;
-    const confirmedTreatment=candidate.recovery_no_selection?null:selectedFollowupTopic;
-    const effectivePolicy=confirmedTreatment
-      ? {ambiguous:false,treatment:confirmedTreatment,
+    const effectivePolicy=followupTreatment
+      ? {ambiguous:false,treatment:followupTreatment,
           source:staffTopic?"staff_discussed_followup":"resolved_followup"}
       : adFollowUpPolicy;
     candidate={...candidate,adFollowUpPolicy:effectivePolicy,
@@ -883,8 +885,8 @@ async function runOnce({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
       languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
-      treatmentInterest:confirmedTreatment,
-      selectedTreatment:confirmedTreatment,
+      treatmentInterest:followupTreatment,
+      selectedTreatment:followupTreatment,
       clinicConfig,
       forceGeneral:generalOnly,
     });
@@ -952,7 +954,7 @@ async function runOnce({
         !candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
-          slot,treatmentInterest:confirmedTreatment,
+          slot,treatmentInterest:followupTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
       let key=(staffVideoSent || generalOnly || candidate.staff_reply ||
@@ -1047,6 +1049,7 @@ async function runOnce({
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             slotHours:slot,anchorMessageId:candidate.inbound_id,
             treatmentInterest:confirmedTreatment||null,
+            discussionTreatment:staffTopic?.treatment||null,
             recoveryNoSelection:candidate.recovery_no_selection===true},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
