@@ -23,6 +23,8 @@ const {classifyVerifiedTreatmentTurn,isStoppedDecision,
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
+const {resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled}=
+  require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
 const {isVerifiedFailedVideo,textWithoutVideo}=
@@ -486,6 +488,7 @@ const CANDIDATES_SQL=`
    ) AS verified_meta_ad,
    treatment_state.status AS verified_treatment_status,
    treatment_state.treatment_name AS verified_treatment_name,
+   treatment_state.source_message_id AS verified_treatment_source_message_id,
    ad_followup.source AS ad_followup_source,
    ad_followup.headline AS ad_followup_headline,
    ad_followup.body AS ad_followup_body,
@@ -507,7 +510,32 @@ const CANDIDATES_SQL=`
        AND (language_turn.created_at,language_turn.id)
            <= (inbound.created_at,inbound.id)
      ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 20
-   ) AS customer_texts
+   ) AS customer_texts,
+   -- Read-only, sender-bound staff/customer turns for optional service-window
+   -- follow-up topic selection. Not marketing consent or customer selection.
+   CASE WHEN ${process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==='true' ? 'TRUE' : 'FALSE'} THEN ARRAY(SELECT jsonb_build_object(
+       'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
+       'created_at',topic.created_at)
+     FROM messages topic
+     JOIN whatsapp_sender_message_context topic_context
+       ON topic_context.message_id=topic.id AND topic_context.conversation_id=sc.id
+     WHERE topic.contact_id=c.id
+       AND topic.created_at>=inbound.created_at-INTERVAL '24 hours'
+       AND topic.created_at<=$4::timestamptz
+       AND topic.whatsapp_message_id IS NOT NULL
+       AND topic.delivery_status IS DISTINCT FROM 'failed'
+       AND topic.is_forwarded IS DISTINCT FROM TRUE
+       AND COALESCE(topic.whatsapp_customer_mutation,'')=''
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.sender_id=sa.id AND historical.message_id=topic.id
+       )
+       AND (topic.role='user' OR
+         (topic.role='assistant' AND topic.sent_by_username IS NOT NULL
+         AND topic.sent_by_username<>'Follow-up automation'
+         AND topic.is_automated_follow_up IS DISTINCT FROM TRUE))
+     ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
+   ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
@@ -821,15 +849,36 @@ async function runOnce({
     const choice=chooseSecondaryFollowUpTreatment({
       candidate,clinicConfig,adFollowUpPolicy,latestDecision,
     });
+    // A later staff-recommended care topic can guide an in-window service
+    // reminder, but NEVER modifies verified selection or marketing consent.
+    // An unresolved comparison, refusal or 131060 no-selection cannot switch.
+    const staffTopic=staffTopicFeatureEnabled(env) &&
+      !candidate.recovery_no_selection &&
+      latestDecision?.status!=="ambiguous" &&
+      candidate.verified_treatment_status!=="ambiguous"
+      ? resolveStaffDiscussedFollowUpTopic({
+          turns:candidate.followup_topic_turns,clinicConfig,
+          lastConfirmedMessageId:candidate.verified_treatment_source_message_id,
+        }) : null;
+    // Keep the verified customer selection distinct from a staff-led topic.
+    // Existing follow-up snapshots and cross-step checks still use ONLY this.
+    const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
+    const followupTreatment=staffTopic?.treatment||confirmedTreatment;
     // Without readable patient intent, even an old CRM/ad treatment is
     // not evidence of what this 131060 customer wants.
-    const generalOnly=candidate.recovery_no_selection?true:choice.generalOnly;
-    const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
-    // The 20h AI invitation must not reuse a stale CRM/ad treatment either.
+    const generalOnly=candidate.recovery_no_selection?true:
+      staffTopic?false:choice.generalOnly;
     const effectivePolicy=confirmedTreatment
       ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
       : adFollowUpPolicy;
-    candidate={...candidate,adFollowUpPolicy:effectivePolicy};
+    // Staff discussion is only the in-window copy/media topic. Keep the
+    // customer-verified policy and the persisted snapshot unchanged.
+    const discussionPolicy=staffTopic
+      ? {ambiguous:false,treatment:staffTopic.treatment,
+          source:"staff_discussed_followup"}
+      : effectivePolicy;
+    candidate={...candidate,adFollowUpPolicy:discussionPolicy,
+      staff_discussed_followup_topic:staffTopic?.treatment||null};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
@@ -841,8 +890,8 @@ async function runOnce({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
       languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
-      treatmentInterest:confirmedTreatment,
-      selectedTreatment:confirmedTreatment,
+      treatmentInterest:followupTreatment,
+      selectedTreatment:followupTreatment,
       clinicConfig,
       forceGeneral:generalOnly,
     });
@@ -910,7 +959,7 @@ async function runOnce({
         !candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
-          slot,treatmentInterest:confirmedTreatment,
+          slot,treatmentInterest:followupTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
       let key=(staffVideoSent || generalOnly || candidate.staff_reply ||
@@ -1005,6 +1054,7 @@ async function runOnce({
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             slotHours:slot,anchorMessageId:candidate.inbound_id,
             treatmentInterest:confirmedTreatment||null,
+            discussionTreatment:staffTopic?.treatment||null,
             recoveryNoSelection:candidate.recovery_no_selection===true},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,

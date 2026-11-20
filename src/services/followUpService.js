@@ -12,6 +12,8 @@ const { createCoalescedImmediateWake, followUpChangeRequiresWake,
   primaryPipelineChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const {resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled} =
+  require("../utils/followUpCurrentTopic");
 const { campaignFollowUp } = require("../utils/neutroBreastRm68Campaign");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { resolveAdFollowUpTreatment, neutralMixedAdFollowUp } =
@@ -671,16 +673,29 @@ function activePromotionFollowUpStillConfigured(
 }
 
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
+  // Follow-up-only, sender-verified staff discussion. Nothing here updates
+  // the reply model, CRM, marketing permission or Before & After triggers.
+  const staffTopic = staffTopicFeatureEnabled() &&
+    candidate.channel === "whatsapp" &&
+    clinicConfig.businessType === "tcm_clinic" &&
+    /^Neutro Sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+    !candidate.adFollowUpPolicy?.ambiguous
+    ? resolveStaffDiscussedFollowUpTopic({
+        turns:candidate.followup_topic_turns,clinicConfig,
+      }) : null;
   let promotionPackageSelection = null;
-  if (stepIndex === 1) {
+  // Staff's new discussion topic must not resurrect an old ad's promo.
+  if (stepIndex === 1 && !staffTopic) {
     const promotionFollowUp = promotionFollowUpForCandidate(candidate, language);
     if (promotionFollowUp?.promotionFollowUp) return promotionFollowUp;
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
-  const currentService = candidate.adFollowUpPolicy
-    ? {mentioned:true,serviceName:candidate.adFollowUpPolicy.treatment}
-    : followUpServiceContext(candidate);
+  const currentService = staffTopic
+    ? {mentioned:true,serviceName:staffTopic.treatment}
+    : candidate.adFollowUpPolicy
+      ? {mentioned:true,serviceName:candidate.adFollowUpPolicy.treatment}
+      : followUpServiceContext(candidate);
   const overrideForService = (serviceName) =>
     step.serviceOverrides.find(
       (item) =>
@@ -726,6 +741,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     selectedVoiceNote: mediaSource ? selectedVoiceNote(mediaSource.voiceNotes, language) : null,
     promotionFollowUp: false,
     promotionPackageSelection,
+    staffDiscussedFollowupTopic:staffTopic?.treatment||null,
   };
 }
 
@@ -1491,6 +1507,7 @@ async function sendCandidate(candidate) {
             triggerMessageId: candidate.trigger_message_id,
             stepNumber: stepIndex,
             treatmentInterest:
+              fallbackSelection.staffDiscussedFollowupTopic ||
               aiContext.lead?.treatment_interest || candidate.treatment_interest,
             stageName: aiContext.lead?.stage_name,
             branchName: aiContext.lead?.branch_name,

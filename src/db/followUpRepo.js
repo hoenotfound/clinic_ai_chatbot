@@ -305,7 +305,28 @@ async function findCandidates({
                  latest_inbound.created_at - interval '24 hours'
            ORDER BY service_inbound.created_at DESC, service_inbound.id DESC
            LIMIT 10
-         ) AS recent_service_messages
+         ) AS recent_service_messages,
+         -- Follow-up-only context, separate from verified treatment, pricing
+         -- triggers, Before & After selection and AI reply history.
+         CASE WHEN c.channel='whatsapp' AND
+           ${process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==='true' ? 'TRUE' : 'FALSE'} THEN ARRAY(
+           SELECT jsonb_build_object(
+             'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
+             'created_at',topic.created_at)
+           FROM messages topic
+           WHERE topic.contact_id=c.id
+             AND topic.created_at>=latest_inbound.created_at-INTERVAL '24 hours'
+             AND topic.created_at<=now()
+             AND topic.whatsapp_message_id IS NOT NULL
+             AND topic.delivery_status IS DISTINCT FROM 'failed'
+             AND COALESCE((to_jsonb(topic)->>'is_forwarded')::boolean,FALSE)=FALSE
+             AND COALESCE(to_jsonb(topic)->>'whatsapp_customer_mutation','')=''
+             AND (topic.role='user' OR
+               (topic.role='assistant' AND topic.sent_by_username IS NOT NULL
+               AND topic.sent_by_username<>'Follow-up automation'
+               AND COALESCE((to_jsonb(topic)->>'is_automated_follow_up')::boolean,FALSE)=FALSE))
+           ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
+         ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
        FROM recent_inbound_contacts recent
        JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
@@ -457,6 +478,7 @@ async function findCandidates({
        trigger_message_content,
        recent_inbound_messages,
        recent_service_messages,
+       followup_topic_turns,
        treatment_interest,
        ad_followup_source,
        ad_followup_headline,
