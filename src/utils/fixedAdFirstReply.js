@@ -13,7 +13,7 @@ const {
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
-const { CAMPAIGN_KEY, isNeutro, isExactPrefill, campaignCreativeMatches, firstReply } =
+const { CAMPAIGN_KEY, isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, firstReply } =
   require("./neutroBreastRm68Campaign");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -167,15 +167,18 @@ function resolveFixedAdFirstReply({
   // with this independently approved campaign copy. Do not infer Meta ad
   // attribution, and never accept missing evidence for other treatments,
   // returning contacts, edited messages or a conflicting known referral.
-  const unattributedRm68FirstTurn = firstTurn && isNeutro(businessName) &&
-    isExactPrefill(customerText) && !hasClinicalMediaRisk(customerText) &&
+  const safeRm68Enquiry = isNeutro(businessName) &&
+    isSimpleRm68Enquiry(customerText) && !hasClinicalMediaRisk(customerText);
+  const unattributedRm68FirstTurn = firstTurn && safeRm68Enquiry &&
     !metaAdContext && !currentAdReferral;
   if (!freshSavedAttribution && !liveRm68Ad && !unattributedRm68FirstTurn)
     return skip("missing_or_stale_attribution");
   // A current provider referral outranks older saved attribution. If one is
   // present but points to a different campaign, do not send the RM68 offer.
-  if (!hasClinicalMediaRisk(customerText) && isNeutro(businessName) &&
-      isExactPrefill(customerText) &&
+  if (safeRm68Enquiry &&
+      // Returning conversations still require the EXACT approved prefill
+      // and a new signed RM68 ad referral, never a fuzzy historical match.
+      (firstTurn || isExactPrefill(customerText)) &&
       (unattributedRm68FirstTurn || (liveMetaAd ? liveRm68Ad :
         freshSavedAttribution && campaignCreativeMatches(metaAdContext)))) {
     return {

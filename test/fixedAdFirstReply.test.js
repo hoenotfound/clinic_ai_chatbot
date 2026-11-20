@@ -109,13 +109,64 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
   for (const edited of [
     customerText + "我有乳房肿块怎么办？",
     customerText + "请问今天可以预约吗？",
-    "你好！我想了解【胸部专业检查 RM68体验优惠】",
     "你好！想了解你们家的【黄金脉冲技术】",
   ]) {
     assert.equal(run({
       customerText: edited,
       conversationHistory: [{ role: "user", content: edited }],
     })?.campaignKey, undefined, "other or edited enquiries must not use the campaign: " + edited);
+  }
+});
+
+test("Shirly shortened RM68 enquiry and clear paraphrases send campaign copy before AI", () => {
+  const campaignNow = Date.parse("2026-11-19T02:51:46Z");
+  const campaignAd = {
+    attributedAt: new Date(campaignNow).toISOString(),
+    headline: "由KKM认证中医师操作",
+    body: "Neutro Sense TCM 胸部护理限时体验，只需 RM68！",
+  };
+  const cases = [
+    "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】",
+    "你好！我想了解【胸部专业检查 RM68体验优惠】",
+    "请问 RM68 胸部护理体验还有吗？",
+    "我想了解 RM68 胸部专业检查",
+  ];
+  for (const customerText of cases) {
+    for (const metaAdContext of [campaignAd, null]) {
+      const result = attempt({
+        customerText, conversationHistory: [{ role: "user", content: customerText }],
+        metaAdContext, currentAdReferral: null, metaAdCreativeService: null, now: campaignNow,
+      });
+      assert.equal(result?.campaignKey, "neutro_breast_rm68_2026", customerText);
+      assert.match(result.reply, /首次体验只需 RM68/);
+      assert.match(result.reply, /全程约 1小时30分钟/);
+      assert.equal(result.serviceQuery, false, "ordinary RM388 media must not be selected");
+    }
+  }
+  const customerText = cases[0];
+  const run = (extra = {}) => attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: campaignAd, metaAdCreativeService: null, now: campaignNow, ...extra,
+  });
+  assert.equal(run({ isFirstMessage: false }), null);
+  assert.equal(run({ hasExistingBooking: true }), null);
+  assert.equal(run({ hasStaffHandoff: true }), null);
+  assert.equal(run({ metaAdContext: { ...campaignAd, body: "骨盆调理 RM388" } }), null);
+  assert.equal(run({ metaAdContext: { ...campaignAd,
+    attributedAt: new Date(campaignNow - 8 * 86400000).toISOString(),
+  } }), null);
+  for (const edited of [
+    customerText + " 我有乳房肿块怎么办？",
+    customerText + " 我明天要预约",
+    customerText + " 骨盆配套也有吗",
+    customerText + " 要取消预约",
+    "我想了解 RM688 胸部护理",
+    "我想了解 RM68 骨盆护理",
+  ]) {
+    assert.equal(run({
+      customerText: edited,
+      conversationHistory: [{ role: "user", content: edited }],
+    }), null, edited);
   }
 });
 
