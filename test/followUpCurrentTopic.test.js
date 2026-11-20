@@ -82,3 +82,82 @@ test("staff topics are used only in follow-up services, not result or marketing 
   assert.doesNotMatch(fs.readFileSync(path.join(__dirname,"..",file),"utf8"),/followUpCurrentTopic/);
  }
 });
+
+
+test("negative staff recommendations in Chinese, English and Malay never pick an older pelvic offer",()=>{
+ for(const negative of [
+  "现在不建议做骨盆调理", "Package A 不适合你",
+  "I would not recommend Package A", "Package A tidak sesuai buat masa ini",
+ ]) {
+  assert.equal(resolveStaffDiscussedFollowUpTopic({
+   turns:[...conversation,at(109,"assistant",negative)],
+   clinicConfig:cfg,lastConfirmedMessageId:101,
+  }),null,negative);
+ }
+});
+test("a newer customer-confirmed pulse preference cannot be overridden by staff upselling pelvic",()=>{
+ const turns=[...conversation.slice(0,4),
+  at(105,"user","我想先了解脉冲波调理"),
+  at(106,"assistant","我会推荐 Package A")];
+ assert.equal(resolveStaffDiscussedFollowUpTopic({turns,clinicConfig:cfg,
+  lastConfirmedMessageId:105}),null);
+});
+test("unrelated staff offers and generic package questions cannot invent treatment interest",()=>{
+ assert.equal(resolveStaffDiscussedFollowUpTopic({
+  turns:[at(1,"user","脉冲波想了解"),
+    at(2,"user","哪个配套呢"),
+    at(3,"assistant","推荐 Package A")],clinicConfig:cfg}),null);
+ assert.equal(resolveStaffDiscussedFollowUpTopic({
+  turns:[at(1,"user","肚子一直瘦不下来"),
+    at(2,"assistant","我建议 3D 小颜术")],clinicConfig:cfg}),null);
+ assert.equal(resolveStaffDiscussedFollowUpTopic({
+  turns:[at(1,"user","肚子是哪个配套"),
+    at(2,"assistant","推荐 Package ABC")],clinicConfig:cfg}),null);
+});
+test("declined later customer service stops staff-led topic selection",()=>{
+ assert.equal(resolveStaffDiscussedFollowUpTopic({
+  turns:[...conversation,at(109,"user","我不想做骨盆调理")],
+  clinicConfig:cfg,lastConfirmedMessageId:101}),null);
+});
+test("existing primary promotional follow-up still precedes staff-discussion fallback",()=>{
+ const primary=fs.readFileSync(path.join(__dirname,"../src/services/followUpService.js"),"utf8");
+ assert.match(primary,/if \(stepIndex === 1\) \{\s*const promotionFollowUp = promotionFollowUpForCandidate/);
+ assert.doesNotMatch(primary,/if \(stepIndex === 1 && !staffTopic\)/);
+ const secondary=fs.readFileSync(path.join(__dirname,
+  "../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
+ assert.match(secondary,/const confirmedTreatment=candidate\.recovery_no_selection\?null:choice\.treatment/);
+ assert.match(secondary,/discussionTreatment:staffTopic\?\.treatment\|\|null/);
+});
+test("secondary staff discussion captions never call a suggested treatment patient-selected",()=>{
+ const {staffDiscussedFollowUpText}=require("../src/services/whatsappSecondaryFollowUpLanguage");
+ for(const lang of ["zh","en","ms"]){
+  for(const slot of [2,6]){
+   const copy=staffDiscussedFollowUpText({slot,language:lang,treatment:"骨盆调理"});
+   assert.ok(copy?.includes("骨盆调理"),lang+slot);
+   assert.ok(!/你之前想了解骨盆|you asked for|you chose|you selected/iu.test(copy),lang+slot);
+  }
+ }
+});
+test("secondary booking nudge requires fresh, bounded evidence and cannot unlock 20h",()=>{
+ const service=require("../src/services/whatsappSecondaryFollowUpService");
+ assert.equal(service.bookingQuestionNudgeSql("NOW()",{}),"FALSE");
+ assert.equal(service.bookingQuestionNudgeSql("NOW()",{
+  NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED:"true",
+  NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER:"bad"}),"FALSE");
+ const sql=service.bookingQuestionNudgeSql("NOW()",{
+  NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED:"true",
+  NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER:"2026-11-21T00:00:00Z"});
+ for(const required of ["slot_hours=6","first_reply.staff_question",
+  "previous_nudge.slot_hours=2","previous_nudge.status='accepted'",
+  "previous_nudge.completed_at < first_reply.at",
+  "BETWEEN 8 AND 20","2026-11-21T00:00:00.000Z"]){
+  assert.ok(sql.includes(required),required);
+ }
+ assert.ok(!sql.includes("rule.slot_hours=20"));
+ const source=fs.readFileSync(path.join(__dirname,
+  "../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
+ assert.match(source,/bookingQuestionNudgeSql\('\$4::timestamptz'\)/);
+ assert.match(source,/bookingQuestionNudgeSql\('NOW\(\)'\)/);
+ assert.match(source,/candidate\.staff_reply && candidate\.staff_question\s*\?\s*gentleStaffQuestionNudge/);
+ assert.match(source,/!candidate\.staff_reply && !generalOnly/);
+});

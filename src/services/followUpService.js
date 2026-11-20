@@ -684,8 +684,10 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
         turns:candidate.followup_topic_turns,clinicConfig,
       }) : null;
   let promotionPackageSelection = null;
-  // Staff's new discussion topic must not resurrect an old ad's promo.
-  if (stepIndex === 1 && !staffTopic) {
+  // Preserve the established promotion-specific eligibility, exact caption
+  // and graphic selection. Staff discussion only affects the normal fallback
+  // when the existing promotion logic does not select a valid offer.
+  if (stepIndex === 1) {
     const promotionFollowUp = promotionFollowUpForCandidate(candidate, language);
     if (promotionFollowUp?.promotionFollowUp) return promotionFollowUp;
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
