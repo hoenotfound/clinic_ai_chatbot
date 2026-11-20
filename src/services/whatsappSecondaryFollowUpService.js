@@ -456,9 +456,9 @@ const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3:
 // One optional, gentle booking-question nudge after the 2h reminder was
 // accepted BEFORE staff asked about availability. Never unlocks 20h or media.
 // Only fresh questions after a configured UTC rollout time are eligible.
-function bookingQuestionNudgeSql(nowSql) {
- const raw=String(process.env.NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER||"").trim();
- if(!staffTopicFeatureEnabled(process.env) ||
+function bookingQuestionNudgeSql(nowSql,env=process.env) {
+ const raw=String(env.NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER||"").trim();
+ if(!staffTopicFeatureEnabled(env) ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(raw))
   return "FALSE";
  const ms=Date.parse(raw);
@@ -1198,6 +1198,6 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  CANDIDATES_SQL,RECHECK_SQL,RECENT_STAFF_VIDEO_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
- serviceFollowupParityActivation,runOnce,
+ serviceFollowupParityActivation,bookingQuestionNudgeSql,runOnce,
  nextPotentialDueAt,start,stop,
 };
