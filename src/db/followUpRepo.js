@@ -308,7 +308,8 @@ async function findCandidates({
          ) AS recent_service_messages,
          -- Follow-up-only context, separate from verified treatment, pricing
          -- triggers, Before & After selection and AI reply history.
-         CASE WHEN c.channel='whatsapp' THEN ARRAY(
+         CASE WHEN c.channel='whatsapp' AND
+           ${process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==='true' ? 'TRUE' : 'FALSE'} THEN ARRAY(
            SELECT jsonb_build_object(
              'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
              'created_at',topic.created_at)
