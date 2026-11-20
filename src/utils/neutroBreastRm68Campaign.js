@@ -17,6 +17,26 @@ function normalize(value) {
 function isExactPrefill(value) {
   return [PREFILL, FOLLOWUP_PREFILL].some((prefill) => normalize(value) === normalize(prefill));
 }
+// This recognises a customer explicitly asking about the advertised RM68
+// breast-care offer, including shorter/edited Meta prefills. It does NOT
+// establish ad attribution or marketing consent. Only the first-turn reply
+// policy may use it, after checking clinical, staff, booking and sender gates.
+function isSimpleRm68Enquiry(value) {
+  if (isExactPrefill(value)) return true;
+  const raw = normalize(value);
+  if (raw.length < 12 || raw.length > 240 || /[\r\n]/u.test(String(value || ""))) return false;
+  if (!/\b(?:RM|MYR)\s*68\b/iu.test(raw) ||
+      !/(?:胸部|乳腺|乳房|breast|payudara)/iu.test(raw) ||
+      !/(?:专业检查|專業檢查|健康评估|健康評估|护理|護理|体验|體驗|优惠|優惠|assessment|check(?:up)?|care|trial|promotion|promo|offer)/iu.test(raw) ||
+      !/(?:我对|我對|想了解|想知道|请问|請問|咨询|諮詢|有兴趣|有興趣|優惠|优惠|体验|體驗|interested|want to know|like to know|berminat|nak tahu|promo|promotion|trial|offer)/iu.test(raw)) return false;
+  // Mixed treatments, cancellations, requests for staff or personalised
+  // medical/appointment advice must remain in the normal AI/review path.
+  if (isOtherTreatmentQuery(raw) ||
+      /(?:骨盆|盆骨|3\s*d|9\s*d|子宫|子宮|产后|產後|hifu|facial|pelvic|postpartum|退订|退訂|停止|退款|取消|换个|換個|不感兴趣|不感興趣|没兴趣|沒興趣|人工|客服|员工|員工)/iu.test(raw) ||
+      /(?:今天|明天|后天|後天|下午|上午|早上|晚上|今晚|周末|週末|星期[一二三四五六日天]|礼拜[一二三四五六日天]|禮拜[一二三四五六日天]|预约|預約|改期|多少[钱錢]|[价價][钱錢]|多久|多长|多長|包括|包含|副作用|治疗|治療|可以治|是否适合|是否適合|怎么|怎麼|如何|地址|地点|地點|在哪里|在哪裡|\b(?:today|tomorrow|book(?:ing)?|schedule|reschedul(?:e|ing)|after|before|pregnan(?:t|cy)|surgery|cancer|pain|location|address|where|how|why|when)\b)/iu.test(raw)) return false;
+  return true;
+}
+
 function isNeutro(businessName) {
   return /^neutro\s+sense\s+tcm(?:\s+centre)?$/iu.test(String(businessName || "").trim());
 }
@@ -92,7 +112,7 @@ function isCampaignOpening(text) {
 }
 function hasCampaignConversation(history) {
   const messages = Array.isArray(history) ? history : [];
-  const first = messages.findIndex(row => row?.role === "user" && isExactPrefill(row.content));
+  const first = messages.findIndex(row => row?.role === "user" && isSimpleRm68Enquiry(row.content));
   return first >= 0 && messages.slice(first + 1).some(
     row => row?.role === "assistant" && isCampaignOpening(row.content)
   );
@@ -210,7 +230,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
 
 module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
-  isNeutro, isExactPrefill, campaignCreativeMatches, campaignDay,
+  isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
   campaignContextReply, guardCampaignPriceConflicts,
