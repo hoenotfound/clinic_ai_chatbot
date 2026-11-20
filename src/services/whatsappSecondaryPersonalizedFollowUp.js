@@ -83,7 +83,10 @@ async function createPersonalized20h({
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
-     instruction:"Second WhatsApp number; 20-hour follow-up. Reply naturally in the customer's language. Prioritize a free 1-to-1 posture assessment and experience when appropriate. No prices unless the customer explicitly asks. Do not repeat previous reminders or claim an appointment was confirmed. Keep concise. If uncertain or inappropriate, skip.",
+     instruction:"Second WhatsApp number; 20-hour follow-up. Reply naturally in the customer's language. Prioritize a free 1-to-1 posture assessment and experience when appropriate. No prices unless the customer explicitly asks. Do not repeat previous reminders or claim an appointment was confirmed. Keep concise. If uncertain or inappropriate, skip." +
+       (candidate.staff_discussed_followup_topic
+         ? " This treatment was suggested by staff in the conversation, not explicitly selected by the customer. Refer to the staff recommendation without claiming the customer chose or requested that treatment."
+         : ""),
      channel:"whatsapp",contactId:ids[0],leadId:lead.id||null,env,
    });
  }catch{return{ok:false,code:"secondary_20h_ai_unavailable"};}
