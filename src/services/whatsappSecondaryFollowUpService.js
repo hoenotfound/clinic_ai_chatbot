@@ -452,6 +452,35 @@ function deliveredStaffVideoSql(contactSql,conversationSql,afterSql){
 }
 const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} AS allowed`;
 
+
+// One optional, gentle booking-question nudge after the 2h reminder was
+// accepted BEFORE staff asked about availability. Never unlocks 20h or media.
+// Only fresh questions after a configured UTC rollout time are eligible.
+function bookingQuestionNudgeSql(nowSql) {
+ const raw=String(process.env.NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER||"").trim();
+ if(!staffTopicFeatureEnabled(process.env) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(raw))
+  return "FALSE";
+ const ms=Date.parse(raw);
+ if(!Number.isFinite(ms))return "FALSE";
+ const activation=new Date(ms).toISOString();
+ return `(
+   rule.slot_hours=6 AND first_reply.staff_reply AND first_reply.staff_question
+   AND first_reply.at >= '${activation}'::timestamptz
+   AND first_reply.at <= ${nowSql} - INTERVAL '2 hours'
+   AND first_reply.text ~* '(平日|周末|週末|星期|礼拜|禮拜|哪天|什麼時間|什么时间|方便过来|方便過來|weekday|weekend|what day|which day|when.*(come|visit)|hari.*(datang|sesuai)|masa.*datang)'
+   AND EXTRACT(HOUR FROM (${nowSql} AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 20
+   AND EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_attempts previous_nudge
+    WHERE previous_nudge.sender_id=sa.id
+      AND previous_nudge.contact_id=c.id
+      AND previous_nudge.anchor_message_id=inbound.id
+      AND previous_nudge.slot_hours=2 AND previous_nudge.status='accepted'
+      AND previous_nudge.completed_at < first_reply.at
+   )
+  )`;
+}
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -640,7 +669,7 @@ const CANDIDATES_SQL=`
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
-      OR ${RECOVERY_NO_SELECTION_SQL})
+      OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('$4::timestamptz')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -756,7 +785,7 @@ const RECHECK_SQL=`
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
-      OR ${RECOVERY_NO_SELECTION_SQL})
+      OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('NOW()')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
