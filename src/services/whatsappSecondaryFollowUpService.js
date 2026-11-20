@@ -16,7 +16,7 @@ const mediaStorage=require("./mediaStorageService");
 const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
-const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText}=require("./whatsappSecondaryFollowUpLanguage");
+const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,staffDiscussedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
   chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
@@ -913,17 +913,22 @@ async function runOnce({
     // delivered first reply, not the internal ad name or CRM treatment.
     const replyLanguage=customerLanguage ||
       detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
-    const localized=neutralMixedAdFollowUp({
-      policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
-    }) || localizedFollowUpText({
-      slot,originalText:candidate.message_text,
-      customerTexts:candidate.customer_texts,
-      languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
-      treatmentInterest:followupTreatment,
-      selectedTreatment:followupTreatment,
-      clinicConfig,
-      forceGeneral:generalOnly,
-    });
+    // Customer-selected and staff-discussed treatments have different copy:
+    // never imply a patient selected a service recommended only by staff.
+    const localized=staffTopic && !generalOnly && slot!==20
+      ? staffDiscussedFollowUpText({slot,language:replyLanguage,
+          treatment:staffTopic.treatment})
+      : neutralMixedAdFollowUp({
+          policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
+        }) || localizedFollowUpText({
+          slot,originalText:candidate.message_text,
+          customerTexts:candidate.customer_texts,
+          languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
+          treatmentInterest:followupTreatment,
+          selectedTreatment:followupTreatment,
+          clinicConfig,
+          forceGeneral:generalOnly,
+        });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
     const safeText=candidate.recovery_no_selection
       ? recoveryNoSelectionReminderText(slot,replyLanguage)
