@@ -7,6 +7,7 @@ const FACE=/(?:面部|脸|臉|小颜|小顏|眼袋|下巴|轮廓|輪廓|抗衰|�
 const BREAST=/(?:乳|胸|breast|payudara)/iu;
 const PACKAGE_QUESTION=/(?:哪个|哪個|哪种|哪種|什么|什麼|推荐|推薦|适合|適合).{0,18}(?:配套|套餐|疗程|療程|护理|護理|package|treatment)|(?:配套|套餐|疗程|療程|护理|護理).{0,18}(?:哪个|哪個|哪种|哪種|适合|適合)|(?:which|what|suitable|recommend).{0,35}(?:package|treatment|care|rawatan)/iu;
 const RECOMMEND=/(?:建议|建議|推荐|推薦|选择|選擇|比较适合|比較適合|更适合|更適合|可以先|recommend|suggest|better for|start with|sesuai|cadang)/iu;
+const STAFF_OFFER=/(?:建议|建議|推荐|推薦|选择|選擇|护理|護理|疗程|療程|调理|調理|配套|套餐|治疗|治療|recommend|suggest|package|pakej|treatment|therapy|rawatan)/iu;
 const CANCEL=/(?:不想要|不想做|不要|没兴趣|沒興趣|算了|不用了|暂停|暫停|not interested|no longer|don't want|do not want|stop|tak nak|tak mahu)/iu;
 function orderedTurns(turns) {
   return (Array.isArray(turns)?turns:[]).filter(turn=>turn &&
@@ -33,6 +34,8 @@ function recommendedPackage(text,config) {
 function staffService(text,config,candidates) {
   const pkg=recommendedPackage(text,config);
   if (pkg) return pkg;
+  // "产后黄金期" is an observation, NOT an offer of 产后调理.
+  if (!STAFF_OFFER.test(text)) return null;
   const beforeInclusions=String(text).split(/(?:包含|包括|内含|內含|includes?|✅|✨)/iu)[0];
   const leading=mentioned(beforeInclusions,candidates);
   if(leading.length===1)return leading[0];
