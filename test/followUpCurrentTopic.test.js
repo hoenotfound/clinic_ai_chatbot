@@ -44,6 +44,12 @@ test("newly confirmed treatment or a newer customer-chosen service takes precede
  assert.equal(resolveStaffDiscussedFollowUpTopic({
   turns:conversation,clinicConfig:cfg,lastConfirmedMessageId:110}),null);
 });
+test("a newer staff comparison cancels an earlier pelvic recommendation",()=>{
+ assert.equal(resolveStaffDiscussedFollowUpTopic({
+   turns:[...conversation,at(109,"assistant","建议比较3D或者9D护理")],
+   clinicConfig:cfg,lastConfirmedMessageId:101,
+ }),null);
+});
 test("one original ad enquiry plus unsolicited staff offer cannot change topic",()=>{
  assert.equal(resolveStaffDiscussedFollowUpTopic({
   turns:[at(1,"user","Hi～我对脉冲波有兴趣"),
