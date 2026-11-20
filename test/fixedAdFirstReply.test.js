@@ -219,7 +219,8 @@ test("new Neutro RM68 opt-in-style CTWA prefill preserves campaign intro and gua
   assert.match(first?.reply || "", /12月5日 & 6日/);
   assert.doesNotMatch(first?.reply || "", /RM388/);
   assert.equal(first?.treatment, null, "do not confuse RM68 chest with regular Pulse Wave");
-  assert.equal(run({ metaAdContext: null }), null);
+  assert.equal(run({ metaAdContext: null })?.campaignKey, "neutro_breast_rm68_2026",
+    "exact opted-in first enquiry can receive the approved offer without Meta referral");
   assert.equal(run({ metaAdContext: { ...campaignAd,
     headline: "黄金脉冲技术 RM388", body: "一般脉冲波护理" } }), null);
   assert.equal(run({ hasStaffHandoff: true }), null);
