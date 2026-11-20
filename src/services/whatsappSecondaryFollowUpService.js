@@ -469,7 +469,7 @@ function bookingQuestionNudgeSql(nowSql,env=process.env) {
    AND first_reply.at >= '${activation}'::timestamptz
    AND first_reply.at <= ${nowSql} - INTERVAL '2 hours'
    AND first_reply.text ~* '(平日|周末|週末|星期|礼拜|禮拜|哪天|什麼時間|什么时间|方便过来|方便過來|weekday|weekend|what day|which day|when.*(come|visit)|hari.*(datang|sesuai)|masa.*datang)'
-   AND EXTRACT(HOUR FROM (${nowSql} AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 20
+   AND date_part('hour', (${nowSql} AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 20
    AND EXISTS (
     SELECT 1 FROM whatsapp_sender_followup_attempts previous_nudge
     WHERE previous_nudge.sender_id=sa.id
