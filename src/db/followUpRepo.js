@@ -319,12 +319,12 @@ async function findCandidates({
              AND topic.created_at<=now()
              AND topic.whatsapp_message_id IS NOT NULL
              AND topic.delivery_status IS DISTINCT FROM 'failed'
-             AND topic.is_forwarded IS DISTINCT FROM TRUE
-             AND COALESCE(topic.whatsapp_customer_mutation,'')=''
+             AND COALESCE((to_jsonb(topic)->>'is_forwarded')::boolean,FALSE)=FALSE
+             AND COALESCE(to_jsonb(topic)->>'whatsapp_customer_mutation','')=''
              AND (topic.role='user' OR
                (topic.role='assistant' AND topic.sent_by_username IS NOT NULL
                AND topic.sent_by_username<>'Follow-up automation'
-               AND topic.is_automated_follow_up IS DISTINCT FROM TRUE))
+               AND COALESCE((to_jsonb(topic)->>'is_automated_follow_up')::boolean,FALSE)=FALSE))
            ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
          ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
        FROM recent_inbound_contacts recent
