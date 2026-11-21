@@ -331,6 +331,26 @@ function promotionKnowledgeLines(promotion) {
   return lines;
 }
 
+// Preserve verified package care facts on a body-area scope question without
+// turning it into permission to quote prices or send media.
+function packageCareInclusionLines(promotions) {
+  return promotions.flatMap((promotion) =>
+    (Array.isArray(promotion?.packages) ? promotion.packages : [])
+      .filter((item) => item && typeof item === "object")
+      .map((item) => {
+        const inclusions = String(item.caption || "")
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => /^✅/u.test(line) && !/(?:RM|MYR)\s*\d/iu.test(line))
+          .slice(0, 12);
+        return inclusions.length
+          ? `  - ${promptContextText(item.name, 160) || "Unnamed package"} inclusions: ${inclusions.join("；")}`
+          : null;
+      })
+      .filter(Boolean)
+  );
+}
+
 function conversationPromotionsList(conversationContext) {
   const active = getActivePromotions(config.promotions || []);
   if (!active.length) return "- None currently configured as active.";
@@ -392,17 +412,25 @@ function conversationPromotionsList(conversationContext) {
     ].join("\n");
   }
 
-  // Show only compact offer facts on non-commercial turns. Even an explicit
-  // treatment mention is not consent to receive unsolicited promotion copy.
+  // Non-commercial care-scope questions can use verified package inclusions,
+  // but must not trigger package prices or media.
   if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
       (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
+    const wombScopeQuestion = config.businessType === "tcm_clinic" &&
+      /子[宫宮].{0,8}(?:复位|復位|归位|歸位|护理|護理|调理|調理)|(?:uterus|womb).{0,24}(?:care|reposition|realign)/iu.test(
+        String(conversationContext?.currentCustomerText || "")
+      );
+    const careDetails = wombScopeQuestion ? packageCareInclusionLines(relevant) : [];
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
+      ...(careDetails.length ? [
+        "- VERIFIED PACKAGE INCLUSIONS for this care-scope question (informational ONLY; no automatic prices, discounts or artwork):",
+        ...careDetails,
+      ] : []),
       ...compactVerifiedPrices,
     ].join("\n");
   }
-
   return relevant
     .flatMap((promotion) => promotionKnowledgeLines(promotion))
     .join("\n");
@@ -1341,6 +1369,7 @@ Use "needs_human" for an explicit request for human/staff/manager assistance, a 
 Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 
 ${config.businessType === "tcm_clinic" ? `TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT:
+- If a customer asks whether an existing pelvic treatment/video is 子宫复位, distinguish a claimed physical uterus/organ repositioning procedure from the EXACT womb-care inclusions in verified ACTIVE PROMOTIONS. If the current pelvic package includes 子宫草药护理, acknowledge it clearly; never answer as if no uterus-related care exists. Do not claim herbal womb care physically repositions organs, and do not invent an unlisted medical procedure. A service-scope question is not a monetary or package-offer request, so do not quote unsolicited prices or trigger promotional artwork.
 - A customer merely naming a body area or spinal condition (such as L4/L5) is not automatically requesting diagnosis or personal treatment clearance; naming a verified configured treatment is normally a service enquiry.
 - If there is no urgent risk or unresolved medical question, answer with VERIFIED neutral service information and optionally invite an assessment; use "normal". Never promise spinal correction, facial bone alignment or guaranteed outcomes.
 - Preserve earlier medical/spinal concerns for practitioner review even if the customer later names a configured treatment. If they ask whether a specific treatment will fix their spinal condition, request a diagnosis, or ask about personal suitability, use "review_required"; use "needs_human" for urgent risk. An unresolved medical question also requires "review_required". Do not turn an unresolved clinical question into a normal sales reply.
