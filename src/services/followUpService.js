@@ -1,5 +1,6 @@
 const clinicConfig = require("../config/clinicConfig");
 const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
+const { adaptNeutroAppointmentInvitation } = require("../utils/appointmentInviteContinuity");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const policyHoldRepo = require("../db/whatsappFollowUpPolicyHoldRepo");
@@ -1657,6 +1658,16 @@ async function sendCandidate(candidate) {
   // Guard every follow-up channel and mode just before durable reservation.
   // If configured media was paired with a price-bearing caption, omit the
   // attachment as well: an image itself might display an unasked amount.
+  // Keep fixed/AI booking invitations aligned with the latest customer-provided
+  // visit day. Never ask them to choose a different week when they already
+  // proposed one; this does not confirm a slot or change promotion media.
+  if (stepIndex === 3) {
+    followUpMessage = adaptNeutroAppointmentInvitation({
+      message: followUpMessage,
+      customerTexts: candidate.recent_inbound_messages || [],
+      language, businessConfig: clinicConfig,
+    });
+  }
   const safeFollowUp = rm68FollowUp
     ? { message: rm68FollowUp.message, suppressMedia: false }
     : enforceAssessmentFirstFollowUpCopy({
