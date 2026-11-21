@@ -2392,8 +2392,8 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         !isDefiniteAppointmentCancellation(text) && !bookingReady &&
         channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-        /(?:[价價][钱錢格]|多少[钱錢]|收费|收費|费用|費用|价格|價格|活动日期|活動日期|只有.{0,4}(?:天|日)|\\b(?:price|cost|how much|when|dates?)\\b)/iu.test(text)) {
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        /(?:[价價][钱錢格]|多少[钱錢]|收费|收費|费用|費用|价格|價格|活动日期|活動日期|只有.{0,4}(?:天|日)|\b(?:price|cost|how much|when|dates?)\b)/iu.test(text)) {
       const campaignAnswer = campaignContextReply({ history, customerText: text });
       if (campaignAnswer) {
         reply = campaignAnswer;
