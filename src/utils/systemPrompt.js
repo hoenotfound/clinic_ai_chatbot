@@ -414,7 +414,7 @@ function conversationPromotionsList(conversationContext) {
   // turning into permission for prices, vouchers or outbound artwork.
   if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
       (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
-    const wombScopeQuestion = Boolean(neutroWombNamingRule()) &&
+    const wombScopeQuestion = Boolean(neutroWombNamingRule(conversationContext?.currentCustomerText)) &&
       /子[宫宮].{0,8}(?:复位|復位|归位|歸位|护理|護理|调理|調理)|(?:uterus|womb).{0,24}(?:care|reposition|realign)/iu.test(
         String(conversationContext?.currentCustomerText || "")
       );
@@ -1150,7 +1150,9 @@ The reason and topic are internal metadata and must never be copied into message
 }
 
 // This care-item name is verified for Neutro Sense only.
-function neutroWombNamingRule() {
+function neutroWombNamingRule(currentCustomerText) {
+  const question = String(currentCustomerText || "");
+  if (!/子[宫宮]|(?:uterus|womb)/iu.test(question)) return "";
   const clinic = String(config.businessName || config.clinicName || "");
   if (config.businessType !== "tcm_clinic" || !/neutro\s*sense/iu.test(clinic)) return "";
   const confirmedPackage = getActivePromotions(config.promotions || []).some((promotion) =>
@@ -1381,7 +1383,7 @@ Use "needs_human" for an explicit request for human/staff/manager assistance, a 
 Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 
 ${config.businessType === "tcm_clinic" ? `TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT:
-${neutroWombNamingRule()}
+${neutroWombNamingRule(conversationContext?.currentCustomerText)}
 - A customer merely naming a body area or spinal condition (such as L4/L5) is not automatically requesting diagnosis or personal treatment clearance; naming a verified configured treatment is normally a service enquiry.
 - If there is no urgent risk or unresolved medical question, answer with VERIFIED neutral service information and optionally invite an assessment; use "normal". Never promise spinal correction, facial bone alignment or guaranteed outcomes.
 - Preserve earlier medical/spinal concerns for practitioner review even if the customer later names a configured treatment. If they ask whether a specific treatment will fix their spinal condition, request a diagnosis, or ask about personal suitability, use "review_required"; use "needs_human" for urgent risk. An unresolved medical question also requires "review_required". Do not turn an unresolved clinical question into a normal sales reply.
