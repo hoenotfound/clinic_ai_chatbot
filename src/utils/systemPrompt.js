@@ -331,6 +331,24 @@ function promotionKnowledgeLines(promotion) {
   return lines;
 }
 
+// Answer care-scope enquiries with verified package inclusions, not promo prices.
+function packageCareInclusionLines(promotions) {
+  return promotions.flatMap((promotion) =>
+    (Array.isArray(promotion?.packages) ? promotion.packages : [])
+      .filter((item) => item && typeof item === "object")
+      .map((item) => {
+        const inclusions = String(item.caption || "")
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => /^✅/u.test(line) && !/(?:RM|MYR)\s*\d/iu.test(line))
+          .slice(0, 12);
+        return inclusions.length
+          ? `  - ${promptContextText(item.name, 160) || "Unnamed package"} inclusions: ${inclusions.join("；")}`
+          : null;
+      })
+      .filter(Boolean)
+  );
+}
 function conversationPromotionsList(conversationContext) {
   const active = getActivePromotions(config.promotions || []);
   if (!active.length) return "- None currently configured as active.";
@@ -392,13 +410,22 @@ function conversationPromotionsList(conversationContext) {
     ].join("\n");
   }
 
-  // Show only compact offer facts on non-commercial turns. Even an explicit
-  // treatment mention is not consent to receive unsolicited promotion copy.
+  // A care-scope question may use current package inclusion facts without
+  // turning into permission for prices, vouchers or outbound artwork.
   if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
       (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
+    const wombScopeQuestion = Boolean(neutroWombNamingRule(conversationContext?.currentCustomerText, conversationContext?.relevantServiceNames)) &&
+      /子[宫宮].{0,8}(?:复位|復位|归位|歸位|护理|護理|调理|調理)|(?:uterus|womb).{0,24}(?:care|reposition|realign)/iu.test(
+        String(conversationContext?.currentCustomerText || "")
+      );
+    const careDetails = wombScopeQuestion ? packageCareInclusionLines(relevant) : [];
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
+      ...(careDetails.length ? [
+        "- VERIFIED PACKAGE INCLUSIONS for this care-scope question (informational ONLY; no automatic prices, discounts or artwork):",
+        ...careDetails,
+      ] : []),
       ...compactVerifiedPrices,
     ].join("\n");
   }
@@ -1122,6 +1149,23 @@ RETURN ONLY ONE VALID JSON OBJECT:
 The reason and topic are internal metadata and must never be copied into message.`;
 }
 
+// This care-item name is verified for Neutro Sense only.
+function neutroWombNamingRule(currentCustomerText, relevantServiceNames = []) {
+  const question = String(currentCustomerText || "");
+  const isRepositionQuestion = /子[宫宮].{0,8}(?:复位|復位|归位|歸位)|(?:uterus|womb).{0,24}(?:reposition|realign)/iu.test(question);
+  const refersToPelvicPackage = Array.isArray(relevantServiceNames) && relevantServiceNames.includes("骨盆调理") && /子[宫宮]|(?:uterus|womb)/iu.test(question);
+  if (!isRepositionQuestion && !refersToPelvicPackage) return "";
+  const clinic = String(config.businessName || config.clinicName || "");
+  if (config.businessType !== "tcm_clinic" || !/neutro\s*sense/iu.test(clinic)) return "";
+  const confirmedPackage = getActivePromotions(config.promotions || []).some((promotion) =>
+    promotion?.linkedService === "骨盆调理" &&
+    (Array.isArray(promotion.packages) ? promotion.packages : []).some((item) =>
+      item?.name === "Package A" && /子宫草药护理/u.test(String(item.caption || ""))
+    )
+  );
+  if (!confirmedPackage) return "";
+  return "- NEUTRO SENSE CLINIC TERMINOLOGY: The clinic uses 子宫复位 as its customer-facing name for the 子宫草药护理 inclusion in 骨盆调理 Package A. These labels refer to the SAME offered care item for this clinic; do NOT tell customers they are different treatments or that Package A does not include 子宫复位. If a customer asks if the prior pelvic video/treatment is 子宫复位, say Package A includes 子宫复位（配套写作「子宫草药护理」） and do not mistake it for an unrelated service. Do not claim the video demonstrates the procedure unless verified. This clinic naming equivalence is NOT evidence that an organ is physically or anatomically repositioned. Do not guarantee a result or prescribe care. A care-inclusion question is not a price question and must not trigger unsolicited pricing or promotional artwork.";
+}
 function buildSystemPrompt(optionsOrFirstMessage = false) {
   const normalizedOptions = normalizeOptions(optionsOrFirstMessage);
   if (normalizedOptions.surface === "comment_automation") {
@@ -1341,6 +1385,7 @@ Use "needs_human" for an explicit request for human/staff/manager assistance, a 
 Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 
 ${config.businessType === "tcm_clinic" ? `TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT:
+${neutroWombNamingRule(conversationContext?.currentCustomerText, conversationContext?.relevantServiceNames)}
 - A customer merely naming a body area or spinal condition (such as L4/L5) is not automatically requesting diagnosis or personal treatment clearance; naming a verified configured treatment is normally a service enquiry.
 - If there is no urgent risk or unresolved medical question, answer with VERIFIED neutral service information and optionally invite an assessment; use "normal". Never promise spinal correction, facial bone alignment or guaranteed outcomes.
 - Preserve earlier medical/spinal concerns for practitioner review even if the customer later names a configured treatment. If they ask whether a specific treatment will fix their spinal condition, request a diagnosis, or ask about personal suitability, use "review_required"; use "needs_human" for urgent risk. An unresolved medical question also requires "review_required". Do not turn an unresolved clinical question into a normal sales reply.
