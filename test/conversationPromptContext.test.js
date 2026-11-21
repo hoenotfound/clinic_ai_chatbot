@@ -1283,3 +1283,74 @@ test("durations on future-opt-in treatment introductions do not unlock promotion
     }
   });
 });
+
+test("uterus repositioning comparison after pelvic explanation keeps verified package inclusions without price permission", () => {
+  const overrides = pelvisPackageConfig();
+  overrides.businessName = "Neutro Sense TCM Centre";
+  overrides.clinicName = "Neutro Sense TCM Centre";
+  overrides.automatedFollowUp = { assessmentFirstPricingEnabled: true };
+  overrides.services.push({
+    name: "子宫调理",
+    description: "Womens wellness care, not physical repositioning of organs.",
+    priceRange: "Not quoted",
+    duration: "Varies",
+  });
+  overrides.serviceAliases.push({ alias: "子宫", officialService: "子宫调理" });
+  overrides.promotions[0].packages[0].caption = "本月优惠 RM388\n✅骨盆调整与体态矫正疗程\n✅子宫草药护理\n✅AI 身体检测";
+  overrides.promotions[0].packages[1].caption = "本月优惠 RM268\n✅骨盆调整";
+  withConfig(overrides, () => {
+    const history = [
+      { role: "assistant", content: "这段影片简单介绍我们怎样从骨盆和整体体态了解小腹、腰臀紧绷。" },
+      { role: "user", content: "是子宫复位treatment吗" },
+    ];
+    const context = buildConversationPromptContext(history);
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.promotionIntent, false);
+    const prompt = buildSystemPrompt({ conversationContext: context });
+    const activeSection = prompt.split("ACTIVE PROMOTIONS —")[1].split("PROMOTION AUTHORITY")[0];
+    assert.match(activeSection, /Package A inclusions:.*子宫草药护理/u);
+    assert.doesNotMatch(activeSection, /(?:RM|MYR)\s*\d/iu);
+    // Staff-confirmed product naming: 子宫草药护理 and 子宫复位 are
+    // two names for the same Package A inclusion, not separate treatments.
+    assert.match(prompt, /uses 子宫复位 as its customer-facing name for the 子宫草药护理 inclusion/);
+    assert.match(prompt, /SAME offered care item/);
+    assert.match(prompt, /do NOT tell customers they are different treatments/);
+    assert.match(prompt, /NOT evidence that an organ is physically or anatomically repositioned/);
+
+    // An explicit new enquiry is still about the separate 子宫调理 service.
+    const newTopic = buildConversationPromptContext([
+      ...history.slice(0, 1), { role: "user", content: "我想了解子宫调理" },
+    ]);
+    assert.deepEqual(newTopic.relevantServiceNames, ["子宫调理"]);
+    const standalonePrompt = buildSystemPrompt({ conversationContext: newTopic });
+    assert.doesNotMatch(standalonePrompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(standalonePrompt, /SAME offered care item/);
+    const noPreviousPelvis = buildConversationPromptContext([
+      { role: "user", content: "是子宫复位treatment吗" },
+    ]);
+    assert.deepEqual(noPreviousPelvis.relevantServiceNames, ["子宫调理"]);
+    const nonWomb = buildConversationPromptContext([
+      { role: "user", content: "骨盆调理需要多久？" },
+    ]);
+    const nonWombActive = buildSystemPrompt({ conversationContext: nonWomb })
+      .split("ACTIVE PROMOTIONS —")[1].split("PROMOTION AUTHORITY")[0];
+    assert.doesNotMatch(nonWombActive, /子宫草药护理/u);
+    // Unrelated facial or pelvic-duration questions must not carry the
+    // uterus-specific clinic naming instruction.
+    const unrelated = buildSystemPrompt({
+      conversationContext: buildConversationPromptContext([{ role: "user", content: "3D小颜术多少钱？" }]),
+    });
+    assert.doesNotMatch(unrelated, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(buildSystemPrompt({ conversationContext: nonWomb }), /NEUTRO SENSE CLINIC TERMINOLOGY/);
+  });
+  withConfig({ ...overrides, businessName: "Independent TCM Centre", clinicName: "Independent TCM Centre" }, () => {
+    const history = [
+      { role: "assistant", content: "骨盆调理的介绍视频" },
+      { role: "user", content: "是子宫复位treatment吗" },
+    ];
+    const prompt = buildSystemPrompt({ conversationContext: buildConversationPromptContext(history) });
+    assert.doesNotMatch(prompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(prompt, /uses 子宫复位 as its customer-facing name/);
+    assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, ["子宫调理"]);
+  });
+});
