@@ -349,6 +349,10 @@ function ensureFirstAssessmentInvitation({
         ? enriched.slice(0, match.index).trimEnd() + "\n" + valueNote + "\n" + enriched.slice(match.index)
         : enriched + "\n" + valueNote;
     }
+    enriched = adaptNeutroAppointmentInvitation({
+      message: enriched, customerTexts: [customerText], language,
+      businessConfig: clinicConfig,
+    });
     if (service.name === "骨盆调理" && !hasVoucher) {
       const voucherNote = chinese
         ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
@@ -357,10 +361,6 @@ function ensureFirstAssessmentInvitation({
           : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
       enriched += "\n\n" + voucherNote;
     }
-    enriched = adaptNeutroAppointmentInvitation({
-      message: enriched, customerTexts: [customerText], language,
-      businessConfig: clinicConfig,
-    });
     return { reply: enriched, appended: enriched !== original };
   }
   const invitation = assessmentFirstInvitation({
