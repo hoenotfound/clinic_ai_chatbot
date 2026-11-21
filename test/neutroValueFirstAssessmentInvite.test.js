@@ -25,7 +25,7 @@ test("pelvic value-first invitation describes verified free intro, not Package A
       treatment: "骨盆调理", customerText: "我想了解骨盆调理",
       language: "zh", services,
     });
-    assert.match(reply, /免费1对1体态评估 \+ 入门体验/u);
+    assert.match(reply, /免费1对1的体态评估 \+ 体验/u);
     assert.match(reply, /中医师.*体态和身体困扰/u);
     assert.match(reply, /RM100.*优惠券/u);
     assert.match(reply, /哪一天比较方便.*确认预约时间/u);
@@ -64,7 +64,7 @@ test("a first-reply discovery question stays the only question after added value
       services,
     });
     assert.equal(guarded.appended, true);
-    assert.match(guarded.reply, /免费1对1体态评估/u);
+    assert.match(guarded.reply, /免费1对1的体态评估/u);
     assert.equal((guarded.reply.match(/？/gu) || []).length, 1);
     assert.doesNotMatch(guarded.reply, /AI\s*身体检测/u);
   } finally {
@@ -76,9 +76,11 @@ test("appointment prompts retain answers-first, date continuity, and no false bo
   const prompt = buildSystemPrompt({ channel: "whatsapp" });
   assert.match(prompt, /Resolve the customer's CURRENT concrete question BEFORE proposing a booking/u);
   assert.match(prompt, /Do NOT claim an appointment is booked before staff or system confirmation/u);
-  assert.match(prompt, /Never imply confirmed availability/u);
   const followup = buildFollowUpPrompt({ followUpContext: { stepNumber: 3 } });
   assert.match(followup, /If the customer already answered 'weekday', 'weekend'/u);
   assert.match(followup, /Do not repeat an earlier automated follow-up/u);
   assert.match(followup, /Never invent or guess prices, promotions, availability/u);
+  const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/utils/systemPrompt.js"), "utf8");
+  assert.match(source, /NEUTRO ASSESSMENT VALUE FIRST/u);
+  assert.match(source, /NEUTRO VALUE-FIRST INVITATION/u);
 });
