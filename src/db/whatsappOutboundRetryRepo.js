@@ -354,7 +354,7 @@ async function secondaryPreProviderRetrySafe({
         AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
         AND m.media_url IS NULL AND m.whatsapp_interactive IS NULL
         AND attempt.origin='ai_reply' AND attempt.outcome='rejected'
-        AND attempt.error_text=$5 AND attempt.provider_message_id IS NULL
+        AND attempt.provider_message_id IS NULL
         AND sender.sender_key='neutro_secondary' AND sender.state='active'
         AND NOT EXISTS (
           SELECT 1 FROM whatsapp_sender_billing_attempts billing
