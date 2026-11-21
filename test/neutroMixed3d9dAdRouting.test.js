@@ -218,7 +218,9 @@ test("ad creative provides context unless newer verified secondary customer choi
  // Secondary prioritizes a newer sender-verified customer choice over the
  // original ad; primary retains its existing creative-first fallback.
  assert.match(secondary,/chooseSecondaryFollowUpTreatment/);
- assert.match(secondary,/const effectivePolicy=confirmedTreatment/);
+ assert.match(secondary,/const confirmedTreatment=candidate\.recovery_no_selection\?null:choice\.treatment/);
+ assert.match(secondary,/const effectivePolicy=unsafeTopic[\s\S]{0,220}confirmedTreatment/);
+ assert.match(secondary,/const followupTreatment=generalOnly\?null:/);
  assert.match(secondary,/if\(slot===20 && !candidate\.recovery_no_selection && !generalOnly/);
  assert.match(personalized,/candidate\.adFollowUpPolicy/);
 });

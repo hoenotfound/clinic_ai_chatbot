@@ -16,14 +16,14 @@ const mediaStorage=require("./mediaStorageService");
 const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
-const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,staffDiscussedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
+const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,neutralTreatmentFollowUpText,staffDiscussedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
   chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
-const {resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled}=
+const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled}=
   require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
@@ -878,10 +878,17 @@ async function runOnce({
     const choice=chooseSecondaryFollowUpTreatment({
       candidate,clinicConfig,adFollowUpPolicy,latestDecision,
     });
-    // A later staff-recommended care topic can guide an in-window service
-    // reminder, but NEVER modifies verified selection or marketing consent.
-    // An unresolved comparison, refusal or 131060 no-selection cannot switch.
-    const staffTopic=staffTopicFeatureEnabled(env) &&
+    // Any signed staff caution or unresolved comparison must block an
+    // obsolete named reminder, EVEN if an older customer selection is valid.
+    // This is service-window copy safety, not a CRM or consent mutation.
+    const safety=staffTopicFeatureEnabled(env) && !candidate.recovery_no_selection
+      ? assessFollowUpTopicSafety({
+          turns:candidate.followup_topic_turns,clinicConfig,
+          lastConfirmedMessageId:candidate.verified_treatment_source_message_id,
+          originalTreatment:choice.treatment,
+        }) : {unsafe:false};
+    const unsafeTopic=safety.unsafe===true;
+    const staffTopic=staffTopicFeatureEnabled(env) && !unsafeTopic &&
       !candidate.recovery_no_selection &&
       latestDecision?.status!=="ambiguous" &&
       candidate.verified_treatment_status!=="ambiguous"
@@ -892,14 +899,16 @@ async function runOnce({
     // Keep the verified customer selection distinct from a staff-led topic.
     // Existing follow-up snapshots and cross-step checks still use ONLY this.
     const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
-    const followupTreatment=staffTopic?.treatment||confirmedTreatment;
-    // Without readable patient intent, even an old CRM/ad treatment is
-    // not evidence of what this 131060 customer wants.
-    const generalOnly=candidate.recovery_no_selection?true:
-      staffTopic?false:choice.generalOnly;
-    const effectivePolicy=confirmedTreatment
-      ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
-      : adFollowUpPolicy;
+    // A neutral message must NEVER inherit old treatment-specific media.
+    const generalOnly=unsafeTopic || candidate.recovery_no_selection ||
+      (staffTopic?false:choice.generalOnly);
+    const followupTreatment=generalOnly?null:
+      staffTopic?.treatment||confirmedTreatment;
+    const effectivePolicy=unsafeTopic
+      ? {ambiguous:true,treatment:null,source:"unsafe_conversation_topic"}
+      : confirmedTreatment
+        ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
+        : adFollowUpPolicy;
     // Staff discussion is only the in-window copy/media topic. Keep the
     // customer-verified policy and the persisted snapshot unchanged.
     const discussionPolicy=staffTopic
@@ -907,7 +916,8 @@ async function runOnce({
           source:"staff_discussed_followup"}
       : effectivePolicy;
     candidate={...candidate,adFollowUpPolicy:discussionPolicy,
-      staff_discussed_followup_topic:staffTopic?.treatment||null};
+      staff_discussed_followup_topic:staffTopic?.treatment||null,
+      unsafe_followup_topic:unsafeTopic};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
@@ -915,10 +925,12 @@ async function runOnce({
       detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
     // Customer-selected and staff-discussed treatments have different copy:
     // never imply a patient selected a service recommended only by staff.
-    const localized=staffTopic && !generalOnly && slot!==20
-      ? staffDiscussedFollowUpText({slot,language:replyLanguage,
-          treatment:staffTopic.treatment})
-      : neutralMixedAdFollowUp({
+    const localized=unsafeTopic
+      ? neutralTreatmentFollowUpText({slot,language:replyLanguage})
+      : staffTopic && !generalOnly && slot!==20
+        ? staffDiscussedFollowUpText({slot,language:replyLanguage,
+            treatment:staffTopic.treatment})
+        : neutralMixedAdFollowUp({
           policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
         }) || localizedFollowUpText({
           slot,originalText:candidate.message_text,

@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const path=require("node:path");
-const {resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled}=
+const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled}=
   require("../src/utils/followUpCurrentTopic");
 const cfg={
  services:[{name:"骨盆调理"},{name:"脉冲波调理"},{name:"子宫调理"},
@@ -160,4 +160,95 @@ test("secondary booking nudge requires fresh, bounded evidence and cannot unlock
  assert.match(source,/bookingQuestionNudgeSql\('NOW\(\)'\)/);
  assert.match(source,/candidate\.staff_reply && candidate\.staff_question\s*\?\s*gentleStaffQuestionNudge/);
  assert.match(source,/!candidate\.staff_reply && !generalOnly/);
+});
+
+test("a signed staff caution cannot silently revert to an older verified treatment",()=>{
+ const cases=[
+  "现在不建议做脉冲波调理，先评估骨盆",
+  "I would not recommend 脉冲波调理 for you",
+  "脉冲波调理 tidak sesuai buat masa ini",
+ ];
+ for(const warning of cases){
+  const review=assessFollowUpTopicSafety({
+   turns:[at(100,"user","我想了解脉冲波调理"),
+    at(101,"user","生完后肚子没有瘦下来"),
+    at(102,"assistant",warning),
+    at(103,"assistant","建议先了解 Package A")],
+   clinicConfig:cfg,originalTreatment:"脉冲波调理",
+   lastConfirmedMessageId:100,
+  });
+  assert.equal(review.unsafe,true,warning);
+  assert.match(review.reason,/staff_/);
+ }
+});
+test("unresolved staff menu or customer comparison overrides old follow-up fallback",()=>{
+ for(const turns of [
+  [at(100,"user","我想做脉冲波调理"),
+   at(101,"assistant","可以考虑 3D 小颜术 或 9D 逆龄抗衰")],
+  [at(100,"user","我想做脉冲波调理"),
+   at(101,"user","3D 小颜术还是9D 逆龄抗衰？")],
+ ]){
+  const review=assessFollowUpTopicSafety({
+   turns,clinicConfig:cfg,originalTreatment:"脉冲波调理",
+   lastConfirmedMessageId:100,
+  });
+  assert.equal(review.unsafe,true,JSON.stringify(turns));
+ }
+});
+test("later verified customer choice clears earlier staff advice without changing consent",()=>{
+ const turns=[
+  at(100,"assistant","不建议做脉冲波调理"),
+  at(101,"user","我想了解骨盆调理"),
+  at(102,"assistant","骨盆调理可以先预约评估"),
+ ];
+ assert.equal(assessFollowUpTopicSafety({
+  turns,clinicConfig:cfg,originalTreatment:"骨盆调理",
+  lastConfirmedMessageId:101,
+ }).unsafe,false);
+});
+test("postpartum symptom alone is not an unsafe named treatment comparison",()=>{
+ const review=assessFollowUpTopicSafety({
+  turns:conversation,clinicConfig:cfg,originalTreatment:"脉冲波调理",
+  lastConfirmedMessageId:101,
+ });
+ assert.equal(review.unsafe,false);
+});
+test("primary follow-ups use neutral text and no images, videos, voice or promotion for unsafe topic",()=>{
+ const config=require("../src/config/clinicConfig");
+ const primary=require("../src/services/followUpService");
+ const props=["businessName","clinicName","businessType","services","serviceAliases","promotions","automatedFollowUp"];
+ const prior=Object.fromEntries(props.map(k=>[k,config[k]]));
+ const previousFeatureFlag=process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED;
+ try {
+  process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED="true";
+  Object.assign(config,{businessName:"Neutro Sense TCM Centre",
+   clinicName:"Neutro Sense TCM Centre",businessType:"tcm_clinic",
+   services:cfg.services,serviceAliases:cfg.serviceAliases,
+   promotions:[],automatedFollowUp:{assessmentFirstPricingEnabled:true}});
+  const choice=primary.messageForCandidate({
+   message:"Generic check-in",translations:{zh:"Generic check-in"},
+   serviceOverrides:[{serviceName:"脉冲波调理",translations:{zh:"脉冲推销"},
+     imageUrl:"https://example.com/pulse.png",videoKey:"pulse.mp4"}],
+  },{
+   channel:"whatsapp",treatment_interest:"脉冲波调理",
+   adFollowUpPolicy:{treatment:"脉冲波调理",ambiguous:false},
+   followup_topic_turns:[at(101,"user","我对脉冲波调理有兴趣"),
+    at(102,"assistant","不建议做脉冲波调理")],
+  },"zh",1);
+  assert.equal(choice.unsafeFollowUpTopic,true);
+  assert.equal(choice.targetedService,null);
+  assert.equal(choice.selectedImageUrl,"");
+  assert.equal(choice.selectedVideoKey,"");
+  assert.equal(choice.selectedVoiceNote,null);
+  assert.equal(choice.promotionFollowUp,false);
+  assert.match(choice.message,/评估/);
+  assert.doesNotMatch(choice.message,/脉冲|RM|这段影片/);
+ } finally {
+  if(previousFeatureFlag===undefined)delete process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED;
+  else process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED=previousFeatureFlag;
+  for(const key of props) {
+   if(prior[key]===undefined)delete config[key];
+   else config[key]=prior[key];
+  }
+ }
 });
