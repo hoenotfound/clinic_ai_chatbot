@@ -284,23 +284,28 @@ function isSubstantiallySimilar(message, previousMessages) {
 // Detect actual scheduling QUESTIONS, not informational weekday mentions.
 // Malaysian Chinese questions often end with 呢/呀/咯 rather than ? or ？.
 const SCHEDULING_NUDGE =
-  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week)\b)/iu;
+  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week|hari\s+apa|minggu\s+(?:depan|ini)|pukul\s+berapa)\b)/iu;
 const SCHEDULING_VISIT_CONTEXT =
-  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suit|prefer|make\s+it)\b)/iu;
+  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suits?|prefer|make\s+it|sesuai|boleh\s+datang|temu\s+janji|janji\s+temu|atur|semak\s+masa|waktu)\b)/iu;
 const SCHEDULING_QUESTION_END =
   /(?:吗|嗎|呢|呀|啊|咯|啦|么|麼)[\s～~!！。.…😊🙂☺️]*$/u;
 const SCHEDULING_ENGLISH_REQUEST =
   /\b(?:can|could|would)\s+you\b.{0,70}\b(?:come|visit|make\s+it|available|free|drop\s+by)\b|\b(?:please\s+(?:tell|share|let)|let\s+me\s+know)\b.{0,70}\b(?:available|free|visit|come|day|time)\b/iu;
 function isSchedulingNudge(message) {
   const current = cleanContent(message);
-  if (!current || current.length > 240) return false;
-  const schedulingTopic = SCHEDULING_NUDGE.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
-  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
-  const asksForAnswer = /[?？]/u.test(current) ||
-    SCHEDULING_QUESTION_END.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
+  if (!current) return false;
+  // Look at the closing portion rather than rejecting replies over 240
+  // characters. Long EN/MS consultation descriptions may still end with a
+  // scheduling question. Avoid classifying historical booking references in
+  // an unrelated long message as a fresh nudge.
+  const bookingTail = current.slice(-420);
+  const schedulingTopic = SCHEDULING_NUDGE.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
+  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
+  const asksForAnswer = /[?？]/u.test(bookingTail) ||
+    SCHEDULING_QUESTION_END.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
   return schedulingTopic && actuallyBooking && asksForAnswer;
 }
 function repeatsSchedulingNudge(message, previousMessages = []) {
