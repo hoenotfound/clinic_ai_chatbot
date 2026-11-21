@@ -1286,6 +1286,8 @@ test("durations on future-opt-in treatment introductions do not unlock promotion
 
 test("uterus repositioning comparison after pelvic explanation keeps verified package inclusions without price permission", () => {
   const overrides = pelvisPackageConfig();
+  overrides.businessName = "Neutro Sense TCM Centre";
+  overrides.clinicName = "Neutro Sense TCM Centre";
   overrides.automatedFollowUp = { assessmentFirstPricingEnabled: true };
   overrides.services.push({
     name: "子宫调理",
@@ -1330,5 +1332,14 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     const nonWombActive = buildSystemPrompt({ conversationContext: nonWomb })
       .split("ACTIVE PROMOTIONS —")[1].split("PROMOTION AUTHORITY")[0];
     assert.doesNotMatch(nonWombActive, /子宫草药护理/u);
+  });
+  withConfig({ ...overrides, businessName: "Independent TCM Centre", clinicName: "Independent TCM Centre" }, () => {
+    const history = [
+      { role: "assistant", content: "骨盆调理的介绍视频" },
+      { role: "user", content: "是子宫复位treatment吗" },
+    ];
+    const prompt = buildSystemPrompt({ conversationContext: buildConversationPromptContext(history) });
+    assert.doesNotMatch(prompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(prompt, /uses 子宫复位 as its customer-facing name/);
   });
 });
