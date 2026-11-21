@@ -375,6 +375,25 @@ function buildConversationPromptContext(
         ? (currentMatches.length ? "current_customer" : "current_promotion")
         : null;
 
+  // "是子宫复位treatment吗" after a pelvic explanation is asking whether
+  // THAT treatment repositions the uterus, not choosing a new 子宫调理 service.
+  // Scope this exception to a deictic question, an independently established
+  // previous pelvic topic, and the configured uterus alias. Explicit new
+  // uterus-treatment requests must continue to select 子宫调理 normally.
+  const refersToEarlierUterusReposition =
+    /^(?:是|是不是|这|這|这个|這個|这种|這種|is this|is that|does this|does that)/iu.test(currentCustomerText) &&
+    /子[宫宮].{0,8}(?:复位|復位|归位|歸位)|(?:uterus|womb).{0,24}(?:reposition|realign)/iu.test(currentCustomerText);
+  if (refersToEarlierUterusReposition &&
+      currentMatches.length === 1 && currentMatches[0] === "子宫调理" &&
+      !topicChangeIntent) {
+    const previousTopic = recentConversationServiceAnchor(messages, candidates, 16, promotions);
+    if (previousTopic?.relevantServiceNames?.length === 1 &&
+        previousTopic.relevantServiceNames[0] === "骨盆调理") {
+      relevantServiceNames = ["骨盆调理"];
+      serviceSource = "recent_pelvic_scope_question";
+    }
+  }
+
   if (
     !relevantServiceNames.length &&
     currentMatches.length <= 2 &&
