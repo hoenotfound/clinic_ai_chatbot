@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const { guardAssessmentFirstPricingReply } = require("../utils/initialOfferReplyGuard");
 const { correctUnsupportedBranchReply } = require("../utils/verifiedPricingBusinessFacts");
+const { correctVerifiedCommentBusinessReply } = require("../utils/commentBusinessFactGuard");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const commentRepo = require("../db/metaCommentAutomationRepo");
 const contactsRepo = require("../db/contactsRepo");
@@ -597,9 +598,16 @@ function createMetaCommentAutomationService({
         );
       }
 
-      const copy =
+      const generatedCopy =
         deterministicCommentSafetyCopy(event, settings, config) ||
         await generateReplyCopy(event, settings, aiClient, sourceContext);
+      // Correct unnecessary admin deferrals against verified live config before
+      // either Meta send or staff-review flagging. Genuine safety always wins.
+      const copy = correctVerifiedCommentBusinessReply({
+        customerText: event.text,
+        copy: generatedCopy,
+        config,
+      });
 
       // Safety handoffs are recorded before any Meta send. That way a failed
       // public/private API call cannot erase the staff-attention signal.
@@ -626,7 +634,7 @@ function createMetaCommentAutomationService({
             : settings.publicReplyStyle === "fixed"
               ? settings.fixedPublicReply
               : copy.publicReply || settings.fixedPublicReply;
-        const guardedPublicText = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        const guardedPublicText = config.automatedFollowUp?.assessmentFirstPricingEnabled === true
           ? guardAssessmentFirstPricingReply({
               customerText: event.text, reply: publicText,
               language: /[\u3400-\u9fff]/u.test(event.text || "") ? "zh" : "en",
@@ -634,7 +642,7 @@ function createMetaCommentAutomationService({
           : publicText;
         const verifiedPublicText = correctUnsupportedBranchReply({
           customerText:event.text,reply:guardedPublicText,
-          branches:clinicConfig.branches,
+          branches:config.branches,
           language:detectMessageLanguage(event.text)||"zh",
         }).reply;
         const publicResult = await meta.replyToComment(event.channel, event.commentId, verifiedPublicText);
@@ -648,7 +656,7 @@ function createMetaCommentAutomationService({
       }
 
       if (settings.privateReplyEnabled && !liveJob.privateReplyMessageId) {
-        const privateText = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        const privateText = config.automatedFollowUp?.assessmentFirstPricingEnabled === true
           ? guardAssessmentFirstPricingReply({
               customerText: event.text, reply: copy.privateReply,
               language: /[\u3400-\u9fff]/u.test(event.text || "") ? "zh" : "en",
@@ -656,7 +664,7 @@ function createMetaCommentAutomationService({
           : copy.privateReply;
         const verifiedPrivateText = correctUnsupportedBranchReply({
           customerText:event.text,reply:privateText,
-          branches:clinicConfig.branches,
+          branches:config.branches,
           language:detectMessageLanguage(event.text)||"zh",
         }).reply;
         newlySentPrivateText = verifiedPrivateText;
