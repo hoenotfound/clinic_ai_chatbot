@@ -1315,7 +1315,7 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     assert.match(prompt, /uses 子宫复位 as its customer-facing name for the 子宫草药护理 inclusion/);
     assert.match(prompt, /SAME offered care item/);
     assert.match(prompt, /do NOT tell customers they are different treatments/);
-    assert.match(prompt, /not evidence that treatment physically moves/);
+    assert.match(prompt, /NOT evidence that an organ is physically or anatomically repositioned/);
 
     // An explicit new enquiry is still about the separate 子宫调理 service.
     const newTopic = buildConversationPromptContext([
@@ -1341,5 +1341,6 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     const prompt = buildSystemPrompt({ conversationContext: buildConversationPromptContext(history) });
     assert.doesNotMatch(prompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
     assert.doesNotMatch(prompt, /uses 子宫复位 as its customer-facing name/);
+    assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, ["子宫调理"]);
   });
 });
