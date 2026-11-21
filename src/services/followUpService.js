@@ -1664,7 +1664,7 @@ async function sendCandidate(candidate) {
   if (stepIndex === 3) {
     followUpMessage = adaptNeutroAppointmentInvitation({
       message: followUpMessage,
-      customerTexts: candidate.recent_inbound_messages || [],
+      customerTexts: [...(candidate.recent_inbound_messages || [])].reverse(),
       language, businessConfig: clinicConfig,
     });
   }
