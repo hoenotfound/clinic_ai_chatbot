@@ -387,8 +387,19 @@ function buildConversationPromptContext(
       currentMatches.length === 1 && currentMatches[0] === "子宫调理" &&
       !topicChangeIntent) {
     const previousTopic = recentConversationServiceAnchor(messages, candidates, 16, promotions);
-    if (previousTopic?.relevantServiceNames?.length === 1 &&
-        previousTopic.relevantServiceNames[0] === "骨盆调理") {
+    // The preceding video/caption may say simply "骨盆" instead of the full
+    // canonical service name. Accept it only for this narrow "is this"
+    // comparison, not as a general treatment or price-selection shortcut.
+    const previousAssistantPelvicExplanation = (Array.isArray(messages) ? messages : [])
+      .slice(0, -1).slice(-4).some((message) =>
+        message?.role === "assistant" &&
+        /骨盆|盆骨|pelvic|pelvis/iu.test(messageText(message)) &&
+        !/(?:脉冲|脈衝|3D|9D|小颜|小顏|逆龄|逆齡)/iu.test(messageText(message))
+      );
+    if ((previousTopic?.relevantServiceNames?.length === 1 &&
+         previousTopic.relevantServiceNames[0] === "骨盆调理") ||
+        (previousAssistantPelvicExplanation &&
+         candidates.some((candidate) => candidate.name === "骨盆调理"))) {
       relevantServiceNames = ["骨盆调理"];
       serviceSource = "recent_pelvic_scope_question";
     }
