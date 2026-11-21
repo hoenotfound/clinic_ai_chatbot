@@ -26,7 +26,11 @@ function customerTiming(customerTexts = []) {
   for (const text of texts) {
     // Past/hypothetical dates and generic questions are not a booking choice.
     const bareDateAnswer = /^(?:(?:下|这|這|本)?(?:个|個)?(?:星期|周|週|礼拜|禮拜)[一二三四五六日天]?|(?:next|this)?\s*(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)|(?:isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)|\d{1,2}\s*[\/.-]\s*\d{1,2}(?:\s*[\/.-]\s*\d{2,4})?)(?:\s*(?:[012]?\d(?:[:.][0-5]\d)?\s*(?:am|pm)|[012]?\d\s*(?:点|點)))?\s*[。！!～~]*$/iu.test(text);
-    if ((!QUALIFIED_AVAILABILITY.test(text) && !bareDateAnswer) ||
+    const shortSpecificDateAnswer = text.length <= 32 && !/[?？]/u.test(text) &&
+      (DAY_ZH.test(text) || DAY_EN.test(text) || DAY_MS.test(text));
+    const bareDayPreference = /^(?:周末|週末|平日|工作日|weekdays?|weekends?|hari biasa|hujung minggu)$/iu.test(text);
+    if ((!QUALIFIED_AVAILABILITY.test(text) && !bareDateAnswer &&
+         !shortSpecificDateAnswer && !bareDayPreference) ||
         /(?:上星期|上周|上週|last\s+week|minggu\s+lepas|之前那天)/iu.test(text)) continue;
     const day = DAY_ZH.test(text) || DAY_EN.test(text) || DAY_MS.test(text);
     const time = CLOCK.test(text);
