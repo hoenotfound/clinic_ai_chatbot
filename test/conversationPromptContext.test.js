@@ -1332,6 +1332,13 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     const nonWombActive = buildSystemPrompt({ conversationContext: nonWomb })
       .split("ACTIVE PROMOTIONS —")[1].split("PROMOTION AUTHORITY")[0];
     assert.doesNotMatch(nonWombActive, /子宫草药护理/u);
+    // Unrelated facial or pelvic-duration questions must not carry the
+    // uterus-specific clinic naming instruction.
+    const unrelated = buildSystemPrompt({
+      conversationContext: buildConversationPromptContext([{ role: "user", content: "3D小颜术多少钱？" }]),
+    });
+    assert.doesNotMatch(unrelated, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(buildSystemPrompt({ conversationContext: nonWomb }), /NEUTRO SENSE CLINIC TERMINOLOGY/);
   });
   withConfig({ ...overrides, businessName: "Independent TCM Centre", clinicName: "Independent TCM Centre" }, () => {
     const history = [
