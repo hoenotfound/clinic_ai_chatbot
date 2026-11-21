@@ -12,7 +12,7 @@ const { createCoalescedImmediateWake, followUpChangeRequiresWake,
   primaryPipelineChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
-const {resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled} =
+const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled} =
   require("../utils/followUpCurrentTopic");
 const { campaignFollowUp } = require("../utils/neutroBreastRm68Campaign");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
@@ -673,9 +673,31 @@ function activePromotionFollowUpStillConfigured(
 }
 
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
-  // Follow-up-only, sender-verified staff discussion. Nothing here updates
-  // the reply model, CRM, marketing permission or Before & After triggers.
-  const staffTopic = staffTopicFeatureEnabled() &&
+  // Follow-up-only, sender-verified staff discussion. Never update the
+  // customer selection, CRM, marketing permission or Before & After triggers.
+  const enabledStaffTopic = staffTopicFeatureEnabled() &&
+    candidate.channel === "whatsapp" &&
+    clinicConfig.businessType === "tcm_clinic" &&
+    /^Neutro Sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""));
+  const topicSafety=enabledStaffTopic ? assessFollowUpTopicSafety({
+    turns:candidate.followup_topic_turns,clinicConfig,
+    originalTreatment:candidate.adFollowUpPolicy?.treatment||candidate.treatment_interest,
+  }) : {unsafe:false};
+  if(topicSafety.unsafe){
+    const copy={
+      zh:"Hi～之前聊到的护理还需要中医师了解情况，才能判断是否适合您 😊 若想了解评估流程，可以随时问我们，不需要急着决定。",
+      en:"Hi! Our practitioner would need to understand your situation before recommending any care 😊 Feel free to ask about the assessment; there is no need to decide now.",
+      ms:"Hai! Pengamal kami perlu memahami keadaan anda sebelum cadangkan rawatan 😊 Kalau ada soalan tentang penilaian, boleh tanya kami bila-bila masa.",
+    };
+    // No treatment-specific promotion, video, photo, voice or AI rewrite.
+    return {message:copy[language]||copy.en,
+      targetedService:null,targetedMediaService:null,
+      selectedImageUrl:"",selectedVideoKey:"",selectedVideoFilename:"",
+      selectedVoiceNote:null,promotionFollowUp:false,
+      promotionPackageSelection:null,unsafeFollowUpTopic:true};
+  }
+  const staffTopic = enabledStaffTopic &&
+
     candidate.channel === "whatsapp" &&
     clinicConfig.businessType === "tcm_clinic" &&
     /^Neutro Sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
@@ -1383,6 +1405,8 @@ async function sendCandidate(candidate) {
     language,
     stepIndex
   );
+  // Do not let a campaign-specific offer overwrite a staff clinical caution.
+  if (fallbackSelection.unsafeFollowUpTopic && rm68FollowUp) return;
   let followUpMessage = rm68FollowUp?.message || fallbackSelection.message;
   let targetedService = rm68FollowUp ? null : fallbackSelection.targetedService;
   let targetedMediaService = fallbackSelection.targetedMediaService || null;
@@ -1402,6 +1426,7 @@ async function sendCandidate(candidate) {
   let aiLeaseToken = null;
   const needsAiWork =
     !rm68FollowUp &&
+    !fallbackSelection.unsafeFollowUpTopic &&
     !candidate.adFollowUpPolicy?.ambiguous &&
     (Boolean(promotionPackageSelection) ||
      (step.messageMode === "ai" && !promotionFollowUp));
