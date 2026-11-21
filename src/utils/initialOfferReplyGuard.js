@@ -234,37 +234,61 @@ function hasTreatmentPriceContent(reply) {
 }
 
 function assessmentFirstInvitation({ treatment, customerText, language = "en", services = [], serviceAliases = [] } = {}) {
-  // Require a single verified service. General body/posture vocabulary is not
-  // proof of pelvic-treatment interest or eligibility for a pelvic voucher.
+  // Only customer-verified service interest may select a treatment-specific invitation.
+  // Package A's AI body scan is NOT verified as part of the free introductory
+  // assessment. Never promise it (or a free paid facial trial) in this invitation.
   const matched = safeServiceFromCustomer(customerText, services, serviceAliases);
   const canonical = (Array.isArray(services) ? services : [])
     .find(service => String(service?.name || "").trim() === String(treatment || "").trim());
   const service = canonical || matched;
-  const isPelvis = String(service?.name || "").trim() === "骨盆调理";
   const name = String(service?.name || "").trim();
+  const isPelvis = name === "骨盆调理";
+  const isFace = /(?:\b[39]\s*d\b|小颜|小顏|逆龄|逆齡|面部|脸部|臉部|facial|face)/iu.test(name);
+  const isBodyPosture = isPelvis || /(?:体态|體態|骨盆|产后|產後|posture|pelvi[cs])/iu.test(name);
   const locale = String(language || "").toLowerCase();
   const zh = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText));
   const ms = locale.startsWith("ms");
-  if (isPelvis && clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true) {
-    return zh
-      ? "可以先免费来做中医师1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
-      : ms
-        ? "Penilaian postur 1-ke-1 bersama sesi pengalaman pengenalan adalah percuma 😊 Selepas hadir, anda juga boleh menerima baucar RM100 untuk rawatan pelvis (tertakluk kepada syarat pusat). Hari biasa atau hujung minggu lebih sesuai?"
-        : "Our 1-on-1 posture assessment + introductory experience is free 😊 After attending, you may also receive an RM100 pelvic-treatment voucher (subject to the centre's conditions). Would weekdays or weekends suit you?";
-  }
+  const dayQuestion = zh
+    ? "\n你哪一天比较方便来呢？我可以帮你向门店确认预约时间～"
+    : ms
+      ? "\nHari apa yang sesuai untuk datang? Saya boleh semak masa dengan pusat dahulu."
+      : "\nWhich day would suit you to visit? I can check the appointment time with the clinic.";
+
   if (isPelvis) {
-    return zh
-      ? "可以先让中医师帮你做一个1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
+    const free = clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true;
+    const intro = zh
+      ? free
+        ? "我们可以先帮你安排免费1对1的体态评估 + 体验，让中医师了解你的体态和身体困扰，再看看适合怎样调理 😊"
+        : "我们可以先帮你安排中医师1对1的体态评估 + 体验，了解你的体态和身体困扰，再看看适合怎样调理 😊"
       : ms
-        ? "Anda boleh datang dahulu untuk penilaian postur 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Selepas hadir, anda boleh menerima baucar RM100 untuk rawatan pelvis. Syarat penggunaan akan disahkan oleh pusat. Hari biasa atau hujung minggu lebih sesuai?"
-        : "You can start with a 1-on-1 posture assessment + trial with our TCM practitioner 😊 After attending, you can receive an RM100 pelvic-treatment voucher. Our centre can confirm the redemption conditions. Would a weekday or weekend suit you?";
+        ? (free ? "Boleh mula dengan penilaian postur 1-ke-1 dan sesi pengenalan percuma" : "Boleh mula dengan penilaian postur 1-ke-1 dan sesi pengenalan") +
+          " bersama pengamal TCM untuk fahami keadaan badan sebelum berbincang tentang rawatan yang sesuai 😊"
+        : (free ? "We can arrange a complimentary 1-on-1 posture assessment and introductory experience" : "We can arrange a 1-on-1 posture assessment and introductory experience") +
+          " so our TCM practitioner can understand your concerns before discussing suitable care 😊";
+    const voucher = zh
+      ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认。"
+      : ms
+        ? "Selepas hadir, anda juga boleh menerima baucar RM100 untuk rawatan pelvis, tertakluk pada syarat pusat."
+        : "After attending, you may also receive an RM100 pelvic-treatment voucher, subject to the clinic's conditions.";
+    return intro + "\n" + voucher + dayQuestion;
+  }
+  if (isFace) {
+    const intro = zh
+      ? "我们可以先帮你安排中医师1对1脸部评估，了解你在意的脸型或紧致问题，再看看" + name + "是否适合你 ❤️"
+      : ms
+        ? "Kami boleh aturkan penilaian wajah 1-ke-1 bersama pengamal TCM untuk fahami keperluan anda sebelum bincang rawatan yang sesuai 😊"
+        : "We can arrange a 1-on-1 facial assessment with our TCM practitioner to understand your concerns before discussing suitable options 😊";
+    return intro + dayQuestion;
   }
   if (name) {
-    return zh
-      ? "可以先让中医师帮你做一个1对1的评估 + 体验，根据你的情况再了解适合的" + name + "护理 😊 你比较方便平日还是周末呢？"
+    const intro = zh
+      ? isBodyPosture
+        ? "可以先让中医师帮你做1对1体态评估 + 入门体验，了解你的身体状况与困扰，再看看适合怎样调理 ❤️"
+        : "可以先安排中医师1对1评估，了解你目前的困扰，再看看" + name + "是否适合你 ❤️"
       : ms
-        ? "Boleh mulakan dengan penilaian 1-ke-1 + sesi percubaan untuk " + name + " dahulu 😊 Hari biasa atau hujung minggu lebih sesuai?"
-        : "You can start with a 1-on-1 assessment + trial for " + name + " 😊 Would a weekday or weekend be more convenient?";
+        ? "Pengamal TCM boleh buat penilaian 1-ke-1 dahulu untuk fahami keperluan anda sebelum bincang rawatan yang sesuai 😊"
+        : "Our TCM practitioner can first assess your concerns one-to-one before discussing whether " + name + " may be suitable 😊";
+    return intro + dayQuestion;
   }
   return safeIntroReply({ customerText, language, services, serviceAliases });
 }
@@ -305,17 +329,13 @@ function ensureFirstAssessmentInvitation({
         : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
     return { reply: original + "\n\n" + voucherNote, appended: true };
   }
-  const invitation = service.name === "骨盆调理"
-    ? assessmentFirstInvitation({ treatment: service.name, customerText, language, services, serviceAliases })
-    : chinese
-    ? "你也可以先来让中医师做一个1对1的评估 + 体验，再了解适合自己的调理方式 😊 你比较方便平日还是周末？"
-    : malay
-      ? "Anda juga boleh datang untuk penilaian 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Hari biasa atau hujung minggu lebih sesuai?"
-      : "You can also begin with a 1-on-1 assessment + trial with our TCM practitioner 😊 Would a weekday or weekend suit you?";
-  // An AI reply may already end with a useful question about the client's
-  // concern. Avoid tacking on a second scheduling question immediately.
+  const invitation = assessmentFirstInvitation({
+    treatment: service.name, customerText, language, services, serviceAliases,
+  });
+  // The AI may already have ended its answer with a useful question.
+  // Do not append a second booking question just because we added value.
   const oneQuestionInvitation = /[?？]\s*$/u.test(original)
-    ? invitation.replace(/(?:你比较方便平日还是周末来呢？|你比较方便平日还是周末？|Hari biasa atau hujung minggu lebih sesuai\?|Would a weekday or weekend suit you\?|Would a weekday or weekend be more convenient\?)\s*$/u, "").trim()
+    ? invitation.replace(/\n[^\n]*[?？][^\n]*$/u, "").trim()
     : invitation;
   return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
 }
