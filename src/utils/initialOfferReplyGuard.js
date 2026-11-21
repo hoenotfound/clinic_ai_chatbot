@@ -258,8 +258,8 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
     const free = clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true;
     const intro = zh
       ? free
-        ? "我们可以先帮你安排免费1对1体态评估 + 入门体验，让中医师了解你的体态和身体困扰，再看看适合怎样调理 ❤️"
-        : "我们可以先帮你安排中医师1对1体态评估 + 入门体验，了解你的体态和身体困扰，再看看适合怎样调理 ❤️"
+        ? "我们可以先帮你安排免费1对1的体态评估 + 体验，让中医师了解你的体态和身体困扰，再看看适合怎样调理 😊"
+        : "我们可以先帮你安排中医师1对1的体态评估 + 体验，了解你的体态和身体困扰，再看看适合怎样调理 😊"
       : ms
         ? (free ? "Boleh mula dengan penilaian postur 1-ke-1 dan sesi pengenalan percuma" : "Boleh mula dengan penilaian postur 1-ke-1 dan sesi pengenalan") +
           " bersama pengamal TCM untuk fahami keadaan badan sebelum berbincang tentang rawatan yang sesuai 😊"
@@ -274,7 +274,7 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   }
   if (isFace) {
     const intro = zh
-      ? "我们可以先帮你安排中医师1对1脸部评估，了解你在意的脸型或紧致问题，再看看适合哪一种护理 ❤️"
+      ? "我们可以先帮你安排中医师1对1脸部评估，了解你在意的脸型或紧致问题，再看看" + name + "是否适合你 ❤️"
       : ms
         ? "Kami boleh aturkan penilaian wajah 1-ke-1 bersama pengamal TCM untuk fahami keperluan anda sebelum bincang rawatan yang sesuai 😊"
         : "We can arrange a 1-on-1 facial assessment with our TCM practitioner to understand your concerns before discussing suitable options 😊";
