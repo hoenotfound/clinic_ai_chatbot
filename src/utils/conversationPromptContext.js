@@ -375,6 +375,45 @@ function buildConversationPromptContext(
         ? (currentMatches.length ? "current_customer" : "current_promotion")
         : null;
 
+  // "是子宫复位treatment吗" after a pelvic explanation is asking whether
+  // THAT treatment repositions the uterus, not choosing a new 子宫调理 service.
+  // Scope this exception to a deictic question, an independently established
+  // previous pelvic topic, and the configured uterus alias. Explicit new
+  // uterus-treatment requests must continue to select 子宫调理 normally.
+  const refersToEarlierUterusReposition =
+    /^(?:是|是不是|这|這|这个|這個|这种|這種|is this|is that|does this|does that)/iu.test(currentCustomerText) &&
+    /子[宫宮].{0,8}(?:复位|復位|归位|歸位)|(?:uterus|womb).{0,24}(?:reposition|realign)/iu.test(currentCustomerText);
+  // This package synonym is verified only for Neutro Sense, not other clinics.
+  const confirmedNeutroPackage = config.businessType === "tcm_clinic" &&
+    /neutro\s*sense/iu.test(String(config.businessName || config.clinicName || "")) &&
+    getActivePromotions(promotions || []).some((promotion) =>
+      promotion?.linkedService === "骨盆调理" &&
+      (Array.isArray(promotion.packages) ? promotion.packages : []).some((item) =>
+        item?.name === "Package A" && /子宫草药护理/u.test(String(item.caption || ""))
+      )
+    );
+  if (confirmedNeutroPackage && refersToEarlierUterusReposition &&
+      currentMatches.length === 1 && currentMatches[0] === "子宫调理" &&
+      !topicChangeIntent) {
+    const previousTopic = recentConversationServiceAnchor(messages, candidates, 16, promotions);
+    // The preceding video/caption may say simply "骨盆" instead of the full
+    // canonical service name. Accept it only for this narrow "is this"
+    // comparison, not as a general treatment or price-selection shortcut.
+    const previousAssistantPelvicExplanation = (Array.isArray(messages) ? messages : [])
+      .slice(0, -1).slice(-4).some((message) =>
+        message?.role === "assistant" &&
+        /骨盆|盆骨|pelvic|pelvis/iu.test(messageText(message)) &&
+        !/(?:脉冲|脈衝|3D|9D|小颜|小顏|逆龄|逆齡)/iu.test(messageText(message))
+      );
+    if ((previousTopic?.relevantServiceNames?.length === 1 &&
+         previousTopic.relevantServiceNames[0] === "骨盆调理") ||
+        (previousAssistantPelvicExplanation &&
+         candidates.some((candidate) => candidate.name === "骨盆调理"))) {
+      relevantServiceNames = ["骨盆调理"];
+      serviceSource = "recent_pelvic_scope_question";
+    }
+  }
+
   if (
     !relevantServiceNames.length &&
     currentMatches.length <= 2 &&
