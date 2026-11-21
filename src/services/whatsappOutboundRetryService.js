@@ -424,6 +424,7 @@ async function runWhatsappOutboundRetryQueue({
   sendText = channelMessaging.sendText,
   sendMessage = null,
   sendSecondaryText = sendSecondaryStaffText,
+  senderEnv = process.env,
 } = {}) {
   const deliverText = compatibleSender({ sendText, sendMessage });
 
@@ -529,7 +530,7 @@ async function runWhatsappOutboundRetryQueue({
       // or Meta attempt may enter this path. Never redirect another sender's
       // message into the primary Cloud API transport.
       const secondaryPreProvider =
-        !primarySender && secondaryRetrySenderVerified(row) &&
+        !primarySender && secondaryRetrySenderVerified(row, senderEnv) &&
         row.origin === "ai_reply" && row.last_error === SECONDARY_PRE_PROVIDER_ERROR &&
         row.delivery_status === "failed" && !row.whatsapp_message_id &&
         row.message_content && row.recipient === row.current_recipient;
@@ -559,7 +560,7 @@ async function runWhatsappOutboundRetryQueue({
         );
         if (!latest ||
             !(secondaryPreProvider
-              ? secondaryRetrySenderVerified(latest)
+              ? secondaryRetrySenderVerified(latest, senderEnv)
               : primaryRetrySenderVerified(latest)) ||
             String(latest.current_sender_id || "") !== String(row.current_sender_id || "") ||
             verifiedRecipientForContact({
