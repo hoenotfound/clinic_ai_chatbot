@@ -335,7 +335,7 @@ function ensureFirstAssessmentInvitation({
   // The AI may already have ended its answer with a useful question.
   // Do not append a second booking question just because we added value.
   const oneQuestionInvitation = /[?？]\s*$/u.test(original)
-    ? invitation.replace(/\n[^\n]*[?？]\s*$/u, "").trim()
+    ? invitation.replace(/\n[^\n]*[?？][^\n]*$/u, "").trim()
     : invitation;
   return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
 }
