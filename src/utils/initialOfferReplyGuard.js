@@ -14,6 +14,8 @@ const {
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const clinicConfig = require("../config/clinicConfig");
+const { adaptNeutroAppointmentInvitation, isNeutroBusiness } =
+  require("./appointmentInviteContinuity");
 
 // A final outbound boundary for a first WhatsApp message without a current
 // price enquiry. Consent detection must not control unsolicited price safety.
@@ -320,14 +322,46 @@ function ensureFirstAssessmentInvitation({
   const malay = lang.startsWith("ms");
   const alreadyInvited = /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original);
   const hasVoucher = /\b(?:RM|MYR)\s*100\b/iu.test(original);
+  // Strengthen a short existing assessment invitation without replacing a
+  // useful answer or adding a second booking question. This only changes
+  // Neutro conversations; a mere reference to a 1-to-1 assessment is not
+  // itself permission to push an appointment.
+  const neutro = isNeutroBusiness(clinicConfig);
+  const valueNote = chinese
+    ? service.name === "骨盆调理"
+      ? "中医师会先了解你的体态和身体困扰，再看看适合怎样调理 ❤️"
+      : /(?:3D|9D|小颜|逆龄|面部|脸部)/iu.test(service.name)
+        ? "中医师会先了解你在意的脸型和紧致问题，再看看适合哪种护理 ❤️"
+        : "中医师会先了解你目前在意的身体状况，再看看适合怎样调理 ❤️"
+    : malay
+      ? "Pengamal TCM akan fahamkan keadaan dan keperluan anda dahulu sebelum bincang rawatan yang sesuai 😊"
+      : "Our TCM practitioner will first understand your concerns before discussing suitable care 😊";
+  const hasValue = /(?:了解|瞭解|明白|认识|認識|fahami|memahami|understand).{0,70}(?:体态|體態|身体|身體|困扰|困擾|情况|狀況|需要|需求|脸型|臉型|紧致|緊緻|care|concerns?|needs?|condition|rawatan|keperluan)/iu.test(original);
+  const looksLikeInvite = /(?:安排|预约|預約|来做|來做|先来|先來|过来|過來|到店|想先|想不想|book|arrange|come|visit|appointment|atur|datang)/iu.test(original);
+  const isAlreadyBooked = /(?:已预约|已預約|已确认|已確認|confirmed appointment|already booked|temu janji disahkan)/iu.test(original);
   if (alreadyInvited) {
-    if (service.name !== "骨盆调理" || hasVoucher) return { reply: original, appended: false };
-    const voucherNote = chinese
-      ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
-      : malay
-        ? "Selepas hadir untuk penilaian + sesi percubaan, anda juga boleh menerima baucar RM100 untuk rawatan pelvis. Syarat ditegaskan oleh pusat."
-        : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
-    return { reply: original + "\n\n" + voucherNote, appended: true };
+    let enriched = original;
+    if (neutro && looksLikeInvite && !hasValue && !isAlreadyBooked) {
+      // Put the reason for visiting BEFORE the existing scheduling question.
+      const bookingQuestion = /(?:你比较方便|你比較方便|你哪一天|你下星期|您想先安排|你想先安排|which day|what day|would a weekday|hari apa|hari biasa|hujung minggu)/iu;
+      const match = bookingQuestion.exec(enriched);
+      enriched = match
+        ? enriched.slice(0, match.index).trimEnd() + "\n" + valueNote + "\n" + enriched.slice(match.index)
+        : enriched + "\n" + valueNote;
+    }
+    enriched = adaptNeutroAppointmentInvitation({
+      message: enriched, customerTexts: [customerText], language,
+      businessConfig: clinicConfig,
+    });
+    if (service.name === "骨盆调理" && !hasVoucher) {
+      const voucherNote = chinese
+        ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
+        : malay
+          ? "Selepas hadir untuk penilaian + sesi percubaan, anda juga boleh menerima baucar RM100 untuk rawatan pelvis. Syarat ditegaskan oleh pusat."
+          : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
+      enriched += "\n\n" + voucherNote;
+    }
+    return { reply: enriched, appended: enriched !== original };
   }
   const invitation = assessmentFirstInvitation({
     treatment: service.name, customerText, language, services, serviceAliases,
@@ -337,7 +371,11 @@ function ensureFirstAssessmentInvitation({
   const oneQuestionInvitation = /[?？]\s*$/u.test(original)
     ? invitation.replace(/\n[^\n]*[?？][^\n]*$/u, "").trim()
     : invitation;
-  return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
+  const adaptedInvitation = adaptNeutroAppointmentInvitation({
+    message: oneQuestionInvitation || invitation, customerTexts: [customerText],
+    language, businessConfig: clinicConfig,
+  });
+  return { reply: original + "\n\n" + adaptedInvitation, appended: true };
 }
 
 // This is conversational continuity only, never authority to quote a price.

@@ -23,6 +23,7 @@ const {classifyVerifiedTreatmentTurn,isStoppedDecision,
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
+const {adaptNeutroAppointmentInvitation}=require("../utils/appointmentInviteContinuity");
 const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled}=
   require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
@@ -1080,6 +1081,12 @@ async function runOnce({
           outboundText=personalized.message;
           aiMode=personalized.mode;
         }
+      }
+      if(slot===20){
+        outboundText=adaptNeutroAppointmentInvitation({
+          message:outboundText,customerTexts:[...(candidate.customer_texts||[])].reverse(),
+          language:replyLanguage,businessConfig:clinicConfig,
+        });
       }
       // Keep service-window reminders focused on the customer's enquiry.
       // The marketing sender must still verify consent separately.
