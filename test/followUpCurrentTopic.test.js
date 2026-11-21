@@ -218,7 +218,9 @@ test("primary follow-ups use neutral text and no images, videos, voice or promot
  const primary=require("../src/services/followUpService");
  const props=["businessName","clinicName","businessType","services","serviceAliases","promotions","automatedFollowUp"];
  const prior=Object.fromEntries(props.map(k=>[k,config[k]]));
+ const previousFeatureFlag=process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED;
  try {
+  process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED="true";
   Object.assign(config,{businessName:"Neutro Sense TCM Centre",
    clinicName:"Neutro Sense TCM Centre",businessType:"tcm_clinic",
    services:cfg.services,serviceAliases:cfg.serviceAliases,
@@ -242,6 +244,8 @@ test("primary follow-ups use neutral text and no images, videos, voice or promot
   assert.match(choice.message,/评估/);
   assert.doesNotMatch(choice.message,/脉冲|RM|这段影片/);
  } finally {
+  if(previousFeatureFlag===undefined)delete process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED;
+  else process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED=previousFeatureFlag;
   for(const key of props) {
    if(prior[key]===undefined)delete config[key];
    else config[key]=prior[key];
