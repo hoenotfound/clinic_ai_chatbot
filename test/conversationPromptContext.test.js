@@ -1322,6 +1322,9 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
       ...history.slice(0, 1), { role: "user", content: "我想了解子宫调理" },
     ]);
     assert.deepEqual(newTopic.relevantServiceNames, ["子宫调理"]);
+    const standalonePrompt = buildSystemPrompt({ conversationContext: newTopic });
+    assert.doesNotMatch(standalonePrompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
+    assert.doesNotMatch(standalonePrompt, /SAME offered care item/);
     const noPreviousPelvis = buildConversationPromptContext([
       { role: "user", content: "是子宫复位treatment吗" },
     ]);
