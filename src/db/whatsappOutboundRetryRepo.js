@@ -258,6 +258,7 @@ async function checkSendEligibility({
   leaseToken,
   messageId,
   contactId,
+  allowSecondaryStarted = false,
 } = {}, database = pool) {
   const result = await database.query(
     `SELECT
@@ -266,6 +267,7 @@ async function checkSendEligibility({
        q.processing_kind,
        q.lease_token,
        c.id AS contact_id,
+       m.created_at AS message_created_at,
        c.mode AS contact_mode,
        c.channel AS contact_channel,
        c.whatsapp_number AS current_recipient,
@@ -296,6 +298,7 @@ async function checkSendEligibility({
            AND (newer.created_at, newer.id) > (original.created_at, original.id)
        ) AS has_newer_staff_message
      FROM whatsapp_outbound_retries q
+     JOIN messages m ON m.id=q.message_id AND m.contact_id=q.contact_id
      JOIN contacts c ON c.id = q.contact_id
      LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
      WHERE q.id = $1
@@ -303,12 +306,23 @@ async function checkSendEligibility({
        AND q.message_id = $3
        AND q.contact_id = $4
        AND q.status = 'processing'
-       AND q.processing_kind IN ('send_pending', 'send_started')`,
+       AND (
+         q.processing_kind = 'send_pending'
+         OR (
+           $5::boolean = TRUE
+           AND q.processing_kind = 'send_started'
+           AND q.origin = 'ai_reply'
+           AND q.last_error = 'secondary_billing_previous_send_unresolved'
+           AND sa.sender_key = 'neutro_secondary'
+           AND sa.state = 'active'
+         )
+       )`,
     [
       Number(id),
       String(leaseToken || ""),
       Number(messageId),
       Number(contactId),
+      allowSecondaryStarted === true,
     ]
   );
   return result.rows[0] || null;
@@ -318,7 +332,7 @@ async function checkSendEligibility({
 // conclusively stopped before any provider/billing attempt. No other
 // secondary message is ever eligible for the generic retry worker.
 async function secondaryPreProviderRetrySafe({
-  id, leaseToken, messageId, contactId, originalError,
+  id, leaseToken, messageId, contactId, failureCode,
 } = {}, database = pool) {
   const result = await database.query(
     `SELECT EXISTS(
@@ -334,7 +348,9 @@ async function secondaryPreProviderRetrySafe({
         AND q.origin='ai_reply'
         AND q.last_error=$5
         AND m.role='assistant' AND m.sent_by_username IS NULL
-        AND m.delivery_status='failed' AND m.delivery_error=$5
+        AND m.delivery_status='failed'
+        AND m.delivery_error=attempt.error_text
+        AND attempt.error_text IS NOT NULL
         AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
         AND m.media_url IS NULL AND m.whatsapp_interactive IS NULL
         AND attempt.origin='ai_reply' AND attempt.outcome='rejected'
@@ -350,7 +366,7 @@ async function secondaryPreProviderRetrySafe({
                  OR evidence.provider_message_id IS NOT NULL))
     ) AS safe`,
     [Number(id),String(leaseToken||''),Number(messageId),Number(contactId),
-      String(originalError||'')]
+      String(failureCode||'')]
   );
   return result.rows?.[0]?.safe === true;
 }
