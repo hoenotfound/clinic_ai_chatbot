@@ -345,7 +345,9 @@ async function secondaryPreProviderRetrySafe({
           WHERE billing.message_id=m.id)
         AND NOT EXISTS (
           SELECT 1 FROM outbound_message_evidence evidence
-          WHERE evidence.message_id=m.id)
+          WHERE evidence.message_id=m.id
+            AND (evidence.accepted IS DISTINCT FROM FALSE
+                 OR evidence.provider_message_id IS NOT NULL))
     ) AS safe`,
     [Number(id),String(leaseToken||''),Number(messageId),Number(contactId),
       String(originalError||'')]
