@@ -1308,7 +1308,12 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     const activeSection = prompt.split("ACTIVE PROMOTIONS —")[1].split("PROMOTION AUTHORITY")[0];
     assert.match(activeSection, /Package A inclusions:.*子宫草药护理/u);
     assert.doesNotMatch(activeSection, /(?:RM|MYR)\s*\d/iu);
-    assert.match(prompt, /Do not claim herbal womb care physically repositions organs/);
+    // Staff-confirmed product naming: 子宫草药护理 and 子宫复位 are
+    // two names for the same Package A inclusion, not separate treatments.
+    assert.match(prompt, /uses 子宫复位 as its customer-facing name for the 子宫草药护理 inclusion/);
+    assert.match(prompt, /SAME offered care item/);
+    assert.match(prompt, /do NOT tell customers they are different treatments/);
+    assert.match(prompt, /not evidence that treatment physically moves/);
 
     // An explicit new enquiry is still about the separate 子宫调理 service.
     const newTopic = buildConversationPromptContext([
