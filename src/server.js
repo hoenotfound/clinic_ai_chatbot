@@ -475,6 +475,8 @@ async function sendTrackedText(
           recipient: contact.whatsapp_number,
           origin,
           sendResult,
+          secondaryPreProviderCode: provenSecondaryPreProviderBlock
+            ? sendResult.code : null,
         });
         retryQueued = Boolean(queued);
         if (retryQueued) {
