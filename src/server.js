@@ -2383,6 +2383,36 @@ async function processIncomingMessage(
       }
     }
 
+    // A verified, ongoing RM68 campaign can answer ordinary date and price
+    // questions even when the model incorrectly requested a clinical review.
+    // Do not clear existing review records, permit medical replies, or attach
+    // marketing media. An unrelated review remains visible to staff.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        /(?:[价價][钱錢格]|多少[钱錢]|收费|收費|费用|費用|价格|價格|活动日期|活動日期|只有.{0,4}(?:天|日)|\\b(?:price|cost|how much|when|dates?)\\b)/iu.test(text)) {
+      const campaignAnswer = campaignContextReply({ history, customerText: text });
+      if (campaignAnswer) {
+        reply = campaignAnswer;
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        clinicalAcknowledgement = null;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        details = null;
+        reviewContinuationTextOnly = true;
+        console.info("[RM68 safe administrative review recovery] contact=" +
+          contact.id + " inbound=" + savedInbound.id);
+      }
+    }
+
     // A non-urgent urinary symptom merits one staff review, not complete
     // silence. Use fixed non-diagnostic copy; never trust generated medical
     // reassurance or mark the clinical review as resolved.
