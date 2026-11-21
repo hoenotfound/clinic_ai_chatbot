@@ -103,7 +103,54 @@ function resolveStaffDiscussedFollowUpTopic({turns,clinicConfig,lastConfirmedMes
  }
  return null;
 }
+
+// Return an independent risk result, not a new "selected treatment".
+// A negative staff clinical recommendation must never fall back to the older
+// signed customer choice, old CRM treatment or advertisement. A comparison
+// with no later explicit customer choice must not select a service image/video.
+function assessFollowUpTopicSafety({
+  turns,clinicConfig,originalTreatment=null,lastConfirmedMessageId=0,
+}={}) {
+ const ordered=orderedTurns(turns);
+ const candidates=serviceCandidates(clinicConfig?.services,clinicConfig?.serviceAliases);
+ const confirmedId=Number(lastConfirmedMessageId)||0;
+ const original=String(originalTreatment||"").trim();
+ for(const turn of ordered) {
+  if(Number(turn.id)<=confirmedId)continue;
+  if(turn.role==="assistant"){
+   if(negatedStaffOffer(turn.content,clinicConfig,candidates)){
+    const clauses=String(turn.content).split(/[，,。.!！?？;；\n]|\b(?:but|instead|tapi|tetapi)\b/iu);
+    const declined=clauses.flatMap(clause=>NEGATIVE_ADVICE.test(clause)
+      ? [...mentioned(clause,candidates),...configuredPackageMention(clause,clinicConfig)] : []);
+    if(!original || declined.includes(original)){
+      return {unsafe:true,reason:"staff_advised_against_treatment"};
+    }
+    // If the staff cautions against another service the patient is now
+    // discussing, prefer a neutral reminder instead of guessing whether
+    // the original selection remains clinically suitable.
+    if(declined.length>0)return {unsafe:true,reason:"staff_treatment_caution"};
+   }
+   const intro=String(turn.content).split(/(?:包含|包括|内含|內含|includes?|✅|✨)/iu)[0];
+   const names=mentioned(intro,candidates);
+   const comparison=/(?:还是|還是|或者|或是|或(?:者)?|比较|比較|选择|選擇|vs\.?|versus|\bor\b|\bbetween\b|atau|pilih|banding)/iu.test(intro);
+   if(names.length>1 && comparison){
+     return {unsafe:true,reason:"staff_multiple_treatment_options"};
+   }
+  }else if(turn.role==="user") {
+   const names=mentioned(turn.content,candidates);
+   const comparison=/(?:还是|還是|或者|或是|哪[一個个种種]|比较|比較|区别|區別|差别|差別|vs\.?|versus|\bor\b|\bbetween\b|atau|banding|mana)/iu.test(turn.content);
+   if(names.length>1 && comparison){
+     return {unsafe:true,reason:"customer_unresolved_treatment_comparison"};
+   }
+   if(CANCEL.test(turn.content) && (!original || names.includes(original))){
+     return {unsafe:true,reason:"customer_discontinued_treatment"};
+   }
+  }
+ }
+ return {unsafe:false,reason:null};
+}
+
 function staffTopicFeatureEnabled(env=process.env){
  return env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==="true";
 }
-module.exports={resolveStaffDiscussedFollowUpTopic,staffTopicFeatureEnabled};
+module.exports={resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled};
