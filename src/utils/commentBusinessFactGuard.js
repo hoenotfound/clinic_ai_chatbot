@@ -33,9 +33,10 @@ function safeKnownLocation(config, language) {
       branches.length !== (Array.isArray(config?.branches) ? config.branches.length : 0)) return null;
   const name = String(branches[0].name).trim();
   const address = String(branches[0].address).trim();
-  if (language === "ms") return "Lokasi klinik kami yang disahkan ialah " + name + " 😊\nAlamat: " + address;
-  if (language === "en") return "Our currently confirmed clinic location is " + name + " 😊\nAddress: " + address;
-  return "我们目前确认的门店在 " + name + " 哦 😊\n地址：" + address;
+  const isClinic = ["tcm_clinic", "aesthetic_clinic"].includes(config?.businessType);
+  if (language === "ms") return "Lokasi kami yang disahkan ialah " + name + " 😊\nAlamat: " + address;
+  if (language === "en") return "Our currently confirmed " + (isClinic ? "clinic location" : "location") + " is " + name + " 😊\nAddress: " + address;
+  return "我们目前确认的" + (isClinic ? "门店" : "营业地点") + "在 " + name + " 哦 😊\n地址：" + address;
 }
 
 function safeKnownHours(config, language) {
