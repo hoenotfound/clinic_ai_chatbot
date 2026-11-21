@@ -110,3 +110,107 @@ test("location recognition stays narrow", () => {
   assert.equal(verifiedAnswerKind("营业时间是几点？"), "hours");
   assert.equal(verifiedAnswerKind("Pelvic treatment price?"), null);
 });
+
+
+test("comment processing sends the corrected DM without creating false staff attention", async () => {
+  const { createMetaCommentAutomationService, DEFAULT_COMMENT_AUTOMATION } =
+    require("../src/services/metaCommentAutomationService");
+  const original = {
+    id: 321, channel: "facebook", commentId: "comment-321",
+    entryId: "page-1", authorId: "author-321", authorName: "Sandy",
+    text: "有在槟城有店铺吗?", postId: "post-1", mediaId: null,
+    parentCommentId: null, rawEvent: {}, attemptCount: 1,
+    publicReplyId: null, privateReplyMessageId: null,
+  };
+  let job = { ...original };
+  let sentText = null;
+  let savedText = null;
+  let attentionCalls = 0;
+  const repo = {
+    claimJob: async () => job,
+    markSkipped: async () => assert.fail("must not skip a valid business question"),
+    markFailed: async (_id, err) => { throw err; },
+    markPrivateReplyPending: async (_id, { text }) => {
+      job = { ...job, privateReplyPendingText: text };
+      return job;
+    },
+    markPrivateReplySent: async (_id, data) => {
+      job = { ...job, privateReplyMessageId: data.messageId,
+        privateReplyRecipientId: data.recipientId };
+      return job;
+    },
+    markCompleted: async () => ({ ...job, status: "completed" }),
+  };
+  const meta = {
+    sendPrivateReplyToComment: async (_channel, _commentId, text) => {
+      sentText = text;
+      return { success: true, messageId: "mid-321", recipientId: "psid-321" };
+    },
+    replyToComment: async () => assert.fail("public replies remain disabled"),
+  };
+  const aiClient = {
+    getReply: async () => JSON.stringify({
+      reply: awaitingStaff.privateReply,
+      outcome: "needs_human",
+      publicReply: "",
+      privateReply: awaitingStaff.privateReply,
+      shouldRespond: true,
+    }),
+  };
+  const contacts = {
+    getOrCreateChannelContact: async () => ({ id: 321 }),
+    setAttention: async () => { attentionCalls += 1; },
+  };
+  const service = createMetaCommentAutomationService({
+    repo, meta, aiClient, contacts,
+    messages: { getMessageByProviderIdForContact: async () => null },
+    store: {
+      appendMessageForContact: async (_id, _role, text) => {
+        savedText = text;
+        return { id: 4321 };
+      },
+    },
+    pipeline: { ensureLeadForContact: async () => ({ lead: null }) },
+    config: {
+      ...config,
+      commentAutomation: {
+        ...DEFAULT_COMMENT_AUTOMATION,
+        enabled: true, publicReplyEnabled: false, privateReplyEnabled: true,
+      },
+    },
+    repliesEnabled: () => true,
+  });
+  const result = await service.processJob(original.id);
+  assert.equal(result.status, "completed");
+  assert.match(sentText, /Petaling Jaya/);
+  assert.equal(savedText, sentText);
+  assert.equal(attentionCalls, 0);
+});
+
+test("social comment prompt reads locations, hours and FAQs from the live shared config", () => {
+  const liveConfig = require("../src/config/clinicConfig");
+  const { buildSystemPrompt } = require("../src/utils/systemPrompt");
+  const original = {
+    branches: liveConfig.branches, hours: liveConfig.hours, faqs: liveConfig.faqs,
+  };
+  try {
+    liveConfig.branches = config.branches;
+    liveConfig.hours = config.hours;
+    liveConfig.faqs = [{ q: "Do you accept walk-ins?", a: "Appointment preferred" }];
+    const prompt = buildSystemPrompt({
+      surface: "comment_automation", channel: "facebook",
+      commentText: "有在槟城有店铺吗?",
+      publicReplyEnabled: false, privateReplyEnabled: true,
+    });
+    assert.match(prompt, /Petaling Jaya/);
+    assert.match(prompt, /Section 19\/1/);
+    assert.match(prompt, /Tue-Fri 10am-8pm/);
+    assert.match(prompt, /Do you accept walk-ins/);
+    assert.match(prompt, /Do not defer a fact that is already configured/i);
+    assert.match(prompt, /do NOT mention treatment\/package\/trial prices/i);
+  } finally {
+    liveConfig.branches = original.branches;
+    liveConfig.hours = original.hours;
+    liveConfig.faqs = original.faqs;
+  }
+});
