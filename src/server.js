@@ -2413,6 +2413,37 @@ async function processIncomingMessage(
       }
     }
 
+    // Reply with the single address actually configured for this clinic.
+    // Never infer a branch from an ad, a prior message, or a generated answer.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        /^(?:请问|請問|想问|想問|你好|hi|hello|想知道|可以问下)?[\s，,～~]*(?:你们|你們|你家|你们的|你們的|店|门店|門店|诊所|診所)?[\s，,～~]*(?:的店|的门店|的門店)?[\s，,～~]*(?:是)?(?:在(?:哪里|哪裡|哪|什么地方|什麼地方)|地址(?:是|在哪里|在哪裡)?|地点(?:是|在哪里|在哪裡)?|地點(?:是|在哪里|在哪裡)?)[\s？?。!！]*$/iu.test(String(text || "").trim())) {
+      const branches = Array.isArray(clinicConfig.branches) ? clinicConfig.branches : [];
+      if (branches.length === 1 && String(branches[0]?.address || "").trim()) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+        if (evidence?.pendingClinicalReview === false) {
+          reply = "我们位于 " + String(branches[0].name || clinicConfig.businessName || "").trim() +
+            " 😊\n📍 " + String(branches[0].address).trim() +
+            "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️";
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          clinicalAcknowledgement = null;
+          priceQuery = false;
+          packageQuery = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          details = null;
+          reviewContinuationTextOnly = true;
+        }
+      }
+    }
+
     // A non-urgent urinary symptom merits one staff review, not complete
     // silence. Use fixed non-diagnostic copy; never trust generated medical
     // reassurance or mark the clinical review as resolved.
