@@ -207,7 +207,7 @@ test("social comment prompt reads locations, hours and FAQs from the live shared
     assert.match(prompt, /Tue-Fri 10am-8pm/);
     assert.match(prompt, /Do you accept walk-ins/);
     assert.match(prompt, /Do not defer a fact that is already configured/i);
-    assert.match(prompt, /do NOT mention treatment\/package\/trial prices/i);
+    assert.match(prompt, /applies ONLY to that exact configured service/i);
   } finally {
     liveConfig.branches = original.branches;
     liveConfig.hours = original.hours;
