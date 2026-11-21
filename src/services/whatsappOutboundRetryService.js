@@ -5,6 +5,8 @@ const contactsRepo = require("../db/contactsRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("../db/outboundMessageEvidenceRepo");
 const channelMessaging = require("./channelMessagingService");
+const { sendSecondaryStaffText } = require("./whatsappSecondaryStaffDispatch");
+const { isProvenPreProviderBlock } = require("./whatsappSecondaryPreSendDeferral");
 const {
   TRANSIENT_SEND_ERROR_CODES,
 } = require("./whatsappService");
@@ -12,6 +14,8 @@ const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
+const SECONDARY_PRE_PROVIDER_ERROR =
+  "The previous WhatsApp message is still being confirmed. Check its delivery before another send.";
 const INITIAL_RETRY_DELAY_MS = 15 * 1000;
 const RETRY_DELAYS_MS = Object.freeze([
   INITIAL_RETRY_DELAY_MS,
@@ -399,6 +403,17 @@ function primaryRetrySenderVerified(row, env = process.env) {
   );
 }
 
+function secondaryRetrySenderVerified(row, env = process.env) {
+  return Boolean(
+    row?.current_sender_id != null &&
+    row.current_sender_key === "neutro_secondary" &&
+    row.current_sender_state === "active" &&
+    row.current_sender_phone_number_id === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+    row.current_sender_account_id === env.WHATSAPP_SECONDARY_WABA_ID &&
+    row.current_sender_key === env.WHATSAPP_SECONDARY_SENDER_KEY
+  );
+}
+
 async function runWhatsappOutboundRetryQueue({
   repository = retryRepo,
   messages = messagesRepo,
@@ -408,6 +423,7 @@ async function runWhatsappOutboundRetryQueue({
   isAutomationEnabled = automatedRepliesEnabled,
   sendText = channelMessaging.sendText,
   sendMessage = null,
+  sendSecondaryText = sendSecondaryStaffText,
 } = {}) {
   const deliverText = compatibleSender({ sendText, sendMessage });
 
@@ -508,7 +524,16 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
-      if (!primaryRetrySenderVerified(row)) {
+      const primarySender = primaryRetrySenderVerified(row);
+      // Only the exact secondary AI reply refused BEFORE a billing reservation
+      // or Meta attempt may enter this path. Never redirect another sender's
+      // message into the primary Cloud API transport.
+      const secondaryPreProvider =
+        !primarySender && secondaryRetrySenderVerified(row) &&
+        row.origin === "ai_reply" && row.last_error === SECONDARY_PRE_PROVIDER_ERROR &&
+        row.delivery_status === "failed" && !row.whatsapp_message_id &&
+        row.message_content && row.recipient === row.current_recipient;
+      if (!primarySender && !secondaryPreProvider) {
         await finishAttention(row,
           "Automatic retry blocked: this message belongs to a different or unverified WhatsApp sender. Review the original chat before resending.", {
             terminal: "cancelled", repository, contacts, inbound, leaseToken,
@@ -533,7 +558,9 @@ async function runWhatsappOutboundRetryQueue({
           isAutomationEnabled
         );
         if (!latest ||
-            !primaryRetrySenderVerified(latest) ||
+            !(secondaryPreProvider
+              ? secondaryRetrySenderVerified(latest)
+              : primaryRetrySenderVerified(latest)) ||
             String(latest.current_sender_id || "") !== String(row.current_sender_id || "") ||
             verifiedRecipientForContact({
               whatsapp_number: latest.current_recipient,
@@ -541,9 +568,21 @@ async function runWhatsappOutboundRetryQueue({
               whatsapp_user_id: latest.current_user_id,
             }) !== verifiedRecipientForContact(contactForSend)) return false;
 
-        const started = typeof repository.markSendStarted === "function"
-          ? await repository.markSendStarted(row.id, leaseToken)
-          : { id: row.id };
+        if (secondaryPreProvider && !providerCallStarted) {
+          // This is checked before the secondary billing reservation. Later
+          // rechecks must not mistake this new, valid reservation for evidence
+          // of the original definitively-unsent attempt.
+          if (typeof repository.secondaryPreProviderRetrySafe !== "function" ||
+              !await repository.secondaryPreProviderRetrySafe({
+                id: row.id, leaseToken,
+                messageId: row.message_id, contactId: row.contact_id,
+                originalError: SECONDARY_PRE_PROVIDER_ERROR,
+              })) return false;
+        }
+        const started = providerCallStarted ? { id: row.id }
+          : typeof repository.markSendStarted === "function"
+            ? await repository.markSendStarted(row.id, leaseToken)
+            : { id: row.id };
         if (!started) return false;
         providerCallStarted = true;
         return true;
@@ -553,16 +592,43 @@ async function runWhatsappOutboundRetryQueue({
       // That preserves the 24-hour WhatsApp policy gate before preSendCheck,
       // while preSendCheck is the last ownership/conversation fence immediately
       // before the provider request.
-      const result = await deliverText(
-        contactForSend,
-        row.message_content,
-        {
-          purpose: "service",
-          currentMessageId: row.message_id,
-          preSendCheck,
-        }
-      );
+      const result = secondaryPreProvider
+        ? await sendSecondaryText({
+            contact: await contacts.getContactById(row.contact_id),
+            messageId: row.message_id, text: row.message_content,
+            origin: "ai_reply", preSendCheck,
+          })
+        : await deliverText(
+            contactForSend,
+            row.message_content,
+            {
+              purpose: "service",
+              currentMessageId: row.message_id,
+              preSendCheck,
+            }
+          );
       providerResultResolved = true;
+
+      // A secondary cancellation AFTER reservation may still have an
+      // uncertain provider/billing outcome. Never downgrade it to "cancelled".
+      if (secondaryPreProvider && (result?.ambiguous || result?.unknown)) {
+        await failClosedAmbiguous(row, retryErrorText(result), {
+          repository, messages, contacts, evidence, inbound, leaseToken,
+        });
+        continue;
+      }
+      if (secondaryPreProvider && isProvenPreProviderBlock(result) &&
+          Number(row.attempts) < MAX_RETRY_ATTEMPTS) {
+        const delayMs = retryDelayForAttempt(row.attempts);
+        await repository.reschedule(row.id, leaseToken, {
+          delaySeconds: Math.ceil(delayMs / 1000),
+          errorText: SECONDARY_PRE_PROVIDER_ERROR,
+        });
+        console.warn(
+          `Secondary AI reply deferred before provider for message ${row.message_id}.`
+        );
+        continue;
+      }
 
       if (result?.cancelled) {
         const reason = result?.preSendCheckFailed
