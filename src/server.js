@@ -118,6 +118,7 @@ const {
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
+const { isProvenPreProviderBlock } = require("./services/whatsappSecondaryPreSendDeferral");
 const { sendSecondaryStaffText } = require("./services/whatsappSecondaryStaffDispatch");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
@@ -446,7 +447,15 @@ async function sendTrackedText(
   if (!sendResult.success) {
     let retryQueued = false;
 
+    // This exact secondary billing-gate refusal happened before any Meta
+    // request or billing reservation. Reuse the durable outbound retry queue,
+    // but never admit unknown/ambiguous outcomes or recovery-button messages.
+    const provenSecondaryPreProviderBlock =
+      secondaryAutomatedText && origin === "ai_reply" &&
+      interactiveButtons == null && isProvenPreProviderBlock(sendResult);
+
     if (
+      provenSecondaryPreProviderBlock || (
       contact.channel === "whatsapp" &&
       // Generic retries use primary Cloud API credentials. A secondary
       // sender must never enter that queue, even on a transient failure.
@@ -457,6 +466,7 @@ async function sendTrackedText(
       sendResult.retryable === true &&
       sendResult.ambiguous !== true &&
       ["ai_reply", "system_fallback"].includes(origin)
+      )
     ) {
       try {
         const queued = await whatsappOutboundRetry.queueTextRetry({
