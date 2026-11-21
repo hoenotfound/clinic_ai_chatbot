@@ -649,7 +649,8 @@ async function runWhatsappOutboundRetryQueue({
         providerAcceptedUnpersisted = true;
         const updated = await messages.setWhatsappMessageId(
           row.message_id,
-          result.wamid
+          result.wamid,
+          { preserveVerifiedSecondaryReceipt: secondaryPreProvider }
         );
         if (!updated?.whatsapp_message_id) {
           const persistenceError = new Error(
