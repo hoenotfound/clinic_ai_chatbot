@@ -109,8 +109,8 @@ test("real PostgreSQL: stable code proves only genuinely unsent secondary AI tex
 
     await db.query(
       "INSERT INTO outbound_message_evidence "+
-      "(message_id,contact_id,channel,origin,accepted,provider_message_id) "+
-      "VALUES($1,$2,'whatsapp','ai_reply',TRUE,'wamid.proven-accepted')",
+      "(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) "+
+      "VALUES($1,$2,'whatsapp','ai_reply',TRUE,'wamid.proven-accepted',NOW())",
       [ids.outbound,ids.contact]
     );
     assert.equal(await proven(db,ids),false,
