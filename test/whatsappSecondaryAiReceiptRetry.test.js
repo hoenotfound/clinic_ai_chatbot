@@ -3,7 +3,9 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
 const path=require("node:path");
-const {runWhatsappOutboundRetryQueue}=require("../src/services/whatsappOutboundRetryService");
+const {runWhatsappOutboundRetryQueue,secondaryRetryFresh,SECONDARY_RETRY_MAX_AGE_MS,
+  queueTextRetry}=require("../src/services/whatsappOutboundRetryService");
+const {PRE_PROVIDER_CODE}=require("../src/services/whatsappSecondaryPreSendDeferral");
 
 const ERROR="The previous WhatsApp message is still being confirmed. Check its delivery before another send.";
 const senderEnv={
@@ -16,7 +18,8 @@ function row(changes={}){
     id:4,message_id:22603,contact_id:9251,recipient:"60142635859",
     origin:"ai_reply",status:"processing",processing_kind:"send_pending",
     attempts:1,lease_token:"safe-lease",message_content:"Approved AI reply",
-    delivery_status:"failed",delivery_error:ERROR,last_error:ERROR,
+    delivery_status:"failed",delivery_error:ERROR,last_error:PRE_PROVIDER_CODE,
+    message_created_at:new Date().toISOString(),
     whatsapp_message_id:null,contact_mode:"ai",contact_channel:"whatsapp",
     contact_needs_attention:false,has_newer_customer_message:false,
     has_newer_staff_message:false,current_sender_id:2,
@@ -36,7 +39,7 @@ function setup(changes={}){
    async secondaryPreProviderRetrySafe(args){
      calls.push("proof");
      assert.equal(args.messageId,22603);
-     assert.equal(args.originalError,ERROR);
+     assert.equal(args.failureCode,PRE_PROVIDER_CODE);
      return true;
    },
    async markSendStarted(){calls.push("started");return{id:4}},
@@ -106,7 +109,7 @@ test("still-locked secondary gate is deferred without provider send or staff att
  await runWhatsappOutboundRetryQueue(ctx);
  const deferred=ctx.calls.find(x=>Array.isArray(x)&&x[0]==="defer");
  assert.ok(deferred);
- assert.equal(deferred[1].errorText,ERROR);
+ assert.equal(deferred[1].errorText,PRE_PROVIDER_CODE);
  assert.equal(ctx.calls.includes("failed"),false);
  assert.equal(ctx.calls.includes("attention"),false);
 });
@@ -143,4 +146,72 @@ test("outbound primary worker remains protected and secondary enrollment is exac
  assert.match(worker,/secondaryRetrySenderVerified/);
  assert.match(repo,/NOT EXISTS \(\s*SELECT 1 FROM whatsapp_sender_billing_attempts billing/);
  assert.match(repo,/NOT EXISTS \(\s*SELECT 1 FROM outbound_message_evidence evidence/);
+});
+
+test("secondary reply retry expires after 10 minutes even within Meta's service window",async()=>{
+ const original=new Date(Date.now()-SECONDARY_RETRY_MAX_AGE_MS-1000).toISOString();
+ assert.equal(secondaryRetryFresh({message_created_at:original}),false);
+ assert.equal(secondaryRetryFresh({message_created_at:new Date().toISOString()}),true);
+ const ctx=setup({message_created_at:original});
+ ctx.sendSecondaryText=async()=>{throw Error("expired reply must never reach Meta")};
+ await runWhatsappOutboundRetryQueue(ctx);
+ assert.equal(ctx.calls.includes("attention"),true);
+ assert.equal(ctx.calls.includes("cancelled"),true);
+ assert.equal(ctx.calls.includes("started"),false);
+});
+
+test("secondary retry checks age again before provider call",async()=>{
+ const ctx=setup();
+ ctx.repository.checkSendEligibility=async()=>({
+   ...row(),message_created_at:new Date(Date.now()-SECONDARY_RETRY_MAX_AGE_MS-1000).toISOString(),
+ });
+ ctx.sendSecondaryText=async({preSendCheck})=>{
+   assert.equal(await preSendCheck(),false);
+   return{success:false,cancelled:true};
+ };
+ await runWhatsappOutboundRetryQueue(ctx);
+ assert.equal(ctx.calls.includes("started"),false);
+ assert.equal(ctx.calls.includes("cancelled"),true);
+});
+
+test("secondary failure code remains stable when the customer-facing error text changes",async()=>{
+ const queued=[];
+ const repository={
+  async enqueueTextRetry(args){queued.push(args);return{id:55}},
+ };
+ await queueTextRetry({
+   messageId:99,contactId:7,recipient:"60125550000",origin:"ai_reply",
+   sendResult:{
+    success:false,code:PRE_PROVIDER_CODE,policyBlocked:true,
+    unknown:false,ambiguous:false,wamid:null,
+    error:"Localized explanation that can change without affecting retry rules",
+   },
+   secondaryPreProviderCode:PRE_PROVIDER_CODE,
+ },repository);
+ assert.equal(queued.length,1);
+ assert.equal(queued[0].errorText,PRE_PROVIDER_CODE);
+ await queueTextRetry({
+   messageId:100,contactId:7,recipient:"60125550000",origin:"ai_reply",
+   sendResult:{success:false,retryable:true,error:"Primary provider temporary error"},
+ },repository);
+ assert.equal(queued[1].errorText,"Primary provider temporary error");
+});
+
+test("the secondary retry permits send_started rechecks only for its own marked attempt",async()=>{
+ const ctx=setup();
+ let calls=0;
+ ctx.repository.checkSendEligibility=async(args)=>{
+   calls++;
+   if(calls===1)assert.equal(args.allowSecondaryStarted,false);
+   else assert.equal(args.allowSecondaryStarted,true);
+   return row();
+ };
+ ctx.sendSecondaryText=async({preSendCheck})=>{
+   assert.equal(await preSendCheck(),true);
+   assert.equal(await preSendCheck(),true);
+   return{success:true,wamid:"wamid.late-check"};
+ };
+ await runWhatsappOutboundRetryQueue(ctx);
+ assert.equal(calls,2);
+ assert.equal(ctx.calls.includes("sent"),true);
 });
