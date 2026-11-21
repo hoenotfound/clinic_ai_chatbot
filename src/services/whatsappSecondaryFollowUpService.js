@@ -1084,7 +1084,7 @@ async function runOnce({
       }
       if(slot===20){
         outboundText=adaptNeutroAppointmentInvitation({
-          message:outboundText,customerTexts:candidate.customer_texts||[],
+          message:outboundText,customerTexts:[...(candidate.customer_texts||[])].reverse(),
           language:replyLanguage,businessConfig:clinicConfig,
         });
       }
