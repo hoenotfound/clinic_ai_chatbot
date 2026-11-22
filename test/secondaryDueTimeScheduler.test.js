@@ -510,3 +510,19 @@ test("failed secondary preflight read falls back to normal scan before error bac
  assert.equal(scheduler.state().dueAt,time("2026-11-02T02:00:00Z"));
  scheduler.stop();
 });
+
+test("combined secondary marketing hints do not turn missing lane data into no due work",()=>{
+ const combine=marketing.combinePotentialDueHints;
+ const none={next_due_at:null,has_overdue:false};
+ const future={next_due_at:"2026-11-02T08:00:00Z",has_overdue:false};
+ const due={next_due_at:null,has_overdue:true};
+ assert.equal(combine([none,null]),null,"missing Day4 or general lane must force full query");
+ assert.equal(combine([none,{next_due_at:null}]),null,"missing overdue boolean is uncertain");
+ assert.equal(combine([none,{next_due_at:"bad",has_overdue:false}]),null,
+  "invalid future deadline must not be silently discarded");
+ assert.equal(combine([]),null);
+ assert.deepEqual(combine([none,none]),none);
+ assert.equal(combine([none,due]).has_overdue,true);
+ assert.equal(combine([none,future]).next_due_at.toISOString(),
+  "2026-11-02T08:00:00.000Z");
+});
