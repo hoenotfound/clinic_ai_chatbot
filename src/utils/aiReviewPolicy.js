@@ -127,7 +127,12 @@ function categorizeAiReview(customerText, proposedCategory) {
   const text = String(customerText || "").trim();
   // A short, clearly administrative enquiry is not a medical question merely
   // because the model suggested clinical review. Preserve all clinical flags.
-  if (ADMINISTRATIVE_QUESTION.test(text) && !CLINICAL_QUESTION.test(text) &&
+  // Only unambiguous short enquiry forms override an erroneous model label.
+  // Do not turn arbitrary admin keywords inside clinical conversations into
+  // permission to bypass review for Neutro or any other clinic.
+  const SAFE_SHORT_ADMIN_QUESTION =
+    /^(?:(?:请问|請問|想问|想問|请问一下|請問一下|可以问下|你好|hi)\s*)?(?:(?:价钱|價錢|价格|價格|多少钱|多少錢|收费|收費|费用|費用)(?:呢|吗|嗎|是多少|多少)?|(?:只有|就|仅有|僅有)(?:这|這)?(?:两|兩|2)(?:天|日)(?:吗|嗎)?|(?:你们|你們|你家)?(?:的)?(?:店|门店|門店|诊所|診所)?(?:是)?(?:在(?:哪里|哪裡|哪|哪儿|哪兒)|地址(?:是|在哪里|在哪裡)?|地点(?:是|在哪里|在哪裡)?|地點(?:是|在哪里|在哪裡)?))[\s?!？。!！～~]*$/iu;
+  if (SAFE_SHORT_ADMIN_QUESTION.test(text) && !CLINICAL_QUESTION.test(text) &&
       !hasClinicalMediaRisk(text) && !MEDICAL_HISTORY.test(text) &&
       !checkKeywordTriggers(text)) return "information";
   if (proposedCategory !== "information") return "clinical";
