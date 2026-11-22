@@ -47,7 +47,7 @@ function administrativeReviewReply({
     );
     const locale = String(language || "").toLowerCase();
     if (!Array.isArray(prices) || prices.length === 0 ||
-        prices.some(p => !/^RM[1-9]\\d{1,4}$/u.test(String(p.price || "")))) {
+        prices.some(p => !/^RM[1-9]\d{1,4}$/u.test(String(p.price || "")))) {
       return {
         kind: "explicit_price_needs_confirmation",
         reply: locale.startsWith("ms")
