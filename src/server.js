@@ -1704,6 +1704,49 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
+    // Recover an unambiguous, customer-authored price question early enough
+    // for the EXISTING verified pricing decision and media selector to run.
+    // Do not derive treatment from Meta, AI guesses or CRM labels. A verified
+    // RM68 campaign keeps its dedicated campaign path instead.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !bookingReady && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        (aiPricingEnabled || aiPricingMode === "shadow") &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isStandalonePriceQuestion(text) && hasExplicitPriceRequest(text) &&
+        categorizeAiReview(text, reviewType) === "information" &&
+        !campaignContextReply({ history, customerText: text })) {
+      const chosen = resolveVerifiedPriceFollowUpService({
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+        allowContinuedPriceContext: aiPricingEnabled,
+      });
+      const prices = chosen?.name
+        ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, history)
+        : null;
+      if (prices?.length && prices.every(item =>
+          /^RM[1-9]\\d{1,4}$/u.test(String(item.price || "")))) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (evidence?.pendingClinicalReview === false) {
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          priceQuery = true;
+          packageQuery = false;
+          details = { ...details, treatment: chosen.name };
+          aiReply = priceCheckingReply("treatment", mediaLanguage);
+          console.info("[Pricing] Recovered verified Neutro price question " +
+            "contact=" + contact.id + " inbound=" + savedInbound.id);
+        }
+      }
+    }
+
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
