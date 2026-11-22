@@ -905,7 +905,8 @@ function combinePotentialDueHints(hints){
  let hasOverdue=false;
  for(const hint of hints){
    if(!hint||typeof hint.has_overdue!=="boolean"||
-      !Object.prototype.hasOwnProperty.call(hint,"next_due_at"))return null;
+      !Object.prototype.hasOwnProperty.call(hint,"next_due_at")||
+      hint.next_due_at===undefined)return null;
    hasOverdue ||= hint.has_overdue;
    if(hint.next_due_at!=null){
      const dueAt=new Date(hint.next_due_at).getTime();
