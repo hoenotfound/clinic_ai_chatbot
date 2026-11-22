@@ -16,6 +16,45 @@ const BUSINESS_LOCATION_MS =
 const HOURS_QUESTION =
   /(?:营业时间|營業時間|营业到几点|營業到幾點|几点开|幾點開|几点关|幾點關|几时开|幾時開|几时关|幾時關|开门时间|開門時間|\b(?:opening hours|business hours|operating hours|what time (?:do you )?(?:open|close)|when (?:do you )?(?:open|close)|waktu operasi|waktu buka|jam buka|masa operasi|pukul berapa (?:buka|tutup))\b)/iu;
 
+function isBusinessLocationQuestion(customerText) {
+  const value = String(customerText || "");
+  return BUSINESS_LOCATION_ZH.test(value) || BUSINESS_LOCATION_EN.test(value) ||
+    BUSINESS_LOCATION_MS.test(value);
+}
+
+// Safe, standalone business-address response from Settings. Do not use a
+// treatment location ("my pain is located here") to authorize this response.
+// When a question also asks for a package price, leave the combined answer to
+// the normal verified pricing path.
+function confirmedSingleBranchLocationAnswer({
+  customerText = "", branches = [], language = "zh",
+} = {}) {
+  const question = String(customerText || "").trim();
+  if (!question || question.length > 130 || !isBusinessLocationQuestion(question) ||
+      /(?:疼|痛|不舒服|症状|症狀|部位|身体|身體|[价價][钱錢格]|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|活动|活動|[预預]约|[病癌]|(?:\b(?:price|cost|fee|promo|package|treatment|pain|symptom|booking|appointment|rawatan|harga)\b))/iu.test(question)) return null;
+  const valid = (Array.isArray(branches) ? branches : [])
+    .filter(b => b && typeof b.address === "string" && b.address.trim());
+  if (valid.length !== 1) return null;
+  const name = String(valid[0].name || "").trim();
+  const address = valid[0].address.trim();
+  const locale = String(language || "").toLowerCase();
+  const ms = /\b(?:alamat|lokasi|klinik|cawangan|kedai|dimana|di mana|kat mana)\b/iu.test(question) ||
+    locale.startsWith("ms");
+  const en = !ms && (/\b(?:where|address|location|shop|store|clinic|centre|center|branch|outlet)\b/iu.test(question) ||
+    locale.startsWith("en"));
+  return {
+    kind: "verified_location",
+    reply: ms
+      ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
+        + "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji."
+      : en
+        ? "We're located in " + (name || "our clinic") + " 😊\n📍 " + address
+          + "\nWhich day would be convenient for you? We can help check appointment arrangements."
+        : "我们位于 " + (name || "门店") + " 😊\n📍 " + address
+          + "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️",
+  };
+}
+
 function appendRequestedBusinessFacts({
   customerText = "", reply = "", branches = [], hours = null, language = "zh",
 } = {}) {
@@ -23,8 +62,7 @@ function appendRequestedBusinessFacts({
   const source = String(reply || "");
   if (!current.trim() || !source.trim()) return source;
 
-  const wantsLocation = BUSINESS_LOCATION_ZH.test(current) ||
-    BUSINESS_LOCATION_EN.test(current) || BUSINESS_LOCATION_MS.test(current);
+  const wantsLocation = isBusinessLocationQuestion(current);
   const wantsHours = HOURS_QUESTION.test(current);
   if (!wantsLocation && !wantsHours) return source;
 
@@ -136,4 +174,5 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
  return {reply:final,changed:final!==original};
 }
 
-module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply };
+module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply,
+  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer };
