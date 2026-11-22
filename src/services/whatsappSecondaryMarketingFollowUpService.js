@@ -890,13 +890,31 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
  const generic=generalSql.enabled(env)
    ?(await runFollowUpRead(database,pool,generalSql.POTENTIAL_DUE_SQL,
      [...params,generalSql.activation(env)],{env})).rows?.[0]||null:null;
- const dueTimes=[ordinary?.next_due_at,extended?.next_due_at,generic?.next_due_at]
-   .filter(Boolean).map(value=>new Date(value).getTime())
-   .filter(Number.isFinite);
+ return combinePotentialDueHints([
+   ordinary,
+   ...(extendedEnabled(env)?[extended]:[]),
+   ...(generalSql.enabled(env)?[generic]:[]),
+ ]);
+}
+function combinePotentialDueHints(hints){
+ // The short-circuit is safe only if EVERY enabled marketing lane
+ // actually returned a valid aggregate row. Never turn a missing/invalid
+ // sub-query result into the authoritative "nothing is due" answer.
+ if(!Array.isArray(hints)||!hints.length)return null;
+ const dueTimes=[];
+ let hasOverdue=false;
+ for(const hint of hints){
+   if(!hint||typeof hint.has_overdue!=="boolean")return null;
+   hasOverdue ||= hint.has_overdue;
+   if(hint.next_due_at!=null){
+     const dueAt=new Date(hint.next_due_at).getTime();
+     if(!Number.isFinite(dueAt))return null;
+     dueTimes.push(dueAt);
+   }
+ }
  return {
    next_due_at:dueTimes.length?new Date(Math.min(...dueTimes)):null,
-   has_overdue:ordinary?.has_overdue===true||extended?.has_overdue===true||
-     generic?.has_overdue===true,
+   has_overdue:hasOverdue,
  };
 }
 
@@ -918,6 +936,6 @@ module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
- POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
+ POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,combinePotentialDueHints,customerTemplateLocale,
  approvedStaticMarketingTemplate,finishProvenMarketingPreProviderCancellation,runOnce,nextPotentialDueAt,start,stop,
 };
