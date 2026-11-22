@@ -18,8 +18,10 @@ coexistence, attempt and billing rules as the full candidate selector.
 On every scheduled or event-triggered wake, first query the *fresh* potential-due
 hint. Skip the full candidate scan only if the hint definitively says
 `has_overdue === false` and its earliest next due is either absent or in the
-future. Uncertain, null, invalid or overdue hints always run the original
-candidate selector. The clock is reread **after** the hint SQL, so a due slot
+future. Uncertain, null, invalid, incomplete or overdue hints always run the original
+candidate selector. If a due-time hint remains unavailable after that full
+scan, schedule another check in five minutes instead of the one-hour idle
+backstop. A valid empty hint retains the normal hourly idle interval. The clock is reread **after** the hint SQL, so a due slot
 cannot be skipped merely because the hint took time to execute. When candidates
 might be due, run the existing selector and all exact pre-send safeguards,
 then refresh the next-due hint as before. Full 10-attempt batches continue
