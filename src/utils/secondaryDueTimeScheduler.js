@@ -67,7 +67,8 @@ function nextAllowedClinicTime(ms) {
 // yet, avoid the much heavier full candidate scan. Ambiguous or malformed
 // hints always fall back to the original candidate query.
 function noPotentialDueNow(hint, nowMs) {
-  if (!hint || hint.has_overdue !== false || !Number.isFinite(nowMs)) return false;
+  if (!hint || hint.has_overdue !== false || !Number.isFinite(nowMs) ||
+      !Object.prototype.hasOwnProperty.call(hint, "next_due_at")) return false;
   if (hint.next_due_at == null) return true;
   const nextDueAt = new Date(hint.next_due_at).getTime();
   return Number.isFinite(nextDueAt) && nextDueAt > nowMs;
@@ -205,6 +206,10 @@ function createSecondaryDueScheduler({
         // Continue draining a genuine due batch without a five-minute poll.
         // Attempts are one-shot and remain protected by the original ledger.
         if (Number(result?.outcome?.attempted || 0) >= 10) return BACKLOG_RECHECK_MS;
+        // A missing hint is not proof that no future work is due. After
+        // the safe full-scan fallback, recheck in five minutes rather than
+        // allowing the ordinary one-hour idle backstop to postpone work.
+        if (preflightDueHint && !result?.hint) return ERROR_RETRY_MS;
         return nextSecondaryDueDelay(result?.hint, now());
       },
     });
