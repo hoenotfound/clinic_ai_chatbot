@@ -47,7 +47,9 @@ const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClar
 const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
-const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
+  confirmedSingleBranchLocationAnswer } = require("./utils/verifiedPricingBusinessFacts");
+const { administrativeReviewReply } = require("./utils/neutroAdministrativeReviewReply");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -2383,52 +2385,28 @@ async function processIncomingMessage(
       }
     }
 
-    // A verified, ongoing RM68 campaign can answer ordinary date and price
-    // questions even when the model incorrectly requested a clinical review.
-    // Do not clear existing review records, permit medical replies, or attach
-    // marketing media. An unrelated review remains visible to staff.
+    // Recover routine location, verified campaign/date, and unscoped price
+    // questions. Verify there is no unresolved clinical review on this contact
+    // before bypassing an erroneous model review. This path sends text only,
+    // and does not clear staff reviews, override ownership or trigger media.
     if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         !isDefiniteAppointmentCancellation(text) && !bookingReady &&
         channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-        /(?:[价價][钱錢格]|多少[钱錢]|收费|收費|费用|費用|价格|價格|活动日期|活動日期|只有.{0,4}(?:天|日)|\b(?:price|cost|how much|when|dates?)\b)/iu.test(text)) {
-      const campaignAnswer = campaignContextReply({ history, customerText: text });
-      if (campaignAnswer) {
-        reply = campaignAnswer;
-        flagged = false;
-        reviewRequired = false;
-        reviewType = null;
-        bookingReady = false;
-        clinicalAcknowledgement = null;
-        priceQuery = false;
-        packageQuery = false;
-        serviceQuery = false;
-        serviceQuerySource = null;
-        details = null;
-        reviewContinuationTextOnly = true;
-        console.info("[RM68 safe administrative review recovery] contact=" +
-          contact.id + " inbound=" + savedInbound.id);
-      }
-    }
-
-    // Reply with the single address actually configured for this clinic.
-    // Never infer a branch from an ad, a prior message, or a generated answer.
-    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
-        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
-        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
-        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
-        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-        /^(?:请问|請問|想问|想問|你好|hi|hello|想知道|可以问下)?[\s，,～~]*(?:你们|你們|你家|你们的|你們的|店|门店|門店|诊所|診所)?[\s，,～~]*(?:的店|的门店|的門店)?[\s，,～~]*(?:是)?(?:在(?:哪里|哪裡|哪|什么地方|什麼地方)|地址(?:是|在哪里|在哪裡)?|地点(?:是|在哪里|在哪裡)?|地點(?:是|在哪里|在哪裡)?)[\s？?。!！]*$/iu.test(String(text || "").trim())) {
-      const branches = Array.isArray(clinicConfig.branches) ? clinicConfig.branches : [];
-      if (branches.length === 1 && String(branches[0]?.address || "").trim()) {
-        const evidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const adminAnswer = administrativeReviewReply({
+        customerText: text, history, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (adminAnswer) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
         if (evidence?.pendingClinicalReview === false) {
-          reply = "我们位于 " + String(branches[0].name || clinicConfig.businessName || "").trim() +
-            " 😊\n📍 " + String(branches[0].address).trim() +
-            "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️";
+          reply = adminAnswer.reply;
           flagged = false;
           reviewRequired = false;
           reviewType = null;
@@ -2440,6 +2418,9 @@ async function processIncomingMessage(
           serviceQuerySource = null;
           details = null;
           reviewContinuationTextOnly = true;
+          console.info("[Neutro administrative review recovery] contact=" +
+            contact.id + " inbound=" + savedInbound.id +
+            " kind=" + adminAnswer.kind);
         }
       }
     }
