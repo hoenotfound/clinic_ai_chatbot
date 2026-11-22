@@ -340,6 +340,19 @@ test("verified price review flows to existing pricing/media path only without cl
 });
 
 
+test("latest English and Malay admin questions override older chat-language labels", () => {
+  const en = administrativeReviewReply({
+    customerText: "price?", history: [], branches: PJ,
+    language: "ms", services: [], serviceAliases: [], promotions: [],
+  });
+  assert.match(en.reply, /Which treatment would you like/);
+  const ms = administrativeReviewReply({
+    customerText: "berapa harga", history: [], branches: PJ,
+    language: "en", services: [], serviceAliases: [], promotions: [],
+  });
+  assert.match(ms.reply, /Awak nak tahu harga/);
+});
+
 test("natural price helper accepts 价钱呢 but rejects unrelated text", () => {
   const { isStandalonePriceQuestion } =
     require("../src/utils/neutroAdministrativeReviewReply");
