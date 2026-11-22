@@ -14,6 +14,8 @@ const {
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const clinicConfig = require("../config/clinicConfig");
+const { templateText, verifiedPelvicAssessmentVoucher } = require("./clinicAssessmentReplyTemplates");
+const { SESSION_RESULT_QUESTION } = require("./verifiedResultMediaExample");
 const { adaptNeutroAppointmentInvitation, isNeutroBusiness } =
   require("./appointmentInviteContinuity");
 
@@ -250,6 +252,25 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   const locale = String(language || "").toLowerCase();
   const zh = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText));
   const ms = locale.startsWith("ms");
+  if (isNeutroBusiness(clinicConfig)) {
+    const kind = isPelvis
+      ? (clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+        ? "pelvicFree" : "pelvicStandard")
+      : isFace ? "face" : isBodyPosture ? "body" : "general";
+    const configuredIntro = templateText(clinicConfig, language, kind, name);
+    const configuredQuestion = templateText(clinicConfig, language, "dayQuestion");
+    if (configuredIntro && configuredQuestion) {
+      const voucher = isPelvis && verifiedPelvicAssessmentVoucher(clinicConfig)
+        ? templateText(clinicConfig, language, "voucher") : null;
+      return [configuredIntro, voucher, configuredQuestion].filter(Boolean).join("\n");
+    }
+    // A partial clinic template configuration must fail closed rather than
+    // revive old static vouchers or make up an incomplete invitation.
+    if (clinicConfig.assessmentReplyTemplates) {
+      return safeIntroReply({ customerText, language, services, serviceAliases });
+    }
+  }
+
   const dayQuestion = zh
     ? "\n你哪一天比较方便来呢？我可以帮你向门店确认预约时间～"
     : ms
@@ -302,6 +323,7 @@ function ensureFirstAssessmentInvitation({
 } = {}) {
   const original = String(reply || "").trim();
   if (!isFirstMessage || flagged || !original ||
+      SESSION_RESULT_QUESTION.test(String(customerText || "")) ||
       hasClinicalMediaRisk(customerText) ||
       hasExplicitPriceRequest(customerText, { treatment }) ||
       !hasCustomerServiceEnquiry(customerText)) {
@@ -327,7 +349,13 @@ function ensureFirstAssessmentInvitation({
   // Neutro conversations; a mere reference to a 1-to-1 assessment is not
   // itself permission to push an appointment.
   const neutro = isNeutroBusiness(clinicConfig);
-  const valueNote = chinese
+  const configuredValueNote = neutro
+    ? templateText(clinicConfig, language,
+        service.name === "骨盆调理" ? "valuePelvic"
+          : /(?:3D|9D|小颜|逆龄|面部|脸部)/iu.test(service.name) ? "valueFace"
+            : "valueGeneral", service.name)
+    : null;
+  const valueNote = configuredValueNote || (chinese
     ? service.name === "骨盆调理"
       ? "中医师会先了解你的体态和身体困扰，再看看适合怎样调理 ❤️"
       : /(?:3D|9D|小颜|逆龄|面部|脸部)/iu.test(service.name)
@@ -335,7 +363,7 @@ function ensureFirstAssessmentInvitation({
         : "中医师会先了解你目前在意的身体状况，再看看适合怎样调理 ❤️"
     : malay
       ? "Pengamal TCM akan fahamkan keadaan dan keperluan anda dahulu sebelum bincang rawatan yang sesuai 😊"
-      : "Our TCM practitioner will first understand your concerns before discussing suitable care 😊";
+      : "Our TCM practitioner will first understand your concerns before discussing suitable care 😊");
   const hasValue = /(?:了解|瞭解|明白|认识|認識|fahami|memahami|understand).{0,70}(?:体态|體態|身体|身體|困扰|困擾|情况|狀況|需要|需求|脸型|臉型|紧致|緊緻|care|concerns?|needs?|condition|rawatan|keperluan)/iu.test(original);
   const looksLikeInvite = /(?:安排|预约|預約|来做|來做|先来|先來|过来|過來|到店|想先|想不想|book|arrange|come|visit|appointment|atur|datang)/iu.test(original);
   const isAlreadyBooked = /(?:已预约|已預約|已确认|已確認|confirmed appointment|already booked|temu janji disahkan)/iu.test(original);
@@ -353,12 +381,19 @@ function ensureFirstAssessmentInvitation({
       message: enriched, customerTexts: [customerText], language,
       businessConfig: clinicConfig,
     });
-    if (service.name === "骨盆调理" && !hasVoucher) {
-      const voucherNote = chinese
+    const configuredTemplatesActive = neutro &&
+      Boolean(clinicConfig.assessmentReplyTemplates);
+    const verifiedVoucher = verifiedPelvicAssessmentVoucher(clinicConfig);
+    const templateVoucher = configuredTemplatesActive
+      ? templateText(clinicConfig, language, "voucher") : null;
+    if (service.name === "骨盆调理" && !hasVoucher &&
+        (!configuredTemplatesActive || (verifiedVoucher && templateVoucher))) {
+      const configuredVoucher = templateVoucher;
+      const voucherNote = configuredVoucher || (chinese
         ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
         : malay
           ? "Selepas hadir untuk penilaian + sesi percubaan, anda juga boleh menerima baucar RM100 untuk rawatan pelvis. Syarat ditegaskan oleh pusat."
-          : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
+          : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.");
       enriched += "\n\n" + voucherNote;
     }
     return { reply: enriched, appended: enriched !== original };

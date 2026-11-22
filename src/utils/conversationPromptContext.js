@@ -1,5 +1,6 @@
 const { withPelvicSpellingAliases } = require("./pelvicSpellingAliases");
 const config = require("../config/clinicConfig");
+const { verifiedResultExampleForConversation } = require("./verifiedResultMediaExample");
 const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -496,6 +497,14 @@ function buildConversationPromptContext(
     relevantServiceNames,
     serviceSource,
     currentCustomerText,
+    verifiedResultMediaExample: relevantServiceNames.length <= 1
+      ? verifiedResultExampleForConversation({
+          messages,
+          resultMedia: config.resultMedia,
+          serviceName: relevantServiceNames[0] || "",
+          customerText: currentCustomerText,
+        })
+      : null,
     clarifiedPriceService: resolveClarifiedPriceService({
       customerText: currentCustomerText, conversationHistory: messages,
       services, serviceAliases: aliases,

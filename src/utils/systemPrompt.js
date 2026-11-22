@@ -1369,6 +1369,13 @@ ${promotionsList}
 
 ${promotionAuthorityRules()}
 
+${conversationContext?.verifiedResultMediaExample?.verifiedSessionCount === 1
+  ? `VERIFIED RESULT-MEDIA CONTEXT FOR THE CURRENT QUESTION:
+- The clinic-approved Before & After caption just sent in this conversation is for ONE session of ${conversationContext.verifiedResultMediaExample.service}. The confirmation comes from that exact configured media item and its verified session metadata, NOT from an advertisement or the customer's assumption.
+- Answer a one-session-results question directly about this example first, then briefly explain that visible differences vary between individuals. Do not promise that the current customer will see the same change, claim a medical correction from a photo, or offer a fixed-session guarantee.
+- This is not a current price/package enquiry. Do not volunteer prices, trigger price graphics or change the treatment topic.
+` : ""}
+
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT-FIRST PRICING POLICY (overrides older sales guidance):
 - Quote verified treatment/package prices only for an explicit CURRENT monetary question or an immediate answer naming the verified service after our price clarification. Answer directly, including both active package options when relevant; never require an assessment to learn a confirmed price.
 - Package contents, service mechanisms, general offer enquiries and consent for FUTURE promotions are not monetary requests. Otherwise answer the concern and, when suitable, invite a 1对1体态评估 + 体验 without repeatedly pushing a booking.

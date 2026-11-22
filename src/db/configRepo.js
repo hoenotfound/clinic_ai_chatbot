@@ -44,6 +44,7 @@ const CONFIG_KEYS = [
   "closingPlaybook",
   "tone",
   "messagingStyle",
+  "assessmentReplyTemplates",
   "sop",
   "escalation",
   "guardrails",
