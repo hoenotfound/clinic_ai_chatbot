@@ -37,7 +37,15 @@ function authorizedImages(item) {
 function verifiedResultExampleForConversation({
   messages, resultMedia = [], serviceName = "", customerText = "",
 } = {}) {
-  if (!SESSION_RESULT_QUESTION.test(String(customerText || ""))) return null;
+  const question = String(customerText || "");
+  const mentionsSessionCount =
+    /(?:一次|一回|第一[次回]|單次|单次|1\s*(?:次|回|session)|one\s+session|single\s+session|first\s+session)/iu.test(question);
+  const asksAboutResult =
+    /(?:效果|見效|见效|有分别|有分別|变化|變化|这样|這樣|results?|difference|change|improvement|noticeable|after)/iu.test(question);
+  const isMonetaryQuestion =
+    /(?:多少钱|多少錢|价格|價格|价钱|價錢|收费|收費|费用|費用|多少RM|\b(?:price|how much|cost|fee|harga)\b)/iu.test(question);
+  if (!SESSION_RESULT_QUESTION.test(question) || !mentionsSessionCount ||
+      !asksAboutResult || isMonetaryQuestion) return null;
   const service = normalized(serviceName);
   if (!Array.isArray(messages) || !messages.length) return null;
   const groups = (Array.isArray(resultMedia) ? resultMedia : [])
