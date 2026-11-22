@@ -143,7 +143,7 @@ function isContinuedTreatmentPriceQuestion(text) {
   return current.length > 0 && current.length <= 60 &&
     (SESSION_AMOUNT.test(current) ||
       /^(?:请问|請問)?\s*(?:疗程|療程|护理|護理|治疗|治療|rawatan|treatment|service)\s*(?:多少钱|多少錢|几多钱|幾多錢|价钱|價錢|价格|價格|收费|收費|费用|費用|price|cost|harga)[\s?？。!！]*$/iu.test(current) ||
-      /^(?:(?:请问|請問|想问|想問)\\s*)?(?:价钱|價錢|价格|價格|收费|收費|费用|費用)(?:呢|吗|嗎|呀)?[\\s?？。!！]*$/iu.test(current) ||
+      /^(?:(?:请问|請問|想问|想問)\s*)?(?:价钱|價錢|价格|價格|收费|收費|费用|費用)(?:呢|吗|嗎|呀)?[\s?？。!！]*$/iu.test(current) ||
       isStandalonePriceQuestion(current) || isContextualPriceReference(current) ||
       isFirstTrialAmountQuestion(current));
 }
