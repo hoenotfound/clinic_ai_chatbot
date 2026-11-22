@@ -50,7 +50,9 @@ const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply"
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
   confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion } =
   require("./utils/verifiedPricingBusinessFacts");
-const { administrativeReviewReply } = require("./utils/neutroAdministrativeReviewReply");
+const { administrativeReviewReply,
+  isStandalonePriceQuestion: isStandaloneNeutroPriceQuestion } =
+  require("./utils/neutroAdministrativeReviewReply");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1716,15 +1718,26 @@ async function processIncomingMessage(
         (aiPricingEnabled || aiPricingMode === "shadow") &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-        isStandalonePriceQuestion(text) && hasExplicitPriceRequest(text) &&
+        isStandaloneNeutroPriceQuestion(text) && hasExplicitPriceRequest(text) &&
         categorizeAiReview(text, reviewType) === "information" &&
         !campaignContextReply({ history, customerText: text })) {
-      const chosen = resolveVerifiedPriceFollowUpService({
+      const selectedFromPricingContext = resolveVerifiedPriceFollowUpService({
         customerText: text, conversationHistory: history,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
         allowContinuedPriceContext: aiPricingEnabled,
       });
+      const continuity = selectedFromPricingContext ? null
+        : planNeutroReviewContinuation({
+            customerText: text, conversationHistory: history,
+            language: mediaLanguage, services: clinicConfig.services,
+            serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions,
+          });
+      const chosen = selectedFromPricingContext ||
+        (continuity?.kind === "verified_price"
+          ? (clinicConfig.services || []).find(item =>
+              item.name === continuity.treatment) : null);
       const prices = chosen?.name
         ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, history)
         : null;
