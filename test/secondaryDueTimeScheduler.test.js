@@ -481,6 +481,8 @@ test("no-due preflight never suppresses disabled or uncertain follow-up state",(
  assert.equal(noPotentialDueNow(null,now),false);
  assert.equal(noPotentialDueNow({has_overdue:true,next_due_at:null},now),false);
  assert.equal(noPotentialDueNow({has_overdue:null,next_due_at:null},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false},now),false,
+  "missing next_due_at is not a valid negative due hint");
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"not-a-date"},now),false);
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-01T23:59:59Z"},now),false);
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-02T00:00:01Z"},now),true);
@@ -518,6 +520,8 @@ test("combined secondary marketing hints do not turn missing lane data into no d
  const due={next_due_at:null,has_overdue:true};
  assert.equal(combine([none,null]),null,"missing Day4 or general lane must force full query");
  assert.equal(combine([none,{next_due_at:null}]),null,"missing overdue boolean is uncertain");
+ assert.equal(combine([none,{has_overdue:false}]),null,
+  "an enabled lane with missing next_due_at must be uncertain");
  assert.equal(combine([none,{next_due_at:"bad",has_overdue:false}]),null,
   "invalid future deadline must not be silently discarded");
  assert.equal(combine([]),null);
@@ -525,4 +529,39 @@ test("combined secondary marketing hints do not turn missing lane data into no d
  assert.equal(combine([none,due]).has_overdue,true);
  assert.equal(combine([none,future]).next_due_at.toISOString(),
   "2026-11-02T08:00:00.000Z");
+});
+
+test("unknown secondary due hints use five-minute recovery rather than one-hour sleep",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary uncertain due recovery",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return null;},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"a missing hint must execute the full candidate selector");
+ assert.equal(reads,2,"both preflight and regular post-run hints are attempted");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:05:00Z"),
+  "unknown hint must not strand a due slot behind the one-hour idle backstop");
+ await clock.advance(ERROR_RETRY_MS);
+ assert.equal(runs,2,"recovery retries after five minutes");
+ scheduler.stop();
+});
+
+test("known-empty secondary hints retain hourly recovery and no full scan",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary known-empty due idle",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>({next_due_at:null,has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,0,"no full scan when an aggregate proves no due work");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T01:00:00Z"),
+  "valid empty hints preserve the existing hourly idle recovery");
+ scheduler.stop();
 });
