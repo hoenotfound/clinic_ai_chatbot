@@ -5,6 +5,8 @@ const { campaignContextReply, isCampaignAvailabilityQuestion } =
   require("./neutroBreastRm68Campaign");
 const { planNeutroReviewContinuation } = require("./neutroReviewContinuation");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { verifiedPricesForService } = require("./verifiedPriceReply");
 
 // A review from the model must never turn an unscoped price question into
 // silence. Return a clarification when there is no verified treatment/offer.
@@ -31,7 +33,46 @@ function administrativeReviewReply({
     ? campaignContextReply({ history, customerText: message, now })
     : null;
   if (campaign) return { kind: "verified_rm68_campaign", reply: campaign };
-  if (!isStandalonePriceQuestion(message) || !hasExplicitPriceRequest(message)) return null;
+  if (!hasExplicitPriceRequest(message)) return null;
+  if (!isStandalonePriceQuestion(message)) {
+    // An explicitly named treatment may be quoted only from its configured,
+    // independently validated promotional pricing. A different/ambiguous
+    // treatment or conflicting captions must never be guessed from an ad.
+    const selected = safeServiceFromCustomer(
+      message, Array.isArray(services) ? services : [], serviceAliases
+    );
+    if (!selected?.name) return null;
+    const prices = verifiedPricesForService(
+      selected.name, promotions, message, history, { allowTextOnlyOffers: true }
+    );
+    const locale = String(language || "").toLowerCase();
+    if (!Array.isArray(prices) || prices.length === 0 ||
+        prices.some(p => !/^RM[1-9]\\d{1,4}$/u.test(String(p.price || "")))) {
+      return {
+        kind: "explicit_price_needs_confirmation",
+        reply: locale.startsWith("ms")
+          ? "Saya boleh bantu semak harga terkini untuk " + selected.name + " dengan pusat dahulu 😊"
+          : locale.startsWith("en")
+            ? "I can help confirm the latest price for " + selected.name + " with the clinic 😊"
+            : "我可以先帮你向门店确认 " + selected.name + " 的最新收费哦 😊",
+      };
+    }
+    const amount = prices.map(p => (p.name === "Main offer" ? selected.name : p.name) +
+      "：" + p.price).join("；");
+    const voucher = prices.some(p => p.afterVoucher)
+      ? (locale.startsWith("en") ? " Listed voucher prices are after the voucher is applied."
+        : locale.startsWith("ms") ? " Harga baucar adalah selepas baucar digunakan."
+          : " 如有优惠券，以上注明的优惠价为使用优惠券后的价格。")
+      : "";
+    return {
+      kind: "explicit_verified_price",
+      reply: locale.startsWith("en")
+        ? "Of course 😊 Current verified price: " + amount + "." + voucher
+        : locale.startsWith("ms")
+          ? "Boleh 😊 Harga promosi semasa: " + amount + "." + voucher
+          : "可以的～😊 目前核实的优惠价：" + amount + "。" + voucher,
+    };
+  }
 
   const verified = planNeutroReviewContinuation({
     customerText: message, conversationHistory: history, language,
