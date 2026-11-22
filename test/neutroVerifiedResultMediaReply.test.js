@@ -30,28 +30,36 @@ function example(messages, text = "一次就这样的效果？", serviceName = "
 test("approved second pelvis caption allows a one-session example answer", () => {
   for (const text of ["一次就这样的效果？", "一次就见效果吗？", "做一次就有分别吗？"]) {
     assert.deepEqual(example([
-      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
+      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
       {role:"user",content:text},
     ],text), {service:"骨盆调理",verifiedSessionCount:1});
   }
   assert.deepEqual(example([
-    {role:"assistant",content:"Another customer Before & After from one session"},
+    {role:"assistant",content:"Another customer Before & After from one session",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
     {role:"user",content:"Results after one session?"},
   ], "Results after one session?", "骨盆调理"), {service:"骨盆调理",verifiedSessionCount:1});
 });
 
 test("cannot infer one-session outcome from another photo, customer/ad text or different service", () => {
-  assert.equal(example([{role:"assistant",content:"第一次骨盆 Before & After"}, {role:"user",content:"一次有分别吗"}]), null);
+  assert.equal(example([{role:"assistant",content:"第一次骨盆 Before & After",verifiedOutboundImageUrl:"/api/config/result-media/image/1"}, {role:"user",content:"一次有分别吗"}]), null);
   assert.equal(example([{role:"user",content:"再给你看一个顾客护理后的 Before & After 😊"}, {role:"user",content:"一次有分别吗"}]), null);
   assert.equal(example([{role:"assistant",content:"Unconfigured promo says first session"}, {role:"user",content:"一次有分别吗"}]), null);
-  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"}, {role:"user",content:"多少钱?"}]), null);
-  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"}, {role:"user",content:"一次有分别吗"}], "一次有分别吗", "3D 小颜术"), null);
-  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
-    {role:"assistant",content:"第一次骨盆 Before & After"},
+  assert.equal(example([
+    {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/1"},
+    {role:"user",content:"一次有分别吗"},
+  ]), null, "matching copy with the wrong image cannot prove one session");
+  assert.equal(example([
+    {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
+    {role:"user",content:"一次有分别吗"},
+  ]), null, "a plain text caption is not verified image evidence");
+  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"多少钱?"}]), null);
+  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"一次有分别吗"}], "一次有分别吗", "3D 小颜术"), null);
+  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
+    {role:"assistant",content:"第一次骨盆 Before & After",verifiedOutboundImageUrl:"/api/config/result-media/image/1"},
     {role:"user",content:"一次有分别吗"}]), null,
   "a newer unverified result overrides an older verified item");
   assert.equal(example([
-    {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
+    {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
     ...Array.from({length:9}, () => ({role:"assistant",content:"other message"})),
     {role:"user",content:"一次有分别吗"},
   ]), null);
@@ -73,7 +81,7 @@ test("the real Gemini request receives a trusted example only after matching con
       messagingStyle: "Answer verified result questions directly first.",
     });
     const messages = [
-      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
+      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
       {role:"user",content:"一次就见效果吗？"},
     ];
     const context = buildConversationPromptContext(messages);
@@ -91,7 +99,7 @@ test("the real Gemini request receives a trusted example only after matching con
 
     const unverified = buildSystemPrompt({
       channel:"whatsapp",conversationContext:buildConversationPromptContext([
-        {role:"assistant",content:"第一次骨盆 Before & After"},
+        {role:"assistant",content:"第一次骨盆 Before & After",verifiedOutboundImageUrl:"/api/config/result-media/image/1"},
         {role:"user",content:"一次就见效果吗？"},
       ]),
     });
