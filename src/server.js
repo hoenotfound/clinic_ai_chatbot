@@ -47,7 +47,12 @@ const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClar
 const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
-const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
+  confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion } =
+  require("./utils/verifiedPricingBusinessFacts");
+const { administrativeReviewReply,
+  isStandalonePriceQuestion: isStandaloneNeutroPriceQuestion } =
+  require("./utils/neutroAdministrativeReviewReply");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1702,6 +1707,60 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
+    // Recover an unambiguous, customer-authored price question early enough
+    // for the EXISTING verified pricing decision and media selector to run.
+    // Do not derive treatment from Meta, AI guesses or CRM labels. A verified
+    // RM68 campaign keeps its dedicated campaign path instead.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !bookingReady && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        (aiPricingEnabled || aiPricingMode === "shadow") &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isStandaloneNeutroPriceQuestion(text) && hasExplicitPriceRequest(text) &&
+        categorizeAiReview(text, reviewType) === "information" &&
+        !campaignContextReply({ history, customerText: text })) {
+      const selectedFromPricingContext = resolveVerifiedPriceFollowUpService({
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+        allowContinuedPriceContext: aiPricingEnabled,
+      });
+      const continuity = selectedFromPricingContext ? null
+        : planNeutroReviewContinuation({
+            customerText: text, conversationHistory: history,
+            language: mediaLanguage, services: clinicConfig.services,
+            serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions,
+          });
+      const chosen = selectedFromPricingContext ||
+        (continuity?.kind === "verified_price"
+          ? (clinicConfig.services || []).find(item =>
+              item.name === continuity.treatment) : null);
+      const prices = chosen?.name
+        ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, history)
+        : null;
+      if (prices?.length && prices.every(item =>
+          /^RM[1-9]\d{1,4}$/u.test(String(item.price || "")))) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (evidence?.pendingClinicalReview === false) {
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          priceQuery = true;
+          packageQuery = false;
+          details = { ...details, treatment: chosen.name };
+          aiReply = priceCheckingReply("treatment", mediaLanguage);
+          console.info("[Pricing] Recovered verified Neutro price question " +
+            "contact=" + contact.id + " inbound=" + savedInbound.id);
+        }
+      }
+    }
+
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
@@ -2326,7 +2385,7 @@ async function processIncomingMessage(
       });
       if (continuity) {
         const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
-        if (verified && typeof verified.pendingClinicalReview === "boolean") {
+        if (verified?.pendingClinicalReview === false) {
           reply = continuity.reply;
           flagged = false;
           reviewRequired = false;
@@ -2379,6 +2438,46 @@ async function processIncomingMessage(
           reviewContinuationTextOnly = true;
           console.info("[RM68 availability review recovery] contact=" +
             contact.id + " inbound=" + savedInbound.id);
+        }
+      }
+    }
+
+    // Recover routine location, verified campaign/date, and unscoped price
+    // questions. Verify there is no unresolved clinical review on this contact
+    // before bypassing an erroneous model review. This path sends text only,
+    // and does not clear staff reviews, override ownership or trigger media.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const adminAnswer = administrativeReviewReply({
+        customerText: text, history, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (adminAnswer) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (evidence?.pendingClinicalReview === false) {
+          reply = adminAnswer.reply;
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          clinicalAcknowledgement = null;
+          priceQuery = false;
+          packageQuery = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          details = null;
+          reviewContinuationTextOnly = true;
+          console.info("[Neutro administrative review recovery] contact=" +
+            contact.id + " inbound=" + savedInbound.id +
+            " kind=" + adminAnswer.kind);
         }
       }
     }
@@ -2548,6 +2647,56 @@ async function processIncomingMessage(
     // staff-provided offer, while retaining ALL staff, safety and billing gates.
     if (!flagged && fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
       reply = fixedAdFirstReply.reply;
+    }
+
+    // A location-only enquiry must never depend on the model's invented
+    // branch or city. Both WhatsApp senders and social channels use the
+    // currently loaded single branch from Settings at the final text send.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const verifiedLocation = confirmedSingleBranchLocationAnswer({
+        customerText: text, branches: clinicConfig.branches,
+        language: mediaLanguage,
+      });
+      if (verifiedLocation) {
+        reply = verifiedLocation.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
+    }
+
+    // For mixed price + location enquiries without an approved ordinary
+    // pricing decision, reply with verified business facts and either the
+    // strictly verified campaign price or a treatment clarification. Keep
+    // normal approved prices on the original media-capable pricing path.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isBusinessLocationQuestion(text) && hasExplicitPriceRequest(text) &&
+        !approvedPricingDecision) {
+      const verifiedMixed = administrativeReviewReply({
+        customerText: text, history, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (verifiedMixed &&
+          /(?:mixed_price_location_clarification|verified_rm68_campaign|explicit_verified_price|explicit_price_needs_confirmation)/u.test(verifiedMixed.kind)) {
+        reply = verifiedMixed.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
     }
 
     responseAttempted = true;
