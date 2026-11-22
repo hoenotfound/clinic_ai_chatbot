@@ -19,6 +19,21 @@ function authorizedCaptions(item) {
   return new Set(captions.map(normalized).filter(Boolean));
 }
 
+function safeImageIdentity(url) {
+  const value = String(url || "").trim();
+  // The image path is first-party provider data, not a user-controlled query.
+  const id = value.match(/\/(?:promo-images|api\/config\/result-media\/image)\/([1-9]\d{0,9})(?:[/?#]|$)/u);
+  return id ? "media:" + id[1] : value;
+}
+
+function authorizedImages(item) {
+  const urls = [item?.imageUrl];
+  for (const language of ["zh", "en", "ms"]) {
+    urls.push(item?.mediaTranslations?.[language]?.imageUrl);
+  }
+  return new Set(urls.map(safeImageIdentity).filter(Boolean));
+}
+
 function verifiedResultExampleForConversation({
   messages, resultMedia = [], serviceName = "", customerText = "",
 } = {}) {
@@ -46,6 +61,10 @@ function verifiedResultExampleForConversation({
     const caption = normalized(messages[i].content);
     const matched = allItems.filter(row => authorizedCaptions(row.item).has(caption));
     if (matched.length !== 1) continue;
+    const savedPhoto = safeImageIdentity(messages[i].verifiedOutboundImageUrl);
+    // Never authorize the claim using a copied caption without the actual
+    // outbound image matching this exact approved configured item.
+    if (!savedPhoto || !authorizedImages(matched[0].item).has(savedPhoto)) return null;
     return matched[0].item.verifiedSessionCount === 1
       ? { service: matched[0].service, verifiedSessionCount: 1 }
       : null;
