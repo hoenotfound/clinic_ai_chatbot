@@ -110,3 +110,101 @@ test("clinical concerns do not get administrative answers from medical location"
   });
   assert.equal(result,null);
 });
+
+
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+
+function serverSection(start, end) {
+  const a = serverSource.indexOf(start);
+  const b = serverSource.indexOf(end, a);
+  assert.ok(a > 0 && b > a, "Expected real server boundaries");
+  return serverSource.slice(a, b);
+}
+
+const adminRecoverySection = serverSection(
+  "    // Recover routine location, verified campaign/date, and unscoped price",
+  "    // A non-urgent urinary symptom merits one staff review"
+);
+
+async function runRealRecoveryBoundary({ pending, sender = 1 }) {
+  const history = [
+    { role: "user", content: PREFILL },
+    { role: "assistant", content: firstReply(Date.parse("2026-11-22T00:00:00Z")) },
+  ];
+  const context = {
+    keywordReason: null, urgentSafety: false, flagged: true, reviewRequired: true,
+    reviewType: "clinical", bookingReady: false, text: "价钱呢？",
+    marketingStopQuestion: null, clinicalAcknowledgement: null,
+    priceQuery: true, packageQuery: true, serviceQuery: true,
+    serviceQuerySource: "model", details: null,
+    reply: "AI draft under review", reviewContinuationTextOnly: false,
+    channel: "whatsapp", history, mediaLanguage: "zh",
+    contact: { id: 24, whatsapp_sender_id: sender },
+    savedInbound: { id: 999 },
+    clinicConfig: {
+      businessType: "tcm_clinic", businessName: "Neutro Sense TCM Centre",
+      branches: PJ, services: [], serviceAliases: [], promotions: [],
+    },
+    isActiveSafetyConcern: () => false,
+    hasClinicalMediaRisk: () => false,
+    isExplicitStaffRequest: () => false,
+    isDefiniteAppointmentCancellation: () => false,
+    administrativeReviewReply,
+    contactsRepo: {
+      getTcmReviewEvidence: async () => pending === null ? null :
+        { pendingClinicalReview: pending },
+    },
+    console: { info: () => {} },
+  };
+  const code = "(async () => {\n" + adminRecoverySection +
+    "\nreturn {flagged,reviewRequired,reply,reviewContinuationTextOnly};\n})()";
+  return await vm.runInNewContext(code, context);
+}
+
+test("real server boundary never bypasses pending or unknown clinical reviews", async () => {
+  for (const sender of [1, 2]) {
+    for (const pending of [true, null]) {
+      const result = await runRealRecoveryBoundary({pending, sender});
+      assert.equal(result.flagged, true);
+      assert.equal(result.reviewRequired, true);
+      assert.equal(result.reply, "AI draft under review");
+    }
+    const result = await runRealRecoveryBoundary({pending:false, sender});
+    assert.equal(result.flagged,false);
+    assert.equal(result.reviewRequired,false);
+    assert.equal(result.reviewContinuationTextOnly,true);
+    assert.match(result.reply,/RM68/);
+  }
+});
+
+const finalLocationSection = serverSection(
+  "    // A location-only enquiry must never depend on the model's invented",
+  "    responseAttempted = true;"
+);
+test("real final-send guard replaces Puchong on both sender paths", async () => {
+  for (const sender of [1, 2]) {
+    const context = {
+      flagged:false, bookingReady:false, keywordReason:null,
+      marketingStopQuestion:null, urgentSafety:false,
+      text:"你们的店是在哪？", reply:"我们的店在 Puchong。",
+      channel:"whatsapp", mediaLanguage:"zh", reviewContinuationTextOnly:false,
+      priceQuery:false, packageQuery:false, serviceQuery:false,
+      serviceQuerySource:null,
+      contact:{id:24,whatsapp_sender_id:sender},
+      clinicConfig:{businessType:"tcm_clinic",
+        businessName:"Neutro Sense TCM Centre",branches:PJ},
+      isActiveSafetyConcern:()=>false, hasClinicalMediaRisk:()=>false,
+      isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,
+    };
+    const result = await vm.runInNewContext(
+      "(async()=>{\n" + finalLocationSection +
+      "\nreturn {reply,reviewContinuationTextOnly};\n})()", context
+    );
+    assert.ok(result.reply.includes(PJ[0].address));
+    assert.doesNotMatch(result.reply,/Puchong/);
+    assert.equal(result.reviewContinuationTextOnly,true);
+  }
+});
