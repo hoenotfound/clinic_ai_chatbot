@@ -15,7 +15,7 @@ const PRICE_FIRST = /^(?:(?:我)?想(?:先)?(?:了解|知道|问问|問問|看)(
 // configured treatment the customer wants. Recover an ordinary clarification
 // instead of leaving an information review pending. This never chooses pelvis
 // from an ad label, symptoms, or an assistant's guessed service.
-const NATURAL_SHORT_PRICE = /^(?:(?:请问|請問|想问|想問|那|那么)\\s*)?(?:价钱|價錢|价格|價格|多少钱|多少錢|收费|收費|费用|費用)(?:呢|吗|嗎|呀)?[\\s?？。!！]*$/iu;
+const NATURAL_SHORT_PRICE = /^(?:(?:请问|請問|想问|想問|那|那么)\s*)?(?:价钱|價錢|价格|價格|多少钱|多少錢|收费|收費|费用|費用)(?:呢|吗|嗎|呀)?[\s?？。!！]*$/iu;
 const GENERIC_SESSION_PRICE = /^(?:(?:通常|一般|大概|请问|請問|想问|想問)\s*)?(?:做\s*)?(?:一|1|每)\s*(?:个|個|次|回)?\s*(?:疗程|療程|调理|調理|护理|護理)\s*(?:大概|通常|一般|是|要|收费|收費|费用|費用)?\s*(?:多少钱|多少錢|几多钱|幾多錢|价格|價格|价钱|價錢|费用|費用)(?:呢|吗|嗎)?[\s?？.!！。]*$|^(?:(?:usually|normally|generally)\s+)?(?:how\s+much\s+(?:is|for|does)\s+)?(?:a|one|each)\s+(?:session|treatment)\s+(?:cost|price|fee|(?:costs?\s+)?how\s+much)[\s?!.]*$|^(?:berapa\s+(?:harga|kos)\s+(?:untuk\s+)?(?:satu|setiap)\s+(?:sesi|rawatan))[?!. ]*$/iu;
 const OFFICE_QUESTION = /(?:久坐|坐办公室|坐辦公室|长时间.{0,8}坐|長時間.{0,8}坐|sit(?:ting)? (?:at (?:the )?office|for long)|duduk lama)/iu;
 const SMALL_BELLY = /(?:久坐|小腹|office|sitting|duduk lama)/iu;
