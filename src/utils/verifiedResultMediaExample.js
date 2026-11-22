@@ -24,13 +24,15 @@ function verifiedResultExampleForConversation({
 } = {}) {
   if (!SESSION_RESULT_QUESTION.test(String(customerText || ""))) return null;
   const service = normalized(serviceName);
-  if (!service || !Array.isArray(messages) || !messages.length) return null;
+  if (!Array.isArray(messages) || !messages.length) return null;
   const groups = (Array.isArray(resultMedia) ? resultMedia : [])
-    .filter(group => group?.enabled === true && normalized(group.service) === service);
-  if (groups.length !== 1) return null;
-
-  const allItems = (Array.isArray(groups[0].items) ? groups[0].items : [])
-    .filter(item => typeof item?.caption === "string" && item.caption.trim());
+    .filter(group => group?.enabled === true &&
+      (!service || normalized(group.service) === service));
+  if (!groups.length) return null;
+  const allItems = groups.flatMap(group =>
+    (Array.isArray(group.items) ? group.items : [])
+      .filter(item => typeof item?.caption === "string" && item.caption.trim())
+      .map(item => ({ item, service: group.service })));
   if (!allItems.length) return null;
 
   const lastCustomer = messages.findLastIndex(message => message?.role === "user");
@@ -42,10 +44,10 @@ function verifiedResultExampleForConversation({
     if (messages[i]?.role !== "assistant" ||
         typeof messages[i]?.content !== "string") continue;
     const caption = normalized(messages[i].content);
-    const matched = allItems.filter(item => authorizedCaptions(item).has(caption));
+    const matched = allItems.filter(row => authorizedCaptions(row.item).has(caption));
     if (matched.length !== 1) continue;
-    return matched[0].verifiedSessionCount === 1
-      ? { service: groups[0].service, verifiedSessionCount: 1 }
+    return matched[0].item.verifiedSessionCount === 1
+      ? { service: matched[0].service, verifiedSessionCount: 1 }
       : null;
   }
   return null;
