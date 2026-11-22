@@ -208,3 +208,132 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
     assert.equal(result.reviewContinuationTextOnly,true);
   }
 });
+
+
+test("mixed price and address questions include PJ without guessing a new price", () => {
+  const withoutCampaign = administrativeReviewReply({
+    customerText: "价钱呢？你们店在哪里？",
+    history: [], branches: PJ, language: "zh", services: [],
+    serviceAliases: [], promotions: [],
+  });
+  assert.equal(withoutCampaign?.kind, "mixed_price_location_clarification");
+  assert.match(withoutCampaign.reply, /哪一项护理/);
+  assert.ok(withoutCampaign.reply.includes(PJ[0].address));
+  assert.doesNotMatch(withoutCampaign.reply, /Puchong|RM\s*\d+/);
+
+  const withCampaign = administrativeReviewReply({
+    customerText: "价钱呢？你们店在哪里？",
+    history: [
+      {role: "user", content: PREFILL},
+      {role: "assistant", content: firstReply(Date.parse("2026-11-22T00:00:00Z"))},
+    ],
+    branches: PJ, language: "zh",
+    services: [], serviceAliases: [], promotions: [],
+    now: Date.parse("2026-11-22T00:00:00Z"),
+  });
+  assert.equal(withCampaign?.kind, "verified_rm68_campaign");
+  assert.match(withCampaign.reply, /RM68/);
+  assert.ok(withCampaign.reply.includes(PJ[0].address));
+});
+
+test("explicit English location overrides old Malay language preference", () => {
+  const reply = confirmedSingleBranchLocationAnswer({
+    customerText: "where are you located?", language: "ms", branches: PJ,
+  })?.reply;
+  assert.match(reply, /We're located/);
+  assert.doesNotMatch(reply, /Kami berada/);
+});
+
+const { planNeutroReviewContinuation } =
+  require("../src/utils/neutroReviewContinuation");
+test("natural short price questions are recognized even when no safe offer can be inferred", () => {
+  for (const question of ["价钱？", "价钱呢？", "价格呢？"]) {
+    const result = planNeutroReviewContinuation({
+      customerText: question, conversationHistory: [],
+      language: "zh", services: [], serviceAliases: [], promotions: [],
+    });
+    assert.equal(result?.kind, "unscoped_price_clarification", question);
+  }
+});
+
+const oldContinuitySection = serverSection(
+  "    // Recover only narrow, non-clinical continuations wrongly escalated",
+  "    // An RM68 campaign slot enquiry is answerable"
+);
+test("older verified-price review path never clears pending clinical review", async () => {
+  for (const pending of [true, false, null]) {
+    const context = {
+      flagged: true, reviewRequired: true, reviewType: "clinical",
+      keywordReason: null, urgentSafety: false, marketingStopQuestion: null,
+      text: "价钱？", bookingReady: false, reply: "staff review",
+      serviceQuery: true, serviceQuerySource: "model", priceQuery: true,
+      packageQuery: false, details: null, clinicalAcknowledgement: null,
+      reviewContinuationTextOnly: false, channel: "whatsapp",
+      mediaLanguage: "zh", history: [],
+      contact: {id: 1}, savedInbound: {id: 101},
+      clinicConfig: {businessType: "tcm_clinic", businessName: "Neutro Sense TCM Centre",
+        services: [], serviceAliases: [], promotions: []},
+      isActiveSafetyConcern: () => false,
+      hasClinicalMediaRisk: () => false,
+      isExplicitStaffRequest: () => false,
+      planNeutroReviewContinuation: () => ({kind: "verified_price", reply:"verified reply"}),
+      contactsRepo: {getTcmReviewEvidence: async () => pending === null ? null :
+        {pendingClinicalReview: pending}},
+      console: {info: () => {}},
+    };
+    const result = await vm.runInNewContext(
+      "(async()=>{\n" + oldContinuitySection +
+      "\nreturn {flagged,reviewRequired,reply,reviewContinuationTextOnly};\n})()", context
+    );
+    assert.equal(result.flagged, pending !== false);
+    assert.equal(result.reviewRequired, pending !== false);
+    assert.equal(result.reviewContinuationTextOnly, pending === false);
+  }
+});
+
+const earlyPriceSection = serverSection(
+  "    // Recover an unambiguous, customer-authored price question early enough",
+  "    if (aiPricingEnabled &&\n        flagged"
+);
+test("verified price review flows to existing pricing/media path only without clinical hold", async () => {
+  for (const sender of [1, 2]) {
+    for (const pending of [true, false, null]) {
+      const context = {
+        flagged: true, reviewRequired: true, reviewType: "clinical",
+        keywordReason: null, urgentSafety: false, bookingReady: false,
+        marketingStopQuestion: null, text: "价钱呢？",
+        aiPricingEnabled: true, aiPricingMode: "enabled",
+        priceQuery: false, packageQuery: false, details: null,
+        aiReply: "review draft", mediaLanguage: "zh",
+        channel: "whatsapp", contact: {id:7, whatsapp_sender_id:sender},
+        savedInbound: {id:99}, history: [],
+        clinicConfig: {businessType: "tcm_clinic", businessName: "Neutro Sense TCM Centre",
+          services: [{name:"骨盆调理"}], serviceAliases: [], promotions: []},
+        isActiveSafetyConcern: () => false, hasClinicalMediaRisk: () => false,
+        isExplicitStaffRequest: () => false,
+        isDefiniteAppointmentCancellation: () => false,
+        isStandalonePriceQuestion: () => true, hasExplicitPriceRequest: () => true,
+        categorizeAiReview: () => "information", campaignContextReply: () => null,
+        resolveVerifiedPriceFollowUpService: () => ({name:"骨盆调理"}),
+        verifiedPricesForService: () => [
+          {name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"},
+        ],
+        contactsRepo: {getTcmReviewEvidence: async () => pending === null ? null :
+          {pendingClinicalReview:pending}},
+        priceCheckingReply: () => "checking verified prices",
+        console: {info: () => {}},
+      };
+      const result = await vm.runInNewContext(
+        "(async()=>{\n" + earlyPriceSection +
+        "\nreturn {flagged,reviewRequired,priceQuery,details,aiReply};\n})()", context
+      );
+      assert.equal(result.flagged, pending !== false);
+      assert.equal(result.reviewRequired, pending !== false);
+      assert.equal(result.priceQuery, pending === false);
+      if (pending === false) {
+        assert.equal(result.details.treatment,"骨盆调理");
+        assert.equal(result.aiReply,"checking verified prices");
+      }
+    }
+  }
+});
