@@ -84,3 +84,40 @@ test("appointment prompts retain answers-first, date continuity, and no false bo
   assert.match(source, /NEUTRO ASSESSMENT VALUE FIRST/u);
   assert.match(source, /NEUTRO VALUE-FIRST INVITATION/u);
 });
+
+test("Neutro first-session result questions lead with verified visual example, not guarantees", () => {
+  const old = {
+    businessType: config.businessType,
+    businessName: config.businessName,
+    clinicName: config.clinicName,
+  };
+  try {
+    config.businessType = "tcm_clinic";
+    config.businessName = "Neutro Sense TCM Centre";
+    config.clinicName = "Neutro Sense TCM Centre";
+
+    for (const channel of ["whatsapp", "facebook", "instagram"]) {
+      const prompt = buildSystemPrompt({
+        channel,
+        conversationContext: {
+          currentCustomerText: "一次就这样的效果？",
+          relevantServiceNames: ["骨盆调理"],
+        },
+      });
+      assert.match(prompt, /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
+      assert.match(prompt, /是的☺️ 从这位顾客的 Before & After 可以看到/u);
+      assert.match(prompt, /不过每个人的基础体态和实际变化都不一样/u);
+      assert.match(prompt, /If one-session timing was not verified/u);
+      assert.match(prompt, /do not set priceQuery\/packageQuery/u);
+      assert.match(prompt, /practitioner-review rules unchanged/u);
+    }
+
+    config.businessName = "Another TCM Centre";
+    assert.doesNotMatch(buildSystemPrompt({ channel: "whatsapp" }), /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
+    config.businessType = "generic";
+    config.businessName = "Neutro Sense TCM Centre";
+    assert.doesNotMatch(buildSystemPrompt({ channel: "whatsapp" }), /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
+  } finally {
+    Object.assign(config, old);
+  }
+});
