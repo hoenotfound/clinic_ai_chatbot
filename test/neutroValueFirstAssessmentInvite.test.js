@@ -81,20 +81,32 @@ test("appointment prompts retain answers-first, date continuity, and no false bo
   assert.match(followup, /Do not repeat an earlier automated follow-up/u);
   assert.match(followup, /Never invent or guess prices, promotions, availability/u);
   const source = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/utils/systemPrompt.js"), "utf8");
-  assert.match(source, /NEUTRO ASSESSMENT VALUE FIRST/u);
-  assert.match(source, /NEUTRO VALUE-FIRST INVITATION/u);
+  assert.doesNotMatch(source, /NEUTRO ASSESSMENT VALUE FIRST|NEUTRO VALUE-FIRST INVITATION|NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
 });
 
-test("Neutro first-session result questions lead with verified visual example, not guarantees", () => {
-  const old = {
+test("Neutro reply examples and value-first tone come from editable clinic configuration", () => {
+  const saved = {
     businessType: config.businessType,
     businessName: config.businessName,
     clinicName: config.clinicName,
+    sop: config.sop,
+    messagingStyle: config.messagingStyle,
   };
   try {
     config.businessType = "tcm_clinic";
     config.businessName = "Neutro Sense TCM Centre";
     config.clinicName = "Neutro Sense TCM Centre";
+    config.sop = [
+      "ONE-SESSION BEFORE & AFTER RESULTS",
+      "If the genuine photo confirms one session, reply 是的☺️ 一次护理后就有明显的视觉分别哦💚",
+      "Each case is individual; never guarantee a fixed-session outcome.",
+    ].join("\n");
+    config.messagingStyle = [
+      "RESULT QUESTIONS: ANSWER FIRST",
+      "First address this customer's verified example, then briefly explain individual variation.",
+      "APPOINTMENT VALUE-FIRST (NEUTRO)",
+      "Before asking for a day, explain what 1对1体态评估 + 入门体验 helps understand.",
+    ].join("\n");
 
     for (const channel of ["whatsapp", "facebook", "instagram"]) {
       const prompt = buildSystemPrompt({
@@ -104,20 +116,29 @@ test("Neutro first-session result questions lead with verified visual example, n
           relevantServiceNames: ["骨盆调理"],
         },
       });
-      assert.match(prompt, /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
-      assert.match(prompt, /是的☺️ 从这位顾客的 Before & After 可以看到/u);
-      assert.match(prompt, /不过每个人的基础体态和实际变化都不一样/u);
-      assert.match(prompt, /If one-session timing was not verified/u);
-      assert.match(prompt, /do not set priceQuery\/packageQuery/u);
-      assert.match(prompt, /practitioner-review rules unchanged/u);
+      assert.match(prompt, /ONE-SESSION BEFORE & AFTER RESULTS/u);
+      assert.match(prompt, /是的☺️ 一次护理后就有明显的视觉分别哦💚/u);
+      assert.match(prompt, /RESULT QUESTIONS: ANSWER FIRST/u);
+      assert.match(prompt, /APPOINTMENT VALUE-FIRST \(NEUTRO\)/u);
+      assert.match(prompt, /never guarantee a fixed-session outcome/u);
+      assert.match(prompt, /clinical safety|review_required|TCM ENQUIRIES ABOUT BODY AREAS/iu);
+      assert.match(prompt, /priceQuery/u);
     }
+    const followup = buildFollowUpPrompt({
+      followUpContext: {stepNumber: 3, treatmentInterest: "骨盆调理"},
+    });
+    assert.match(followup, /RESULT QUESTIONS: ANSWER FIRST/u);
+    assert.match(followup, /APPOINTMENT VALUE-FIRST \(NEUTRO\)/u);
+    assert.match(followup, /Do not repeat an earlier automated follow-up/u);
 
-    config.businessName = "Another TCM Centre";
-    assert.doesNotMatch(buildSystemPrompt({ channel: "whatsapp" }), /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
-    config.businessType = "generic";
-    config.businessName = "Neutro Sense TCM Centre";
-    assert.doesNotMatch(buildSystemPrompt({ channel: "whatsapp" }), /NEUTRO FIRST-SESSION RESULT QUESTIONS/u);
+    // No client name or response script should be hardwired into the prompt.
+    config.businessName = "Independent TCM Centre";
+    config.clinicName = "Independent TCM Centre";
+    config.messagingStyle = "Natural and concise.";
+    config.sop = "No additional clinic-specific response script.";
+    const independent = buildSystemPrompt({channel: "whatsapp"});
+    assert.doesNotMatch(independent, /RESULT QUESTIONS: ANSWER FIRST|ONE-SESSION BEFORE & AFTER RESULTS|APPOINTMENT VALUE-FIRST \(NEUTRO\)/u);
   } finally {
-    Object.assign(config, old);
+    Object.assign(config, saved);
   }
 });
