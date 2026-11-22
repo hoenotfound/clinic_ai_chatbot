@@ -175,6 +175,7 @@ test("verified RM68 availability review can recover without silencing clinical r
     isCampaignAvailabilityQuestion,
     campaignContextReply: ({ history, customerText }) =>
       campaignContextReply({ history, customerText, now: early }),
+    administrativeReviewReply: () => null,
     console: { info: () => {} },
   });
   const getHistory = text => [...history, { role: "user", content: text }];
