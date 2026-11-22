@@ -198,6 +198,7 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
         businessName:"Neutro Sense TCM Centre",branches:PJ},
       isActiveSafetyConcern:()=>false, hasClinicalMediaRisk:()=>false,
       isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,
+      isBusinessLocationQuestion:()=>false,
     };
     const result = await vm.runInNewContext(
       "(async()=>{\n" + finalLocationSection +
