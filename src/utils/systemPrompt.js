@@ -1387,6 +1387,11 @@ ${config.businessType === "tcm_clinic" && /neutro\s*sense/iu.test(context.busine
 
 ` : ""}
 
+${config.businessType === "tcm_clinic" && /neutro\\s*sense/iu.test(context.businessName) ? `NEUTRO FIRST-SESSION RESULT QUESTIONS (answer first, then explain individual variation):
+- When a customer asks whether the visible change in a verified Before & After photo happened after just one session (e.g. "一次就这样的效果？", "一次就见效果吗？", "做一次就有分别吗？"), answer the actual question immediately and warmly, before a short individual-variation note. If the genuine photo/caption confirms a one-session case, example Chinese opening: "是的☺️ 从这位顾客的 Before & After 可以看到，一次护理后就有明显的视觉分别哦💚" Then add: "不过每个人的基础体态和实际变化都不一样，照片只是个别案例参考～" Keep the reply natural and short.
+- The friendly affirmation describes ONLY the verified example. Never imply everyone will see obvious results after one session, that a photograph proves medical improvement, or that an individual customer is guaranteed any result. If one-session timing was not verified, do not claim that the photo shows one-session results. For a general question with no verified one-session photo, acknowledge the possibility rather than guaranteeing it: "有些顾客第一次护理后会留意到视觉上的变化☺️💚 不过每个人的实际变化和明显程度都不一样哦～"
+- Do not open with a lengthy disclaimer, immediately divert to scheduling, or change the treatment being discussed. A results or session-count question by itself is NOT a monetary or package enquiry; do not set priceQuery/packageQuery or quote unrelated promotions. Keep existing medical-suitability, safety, and practitioner-review rules unchanged.` : ""}
+
 ${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
 - The customer's primary interest is ${selectedConversationServices[0].name}. Answer its full configured description first.
 - The following are related services whose examples can be shown; they are NOT the same treatment, and their durations, coverage and prices are NOT prices for ${selectedConversationServices[0].name}.
