@@ -142,16 +142,20 @@ test("existing Neutro 1-to-1 invitation gains benefit before booking question, w
 
 test("real Neutro prompt includes value-first rules and preserves pricing and confirmed-slot boundaries", () => {
   const previous = { businessName: config.businessName, businessType: config.businessType,
-    clinicName: config.clinicName };
+    clinicName: config.clinicName, messagingStyle: config.messagingStyle };
   try {
     Object.assign(config, neutro);
+    config.messagingStyle = [
+      "APPOINTMENT VALUE-FIRST (NEUTRO)",
+      "Explain 1对1体态评估 + 入门体验 before asking for a suitable day; do not promise free AI 身体检测.",
+    ].join("\n");
     const systemPrompt = buildSystemPrompt({channel:"whatsapp"});
     const followupPrompt = buildFollowUpPrompt({followUpContext:{stepNumber:3}});
-    assert.match(systemPrompt, /NEUTRO ASSESSMENT VALUE FIRST/u);
+    assert.match(systemPrompt, /APPOINTMENT VALUE-FIRST/u);
     assert.match(systemPrompt, /Resolve the customer's CURRENT concrete question BEFORE proposing a booking/u);
     assert.match(systemPrompt, /AI 身体检测/u);
     assert.match(systemPrompt, /Do NOT claim an appointment is booked before staff or system confirmation/u);
-    assert.match(followupPrompt, /NEUTRO VALUE-FIRST INVITATION/u);
+    assert.match(followupPrompt, /APPOINTMENT VALUE-FIRST/u);
     assert.match(followupPrompt, /Do not repeat an earlier automated follow-up/u);
   } finally {
     Object.assign(config, previous);
