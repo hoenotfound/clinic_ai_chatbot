@@ -264,6 +264,11 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
         ? templateText(clinicConfig, language, "voucher") : null;
       return [configuredIntro, voucher, configuredQuestion].filter(Boolean).join("\n");
     }
+    // A partial clinic template configuration must fail closed rather than
+    // revive old static vouchers or make up an incomplete invitation.
+    if (clinicConfig.assessmentReplyTemplates) {
+      return safeIntroReply({ customerText, language, services, serviceAliases });
+    }
   }
 
   const dayQuestion = zh
@@ -376,11 +381,14 @@ function ensureFirstAssessmentInvitation({
       message: enriched, customerTexts: [customerText], language,
       businessConfig: clinicConfig,
     });
+    const configuredTemplatesActive = neutro &&
+      Boolean(clinicConfig.assessmentReplyTemplates);
+    const verifiedVoucher = verifiedPelvicAssessmentVoucher(clinicConfig);
+    const templateVoucher = configuredTemplatesActive
+      ? templateText(clinicConfig, language, "voucher") : null;
     if (service.name === "骨盆调理" && !hasVoucher &&
-        (!neutro || !templateText(clinicConfig, language, "voucher") ||
-         verifiedPelvicAssessmentVoucher(clinicConfig))) {
-      const configuredVoucher = neutro
-        ? templateText(clinicConfig, language, "voucher") : null;
+        (!configuredTemplatesActive || (verifiedVoucher && templateVoucher))) {
+      const configuredVoucher = templateVoucher;
       const voucherNote = configuredVoucher || (chinese
         ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
         : malay
