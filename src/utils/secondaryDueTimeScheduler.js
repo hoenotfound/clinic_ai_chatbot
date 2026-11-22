@@ -178,7 +178,15 @@ function createSecondaryDueScheduler({
         // wake, so bookings, opt-outs and newly qualified replies cannot use
         // an outdated hint. No cached contacts, SQL writes or send shortcuts.
         if (preflightDueHint) {
-          const earlyHint = await readNextDue({ env, database, now: new Date(now()) });
+          let earlyHint = null;
+          try {
+            earlyHint = await readNextDue({ env, database, now: new Date(now()) });
+          } catch {
+            // The optimization must never postpone a potentially due send.
+            // An unreliable hint falls back to the existing full selector;
+            // its own error handling and provider safeguards remain intact.
+            logger.warn?.("Secondary due-hint preflight failed; using full candidate scan.");
+          }
           if (noPotentialDueNow(earlyHint, now())) {
             return { outcome: { attempted: 0, accepted: 0 }, hint: earlyHint };
           }
