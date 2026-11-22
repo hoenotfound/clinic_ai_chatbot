@@ -101,7 +101,7 @@ function administrativeReviewReply({
   }
 
   const verified = planNeutroReviewContinuation({
-    customerText: message, conversationHistory: history, language,
+    customerText: message, conversationHistory: history, language: replyLanguage,
     services, serviceAliases, promotions,
   });
   if (verified) return verified;
