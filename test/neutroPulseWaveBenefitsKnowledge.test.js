@@ -112,3 +112,17 @@ test("service knowledge does not leak into unrelated clinics", async () => {
     assert.doesNotMatch(prompt,/脉冲波调理|局部线条管理|15cm tissue penetration/u);
   });
 });
+
+
+test("replacement Pulse Wave poster is present and its source keeps verified promo terms", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const jpg = fs.readFileSync(path.join(__dirname, "../portal-frontend/public/neutro-pulse-safe-20261123.jpg"));
+  assert.ok(jpg.length > 20_000, "reviewed promo artwork should be a substantial image");
+  assert.equal(jpg.subarray(0, 3).toString("hex"), "ffd8ff", "must be a JPEG safe for WhatsApp media");
+  const builder = fs.readFileSync(path.join(__dirname, "../scripts/buildNeutroPulsePromoPoster.py"), "utf8");
+  for (const term of ["RM388", "RM688", "艾灸桶护理", "2 小时 15 分钟", "实际体验因人而异"])
+    assert.ok(builder.includes(term), `missing commercial or safety wording: ${term}`);
+  for (const forbidden of ["15cm", "深入骨髓", "偏头痛", "排湿寒气", "骨盆闭合", "瘦身减肥"])
+    assert.ok(!builder.includes(forbidden), `unsupported graphic claim: ${forbidden}`);
+});
