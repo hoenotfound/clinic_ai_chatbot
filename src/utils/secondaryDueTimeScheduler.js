@@ -66,12 +66,19 @@ function nextAllowedClinicTime(ms) {
 // A read-only due hint is a superset of sendable slots. If none can be due
 // yet, avoid the much heavier full candidate scan. Ambiguous or malformed
 // hints always fall back to the original candidate query.
-function noPotentialDueNow(hint, nowMs) {
-  if (!hint || hint.has_overdue !== false || !Number.isFinite(nowMs) ||
+function validSecondaryDueHint(hint) {
+  if (!hint || typeof hint.has_overdue !== "boolean" ||
       !Object.prototype.hasOwnProperty.call(hint, "next_due_at")) return false;
-  if (hint.next_due_at == null) return true;
-  const nextDueAt = new Date(hint.next_due_at).getTime();
-  return Number.isFinite(nextDueAt) && nextDueAt > nowMs;
+  if (hint.next_due_at === null) return true;
+  return hint.next_due_at !== undefined &&
+    Number.isFinite(new Date(hint.next_due_at).getTime());
+}
+
+function noPotentialDueNow(hint, nowMs) {
+  if (!validSecondaryDueHint(hint) || hint.has_overdue !== false ||
+      !Number.isFinite(nowMs)) return false;
+  return hint.next_due_at === null ||
+    new Date(hint.next_due_at).getTime() > nowMs;
 }
 
 function nextSecondaryDueDelay(hint, nowMs = Date.now(), { idleMs = IDLE_RECHECK_MS } = {}) {
@@ -209,7 +216,7 @@ function createSecondaryDueScheduler({
         // A missing hint is not proof that no future work is due. After
         // the safe full-scan fallback, recheck in five minutes rather than
         // allowing the ordinary one-hour idle backstop to postpone work.
-        if (preflightDueHint && !result?.hint) return ERROR_RETRY_MS;
+        if (preflightDueHint && !validSecondaryDueHint(result?.hint)) return ERROR_RETRY_MS;
         return nextSecondaryDueDelay(result?.hint, now());
       },
     });
@@ -241,7 +248,7 @@ module.exports = {
   IDLE_RECHECK_MS, ERROR_RETRY_MS, BACKLOG_RECHECK_MS,
   DELIVERY_RECEIPT_WAKE_DELAY_MS,
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
-  noPotentialDueNow, nextSecondaryDueDelay,
+  validSecondaryDueHint, noPotentialDueNow, nextSecondaryDueDelay,
   measureSecondaryWorkerRun, createSecondaryDueScheduler,
   secondaryEventRequiresWake,
 };
