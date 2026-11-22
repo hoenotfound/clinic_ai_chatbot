@@ -497,11 +497,11 @@ function buildConversationPromptContext(
     relevantServiceNames,
     serviceSource,
     currentCustomerText,
-    verifiedResultMediaExample: relevantServiceNames.length === 1
+    verifiedResultMediaExample: relevantServiceNames.length <= 1
       ? verifiedResultExampleForConversation({
           messages,
           resultMedia: config.resultMedia,
-          serviceName: relevantServiceNames[0],
+          serviceName: relevantServiceNames[0] || "",
           customerText: currentCustomerText,
         })
       : null,
