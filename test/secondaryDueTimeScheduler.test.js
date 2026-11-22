@@ -486,3 +486,27 @@ test("no-due preflight never suppresses disabled or uncertain follow-up state",(
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-02T00:00:01Z"},now),true);
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:null},now),true);
 });
+
+test("failed secondary preflight read falls back to normal scan before error backoff",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0,warnings=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary due-hint fail-open test",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  logger:{error:()=>assert.fail("preflight failure must not abort the worker"),
+    warn:()=>warnings++},
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{
+   reads++;
+   if(reads===1)throw Error("temporary Neon error");
+   return {next_due_at:"2026-11-02T02:00:00Z",has_overdue:false};
+  },
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"the original full selector runs if preflight fails");
+ assert.equal(reads,2,"the normal post-run hint still determines the next schedule");
+ assert.equal(warnings,1);
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T02:00:00Z"));
+ scheduler.stop();
+});
