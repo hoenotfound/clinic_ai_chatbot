@@ -483,6 +483,8 @@ test("no-due preflight never suppresses disabled or uncertain follow-up state",(
  assert.equal(noPotentialDueNow({has_overdue:null,next_due_at:null},now),false);
  assert.equal(noPotentialDueNow({has_overdue:false},now),false,
   "missing next_due_at is not a valid negative due hint");
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:undefined},now),false,
+  "undefined next_due_at must not be interpreted as a valid SQL NULL");
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"not-a-date"},now),false);
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-01T23:59:59Z"},now),false);
  assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-02T00:00:01Z"},now),true);
@@ -522,6 +524,8 @@ test("combined secondary marketing hints do not turn missing lane data into no d
  assert.equal(combine([none,{next_due_at:null}]),null,"missing overdue boolean is uncertain");
  assert.equal(combine([none,{has_overdue:false}]),null,
   "an enabled lane with missing next_due_at must be uncertain");
+ assert.equal(combine([none,{has_overdue:false,next_due_at:undefined}]),null,
+  "undefined due-time values must be uncertain");
  assert.equal(combine([none,{next_due_at:"bad",has_overdue:false}]),null,
   "invalid future deadline must not be silently discarded");
  assert.equal(combine([]),null);
@@ -563,5 +567,21 @@ test("known-empty secondary hints retain hourly recovery and no full scan",async
  assert.equal(runs,0,"no full scan when an aggregate proves no due work");
  assert.equal(scheduler.state().dueAt,time("2026-11-02T01:00:00Z"),
   "valid empty hints preserve the existing hourly idle recovery");
+ scheduler.stop();
+});
+
+test("incomplete object-shaped secondary due hints use five-minute recovery",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary incomplete due recovery",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>({has_overdue:false,next_due_at:undefined}),
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"the incomplete preflight must not skip candidate processing");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:05:00Z"),
+  "the incomplete post-run hint must recheck promptly");
  scheduler.stop();
 });
