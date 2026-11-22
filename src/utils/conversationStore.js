@@ -85,6 +85,14 @@ function withPricingHistoryMetadata(entry, row) {
       value: isVerifiedHumanStaffRow(row),
       enumerable: false,
     },
+    // Trusted outbound image identity is not serialized into model prompts;
+    // it is used only to cross-check one-session results against the exact
+    // clinic-configured media item, avoiding caption-only assumptions.
+    verifiedOutboundImageUrl: {
+      value: row?.role === "assistant" && typeof row?.media_url === "string"
+        ? row.media_url : null,
+      enumerable: false,
+    },
   });
   return entry;
 }
