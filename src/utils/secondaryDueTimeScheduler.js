@@ -63,6 +63,24 @@ function nextAllowedClinicTime(ms) {
   return shifted.getTime() - CLINIC_UTC_OFFSET_MS;
 }
 
+// A read-only due hint is a superset of sendable slots. If none can be due
+// yet, avoid the much heavier full candidate scan. Ambiguous or malformed
+// hints always fall back to the original candidate query.
+function validSecondaryDueHint(hint) {
+  if (!hint || typeof hint.has_overdue !== "boolean" ||
+      !Object.prototype.hasOwnProperty.call(hint, "next_due_at")) return false;
+  if (hint.next_due_at === null) return true;
+  return hint.next_due_at !== undefined &&
+    Number.isFinite(new Date(hint.next_due_at).getTime());
+}
+
+function noPotentialDueNow(hint, nowMs) {
+  if (!validSecondaryDueHint(hint) || hint.has_overdue !== false ||
+      !Number.isFinite(nowMs)) return false;
+  return hint.next_due_at === null ||
+    new Date(hint.next_due_at).getTime() > nowMs;
+}
+
 function nextSecondaryDueDelay(hint, nowMs = Date.now(), { idleMs = IDLE_RECHECK_MS } = {}) {
   if (!hint || !Number.isFinite(nowMs)) return idleMs;
   let earliest = Infinity;
@@ -128,7 +146,7 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
 function createSecondaryDueScheduler({
   label, run, readNextDue, events, env,
   database, createTimer = createAdaptiveWorkerTimer,
-  now = Date.now, logger = console,
+  now = Date.now, logger = console, preflightDueHint = false,
 } = {}) {
   if (typeof run !== "function" || typeof readNextDue !== "function" ||
       typeof events?.subscribe !== "function") {
@@ -163,6 +181,24 @@ function createSecondaryDueScheduler({
       logger,
       now,
       run: async () => {
+        // Only enabled for selectors whose potential-due SQL retains every
+        // required eligibility guard. Read it freshly on each event/recovery
+        // wake, so bookings, opt-outs and newly qualified replies cannot use
+        // an outdated hint. No cached contacts, SQL writes or send shortcuts.
+        if (preflightDueHint) {
+          let earlyHint = null;
+          try {
+            earlyHint = await readNextDue({ env, database, now: new Date(now()) });
+          } catch {
+            // The optimization must never postpone a potentially due send.
+            // An unreliable hint falls back to the existing full selector;
+            // its own error handling and provider safeguards remain intact.
+            logger.warn?.("Secondary due-hint preflight failed; using full candidate scan.");
+          }
+          if (noPotentialDueNow(earlyHint, now())) {
+            return { outcome: { attempted: 0, accepted: 0 }, hint: earlyHint };
+          }
+        }
         const outcome = await run({ env, database });
         if (outcome?.disabled) return { disabled: true };
         // A full batch always schedules another run in ten seconds. Its due
@@ -177,6 +213,10 @@ function createSecondaryDueScheduler({
         // Continue draining a genuine due batch without a five-minute poll.
         // Attempts are one-shot and remain protected by the original ledger.
         if (Number(result?.outcome?.attempted || 0) >= 10) return BACKLOG_RECHECK_MS;
+        // A missing hint is not proof that no future work is due. After
+        // the safe full-scan fallback, recheck in five minutes rather than
+        // allowing the ordinary one-hour idle backstop to postpone work.
+        if (preflightDueHint && !validSecondaryDueHint(result?.hint)) return ERROR_RETRY_MS;
         return nextSecondaryDueDelay(result?.hint, now());
       },
     });
@@ -208,6 +248,7 @@ module.exports = {
   IDLE_RECHECK_MS, ERROR_RETRY_MS, BACKLOG_RECHECK_MS,
   DELIVERY_RECEIPT_WAKE_DELAY_MS,
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
-  nextSecondaryDueDelay, measureSecondaryWorkerRun, createSecondaryDueScheduler,
+  validSecondaryDueHint, noPotentialDueNow, nextSecondaryDueDelay,
+  measureSecondaryWorkerRun, createSecondaryDueScheduler,
   secondaryEventRequiresWake,
 };
