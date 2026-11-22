@@ -312,9 +312,10 @@ test("verified price review flows to existing pricing/media path only without cl
         isActiveSafetyConcern: () => false, hasClinicalMediaRisk: () => false,
         isExplicitStaffRequest: () => false,
         isDefiniteAppointmentCancellation: () => false,
-        isStandalonePriceQuestion: () => true, hasExplicitPriceRequest: () => true,
+        isStandaloneNeutroPriceQuestion: () => true, hasExplicitPriceRequest: () => true,
         categorizeAiReview: () => "information", campaignContextReply: () => null,
         resolveVerifiedPriceFollowUpService: () => ({name:"骨盆调理"}),
+        planNeutroReviewContinuation: () => null,
         verifiedPricesForService: () => [
           {name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"},
         ],
@@ -336,4 +337,13 @@ test("verified price review flows to existing pricing/media path only without cl
       }
     }
   }
+});
+
+
+test("natural price helper accepts 价钱呢 but rejects unrelated text", () => {
+  const { isStandalonePriceQuestion } =
+    require("../src/utils/neutroAdministrativeReviewReply");
+  assert.equal(isStandalonePriceQuestion("价钱呢？"), true);
+  assert.equal(isStandalonePriceQuestion("价钱？"), true);
+  assert.equal(isStandalonePriceQuestion("有没有疼痛？"), false);
 });
