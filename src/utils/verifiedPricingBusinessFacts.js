@@ -41,11 +41,11 @@ function confirmedSingleBranchLocationAnswer({
   // Follow the language of this question rather than inheriting a stale
   // language from a previous ad or from another staff message.
   const chineseQuestion = /[\u3400-\u9FFF]/u.test(question);
-  const ms = /\b(?:alamat|lokasi|klinik|cawangan|kedai|dimana|di mana|kat mana)\b/iu.test(question) ||
-    (!chineseQuestion && locale.startsWith("ms"));
+  const explicitMalay = /\b(?:alamat|lokasi|klinik|cawangan|kedai|dimana|di mana|kat mana)\b/iu.test(question);
+  const explicitEnglish = /\b(?:where|address|location|shop|store|clinic|centre|center|branch|outlet)\b/iu.test(question);
+  const ms = !chineseQuestion && (explicitMalay || (!explicitEnglish && locale.startsWith("ms")));
   const en = !chineseQuestion && !ms &&
-    (/\b(?:where|address|location|shop|store|clinic|centre|center|branch|outlet)\b/iu.test(question) ||
-      locale.startsWith("en"));
+    (explicitEnglish || locale.startsWith("en"));
   return {
     kind: "verified_location",
     reply: ms
