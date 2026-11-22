@@ -124,7 +124,7 @@ function isOtherTreatmentQuery(text) {
   return OTHER_TREATMENT.test(String(text || "")) || EXIT_CAMPAIGN.test(String(text || ""));
 }
 const CAMPAIGN_QUERY =
-  /(?:胸部|乳腺|乳房|艾灸|赠送|贈送|脉冲|脈衝|专业检查|專業檢查|评估|評估|RM\s*68|RM\s*388|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|便宜|包括|包含|做什么|做什麼|什么项目|什麼項目|多久|多长|多長|时间|時間|小时|小時|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:price|cost|fee|duration|how long|hours?|breast|pulse|rm ?68|rm ?388|appointment|availability|slot|december [56]|5th|6th)\b)/iu;
+  /(?:只有这两天|只有這兩天|只有两天|只有兩天|就这两天|就這兩天|只有这两日|只有這兩日|胸部|乳腺|乳房|艾灸|赠送|贈送|脉冲|脈衝|专业检查|專業檢查|评估|評估|RM\s*68|RM\s*388|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|便宜|包括|包含|做什么|做什麼|什么项目|什麼項目|多久|多长|多長|时间|時間|小时|小時|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:price|cost|fee|duration|how long|hours?|breast|pulse|rm ?68|rm ?388|appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 const AMOUNT_QUESTION =
   /(?:RM\s*(?:68|388)|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|\b(?:price|cost|fee|how much|harga)\b)/iu;
 const DURATION_QUESTION =
@@ -132,7 +132,7 @@ const DURATION_QUESTION =
 const INCLUDES_QUESTION =
   /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist)\b)/iu;
 const DATE_QUESTION =
-  /(?:日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
+  /(?:只有这两天|只有這兩天|只有两天|只有兩天|就这两天|就這兩天|只有这两日|只有這兩日|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 
 function stillDiscussingCampaign(history) {
   const messages = Array.isArray(history) ? history : [];
@@ -154,6 +154,26 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
   }
   const dates = dayLine(now);
   const text = String(customerText || "");
+  // If the customer cannot attend the advertised dates and staff/AI has
+  // offered ordinary care at a different time, an unscoped "how much?"
+  // could refer to THAT care. Never quote the event RM68 as its price.
+  if (AMOUNT_QUESTION.test(text) &&
+      /^(?:(?:请问|請問|那么|那|想问|想問|请问一下)\s*)?(?:[价價][钱錢格]|价格|價格|多少钱|多少錢|收费|收費|费用|費用|how much|price|berapa harga)(?:呢|呀|啊|是)?[\s？?。!！]*$/iu.test(text)) {
+    const prior = (Array.isArray(history) ? history : []).filter(
+      item => item && item.role === "user" &&
+        String(item.content || "").trim() !== text.trim()
+    ).slice(-4).map(item => String(item.content || ""));
+    const cannotAttend = prior.some(msg =>
+      /(?:这两天|這兩天|那两天|那兩天|[56]\s*号|[56]\s*日).{0,35}(?:不在|不方便|没空|沒空|来不了|來不了|无法|無法|不行|can't|cannot)|(?:不在|不方便|没空|沒空|来不了|來不了|无法|無法|不行|can't|cannot).{0,35}(?:这两天|這兩天|那两天|那兩天|[56]\s*号|[56]\s*日)/iu.test(msg));
+    const ordinaryCareOffered = (Array.isArray(history) ? history : []).slice(-6)
+      .some(msg => msg?.role === "assistant" &&
+        /(?:平日|平时|平時|其他日期|其他时间|其他時間|改天|平日.*护理|平日.*護理|\b(?:regular care|other days?|other dates?)\b)/iu.test(String(msg.content || "")));
+    if (cannotAttend && ordinaryCareOffered) {
+      return "RM68 是12月5日及6日的限时胸部护理体验优惠哦 😊 " +
+        "如果你想安排其他日期，平日护理的收费需要先请门店确认，不能直接按 RM68 活动价计算。" +
+        "请问你是想了解活动当天的 RM68 优惠，还是其他日期的护理收费呢？";
+    }
+  }
   if (DATE_QUESTION.test(text)) {
     // Never imply that a date, place, or appointment is confirmed.
     return "RM68 胸部健康评估 + 脉冲波舒缓护理的活动日期是" + dates +
