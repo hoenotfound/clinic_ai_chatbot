@@ -65,6 +65,9 @@ function verifiedResultExampleForConversation({
     // Never authorize the claim using a copied caption without the actual
     // outbound image matching this exact approved configured item.
     if (!savedPhoto || !authorizedImages(matched[0].item).has(savedPhoto)) return null;
+    const verifiedPhoto = safeImageIdentity(matched[0].item.verifiedSessionImageUrl);
+    if (!verifiedPhoto || verifiedPhoto !== savedPhoto ||
+        verifiedPhoto !== safeImageIdentity(matched[0].item.imageUrl)) return null;
     return matched[0].item.verifiedSessionCount === 1
       ? { service: matched[0].service, verifiedSessionCount: 1 }
       : null;
