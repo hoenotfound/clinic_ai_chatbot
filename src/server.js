@@ -2592,6 +2592,28 @@ async function processIncomingMessage(
       reply = fixedAdFirstReply.reply;
     }
 
+    // A location-only enquiry must never depend on the model's invented
+    // branch or city. Both WhatsApp senders and social channels use the
+    // currently loaded single branch from Settings at the final text send.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const verifiedLocation = confirmedSingleBranchLocationAnswer({
+        customerText: text, branches: clinicConfig.branches,
+        language: mediaLanguage,
+      });
+      if (verifiedLocation) {
+        reply = verifiedLocation.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
