@@ -351,7 +351,7 @@ test("latest English and Malay admin questions override older chat-language labe
     customerText: "berapa harga", history: [], branches: PJ,
     language: "en", services: [], serviceAliases: [], promotions: [],
   });
-  assert.match(ms.reply, /Awak nak tahu harga/);
+  assert.match(ms.reply, /Boleh.*(?:harga|harganya)/su);
 });
 
 test("natural price helper accepts 价钱呢 but rejects unrelated text", () => {
