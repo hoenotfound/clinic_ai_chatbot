@@ -113,3 +113,15 @@ test("unrelated clinic does not inherit Neutro templates",()=>{
     assert.match(reply,/TCM practitioner/);
   });
 });
+
+test("clinic config save contract retains the editable assessment templates",()=>{
+  const { CONFIG_KEYS, hydrateStoredConfig } = require("../src/db/configRepo");
+  assert.ok(CONFIG_KEYS.includes("assessmentReplyTemplates"));
+  const hydrated=hydrateStoredConfig({
+    businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",
+    assessmentReplyTemplates:copies,
+  });
+  assert.equal(templateText(hydrated,"zh","pelvicFree"),copies.zh.pelvicFree);
+  assert.equal(templateText(hydrated,"en","face","3D 小颜术"),
+    "Neon custom facial assessment for 3D 小颜术");
+});
