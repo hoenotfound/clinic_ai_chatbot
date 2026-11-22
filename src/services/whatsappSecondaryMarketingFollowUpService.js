@@ -907,6 +907,8 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
  scheduler=createSecondaryDueScheduler({
    label:"Secondary WhatsApp marketing followup scheduler",
    run,readNextDue,database,env,events,createTimer,now,
+   // Avoid the expensive multi-slot candidate search when no slot is due.
+   preflightDueHint:true,
  });
  return scheduler.start();
 }
