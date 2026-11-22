@@ -48,7 +48,8 @@ const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPa
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
-  confirmedSingleBranchLocationAnswer } = require("./utils/verifiedPricingBusinessFacts");
+  confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion } =
+  require("./utils/verifiedPricingBusinessFacts");
 const { administrativeReviewReply } = require("./utils/neutroAdministrativeReviewReply");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
@@ -2649,6 +2650,34 @@ async function processIncomingMessage(
       });
       if (verifiedLocation) {
         reply = verifiedLocation.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
+    }
+
+    // For mixed price + location enquiries without an approved ordinary
+    // pricing decision, reply with verified business facts and either the
+    // strictly verified campaign price or a treatment clarification. Keep
+    // normal approved prices on the original media-capable pricing path.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isBusinessLocationQuestion(text) && hasExplicitPriceRequest(text) &&
+        !approvedPricingDecision) {
+      const verifiedMixed = administrativeReviewReply({
+        customerText: text, history, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (verifiedMixed &&
+          /(?:mixed_price_location_clarification|verified_rm68_campaign|explicit_verified_price|explicit_price_needs_confirmation)/u.test(verifiedMixed.kind)) {
+        reply = verifiedMixed.reply;
         reviewContinuationTextOnly = true;
         priceQuery = false;
         packageQuery = false;
