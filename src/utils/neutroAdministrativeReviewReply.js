@@ -1,7 +1,8 @@
 "use strict";
 
 const { confirmedSingleBranchLocationAnswer } = require("./verifiedPricingBusinessFacts");
-const { campaignContextReply } = require("./neutroBreastRm68Campaign");
+const { campaignContextReply, isCampaignAvailabilityQuestion } =
+  require("./neutroBreastRm68Campaign");
 const { planNeutroReviewContinuation } = require("./neutroReviewContinuation");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 
@@ -23,7 +24,12 @@ function administrativeReviewReply({
     customerText: message, branches, language,
   });
   if (location) return location;
-  const campaign = campaignContextReply({ history, customerText: message, now });
+  // Only factual price/availability requests are eligible for the campaign
+  // recovery. A broader treatment or medical question stays in normal review.
+  const campaign = (isStandalonePriceQuestion(message) ||
+    isCampaignAvailabilityQuestion(message))
+    ? campaignContextReply({ history, customerText: message, now })
+    : null;
   if (campaign) return { kind: "verified_rm68_campaign", reply: campaign };
   if (!isStandalonePriceQuestion(message) || !hasExplicitPriceRequest(message)) return null;
 
