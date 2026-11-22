@@ -159,10 +159,7 @@ function conversationSelectedServices(conversationContext) {
 }
 
 function renderCompactService(service) {
-  // Discovery and ad-originated conversations need enough verified service facts
-  // to answer a basic benefits enquiry even before a single service is resolved.
-  // Keep this bounded: the compact catalog includes every configured service.
-  const description = promptContextText(service?.description, 360);
+  const description = promptContextText(service?.description, 240);
   return `- ${promptContextText(service?.name, 180) || "Unnamed service"}${description ? `: ${description}` : ""}`;
 }
 
