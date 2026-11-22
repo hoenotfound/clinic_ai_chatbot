@@ -12,6 +12,7 @@ const media = [
   { service: "骨盆调理", enabled: true, items: [
     { caption: "第一次骨盆 Before & After", imageUrl: "/api/config/result-media/image/1" },
     { caption: "再给你看一个顾客护理后的 Before & After 😊", verifiedSessionCount: 1,
+      verifiedSessionImageUrl: "/api/config/result-media/image/2",
       imageUrl: "/api/config/result-media/image/2",
       mediaTranslations: { en: { caption: "Another customer Before & After from one session" } } },
   ] },
@@ -44,6 +45,14 @@ test("cannot infer one-session outcome from another photo, customer/ad text or d
   assert.equal(example([{role:"assistant",content:"第一次骨盆 Before & After",verifiedOutboundImageUrl:"/api/config/result-media/image/1"}, {role:"user",content:"一次有分别吗"}]), null);
   assert.equal(example([{role:"user",content:"再给你看一个顾客护理后的 Before & After 😊"}, {role:"user",content:"一次有分别吗"}]), null);
   assert.equal(example([{role:"assistant",content:"Unconfigured promo says first session"}, {role:"user",content:"一次有分别吗"}]), null);
+  const changed=structuredClone(media);
+  changed[0].items[1].imageUrl="/api/config/result-media/image/88";
+  assert.equal(verifiedResultExampleForConversation({
+    messages:[
+      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/88"},
+      {role:"user",content:"一次有分别吗"},
+    ],resultMedia:changed,customerText:"一次有分别吗",
+  }), null,"moving a verified caption to a new photo must not inherit the old session proof");
   assert.equal(example([
     {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/1"},
     {role:"user",content:"一次有分别吗"},
