@@ -62,6 +62,12 @@ test("cannot infer one-session outcome from another photo, customer/ad text or d
     {role:"user",content:"一次有分别吗"},
   ]), null, "a plain text caption is not verified image evidence");
   assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"多少钱?"}]), null);
+  for (const q of ["做一次多少钱?", "做一次多久?"]) {
+    assert.equal(example([
+      {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
+      {role:"user",content:q},
+    ],q),null,"session-related price or duration must not be classified as visual result proof");
+  }
   assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"一次有分别吗"}], "一次有分别吗", "3D 小颜术"), null);
   assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
     {role:"assistant",content:"第一次骨盆 Before & After",verifiedOutboundImageUrl:"/api/config/result-media/image/1"},
