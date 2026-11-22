@@ -411,3 +411,78 @@ test("unrelated verified events do not reschedule a genuine due slot",async()=>{
  assert.equal(runs,2,"secondary message still wakes immediately");
  scheduler.stop();
 });
+
+test("secondary preflight skips full candidate scans until a fresh hint shows due work",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let due=false,runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary WhatsApp marketing followup scheduler",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return due
+    ? {next_due_at:null,has_overdue:true}
+    : {next_due_at:"2026-11-02T02:00:00Z",has_overdue:false};},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(reads,1);
+ assert.equal(runs,0,"no candidate scan when no slot could be due");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T02:00:00Z"));
+ events.publish("conversation_changed",{reason:"delivery_status",deliveryStatus:"sent"});
+ await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
+ assert.equal(reads,2,"receipt wakes still read a fresh due hint");
+ assert.equal(runs,0,"status-only wake avoids the full candidate scan");
+ due=true;
+ events.publish("conversation_changed",{reason:"message"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,1,"a new eligible customer message must run full safeguards");
+ assert.equal(reads,4,"due work refreshes its hint after the candidate scan");
+ events.publish("pipeline_changed",{reason:"appointment_set"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,2,"booking updates still trigger the full check when a slot is due");
+ scheduler.stop();
+ assert.equal(clock.scheduled.size,0);
+});
+
+test("secondary preflight fails open to the candidate scan for untrusted due hints",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const hints=[
+  null,
+  {next_due_at:"invalid",has_overdue:false},
+  {next_due_at:null,has_overdue:null},
+  {next_due_at:null,has_overdue:true},
+ ];
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary WhatsApp service followup scheduler",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return hints[Math.min(runs,hints.length-1)];},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"null hint must not suppress due work");
+ events.publish("conversation_changed",{reason:"message"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,2,"malformed future time must not suppress due work");
+ events.publish("conversation_changed",{reason:"booking_confirmed"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,3,"ambiguous overdue flag must not suppress due work");
+ events.publish("conversation_changed",{reason:"whatsapp_opt_out"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,4,"actual overdue work must still run");
+ assert.equal(reads,8,"every full run reads preflight and post-run due hints");
+ scheduler.stop();
+});
+
+test("no-due preflight never suppresses disabled or uncertain follow-up state",()=>{
+ const {noPotentialDueNow}=require("../src/utils/secondaryDueTimeScheduler");
+ const now=time("2026-11-02T00:00:00Z");
+ assert.equal(noPotentialDueNow(null,now),false);
+ assert.equal(noPotentialDueNow({has_overdue:true,next_due_at:null},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:null,next_due_at:null},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"not-a-date"},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-01T23:59:59Z"},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-02T00:00:01Z"},now),true);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:null},now),true);
+});
