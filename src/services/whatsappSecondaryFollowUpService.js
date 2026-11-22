@@ -1216,6 +1216,8 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
  scheduler=createSecondaryDueScheduler({
    label:"Secondary WhatsApp service followup scheduler",
    run,readNextDue,database,env,events,createTimer,now,
+   // Keep full send guards; skip only when the fresh hint proves no due slot.
+   preflightDueHint:true,
  });
  return scheduler.start();
 }
