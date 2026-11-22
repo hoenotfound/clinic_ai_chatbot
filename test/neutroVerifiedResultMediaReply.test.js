@@ -61,7 +61,7 @@ test("cannot infer one-session outcome from another photo, customer/ad text or d
     {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊"},
     {role:"user",content:"一次有分别吗"},
   ]), null, "a plain text caption is not verified image evidence");
-  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"多少钱?"}]), null);
+  assert.equal(example([{role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"}, {role:"user",content:"多少钱?"}], "多少钱?"), null);
   for (const q of ["做一次多少钱?", "做一次多久?"]) {
     assert.equal(example([
       {role:"assistant",content:"再给你看一个顾客护理后的 Before & After 😊",verifiedOutboundImageUrl:"/api/config/result-media/image/2"},
