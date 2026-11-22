@@ -1714,7 +1714,7 @@ async function processIncomingMessage(
         !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
         (aiPricingEnabled || aiPricingMode === "shadow") &&
         clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
         isStandalonePriceQuestion(text) && hasExplicitPriceRequest(text) &&
         categorizeAiReview(text, reviewType) === "information" &&
         !campaignContextReply({ history, customerText: text })) {
@@ -1728,7 +1728,7 @@ async function processIncomingMessage(
         ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, history)
         : null;
       if (prices?.length && prices.every(item =>
-          /^RM[1-9]\\d{1,4}$/u.test(String(item.price || "")))) {
+          /^RM[1-9]\d{1,4}$/u.test(String(item.price || "")))) {
         const evidence = await contactsRepo.getTcmReviewEvidence(
           contact.id, savedInbound.id
         );
