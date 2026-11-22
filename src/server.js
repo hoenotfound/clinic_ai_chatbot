@@ -2328,7 +2328,7 @@ async function processIncomingMessage(
       });
       if (continuity) {
         const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
-        if (verified && typeof verified.pendingClinicalReview === "boolean") {
+        if (verified?.pendingClinicalReview === false) {
           reply = continuity.reply;
           flagged = false;
           reviewRequired = false;
