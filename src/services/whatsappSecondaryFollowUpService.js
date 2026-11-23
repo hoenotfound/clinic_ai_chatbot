@@ -475,7 +475,6 @@ function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql){
      AND staff_caption.created_at>=${afterSql}
  )`;
 }
-const RECENT_STAFF_VIDEO_CAPTION_SQL=`SELECT NOT ${deliveredStaffVideoCaptionSql("$1","$2","$3::timestamptz")} AS allowed`;
 
 
 // One optional, gentle booking-question nudge after the 2h reminder was
@@ -1018,12 +1017,6 @@ async function runOnce({
         serviceFollowupParityActivation(env),
       ]);
       if(result.rows?.[0]?.allowed!==true)return false;
-      if(slot===2){
-        const caption=await database.query(RECENT_STAFF_VIDEO_CAPTION_SQL,[
-          candidate.contact_id,candidate.conversation_id,candidate.inbound_at,
-        ]);
-        if(caption.rows?.[0]?.allowed!==true)return false;
-      }
       if(!checkingVideo)return true;
       const evidence=await database.query(RECENT_STAFF_VIDEO_SQL,[
         candidate.contact_id,candidate.conversation_id,candidate.inbound_at,
