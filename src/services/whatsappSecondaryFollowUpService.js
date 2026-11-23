@@ -1067,12 +1067,23 @@ async function runOnce({
         ?textWithoutVideo(replyLanguage):safeText;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
-         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+      const contextualAiEnabled = !candidate.recovery_no_selection && !generalOnly &&
+        (slot===20
+          ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
+          : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
+      if(contextualAiEnabled){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
-          const code=personalized?.code||"secondary_20h_ai_unavailable";
-          const fallback=SAFE_20H_FALLBACK_CODES.has(code)
+          const code=personalized?.code||"secondary_contextual_ai_unavailable";
+          if(["skip","stop_sequence","human_review"].includes(personalized?.action)){
+            // The model made a do-not-send decision on the verified conversation.
+            // Never replace that decision with a generic sales reminder.
+            await fail(code);
+            continue;
+          }
+          // Preserve the pre-existing 20h neutral fallback for transient errors.
+          // A failed early-stage review must not fall back to an unreviewed send.
+          const fallback=slot===20 && SAFE_20H_FALLBACK_CODES.has(code)
             ? neutral20hFallbackText(replyLanguage):null;
           if(!fallback){await fail(code);continue;}
           outboundText=fallback;
