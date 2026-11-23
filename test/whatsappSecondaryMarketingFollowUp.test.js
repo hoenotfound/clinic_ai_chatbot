@@ -492,14 +492,14 @@ test("Day4/Day6 use ad-origin seed without weakening verified send or due checks
    assert.match(sql,/seed_referral.source_type='ad'/);
    assert.match(sql,/seed_referral.ctwa_clid/);
    assert.match(sql,/seed_referral.meta_ad_id/);
-   assert.match(sql,/recent.created_at > \\$4::timestamptz - INTERVAL '8 days'/);
+   assert.match(sql,/recent.created_at > \$4::timestamptz - INTERVAL '8 days'/);
    assert.match(sql,/consent_seed.marketing_consent='opted_in'/);
    assert.match(sql,/JOIN whatsapp_sender_status_receipts receipt/);
    assert.match(sql,/receipt.matched=TRUE AND receipt.pricing_type='free_entry_point'/);
    assert.match(sql,/receipt.pricing_billable=FALSE/);
    assert.match(sql,/qualified_session.first_reply_at>=rule.updated_at/);
  }
- assert.match(ordinary,/FROM messages recent\\s+WHERE recent.created_at > \\$4::timestamptz - INTERVAL '5 days'/);
+ assert.match(ordinary,/FROM messages recent\s+WHERE recent.created_at > \$4::timestamptz - INTERVAL '5 days'/);
  assert.doesNotMatch(ordinary,/FROM whatsapp_free_entry_referrals seed_referral/);
  assert.equal(167+24<8*24,true,"origin created up to 24h before a reply no older than 167h");
 });
