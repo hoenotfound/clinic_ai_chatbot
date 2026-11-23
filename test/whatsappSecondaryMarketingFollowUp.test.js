@@ -437,3 +437,44 @@ test("Day4/Day6 refuses unreviewed UNKNOWN holds before any one-shot claim",()=>
  }
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/gate\.state IN \('reserved','awaiting_pricing'\)/);
 });
+
+test("all enabled marketing hints execute as one sender-scoped read",async()=>{
+ const e={...env,
+   WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-20T00:00:00Z",
+ };
+ assert.equal(svc.enabled(e),true);
+ assert.equal(svc.extendedEnabled(e),true);
+ assert.equal(require("../src/services/neutroSecondaryGeneralMarketingSql").enabled(e),true);
+ const now=new Date("2026-11-23T02:00:00Z");
+ let reads=0;
+ const db={query:async(sql,params)=>{
+  reads++;
+  assert.equal(sql,svc.combinedPotentialDueSql({extended:true,general:true}));
+  assert.equal(params.length,8,"general activation parameter is bound once");
+  assert.equal(params[0],e.WHATSAPP_SECONDARY_SENDER_KEY);
+  assert.equal(params[3],now);
+  return {rows:[{next_due_at:"2026-11-23T03:00:00Z",has_overdue:false}]};
+ }};
+ const hint=await svc.nextPotentialDueAt({database:db,env:e,now});
+ assert.equal(reads,1,"three enabled marketing lanes must make one database checkout");
+ assert.equal(hint.has_overdue,false);
+ assert.equal(hint.next_due_at.toISOString(),"2026-11-23T03:00:00.000Z");
+});
+
+test("combined marketing due hint preserves missing-result fail-open and ordinary-only fallback",async()=>{
+ let reads=0;
+ const db={query:async(sql,params)=>{
+  reads++;
+  assert.equal(sql,svc.POTENTIAL_DUE_SQL,"ordinary-only SQL remains unchanged");
+  assert.equal(params.length,7);
+  return {rows:[]};
+ }};
+ const result=await svc.nextPotentialDueAt({
+  database:db,env,now:new Date("2026-11-23T02:00:00Z"),
+ });
+ assert.equal(reads,1);
+ assert.equal(result,null,"a missing aggregate must never certify no due leads");
+});
