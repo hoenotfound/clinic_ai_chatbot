@@ -281,7 +281,7 @@ test("Booking Ready requires a customer-provided time or daypart", async () => {
     receivedAt:monday,now:laterMonday,requireValidPreference:true,
   });
   assert.equal(checked.blocked,true);
-  assert.match(checked.reply,/哪一天、几点/);
+  assert.match(checked.reply,/那一天大概几点/);
 });
 test("the most recent pelvic package wins over an older package in chat history", () => {
   const config={promotions:[{linkedService:"骨盆调理",packages:[
