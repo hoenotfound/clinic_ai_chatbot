@@ -104,9 +104,12 @@ const BREAST_LUMP_CONCERN =
 const CLINICAL_MEDIA_SUITABILITY =
   /(?:可不可以|能不能|是否可以|可以|能否|适不适合|適不適合)(?:.{0,15})(?:做|(?<![费費])用|接受|进行|進行)(?:.{0,10})(?:吗|嗎|呢|\?|？)|(?:can|could|should)\s+i\s+(?:have|receive|undergo|try|do)\s+(?:(?:this|the|a|your)\s+)?(?:[\w-]+\s+){0,3}(?:treatment|procedure|therapy|rawatan)|\b(?:am i|is it)\s+(?:eligible|suitable|safe)\b|\b(?:boleh|sesuai)\s+(?:buat|cuba|jalani|rawatan|ke)\b/iu;
 
+function isBreastLumpConcern(customerText) {
+  return BREAST_LUMP_CONCERN.test(String(customerText || ""));
+}
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
-  return BREAST_LUMP_CONCERN.test(value) ||
+  return isBreastLumpConcern(value) ||
     isUrinaryLeakageConcern(value) ||
     CLINICAL_MEDIA_SUITABILITY.test(value) ||
     (hasRecentPostpartumInterval(value) || RECENT_POSTPARTUM_RISK.test(value)) ||
@@ -119,6 +122,9 @@ function hasClinicalMediaRisk(customerText) {
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
+  // A mixed promotional price enquiry does not downgrade a breast lump,
+  // tumor or nodule concern to ordinary information.
+  if (isBreastLumpConcern(customerText)) return "clinical";
   // A lone greeting cannot on its own justify a clinical label. Higher-level
   // server safeguards must separately check pending real clinical reviews.
   if (isSimpleGreeting(customerText) && !hasClinicalMediaRisk(customerText)) return "information";
@@ -171,6 +177,7 @@ function followUpAttentionAllowedSql(alias = "c") {
 
 module.exports = {
   isUrinaryLeakageConcern,
+  isBreastLumpConcern,
   categorizeAiReview,
   hasClinicalMediaRisk,
   followUpAttentionAllowedSql,

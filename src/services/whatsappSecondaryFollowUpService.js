@@ -452,11 +452,14 @@ function deliveredStaffVideoSql(contactSql,conversationSql,afterSql){
      AND staff_video.created_at>=${afterSql}
  )`;
 }
-const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} AS allowed`;
-// A signed Business App video caption can be text-only in coexistence echoes.
-// Do not repeat the 2h introduction when staff has already described
-// sending that video. This does not falsely claim the media itself arrived.
-function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql){
+const RECENT_STAFF_VIDEO_SQL=`SELECT NOT (
+  ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} OR
+  ${staffVideoPlaceholderSql("$1","$2","$3::timestamptz")}
+) AS allowed`;
+// A signed Business App echo is not a delivery receipt. Only a distinctive
+// caption for the 2h introduction or 6h customer example suppresses its
+// matching automated step. Generic video mentions are insufficient.
+function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql,slotSql){
  return `EXISTS (
    SELECT 1 FROM messages staff_caption
    JOIN whatsapp_sender_message_context staff_caption_ctx
@@ -465,18 +468,40 @@ function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql){
    WHERE staff_caption.contact_id=${contactSql}
      AND staff_caption.role='assistant'
      AND staff_caption.sent_by_username IS NOT NULL
-     AND staff_caption.sent_by_username<>'Follow-up automation'
+     AND staff_caption.sent_by_username NOT IN
+       ('Follow-up automation','Consent request automation')
      AND staff_caption.is_automated_follow_up IS DISTINCT FROM TRUE
      AND staff_caption.whatsapp_message_id LIKE 'wamid.%'
      AND staff_caption.delivery_status IS DISTINCT FROM 'failed'
      AND staff_caption.media_mime_type IS NULL
-     AND COALESCE(staff_caption.content,'') ~*
-       '(🎥|📹|这段影片|這段影片|(^|[^[:alpha:]])video([^[:alpha:]]|$))'
      AND staff_caption.created_at>=${afterSql}
+     AND (
+       (${slotSql}=2 AND COALESCE(staff_caption.content,'') ~*
+         '^[[:space:]]*(🎥|📹)[[:space:]]*(Hi[[:space:]～~]*)?(这段影片简单介绍|這段影片簡單介紹|这段视频简单介绍|這段視頻簡單介紹|intro[[:space:]]+video|video[[:space:]]+introduction)')
+       OR (${slotSql}=6 AND COALESCE(staff_caption.content,'') ~*
+         '^[[:space:]]*(🎥|📹)[[:space:]]*(跟你分享一位顾客|跟你分享一位顧客|分享一位顾客|分享一位顧客|customer[[:space:]]+testimonial|testimonial[[:space:]]+video)')
+     )
  )`;
 }
-
-
+// An explicit provider-signed video placeholder shows that staff sent a
+// video but not which one. Keep future media text-only when ambiguous.
+function staffVideoPlaceholderSql(contactSql,conversationSql,afterSql){
+ return `EXISTS (
+   SELECT 1 FROM messages staff_video_placeholder
+   JOIN whatsapp_sender_message_context sent_ctx
+     ON sent_ctx.message_id=staff_video_placeholder.id
+    AND sent_ctx.conversation_id=${conversationSql}
+   WHERE staff_video_placeholder.contact_id=${contactSql}
+     AND staff_video_placeholder.role='assistant'
+     AND staff_video_placeholder.sent_by_username IS NOT NULL
+     AND staff_video_placeholder.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff_video_placeholder.whatsapp_message_id LIKE 'wamid.%'
+     AND staff_video_placeholder.delivery_status IS DISTINCT FROM 'failed'
+     AND staff_video_placeholder.created_at>=${afterSql}
+     AND BTRIM(COALESCE(staff_video_placeholder.content,'')) =
+       '🎥 [Video sent from WhatsApp Business App]'
+ )`;
+}
 // One optional, gentle booking-question nudge after the 2h reminder was
 // accepted BEFORE staff asked about availability. Never unlocks 20h or media.
 // Only fresh questions after a configured UTC rollout time are eligible.
@@ -522,7 +547,8 @@ const CANDIDATES_SQL=`
    lead.treatment_interest,
    lead.marketing_consent AS lead_marketing_consent,
    ${deliveredStaffVideoSql('c.id','sc.id','inbound.created_at')} AS staff_video_sent,
-    ${deliveredStaffVideoCaptionSql('c.id','sc.id','inbound.created_at')} AS staff_video_caption_sent,
+    ${deliveredStaffVideoCaptionSql('c.id','sc.id','inbound.created_at','rule.slot_hours')} AS staff_video_caption_sent,
+   ${staffVideoPlaceholderSql('c.id','sc.id','inbound.created_at')} AS staff_video_placeholder_sent,
    EXISTS (
      SELECT 1 FROM whatsapp_free_entry_referrals r
      JOIN messages ad ON ad.id=r.origin_message_id
@@ -812,6 +838,8 @@ const RECHECK_SQL=`
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
       OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('NOW()')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
+   AND (rule.slot_hours NOT IN (2,6) OR NOT
+     ${deliveredStaffVideoCaptionSql("c.id","sc.id","inbound.created_at","rule.slot_hours")})
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -973,7 +1001,8 @@ async function runOnce({
         ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
-    const staffVideoSent=candidate.staff_video_sent===true;
+    const staffVideoSent=candidate.staff_video_sent===true ||
+      candidate.staff_video_placeholder_sent===true;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
     if(candidate.media_key && !staffVideoSent && !generalOnly && !candidate.staff_reply &&
@@ -1026,8 +1055,10 @@ async function runOnce({
     try {
       // One-shot deterministic block. Do not keep reconsidering the same
       // captioned 2-hour video after staff has already introduced it.
-      if(slot===2 && candidate.staff_video_caption_sent===true){
-        await fail("staff_already_sent_video_introduction");
+      if((slot===2 || slot===6) && candidate.staff_video_caption_sent===true){
+        await fail(slot===2
+          ? "staff_already_sent_video_introduction"
+          : "staff_already_sent_customer_example_video");
         continue;
       }
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}

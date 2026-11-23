@@ -1209,3 +1209,49 @@ test("secondary AI review does not flag a staff-owned contact after ownership ch
   assert.equal(alerts.length,0);
   assert.equal(f.sends,0);
 });
+
+
+test("signed staff captions suppress ONLY their matching secondary video follow-up stage",async()=>{
+ for(const slot of [2,6]){
+  const f=fake({rows:[{...candidate,slot_hours:slot,media_key:null,
+   staff_video_caption_sent:true,staff_video_sent:false}]});
+  const result=await worker.runOnce({
+   ...f,env,
+   getConfig:()=>({services:[{name:"骨盆调理"}],
+    automatedFollowUp:{message:"Intro",
+     additionalSteps:[{message:"Customer example"},{message:"Invitation"}]}}),
+  });
+  assert.equal(result.attempted,1,"slot "+slot);
+  assert.equal(result.accepted,0,"slot "+slot);
+  assert.equal(f.sends,0,"slot "+slot);
+  assert.equal(f.calls.some(x=>x.save),false);
+  const blocked=f.calls.find(x=>x.sql?.includes("status='blocked'"));
+  assert.equal(blocked?.args?.[1],slot===2
+    ?"staff_already_sent_video_introduction"
+    :"staff_already_sent_customer_example_video");
+ }
+});
+test("ambiguous signed Business App video placeholder makes media text-only, not a duplicate",async()=>{
+ const f=fake({rows:[{...candidate,slot_hours:6,media_key:"approved-video",
+  media_type:"video",media_mime_type:"video/mp4",media_filename:"example.mp4",
+  staff_video_placeholder_sent:true}]});
+ const result=await worker.runOnce({
+  ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+   automatedFollowUp:{additionalSteps:[{message:"Followup"}]}}),
+  storage:{downloadMedia:async()=>assert.fail("must not redownload staff-sent video")},
+ });
+ assert.equal(result.accepted,1);
+ assert.equal(f.sends,1);
+ assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,null);
+ assert.equal(f.calls.find(x=>x.send).send.dispatchTransport,undefined);
+});
+test("generic staff messages mentioning video do not suppress 2h or 6h",()=>{
+ assert.match(worker.CANDIDATES_SQL,/staff_video_caption_sent/);
+ assert.match(worker.CANDIDATES_SQL,/slot_hours/);
+ assert.match(worker.RECHECK_SQL,/FROM messages staff_caption/);
+ assert.match(worker.RECHECK_SQL,/staff_caption\.created_at>=inbound\.created_at/);
+ assert.match(worker.CANDIDATES_SQL,/🎥.*这段影片简单介绍/);
+ assert.match(worker.CANDIDATES_SQL,/跟你分享一位顾客/);
+ assert.doesNotMatch(worker.CANDIDATES_SQL,/staff_caption\.content.*'\(\^\|\[\^\[:alpha:\]\]\)video/);
+});
