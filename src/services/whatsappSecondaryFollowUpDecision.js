@@ -19,15 +19,16 @@ const WITHDRAWN=[
 // A question or an explicit new request is not a deferral.
 const POLITE_FUTURE_BOOKING=/(?:有需要(?:我)?(?:再|就)(?:预约|預約|联系|聯繫|找你|通知)|(?:之后|之後|下次|下回)(?:有需要)?再(?:来|來|安排|预约|預約)|(?:我|让|讓)?先(?:解决|解決).{0,30}(?:之后|之後|再来|再來)|(?:我)?(?:再)?考虑考虑|(?:我)?(?:再)?考慮考慮|(?:i(?:'ll| will)?|we(?:'ll| will)?)\s*(?:book|contact|reach out)\s*(?:when|if)\s*(?:needed|ready|later)|(?:let me decide later))/iu;
 const REMOTE_JOHOR_STATEMENT=/^(?:(?:哦|噢|啊|sorry|不好意思|oh)[，,\s]*)?(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
+const POLITE_REMOTE_CLOSING=/^(?:(?:哦|噢|啊|嗯|sorry|不好意思|oh|ok|谢谢|謝謝|thank\s+you|thanks|tq|terima\s+kasih)[，,、.!！。\s😊🙏]*){1,5}(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
 function customerPolitelyDeferred(value) {
+  // Location alone is not opt-out: do not suppress a price, service or
+  // scheduling question just because a customer happens to live in JB.
+  const currentQuestion=/(?:多少钱|多少錢|几多钱|幾多錢|价[格钱錢]|價錢|收费|收費|费用|費用|\b(?:price|cost|fee|how\s+much|harga|berapa)\b|你们有|你們有|可以安排|能预约|能預約|我要预约|我要預約|\b(?:can\s+i\s+book|do\s+you\s+have|can\s+you\s+explain)\b)/iu.test(value);
   const deferCare=/先(?:解决|解決).{0,35}(?:之后|之後).{0,20}再(?:来|來)/u.test(value);
-  const remote=/\b(?:i(?:'m| am) (?:in|from)|我(?:在|住在))\s*(?:jb|johor(?: bahru)?|新山|柔佛|penang|槟城|檳城)(?:的)?\b/iu.test(value) ||
-    /我(?:在|住在)\s*(?:jb|johor|新山|柔佛|penang|槟城|檳城)(?:的)?/iu.test(value);
-  // A customer asking whether to return after recovering has postponed the
-  // visit. A current price or booking question must still be answered.
-  if(deferCare && !/(?:多少钱|多少錢|价格|價錢|价钱|price|cost|今天|明天|today|tomorrow)/iu.test(value))return true;
-  return !/[?？]/u.test(value) &&
-    (POLITE_FUTURE_BOOKING.test(value) || REMOTE_JOHOR_STATEMENT.test(value) || remote);
+  if(deferCare && !currentQuestion && !/(?:今天|明天|today|tomorrow)/iu.test(value))return true;
+  if(currentQuestion || /[?？]/u.test(value))return false;
+  return POLITE_FUTURE_BOOKING.test(value) ||
+    REMOTE_JOHOR_STATEMENT.test(value) || POLITE_REMOTE_CLOSING.test(value);
 }
 const DEFERRED=/(?:^(?:我|让我|讓我|先|暂时|暫時)?(?:再)?(?:考虑|考慮)(?:一下|看看|下|先)?[吧哦啊。.!！\s😊]*$|^(?:我再|我会再|我會再|迟点|遲點|过后|過後|之后|之後)(?:联系|聯繫|找|告诉|告訴|回复|回覆|通知)你|(?:let me (?:think|consider)|i(?:'ll| will) (?:let you know|get back(?: to you)?|contact you)|saya (?:akan )?(?:hubungi|beritahu) (?:nanti|kemudian)))/iu;
 
