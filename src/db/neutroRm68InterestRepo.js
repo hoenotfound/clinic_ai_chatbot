@@ -1,6 +1,6 @@
 "use strict";
 const {pool}=require("./db");
-const {isExplicitRm68Interest}=require("../utils/neutroRm68InterestEvidence");
+const {isExplicitRm68Interest,isRm68ClinicalConcern}=require("../utils/neutroRm68InterestEvidence");
 const CAMPAIGN="neutro_breast_rm68_2026";
 const SERVICE="草药胸部疏通乳腺护理";
 async function recordRm68CustomerInterest({contactId,messageId,text,clinicConfig,database=pool}={}){
@@ -25,12 +25,13 @@ async function recordRm68CustomerInterest({contactId,messageId,text,clinicConfig
   "), updated AS (",
   " UPDATE leads l SET treatment_interest=$4,updated_at=NOW()",
   " FROM current_lead WHERE l.id=current_lead.id",
-  " AND NULLIF(BTRIM(l.treatment_interest),'') IS NULL RETURNING l.id",
+  " AND NULLIF(BTRIM(l.treatment_interest),'') IS NULL AND $6::boolean=TRUE RETURNING l.id",
   "), interest AS (",
   " INSERT INTO lead_activities (lead_id,activity_type,description,actor,metadata)",
   " SELECT current_lead.id,'updated','Customer explicitly asked about RM68 breast-care event.',",
   " 'Automation',jsonb_build_object('outcome','customer_campaign_interest',",
-  " 'campaignKey',$5::text,'inboundMessageId',$2::text,'source','customer_text')",
+  " 'campaignKey',$5::text,'inboundMessageId',$2::text,'source','customer_text',",
+  " 'medicalReviewNeeded',NOT $6::boolean)",
   " FROM current_lead WHERE NOT EXISTS (",
   " SELECT 1 FROM lead_activities a WHERE a.lead_id=current_lead.id",
   " AND a.metadata->>'outcome'='customer_campaign_interest'",
@@ -43,6 +44,7 @@ async function recordRm68CustomerInterest({contactId,messageId,text,clinicConfig
  ].join("\n");
  const result=await database.query(sql,[
    Number(contactId),Number(messageId),String(text).trim(),SERVICE,CAMPAIGN,
+   !isRm68ClinicalConcern(text),
  ]);
  return {matched:true,...(result.rows?.[0]||{})};
 }
