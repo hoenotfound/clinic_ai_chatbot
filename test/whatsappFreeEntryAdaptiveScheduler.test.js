@@ -88,6 +88,12 @@ test("FEP only skips proven non-actionable wakes; booking and billing always wak
     reason:"delivery_status",contactId:2,followUpStateUnchanged:true,
   }),false);
   assert.equal(wake("conversation_changed",{
+    reason:"contact_state",contactId:2,followUpStateUnchanged:true,
+  }),false,"profile-only changes do not alter eligibility");
+  assert.equal(wake("conversation_changed",{
+    reason:"contact_state",contactId:2,
+  }),true,"genuine contact state changes must still wake");
+  assert.equal(wake("conversation_changed",{
     reason:"delivery_status",contactId:2,followUpStateUnchanged:false,
   }),true,"unverified receipts need re-evaluation");
   assert.equal(wake("conversation_changed",{
