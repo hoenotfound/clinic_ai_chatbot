@@ -179,6 +179,8 @@ test("production paths preserve sender/price/media authority and primary deferra
  assert.match(server,/modelPricingStage = parsedReply\.pricingStage/);
  assert.match(server,/modelPricingStage,/);
  assert.match(server,/subsequent_session_text_only/);
+ assert.match(server,/repeatVisitInfoReview = flagged && reviewRequired/);
+ assert.match(server,/evidence\?\.pendingClinicalReview !== false/);
  assert.match(secondary,/personalized\?\.action/);
  assert.match(secondary,/WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED/);
  assert.match(primary,/有需要\.\{0,12\}再/);
