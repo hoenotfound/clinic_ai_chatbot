@@ -93,6 +93,14 @@ function timesInText(text){
     if(!suffix&&h>0&&h<8)continue;
     times.push(h*60+minute);
   }
+  // Simple forms like "2pm" and "3 am" have no colon or Chinese 点.
+  for (const m of value.matchAll(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/giu)) {
+    let hour = +m[1];
+    if (hour < 1 || hour > 12) continue;
+    if (m[2].toLowerCase().startsWith("p") && hour < 12) hour += 12;
+    if (m[2].toLowerCase().startsWith("a") && hour === 12) hour = 0;
+    times.push(hour * 60);
+  }
   return [...new Set(times)];
 }
 function durationMinutesForPackage({config,customerTexts=[],treatment=""}={}){
