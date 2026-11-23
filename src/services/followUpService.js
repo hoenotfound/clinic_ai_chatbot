@@ -1669,21 +1669,6 @@ async function sendCandidate(candidate) {
       language, businessConfig: clinicConfig,
     });
   }
-  // Final textual invitation boundary: the AI and fixed templates may not
-  // propose a date on a configured closed day. Does not modify consent, media,
-  // sender routing or real staff-confirmed bookings.
-  if (clinicConfig.hours?.weekly) {
-    const checked = guardAppointmentReply({
-      hours: clinicConfig.hours, customerText: followUpMessage,
-      reply: followUpMessage, receivedAt: new Date(), now: new Date(),
-      language,
-    });
-    if (checked.blocked && checked.reply !== followUpMessage) {
-      followUpMessage = checked.reply;
-      console.info("[Appointment hours] corrected follow-up invitation contact=" +
-        candidate.contact_id + " reason=" + checked.issue?.status);
-    }
-  }
   const safeFollowUp = rm68FollowUp
     ? { message: rm68FollowUp.message, suppressMedia: false }
     : enforceAssessmentFirstFollowUpCopy({
@@ -1703,7 +1688,7 @@ async function sendCandidate(candidate) {
   const selectedFollowUpImage = rm68FollowUp ? ""
     : promotionFollowUp ? promotionFollowUpImageUrl
     : selectedImageUrl;
-  const effectiveImageUrl =
+  let effectiveImageUrl =
     originalHasPrice ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
@@ -1781,6 +1766,26 @@ async function sendCandidate(candidate) {
       stepIndex,
     });
     followUpMessageMode = "fixed";
+  }
+
+  // Check the FINAL selected text, after RM68/promotion/media fallback
+  // overrides. Otherwise those late rewrites could bypass the first guard.
+  // A corrected scheduling reply is text only; do not attach a now-mismatched
+  // promotion graphic or an old media caption.
+  if (clinicConfig.hours?.weekly) {
+    const checked = guardAppointmentReply({
+      hours: clinicConfig.hours, customerText: "",
+      reply: followUpMessage, receivedAt: new Date(), now: new Date(),
+      language,
+    });
+    if (checked.blocked && checked.reply !== followUpMessage) {
+      followUpMessage = checked.reply;
+      effectiveImageUrl = "";
+      effectiveVideoKey = "";
+      effectiveVoice = null;
+      console.info("[Appointment hours] corrected final follow-up contact=" +
+        candidate.contact_id + " reason=" + checked.issue?.status);
+    }
   }
 
   const effectiveVideoFilename =
