@@ -90,6 +90,12 @@ function hasRecentPostpartumInterval(customerText) {
   return false;
 }
 
+// Breast lumps, nodules or tumors are clinical questions, not ordinary
+// RM68 promotion qualification. Detect the concern even in mixed prefills
+// without claiming diagnosis or treatment eligibility.
+const BREAST_LUMP_CONCERN =
+  /(?:结节|結節|乳瘤|乳房(?:有|里|內|内)?(?:肿块|腫塊|硬块|硬塊|瘤|肿瘤|腫瘤)|乳腺(?:肿块|腫塊|结节|結節|瘤)|胸(?:部|口)(?:有)?(?:肿块|腫塊|硬块|硬塊|瘤)|\b(?:breast\s+)?(?:lumps?|nodules?|breast\s+cysts?|breast\s+tumou?rs?)\b)/iu;
+
 // If AI misses a clinical outcome flag, images still fail closed here. Keep
 // this separate from review categorization, which has different purposes.
 // The single-character verb 用 must not match the 用 in 费用/費用. Without
@@ -100,7 +106,8 @@ const CLINICAL_MEDIA_SUITABILITY =
 
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
-  return isUrinaryLeakageConcern(value) ||
+  return BREAST_LUMP_CONCERN.test(value) ||
+    isUrinaryLeakageConcern(value) ||
     CLINICAL_MEDIA_SUITABILITY.test(value) ||
     (hasRecentPostpartumInterval(value) || RECENT_POSTPARTUM_RISK.test(value)) ||
     CLINICAL_MEDIA_RED_FLAGS.test(value) ||
