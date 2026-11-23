@@ -81,9 +81,10 @@ configurations remain unchanged.
   authorized or sent at night. At 07:00, fresh SQL executes; overnight
   customer messages, delivery receipts, opt-outs, booking changes and rule
   updates are re-evaluated there. A clock-boundary race retries in one second.
-- Proven social-channel `pipeline_changed` events no longer wake WhatsApp
-  secondary workers. Unknown/WhatsApp events, booking, opt-out, messages,
-  rules and relevant delivery receipts remain conservatively actionable.
+- Preserve all appointment, opt-out and otherwise unknown
+  `pipeline_changed` wakes even if a payload claims Facebook or Instagram.
+  A channel label alone cannot prove that a shared lead update is unrelated.
+  Only the three previously reviewed CRM-only reasons are ignored.
 - Passive fixed-label counters now measure: `hint_query`,
   `scan_skipped`, `scan_performed`, `quiet_hours_skipped`,
   `hint_failed`, `hint_uncertain`, `post_hint_query`,
