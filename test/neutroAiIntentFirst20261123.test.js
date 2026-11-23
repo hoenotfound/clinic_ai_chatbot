@@ -123,6 +123,8 @@ test("verified secondary deferrals persist and protect later reminders",()=>{
   assert.equal(isStoppedDecision(decision.status),true,text);
  }
  for(const text of ["我在JB的，你们有分行吗？","我考虑一下，但是价格多少？",
+  "我在JB的 3D多少钱","我在JB的，价钱多少","我住在JB，可以安排线上评估吗",
+  "我考虑考虑 价钱多少", "I am in JB can you explain",
   "Can I book tomorrow?", "第一次体验后又是什么价格？"]){
   assert.notEqual(classifyVerifiedTreatmentTurn({text,clinicConfig:config})?.status,"deferred",text);
  }
