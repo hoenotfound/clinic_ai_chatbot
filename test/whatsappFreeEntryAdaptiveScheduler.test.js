@@ -49,6 +49,22 @@ test("extended follow-up scheduler handles conversation, pipeline and config wak
     subscriptions.get("config_changed")({ keys: ["automatedFollowUp"] });
     subscriptions.get("whatsapp_fep_billing_evidence")({});
     assert.deepEqual(wakeDelays, [300000, 300000, 0, 0]);
+    // Presentation-only noise cannot replace the next exact due time.
+    const oldCount=wakeDelays.length;
+    subscriptions.get("conversation_changed")({contactId:37,reason:"reaction"});
+    subscriptions.get("conversation_changed")({
+      contactId:37,reason:"delivery_status",followUpStateUnchanged:true,
+    });
+    subscriptions.get("pipeline_changed")({leadId:21,reason:"lead_scored"});
+    assert.equal(wakeDelays.length,oldCount);
+    // A WhatsApp booking/opt-out and unverified receipt must still wake.
+    subscriptions.get("pipeline_changed")({
+      leadId:21,reason:"appointment_set",channel:"facebook",
+    });
+    subscriptions.get("conversation_changed")({
+      contactId:37,reason:"delivery_status",
+    });
+    assert.deepEqual(wakeDelays.slice(oldCount),[300000,300000]);
     assert.equal(worker.start({ createTimer: timerFactory, events }), worker.stop,
       "starting the worker twice must not schedule a second worker");
     assert.equal(started, 1);
@@ -61,6 +77,34 @@ test("extended follow-up scheduler handles conversation, pipeline and config wak
     if (original === undefined) delete process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED;
     else process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED = original;
   }
+});
+
+test("FEP only skips proven non-actionable wakes; booking and billing always wake", () => {
+  const wake=worker.freeEntryDueEventRequiresWake;
+  for (const reason of ["reaction","lead_assignment_recovered"]) {
+    assert.equal(wake("conversation_changed",{reason,contactId:2}),false);
+  }
+  assert.equal(wake("conversation_changed",{
+    reason:"delivery_status",contactId:2,followUpStateUnchanged:true,
+  }),false);
+  assert.equal(wake("conversation_changed",{
+    reason:"delivery_status",contactId:2,followUpStateUnchanged:false,
+  }),true,"unverified receipts need re-evaluation");
+  assert.equal(wake("conversation_changed",{
+    reason:"message",contactId:2,
+  }),true);
+  assert.equal(wake("conversation_changed",{
+    reason:"message_updated",contactId:2,
+  }),true);
+  for (const reason of ["lead_scored","meta_ad_enriched","lead_assignment_recovered"]) {
+    assert.equal(wake("pipeline_changed",{reason,leadId:3}),false);
+  }
+  for (const reason of ["appointment_set","whatsapp_opt_out","customer_deleted","booking_hold_resolved"]) {
+    assert.equal(wake("pipeline_changed",{reason,leadId:3,channel:"instagram"}),true,
+      "social channel is not a safe suppression for shared CRM changes");
+  }
+  assert.equal(wake("pipeline_changed",{leadId:3}),true);
+  assert.equal(wake("whatsapp_fep_billing_evidence",{}),true);
 });
 
 test("next-due query shares the CTWA epoch and filters abandoned or unconsented leads", () => {
