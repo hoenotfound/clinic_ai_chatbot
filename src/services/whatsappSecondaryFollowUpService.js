@@ -453,6 +453,28 @@ function deliveredStaffVideoSql(contactSql,conversationSql,afterSql){
  )`;
 }
 const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} AS allowed`;
+// A signed Business App video caption can be text-only in coexistence echoes.
+// Do not repeat the 2h introduction when staff has already described
+// sending that video. This does not falsely claim the media itself arrived.
+function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql){
+ return `EXISTS (
+   SELECT 1 FROM messages staff_caption
+   JOIN whatsapp_sender_message_context staff_caption_ctx
+     ON staff_caption_ctx.message_id=staff_caption.id
+    AND staff_caption_ctx.conversation_id=${conversationSql}
+   WHERE staff_caption.contact_id=${contactSql}
+     AND staff_caption.role='assistant'
+     AND staff_caption.sent_by_username IS NOT NULL
+     AND staff_caption.sent_by_username<>'Follow-up automation'
+     AND staff_caption.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff_caption.whatsapp_message_id LIKE 'wamid.%'
+     AND staff_caption.delivery_status IS DISTINCT FROM 'failed'
+     AND staff_caption.media_mime_type IS NULL
+     AND COALESCE(staff_caption.content,'') ~*
+       '(🎥|📹|这段影片|這段影片|(^|[^[:alpha:]])video([^[:alpha:]]|$))'
+     AND staff_caption.created_at>=${afterSql}
+ )`;
+}
 
 
 // One optional, gentle booking-question nudge after the 2h reminder was
@@ -500,6 +522,7 @@ const CANDIDATES_SQL=`
    lead.treatment_interest,
    lead.marketing_consent AS lead_marketing_consent,
    ${deliveredStaffVideoSql('c.id','sc.id','inbound.created_at')} AS staff_video_sent,
+    ${deliveredStaffVideoCaptionSql('c.id','sc.id','inbound.created_at')} AS staff_video_caption_sent,
    EXISTS (
      SELECT 1 FROM whatsapp_free_entry_referrals r
      JOIN messages ad ON ad.id=r.origin_message_id
@@ -1001,6 +1024,12 @@ async function runOnce({
       return evidence.rows?.[0]?.allowed===true;
     };
     try {
+      // One-shot deterministic block. Do not keep reconsidering the same
+      // captioned 2-hour video after staff has already introduced it.
+      if(slot===2 && candidate.staff_video_caption_sent===true){
+        await fail("staff_already_sent_video_introduction");
+        continue;
+      }
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
       const selectedVideo=!staffVideoSent && !candidate.recovery_no_selection &&
@@ -1068,12 +1097,40 @@ async function runOnce({
         ?textWithoutVideo(replyLanguage):safeText;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
-         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+      const contextualAiEnabled = !candidate.recovery_no_selection && !generalOnly &&
+        (slot===20
+          ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
+          : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
+      if(contextualAiEnabled){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
-          const code=personalized?.code||"secondary_20h_ai_unavailable";
-          const fallback=SAFE_20H_FALLBACK_CODES.has(code)
+          const code=personalized?.code||"secondary_contextual_ai_unavailable";
+          if(["skip","stop_sequence","human_review"].includes(personalized?.action)){
+            // Never replace a do-not-send decision with generic sales copy.
+            // A clinical/staff review must also be visible in Inbox: silently
+            // blocking one slot would otherwise leave the patient unassisted.
+            if(personalized.action==="human_review"){
+              try {
+                if(await preSendCheck()){
+                  const reviewOwner=await contacts.getContactById(candidate.contact_id);
+                  if(reviewOwner?.mode==="ai" &&
+                     reviewOwner.whatsapp_sender_key===env.WHATSAPP_SECONDARY_SENDER_KEY &&
+                     String(reviewOwner.whatsapp_sender_id)===String(candidate.sender_id)){
+                    await contacts.setAttention(candidate.contact_id,true,
+                      "Secondary WhatsApp AI follow-up needs staff review. Check the latest customer request before contacting them.");
+                  }
+                }
+              } catch(error){
+                console.error("[Secondary follow-up] Could not alert staff after AI review:",
+                  error?.message||error);
+              }
+            }
+            await fail(code);
+            continue;
+          }
+          // Preserve the pre-existing 20h neutral fallback for transient errors.
+          // A failed early-stage review must not fall back to an unreviewed send.
+          const fallback=slot===20 && SAFE_20H_FALLBACK_CODES.has(code)
             ? neutral20hFallbackText(replyLanguage):null;
           if(!fallback){await fail(code);continue;}
           outboundText=fallback;

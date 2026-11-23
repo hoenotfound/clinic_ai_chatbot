@@ -36,6 +36,7 @@ async function excludedIncoming({scopedIngress = true} = {}) {
       clinicConfig:{},
       getOperationalLabels:()=>({customerLabel:"customer",customerSingular:"customer"}),
       secondaryUsesPrimaryClinicContent:()=>true,
+      manualOnlySecondaryAttention:()=>null,
       isSecondaryAiReplyEligible:async()=>{calls.audience++;return false;},
       isSecondarySupervisedAiTextTestEligible:async()=>{
         calls.testException++;return false;

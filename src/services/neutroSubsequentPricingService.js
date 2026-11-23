@@ -11,6 +11,7 @@ const { resolveRepeatVisitPriceReply } = require("../utils/repeatVisitPriceReply
 const { hasExplicitPriceRequest } = require("../utils/customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("../utils/aiReviewPolicy");
 const { findServicesInText, serviceCandidates } = require("../utils/conversationPromptContext");
+const { pricingMessageText, isVerifiedStaffTurn } = require("../utils/priceFollowUpContext");
 
 const SUPPORTED = new Set(["3D 小颜术", "9D 逆龄抗衰"]);
 const PROMO_LOOKBACK_HOURS = 168;
@@ -77,11 +78,11 @@ function createNeutroSubsequentPricingService({
   return async function resolveNeutroSubsequentPricing({
     contactId, inboundMessageId, customerText, conversationHistory = [],
     services = [], serviceAliases = [], promotions = [], language = "zh",
-    now = Date.now(),
+    modelPricingStage = null, now = Date.now(),
   } = {}) {
     const classification = resolveRepeatVisitPriceReply({
       customerText, conversationHistory, services, serviceAliases, language, now,
-      allowDirectNamedService: true,
+      modelPricingStage, allowDirectNamedService: true,
     });
     if (!Number.isSafeInteger(Number(contactId)) ||
         !Number.isSafeInteger(Number(inboundMessageId))) return null;
@@ -127,6 +128,29 @@ function createNeutroSubsequentPricingService({
       }
     }
 
+    // The customer may have already received a verified First Trial amount
+    // in this same sender conversation, without an image. Do not repeat that
+    // introductory quote or send a promo graphic in response to a request for
+    // the *later* session's price. Refer the unknown rate to staff instead.
+    const recentTrialText = modelPricingStage === "subsequent_session" &&
+      (Array.isArray(conversationHistory) ? conversationHistory : []).some(turn =>
+        turn?.role === "assistant" && !isVerifiedStaffTurn(turn) &&
+        Number.isFinite(turn.pricingCreatedAtMs) &&
+        now - turn.pricingCreatedAtMs >= 0 &&
+        now - turn.pricingCreatedAtMs <= 3 * 3600_000 &&
+        /(?:First[\s-]*Trial|首次体验|首次體驗|体验优惠|體驗優惠|体验价|體驗價)/iu.test(pricingMessageText(turn)) &&
+        /\b(?:RM|MYR)\s*[1-9]\d+/iu.test(pricingMessageText(turn)) &&
+        findServicesInText(pricingMessageText(turn),
+          serviceCandidates(services, serviceAliases)).includes(service)
+      );
+    if (recentTrialText) return {
+      treatment: service, mode: "staff_handoff",
+      reply: textForStage(service, language, "staff_handoff"),
+      staffReason: "Customer asked for later-session pricing after receiving the " +
+        "verified First Trial quote in this thread. Confirm the subsequent " +
+        "individual-session price; configured normal-price reference is " +
+        staffPriceReference(service, services) + ".",
+    };
     if (!promoAccepted) return {
       treatment: service, mode: "before_promo",
       reply: textForStage(service, language, "before_promo"),

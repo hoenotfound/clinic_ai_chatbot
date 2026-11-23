@@ -146,6 +146,48 @@ function resolveNeutroComboOfferReply({
   return { ...offer, mode: "suggestion", reply };
 }
 
+// The customer may refer to "doing these together" after staff has shown 9D
+// and the same conversation already compared 3D and 9D. Only answer from an
+// independently verified CURRENT combo offer. No combo duration or image can
+// be inferred from the two standalone services.
+function resolveContextualNeutroComboQuestion({
+ customerText,history=[],services=[],serviceAliases=[],promotions=[],
+ language="zh",now=Date.now(),
+}={}){
+ const current=String(customerText||"").trim();
+ if(!current||current.length>150||!hasExplicitPriceRequest(current)||
+   !/(?:一起\s*做|一齐\s*做|一齊\s*做|同时\s*做|同時\s*做|两个\s*一起|兩個\s*一起|\b(?:together|combined|combo)\b)/iu.test(current)||
+   !/(?:多久|多长|多長|小时|小時|要多长时间|要多長時間|\b(?:how\s+long|duration|hours?)\b)/iu.test(current)||
+   REJECT.test(current)||NO_COMBO.test(current)||hasClinicalMediaRisk(current)||
+   !Array.isArray(history)||history.length<3)return null;
+ const last=history.at(-1);
+ if(last?.role!=="user"||String(last.content||"").trim()!==current ||
+   !Number.isFinite(last.pricingCreatedAtMs) ||
+   Math.abs(last.pricingCreatedAtMs-now)>5*60_000)return null;
+ const named=findServicesInText(current,serviceCandidates(services,serviceAliases));
+ if(named.some(n=>!INDIVIDUAL_SERVICES.has(n)&&n!==COMBO_SERVICE))return null;
+ const prior=history.slice(0,-1).filter(t=>t?.role==="assistant"&&
+   Number.isFinite(t.pricingCreatedAtMs)&&
+   t.pricingCreatedAtMs<=now&&t.pricingCreatedAtMs>=now-24*3600_000);
+ const compared=prior.some(t=>/3\s*d/iu.test(String(t.content||""))&&
+   /9\s*d/iu.test(String(t.content||"")));
+ const current9d=prior.some(t=>t.pricingCreatedAtMs>=now-2*3600_000&&
+   /9\s*d/iu.test(String(t.content||"")));
+ if(!compared||!current9d)return null;
+ const offer=verifiedComboOffer(promotions,now,current,history);
+ if(!offer)return null;
+ const isMS=/^ms/iu.test(language),isEN=/^en/iu.test(language);
+ const reply=isMS
+  ? "Pakej 3D + 9D yang disahkan sekarang ialah "+offer.price+
+    " 😊 Tempoh keseluruhan gabungan perlu disahkan dengan pihak pusat dahulu. Pengamal akan menilai sama ada kedua-dua rawatan sesuai dilakukan bersama."
+  : isEN
+    ? "The verified 3D + 9D combination offer is "+offer.price+
+      " 😊 The clinic needs to confirm the total combined session duration. Our practitioner will first assess whether both treatments are suitable together."
+    : "3D + 9D 组合目前核实的体验优惠是 "+offer.price+
+      " 😊 两项一起做的实际总时长还需要请门店确认，不能直接把两项单独护理时间相加。中医师也会先评估是否适合一起安排。";
+ return {...offer,mode:"contextual",reply};
+}
+
 // Media is authorized independently of the model and the reply formatter.
 // The existing promotion selector still applies staff, clinical, billing,
 // delivery receipt, duplicate URL and 24-hour cooldown safeguards.
@@ -181,5 +223,6 @@ function resolveNeutroComboMediaPricingDecision({
 
 module.exports = {
   resolveNeutroComboOfferReply,
+  resolveContextualNeutroComboQuestion,
   resolveNeutroComboMediaPricingDecision,
 };

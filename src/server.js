@@ -38,7 +38,7 @@ const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPri
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartumBudgetQuote");
-const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
+const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -68,6 +68,7 @@ const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
+const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
@@ -108,6 +109,7 @@ const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { isSecondaryAiReplyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
 const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsappSecondarySupervisedAiTextTest");
+const { manualOnlySecondaryAttention } = require("./utils/manualOnlySecondaryAttention");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
@@ -774,10 +776,38 @@ async function processIncomingMessage(
         aiReplyCancellation.inboundMessageCanSend(savedInbound.id)
       : null;
 
+    // A customer's own explicit RM68 enquiry may classify the lead even
+    // when secondary conversation AI is disabled. No outbound action or
+    // permission is implied. Clinical and sender safety gates stay intact.
+    if(channel==="whatsapp" && !mediaType && !unsupportedType &&
+       typeof incoming.text==="string" && incoming.text.trim()){
+      try {
+        await neutroRm68InterestRepo.recordRm68CustomerInterest({
+          contactId:contact.id,messageId:savedInbound.id,
+          text:incoming.text,clinicConfig,
+        });
+      } catch(error){
+        console.warn("[RM68 lead interest] categorization unavailable:",error?.message);
+      }
+    }
+
     // Skip ordinary excluded text before lead scoring, model generation,
     // pricing/media selection and assistant draft creation. The inbound
     // remains saved and unread for staff in the secondary Inbox.
     if (secondaryInboxOnly && !mediaType && !unsupportedType) {
+      // An imported/old secondary contact is intentionally staff-managed.
+      // Do not start AI, but do not silently lose urgent scheduling or
+      // health questions either. Do not overwrite an existing staff review,
+      // or alert after staff has already answered this exact inbound turn.
+      const actionable=manualOnlySecondaryAttention(incoming.text);
+      if(actionable && !contact.needs_attention &&
+         !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
+        try {
+          await contactsRepo.setAttention(contact.id,true,actionable.reason);
+        } catch(err){
+          console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
+        }
+      }
       return { wasFirstMessage, keywordReason };
     }
 
@@ -1303,6 +1333,7 @@ async function processIncomingMessage(
     let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
+    let modelPricingStage = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1432,6 +1463,7 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        modelPricingStage = parsedReply.pricingStage || null;
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -2236,9 +2268,15 @@ async function processIncomingMessage(
           verifiedIndividualQuote: Boolean(twoTreatmentQuote) ||
             Boolean(approvedPricingDecision?.prices?.some(item =>
               item.price && reply.includes(item.price))),
+        }) || resolveContextualNeutroComboQuestion({
+          customerText:text,history,
+          services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          language:mediaLanguage,
         }) : null;
     if (comboOfferDecision) {
-      reply = comboOfferDecision.mode === "direct"
+      reply = ["direct","contextual"].includes(comboOfferDecision.mode)
         ? comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
       console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
@@ -2317,7 +2355,13 @@ async function processIncomingMessage(
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
+    // The model can correctly report an unknown later-session rate as an
+    // INFORMATION review. Recover only the independently verified staff
+    // handoff, never a quote, trial graphic or a clinical/safety review.
+    const repeatVisitInfoReview = flagged && reviewRequired &&
+      reviewType === "information" && modelPricingStage === "subsequent_session";
+    let repeatVisitPriceReply = !pelvicPackageComparison &&
+      (!flagged || repeatVisitInfoReview) && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -2327,13 +2371,23 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions, language: mediaLanguage,
+            modelPricingStage,
           })
         : resolveRepeatVisitPriceReply({
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            language: mediaLanguage,
+            language: mediaLanguage, modelPricingStage,
           })
       : null;
+    if (repeatVisitInfoReview && repeatVisitPriceReply) {
+      const evidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (repeatVisitPriceReply.mode !== "staff_handoff" ||
+          evidence?.pendingClinicalReview !== false) {
+        repeatVisitPriceReply = null;
+      }
+    }
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
       if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
@@ -2874,6 +2928,12 @@ async function processIncomingMessage(
     }
     if (reviewContinuationTextOnly) {
       await auditResultMediaEarlyExit("review_continuation_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
+    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
+      // A later-session question cannot re-enter ordinary First Trial graphics
+      // through an earlier approved promotional-pricing decision.
+      await auditResultMediaEarlyExit("subsequent_session_text_only");
       return { wasFirstMessage, keywordReason };
     }
     if (pelvicPackageComparison) {
