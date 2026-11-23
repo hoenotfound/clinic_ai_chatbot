@@ -224,6 +224,9 @@ function parseStructuredReply(raw) {
   const requestedServiceQuerySource = cleanOptionalText(parsed.serviceQuerySource);
   const priceQuery = parsed.priceQuery === true;
   const packageQuery = parsed.packageQuery === true;
+  // The model describes intent; only verified conversation history may route a price.
+  const pricingStage = ["first_trial", "subsequent_session"].includes(parsed.pricingStage)
+    ? parsed.pricingStage : null;
   const promotionOption = cleanOptionalText(parsed.promotionOption);
   const reviewType = parsed.reviewType === "information" ? "information" : "clinical";
 
@@ -346,6 +349,7 @@ function parseStructuredReply(raw) {
     serviceQuerySource: serviceQuery ? serviceQuerySource : null,
     priceQuery,
     packageQuery,
+    ...(pricingStage ? { pricingStage } : {}),
     promotionOption,
     outcome,
     structured: true,
