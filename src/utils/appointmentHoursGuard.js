@@ -301,9 +301,11 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   // Tuesday?" must be allowed, but "Monday or Tuesday?" is unsafe.
   const segments=original.split(/[\n。！？?!，,；;]/u).map(s=>s.trim()).filter(Boolean);
   for(const segment of segments){
-    if(closureWords.test(segment)||!replyScheduling.test(segment))continue;
+    if(closureWords.test(segment))continue;
     const anchor=localParts(now)?.date;
     const date=detectDate(segment,anchor);
+    if(!replyScheduling.test(segment)&&!(inboundAppointment&&date?.date)&&
+       !(date?.date&&timesInText(segment).length>0))continue;
     if(date?.date){
       const inspected=evaluateAppointmentHours({
         hours,customerText:segment,receivedAt:now,now,durationMinutes,
@@ -344,7 +346,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const conflict=invalid.includes(issue.status)?issue:
     outboundIssue&&invalid.includes(outboundIssue.status)?outboundIssue:null;
   if(conflict){
-    return {reply:alreadyCorrects&&issue.status==="closed"?original:
+    return {reply:alreadyCorrects&&issue.status==="closed"&&!outboundIssue?original:
       issueReply(conflict,{hours,language}),blocked:true,issue:conflict};
   }
   if(requireValidPreference&&["unknown","ambiguous","unconfigured","valid_day"].includes(issue.status)){
