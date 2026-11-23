@@ -81,6 +81,7 @@ function buildConversationOutputSchema() {
       "serviceQuerySource",
       "priceQuery",
       "packageQuery",
+      "pricingStage",
       "promotionOption",
       "treatment",
       "branch",
