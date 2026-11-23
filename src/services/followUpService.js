@@ -1790,6 +1790,23 @@ async function sendCandidate(candidate) {
   // WhatsApp message references that key, so Inbox history and Retry use the
   // same bytes without copying them into each customer's folder.
   const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
+  // A staff-approved recorded voice note cannot be rewritten. If its
+  // transcript offers a closed/past time, send the already guarded text
+  // instead of delivering contradictory appointment guidance by audio.
+  if (effectiveVoice && clinicConfig.hours?.weekly &&
+      followUpAiService.isSchedulingNudge(effectiveVoice.transcript)) {
+    const voiceCheck = guardAppointmentReply({
+      hours: clinicConfig.hours,
+      customerText: effectiveVoice.transcript,
+      reply: effectiveVoice.transcript,
+      receivedAt: new Date(), now: new Date(), language,
+    });
+    if (voiceCheck.blocked) {
+      effectiveVoice = null;
+      console.info("[Appointment hours] suppressed invalid voice invitation contact=" +
+        candidate.contact_id + " reason=" + voiceCheck.issue?.status);
+    }
+  }
   let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;
