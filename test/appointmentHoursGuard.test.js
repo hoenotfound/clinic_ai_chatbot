@@ -68,6 +68,18 @@ test("closed day is recognized across Chinese, English and Malay", () => {
   }
 });
 
+test("a Monday promotion question stays a promotion question", () => {
+  const original = "本月骨盆调理有 Package A 和 Package B 优惠哦 😊";
+  for (const question of ["今天有什么优惠？", "今天骨盆调理价格多少？", "今天 RM68 活动还有吗？"]) {
+    const checked = guardAppointmentReply({
+      hours, customerText: question, reply: original,
+      receivedAt: monday, now: laterMonday,
+    });
+    assert.equal(checked.blocked, false, question);
+    assert.equal(checked.reply, original, question);
+  }
+});
+
 test("open days are valid preferences, NOT evidence of an available slot", () => {
   for (const text of ["明天下午2点", "Tuesday 2pm", "Selasa 14:00"]) {
     const result = evaluateAppointmentHours({hours,customerText:text,receivedAt:monday,now:laterMonday});
