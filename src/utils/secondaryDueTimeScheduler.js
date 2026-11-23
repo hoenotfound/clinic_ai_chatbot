@@ -158,8 +158,9 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
   }
   // Lead scoring and completed Meta ad detail enrichment change only CRM
   // presentation, not the verified sender/consent/due-time eligibility.
-  if (type === "pipeline_changed" &&
-      (payload?.channel === "facebook" || payload?.channel === "instagram")) return false;
+  // A channel label on pipeline events is not sender-proof: shared lead
+  // booking and opt-out changes must keep waking the secondary safeguards.
+  // Only the explicitly enumerated CRM-only reasons below can be ignored.
   if (type === "pipeline_changed" &&
       (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched" ||
        payload?.reason === "lead_assignment_recovered")) {
