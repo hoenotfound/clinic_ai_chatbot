@@ -1,5 +1,6 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
+const { evaluateAppointmentHours } = require("../utils/appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
@@ -84,6 +85,9 @@ function normalizeOptions(reasonOrOptions) {
     activityDescription: safeText(options.activityDescription, 1000) || defaults.activityDescription,
     details: normalizeBookingDetails(options.details || options),
     allowReschedule: options.allowReschedule === true,
+    customerText: safeText(options.customerText, 1000) || "",
+    receivedAt: options.receivedAt || new Date(),
+    durationMinutes: Number(options.durationMinutes) || 0,
   };
 }
 
@@ -99,7 +103,27 @@ function createBookingReadyOutcomeService({
     reasonOrOptions = null
   ) {
     const capturedMessageId = safeMessageId(messageId);
-    const { reason, activityDescription, details, allowReschedule = false } = normalizeOptions(reasonOrOptions);
+    const { reason, activityDescription, details, allowReschedule = false,
+      customerText = "", receivedAt, durationMinutes = 0 } = normalizeOptions(reasonOrOptions);
+    // Second independent guard: no CRM attention, activity or Telegram alert
+    // may be created for a closed/past/out-of-hours AI booking preference.
+    // This also protects callers other than the normal inbound send path.
+    if (getConversionProfile(clinicConfig).mode === "appointment" &&
+        clinicConfig.hours?.weekly) {
+      const hoursCheck = evaluateAppointmentHours({
+        hours: clinicConfig.hours, customerText,
+        appointmentPreference: details.appointmentPreference || "",
+        receivedAt, now: new Date(), durationMinutes,
+      });
+      if (["closed", "past", "outside_hours", "ambiguous", "unknown", "unconfigured"].includes(hoursCheck.status)) {
+        console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
+          " reason=" + hoursCheck.status);
+        return {
+          contactUpdated: false, leadId: null, leadChanged: false,
+          details, blockedReason: hoursCheck.status,
+        };
+      }
+    }
     const client = await database.connect();
     let contactUpdated = false;
     let leadId = null;
