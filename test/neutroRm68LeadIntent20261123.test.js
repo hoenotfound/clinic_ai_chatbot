@@ -155,3 +155,15 @@ test("RM68 clinical context keeps an uncertain hard lump on staff review, even a
  assert.match(s,/isBreastLumpConcern\(text\) \|\| rm68ClinicalConcern/);
  assert.match(s,/reviewType = "clinical"/);
 });
+
+test("AI lead scoring preserves RM68 campaign interest against herbal/full-body service guesses",()=>{
+ const s=fs.readFileSync(require.resolve("../src/db/leadScoringRepo.js"),"utf8");
+ assert.match(s,/function preserveRm68CampaignScoringSql/);
+ assert.match(s,/customer_campaign_interest/);
+ assert.match(s,/neutro_breast_rm68_2026/);
+ assert.match(s,/explicit_choice\.role='user'/);
+ assert.match(s,/草药胸部疏通乳腺护理/);
+ assert.match(s,/脉冲波调理/);
+ assert.match(s,/preserveRm68CampaignScoringSql\('\$4'\)/);
+ assert.match(s,/preserveRm68CampaignScoringSql\('\$3'\)/);
+});
