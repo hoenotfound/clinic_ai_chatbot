@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const config = require("../src/config/clinicConfig");
 const {
   localParts, detectDate, evaluateAppointmentHours, guardAppointmentReply,
-  durationMinutesForPackage, currentClinicDate,
+  durationMinutesForPackage, currentClinicDate, timesInText, describeWeeklyHours,
 } = require("../src/utils/appointmentHoursGuard");
 const { createBookingReadyOutcomeService } = require("../src/services/bookingReadyOutcomeService");
 
@@ -160,6 +160,107 @@ test("a valid correction from the model is kept natural but never booking-ready"
   });
   assert.equal(result.blocked,true);
   assert.equal(result.reply,text);
+});
+
+
+test("AI suggestions of Monday are checked even without customer selecting Monday", () => {
+  const checked = guardAppointmentReply({
+    hours, customerText:"Can I visit next week?",
+    reply:"Sure, would Monday afternoon 2pm work for you? 😊",
+    receivedAt:monday, now:laterMonday, language:"en",
+  });
+  assert.equal(checked.blocked,true);
+  assert.equal(checked.issue.status,"closed");
+  assert.match(checked.reply,/closed on monday/i);
+  assert.doesNotMatch(checked.reply,/Monday afternoon 2pm work/i);
+});
+test("AI already correcting Monday remains natural without Booking Ready", () => {
+  const reply="我们星期一休息哦，星期二下午两点方便吗？";
+  const checked=guardAppointmentReply({
+    hours,customerText:"今天可以吗",reply,
+    receivedAt:monday,now:laterMonday,
+  });
+  assert.equal(checked.blocked,true);
+  assert.equal(checked.reply,reply);
+});
+test("seven in the evening and Malay pukul tujuh are recognized as 7 PM", () => {
+  const saturday="2026-11-28T07:00:00Z";
+  for (const text of ["星期六晚上七点", "Saturday pukul 7 malam", "Saturday 7.00pm", "星期六晚上7点"]) {
+    assert.equal(evaluateAppointmentHours({
+      hours,customerText:text,receivedAt:saturday,now:saturday,
+    }).status,"outside_hours",text);
+  }
+  assert.ok(timesInText("星期六晚上七点").includes(19*60));
+  assert.ok(timesInText("pukul 7 malam").includes(19*60));
+});
+test("an older 'today' is anchored to original timestamp and never silently reused", () => {
+  const tuesday="2026-11-24T06:00:00Z";
+  const history=[{content:"今天可以吗",createdAt:monday}];
+  const result=evaluateAppointmentHours({
+    hours,customerText:"2pm",recentCustomerMessages:history,
+    appointmentPreference:"今天 2pm",receivedAt:tuesday,now:tuesday,
+  });
+  assert.equal(result.status,"unknown");
+  const checked=guardAppointmentReply({
+    hours,customerText:"2pm",recentCustomerMessages:history,
+    appointmentPreference:"今天 2pm",reply:"I'll check that time for you",
+    receivedAt:tuesday,now:tuesday,language:"en",requireValidPreference:true,
+  });
+  assert.equal(checked.blocked,true);
+  assert.match(checked.reply,/Which date/i);
+});
+test("same-day dated conversation stays available to a terse later time", () => {
+  const checked=guardAppointmentReply({
+    hours,customerText:"2pm",
+    recentCustomerMessages:[{content:"今天可以吗",createdAt:monday}],
+    reply:"I'll check today's slot for you",
+    receivedAt:laterMonday,now:laterMonday,language:"en",
+  });
+  assert.equal(checked.blocked,true);
+  assert.equal(checked.issue.status,"closed");
+});
+test("customer has a valid Tuesday preference but AI suggests closed Monday", () => {
+  const tuesday="2026-11-24T03:00:00Z";
+  const checked=guardAppointmentReply({
+    hours,customerText:"Tuesday afternoon",
+    reply:"Would next Monday 2pm suit you for the visit?",
+    receivedAt:monday,now:monday,language:"en",
+  });
+  assert.equal(checked.blocked,true);
+  assert.equal(checked.issue.status,"closed");
+  assert.ok(checked.reply.includes("monday"));
+  assert.ok(tuesday);
+});
+test("treatment duration fallback is read from configured service, not assumed from basic pelvic care", () => {
+  const duration=durationMinutesForPackage({
+    config:{services:[{name:"9D 逆龄抗衰",duration:"约2小时"}]},
+    customerTexts:["9D 逆龄抗衰"],treatment:"9D 逆龄抗衰",
+  });
+  assert.equal(duration,120);
+  const combined=durationMinutesForPackage({
+    config:{services:[{name:"3D + 9D 组合",duration:""}]},
+    customerTexts:["3D + 9D 组合"],treatment:"3D + 9D 组合",
+  });
+  assert.equal(combined,0);
+});
+test("weekly hours produce consistent public descriptions and reject malformed schedules", () => {
+  const text=describeWeeklyHours(hours);
+  assert.match(text.general,/Tuesday 10am-8pm/);
+  assert.match(text.general,/Saturday 10am-6pm/);
+  assert.match(text.closed,/Monday/);
+  const altered=structuredClone(hours);
+  altered.weekly.tuesday={open:"20:00",close:"10:00"};
+  assert.throws(()=>describeWeeklyHours(altered),/Invalid opening hours for tuesday/);
+});
+test("the final follow-up step checks invalid promotional appointment proposals", () => {
+  const checked=guardAppointmentReply({
+    hours,customerText:"",
+    reply:"本月活动还在进行哦，星期一下午2点方便过来预约吗？",
+    receivedAt:monday,now:laterMonday,language:"zh",
+  });
+  assert.equal(checked.blocked,true);
+  assert.equal(checked.issue.status,"closed");
+  assert.doesNotMatch(checked.reply,/本月活动还在进行/);
 });
 
 test("booking-ready backstop rejects the closed day BEFORE any database mutation", async () => {
