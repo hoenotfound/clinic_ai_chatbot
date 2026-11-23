@@ -334,7 +334,7 @@ test("real Neutro short staff confirmation needs recent customer slot and matchi
   },
  });
  assert.equal(await service(9248,text,{providerAccepted:false,messageId:22780}),null);
- assert.equal(await service(9248,text,{providerAccepted:true,messageId:22780}).appointmentStatus,"set");
+ assert.equal((await service(9248,text,{providerAccepted:true,messageId:22780})).appointmentStatus,"set");
  assert.deepEqual(updates,[{id:1687,patch:{
    appointmentStatus:"set",appointmentAt:"2026-11-24T04:00:00.000Z",
  }}]);
