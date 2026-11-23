@@ -52,3 +52,63 @@ No cached database state, persistent timers or new schema objects.
 
 Neon autosuspend, the cross-sender contacts index, and all sender/billing
 configurations remain unchanged.
+
+
+## Phase 2: batch marketing due hints and skip provably blocked night scans (2026-11-23)
+
+### Why
+- The 2026-11-22 deploy reduced full selector scans, but Neon usage remained
+  around 7 CU-hours/day. Compute active time remained approximately 80%, with
+  frequent wake-ups and a 07:00 MYT secondary-worker spike.
+- Marketing's ordinary, extended Day4/Day6 and consented general follow-up
+  hints previously made up to **three separate DB reads per scheduler wake**.
+  Every due hint still retained all original sender/consent/booking/Meta gates.
+
+### Changes
+- Combine enabled marketing due hints with `UNION ALL` in **one read-only
+  PostgreSQL statement**. Each lane still executes its original exact
+  candidate-derived hint, with independently enabled gating. The outer query
+  uses `MIN(next_due_at)` and `BOOL_OR(has_overdue)` for the same combined
+  result. One pool checkout replaces two or three serial pool checkouts.
+  This saves network round trips, **not necessarily the SQL CPU work**.
+- From 00:00 through 06:59 MYT, the two secondary schedulers use a
+  **clock-only 07:00 hint**. This is allowed only when every relevant
+  candidate-discovery query contains the original
+  `EXTRACT(HOUR ...) BETWEEN 7 AND 23` guard. Service pre-send
+  `RECHECK_SQL` binds $4 to sender identity instead of clock time; the
+  scheduler must never mistake that query for a time-bound candidate scan.
+  No WhatsApp follow-up is
+  authorized or sent at night. At 07:00, fresh SQL executes; overnight
+  customer messages, delivery receipts, opt-outs, booking changes and rule
+  updates are re-evaluated there. A clock-boundary race retries in one second.
+- Preserve all appointment, opt-out and otherwise unknown
+  `pipeline_changed` wakes even if a payload claims Facebook or Instagram.
+  A channel label alone cannot prove that a shared lead update is unrelated.
+  Only the three previously reviewed CRM-only reasons are ignored.
+- Passive fixed-label counters now measure: `hint_query`,
+  `scan_skipped`, `scan_performed`, `quiet_hours_skipped`,
+  `hint_failed`, `hint_uncertain`, `post_hint_query`,
+  `due_found`, `backlog` and `receipt_coalesced` separately for each
+  secondary lane. The existing five-minute diagnostic timer emits
+  `[Secondary due scheduling]` without added SQL or new timers.
+
+### Release and verification
+1. Run full GitHub CI, including the real isolated PostgreSQL compilation
+   tests for ordinary-only, ordinary+Day4/Day6, ordinary+general and all lanes.
+2. Confirm both live worker activation flags, primary WhatsApp replies, media,
+   pricing graphics, Meta 131060 recovery, Day4/Day6, billing and consent.
+3. During the first subsequent midnight-to-07:00 MYT window, verify
+   `quiet_hours_skipped` rises without `hint_query` for night wakes.
+   At 07:00, both lanes must resume normal fresh eligibility scans and
+   deliver only authorized reminders.
+4. Compare like-for-like 24-hour Neon CU-hours, compute starts/suspensions,
+   Render pool acquisitions and accepted follow-up events; compare quiet
+   hour and business hour loads separately. **Never claim billable CU savings
+   from a drop in pool acquisition counts alone.**
+5. If eligibility changes, unexpected missing follow-ups, or increased SQL
+   errors occur, rollback to the previous production commit. This PR has no
+   schema migration, clinic-config write or customer-message send.
+
+The scheduler remains fail-open on uncertain SQL hints, retains a five-minute
+retry after hint failures, and makes no changes to actual pre-send guards,
+sender identity, media, treatment pricing, opt-in or one-shot billable claims.

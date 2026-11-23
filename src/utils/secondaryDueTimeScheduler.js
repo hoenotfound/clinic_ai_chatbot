@@ -8,7 +8,8 @@ const { createAdaptiveWorkerTimer } = require("./adaptiveWorkerTimer");
 const { createCoalescedImmediateWake } = require("./followUpWakePolicy");
 const { recordWorkerRun } = require("./workerActivityMetrics");
 const { withDatabaseActivitySource } = require("./databaseActivityContext");
-const { recordWorkerWake } = require("./refreshWakeDiagnostics");
+const { recordWorkerWake, recordSecondaryDueDecision } =
+  require("./refreshWakeDiagnostics");
 
 const IDLE_RECHECK_MS = 60 * 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
@@ -61,6 +62,30 @@ function nextAllowedClinicTime(ms) {
     shifted.setUTCHours(7, 0, 0, 0);
   }
   return shifted.getTime() - CLINIC_UTC_OFFSET_MS;
+}
+
+// All three secondary marketing selectors and the service selector forbid
+// sends before 07:00 Malaysia time. A cheap, in-memory overnight hint is
+// sufficient until clinic opening. Never cache eligibility: at 07:00 the
+// normal SQL, current opt-outs, bookings and billing checks run as usual.
+function quietHoursNextOpenHint(nowMs) {
+  if (!Number.isFinite(nowMs)) return null;
+  const local = new Date(nowMs + CLINIC_UTC_OFFSET_MS);
+  if (!Number.isFinite(local.getTime()) || local.getUTCHours() >= 7) return null;
+  local.setUTCHours(7, 0, 0, 0);
+  return { next_due_at: new Date(local.getTime() - CLINIC_UTC_OFFSET_MS),
+    has_overdue: false };
+}
+
+// Fail open if a future refactor removes a candidate selector's hard
+// quiet-hours policy. Never skip SQL based solely on a configuration name.
+function hasSecondaryClinicQuietHoursGuard(sql) {
+  if (typeof sql !== "string") return false;
+  // Require a standalone AND predicate, not a quoted or commented mention
+  // of the previous policy. A removed guard disables this optimization.
+  // Block-commented policy examples are not executable SQL either.
+  const executable = sql.replace(/\/\*[\s\S]*?\*\//g, "");
+  return /(?:^|\n)[ \t]*AND[ \t]+EXTRACT\(HOUR FROM \(\$4::timestamptz AT TIME ZONE 'Asia\/Kuala_Lumpur'\)\)[ \t\r\n]+BETWEEN[ \t]+7[ \t]+AND[ \t]+23\b/.test(executable);
 }
 
 // A read-only due hint is a superset of sendable slots. If none can be due
@@ -135,6 +160,9 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
   }
   // Lead scoring and completed Meta ad detail enrichment change only CRM
   // presentation, not the verified sender/consent/due-time eligibility.
+  // A channel label on pipeline events is not sender-proof: shared lead
+  // booking and opt-out changes must keep waking the secondary safeguards.
+  // Only the explicitly enumerated CRM-only reasons below can be ignored.
   if (type === "pipeline_changed" &&
       (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched" ||
        payload?.reason === "lead_assignment_recovered")) {
@@ -147,6 +175,7 @@ function createSecondaryDueScheduler({
   label, run, readNextDue, events, env,
   database, createTimer = createAdaptiveWorkerTimer,
   now = Date.now, logger = console, preflightDueHint = false,
+  quietHoursPreflight = false,
 } = {}) {
   if (typeof run !== "function" || typeof readNextDue !== "function" ||
       typeof events?.subscribe !== "function") {
@@ -160,6 +189,9 @@ function createSecondaryDueScheduler({
     () => wake(DELIVERY_RECEIPT_WAKE_DELAY_MS));
   const lane = label === "Secondary WhatsApp marketing followup scheduler"
     ? "secondary_marketing" : "secondary_service";
+  function recordDecision(decision) {
+    try { recordSecondaryDueDecision(lane, decision); } catch (_) {}
+  }
   function observeEvent(type, payload, eligible) {
     // Only fixed-label, in-memory counters. Diagnostic errors must never
     // disrupt scheduling, and booking/opt-out signals retain their timing.
@@ -170,8 +202,10 @@ function createSecondaryDueScheduler({
     const statusOnly = type === "conversation_changed" &&
       payload?.reason === "delivery_status";
     const signal = statusOnly ? coalescedReceiptWake : coalescedWake;
+    const queued = signal();
+    if (statusOnly && !queued) recordDecision("receipt_coalesced");
     recordWorkerWake(lane, type, payload,
-      signal() ? "queued" : "coalesced", env);
+      queued ? "queued" : "coalesced", env);
   }
   function start() {
     if (timer && !timer.state().stopped) return false;
@@ -181,35 +215,64 @@ function createSecondaryDueScheduler({
       logger,
       now,
       run: async () => {
+        // All actual send selectors prohibit sends during clinic quiet hours.
+        // Return a clock-only hint rather than waking Neon to discover that.
+        // Next opening always performs a fresh database read, never a send.
+        if (quietHoursPreflight) {
+          const quietHint = quietHoursNextOpenHint(now());
+          if (quietHint) {
+            recordDecision("quiet_hours_skipped");
+            recordDecision("scan_skipped");
+            return { outcome: { attempted: 0, accepted: 0 },
+              hint: quietHint, quietHoursSkipped: true };
+          }
+        }
         // Only enabled for selectors whose potential-due SQL retains every
         // required eligibility guard. Read it freshly on each event/recovery
         // wake, so bookings, opt-outs and newly qualified replies cannot use
         // an outdated hint. No cached contacts, SQL writes or send shortcuts.
         if (preflightDueHint) {
           let earlyHint = null;
+          recordDecision("hint_query");
           try {
             earlyHint = await readNextDue({ env, database, now: new Date(now()) });
           } catch {
             // The optimization must never postpone a potentially due send.
             // An unreliable hint falls back to the existing full selector;
             // its own error handling and provider safeguards remain intact.
+            recordDecision("hint_failed");
             logger.warn?.("Secondary due-hint preflight failed; using full candidate scan.");
           }
           if (noPotentialDueNow(earlyHint, now())) {
+            recordDecision("scan_skipped");
             return { outcome: { attempted: 0, accepted: 0 }, hint: earlyHint };
           }
+          if (!validSecondaryDueHint(earlyHint)) recordDecision("hint_uncertain");
+          else if (earlyHint.has_overdue) recordDecision("due_found");
         }
+        recordDecision("scan_performed");
         const outcome = await run({ env, database });
         if (outcome?.disabled) return { disabled: true };
         // A full batch always schedules another run in ten seconds. Its due
         // hint is discarded by delayForResult, so avoid that expensive query
         // until the backlog has drained. Existing one-shot send checks remain.
-        if (Number(outcome?.attempted || 0) >= 10) return { outcome, hint: null };
+        if (Number(outcome?.attempted || 0) >= 10) {
+          recordDecision("backlog");
+          return { outcome, hint: null };
+        }
+        recordDecision("post_hint_query");
         const hint = await readNextDue({ env, database, now: new Date(now()) });
         return { outcome, hint };
       },
       delayForResult: result => {
         if (result?.disabled) return null;
+        if (result?.quietHoursSkipped) {
+          // If the clock crosses 07:00 between the in-memory hint and this
+          // scheduling callback, recover after 1s rather than sleeping 1h.
+          const opensAt = new Date(result.hint.next_due_at).getTime();
+          return Number.isFinite(opensAt)
+            ? Math.max(1000, opensAt - now()) : ERROR_RETRY_MS;
+        }
         // Continue draining a genuine due batch without a five-minute poll.
         // Attempts are one-shot and remain protected by the original ledger.
         if (Number(result?.outcome?.attempted || 0) >= 10) return BACKLOG_RECHECK_MS;
@@ -248,6 +311,7 @@ module.exports = {
   IDLE_RECHECK_MS, ERROR_RETRY_MS, BACKLOG_RECHECK_MS,
   DELIVERY_RECEIPT_WAKE_DELAY_MS,
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
+  hasSecondaryClinicQuietHoursGuard, quietHoursNextOpenHint,
   validSecondaryDueHint, noPotentialDueNow, nextSecondaryDueDelay,
   measureSecondaryWorkerRun, createSecondaryDueScheduler,
   secondaryEventRequiresWake,
