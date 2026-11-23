@@ -77,11 +77,11 @@ function createNeutroSubsequentPricingService({
   return async function resolveNeutroSubsequentPricing({
     contactId, inboundMessageId, customerText, conversationHistory = [],
     services = [], serviceAliases = [], promotions = [], language = "zh",
-    now = Date.now(),
+    modelPricingStage = null, now = Date.now(),
   } = {}) {
     const classification = resolveRepeatVisitPriceReply({
       customerText, conversationHistory, services, serviceAliases, language, now,
-      allowDirectNamedService: true,
+      modelPricingStage, allowDirectNamedService: true,
     });
     if (!Number.isSafeInteger(Number(contactId)) ||
         !Number.isSafeInteger(Number(inboundMessageId))) return null;
