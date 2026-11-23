@@ -61,6 +61,7 @@ function buildConversationOutputSchema() {
       },
       priceQuery: { type: "boolean" },
       packageQuery: { type: "boolean" },
+      pricingStage: { enum: ["first_trial", "subsequent_session", null] },
       promotionOption: nullableString(),
       reviewType: { enum: ["information", "clinical", null] },
       treatment: nullableString(),
