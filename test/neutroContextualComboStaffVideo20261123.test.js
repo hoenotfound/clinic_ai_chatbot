@@ -48,13 +48,16 @@ test("no ad-only, old, unverified or ambiguous reference can invent a combo quot
  assert.equal(check(history,{promotions:[promotion,{...promotion}]}),null);
  assert.equal(check(history,{customerText:"3D和骨盆一起做是多久，什么价格"}),null);
 });
-test("staff duplicate video caption blocks 2h only, without another Neon scan",()=>{
+test("staff duplicate caption blocks matching 2h and 6h with provider recheck",()=>{
  const src=fs.readFileSync(require.resolve("../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  assert.match(src,/deliveredStaffVideoCaptionSql/);
  assert.match(src,/staff_caption\.whatsapp_message_id LIKE 'wamid\.%'/);
  assert.match(src,/staff_video_caption_sent/);
- assert.match(src,/if\(slot===2 && candidate\.staff_video_caption_sent===true\)/);
- assert.match(src,/await fail\("staff_already_sent_video_introduction"\)/);
+ assert.match(src,/\(slot===2 \|\| slot===6\) && candidate\.staff_video_caption_sent===true/);
+ assert.match(src,/staff_already_sent_video_introduction/);
+ assert.match(src,/staff_already_sent_customer_example_video/);
+ assert.match(src,/staffVideoPlaceholderSql/);
+ assert.match(src,/deliveredStaffVideoCaptionSql\("c.id","sc.id","inbound.created_at","rule.slot_hours"\)/);
  assert.doesNotMatch(src,/database\.query\(RECENT_STAFF_VIDEO_CAPTION_SQL/);
 });
 test("server uses verified contextual response only behind existing safety gates",()=>{

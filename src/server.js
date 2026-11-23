@@ -69,9 +69,13 @@ const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
 const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
+const {isRm68ClinicalConcern,isExplicitRm68Interest}=
+  require("./utils/neutroRm68InterestEvidence");
+const {sanitizeRm68BookingReadyDetails}=require("./utils/neutroRm68BookingSafety");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
-const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
+const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
+  isBreastLumpConcern } =
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
@@ -86,7 +90,8 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { campaignContextReply, guardCampaignPriceConflicts,
-  configuredFirstReplyImage, isCampaignAvailabilityQuestion } =
+  configuredFirstReplyImage, isCampaignAvailabilityQuestion,
+  hasCampaignConversation,stillDiscussingCampaign } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -1325,6 +1330,7 @@ async function processIncomingMessage(
     let reviewRequired = false;
     let reviewType = null;
     let clinicalAcknowledgement = null;
+    let rm68ClinicalConcern = false;
     let reviewContinuationTextOnly = false;
     let bookingReady = false;
     let serviceQuery = false;
@@ -1488,6 +1494,33 @@ async function processIncomingMessage(
           packageQuery,
           details,
         } = languageCheckedReply);
+      }
+
+      // The RM68 thread itself can establish breast-health context even when
+      // the customer's next answer is only "硬块就不懂", pain or fever.
+      // Keep the clinical decision independent of model intent.
+      rm68ClinicalConcern=isRm68ClinicalConcern(text) &&
+        (isExplicitRm68Interest(text) ||
+         (hasCampaignConversation(history)&&stillDiscussingCampaign(history)));
+      // A model may mistakenly mark a combined RM68 price/clinical enquiry
+      // informational. A breast lump, nodule or tumor requires staff review.
+      if (clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(
+            String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+          (isBreastLumpConcern(text) || rm68ClinicalConcern) &&
+          !keywordReason && !urgentSafety &&
+          !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+          (!flagged || reviewRequired)) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "clinical";
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        details = null;
+        clinicalAcknowledgement = null;
       }
 
       // A confirmed urinary-leakage report needs staff clinical review even
@@ -2544,7 +2577,13 @@ async function processIncomingMessage(
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      clinicalAcknowledgement = nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+      clinicalAcknowledgement = (isBreastLumpConcern(text) || rm68ClinicalConcern)
+        ? (mediaLanguage === "ms"
+          ? "Jika ada ketulan atau nodul pada payudara, kesesuaian rawatan RM68 tidak boleh dipastikan melalui chat. Sila dapatkan pemeriksaan doktor dahulu. Kami akan minta staf semak pertanyaan anda. 💚"
+          : mediaLanguage === "en"
+            ? "For a breast lump or nodule, we cannot confirm whether the RM68 care is suitable through chat. Please seek a medical evaluation first. Our staff will review your enquiry. 💚"
+            : "关于乳房结节或肿块，我们不能仅通过聊天判断是否适合 RM68 护理。建议先由医生检查，我们也会请工作人员跟进您的咨询。💚")
+        : nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
@@ -2814,7 +2853,9 @@ async function processIncomingMessage(
     if (bookingReady) {
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
-          details,
+          details:sanitizeRm68BookingReadyDetails({
+            details,customerText:text,history,channel,clinicConfig,
+          }),
           // A genuinely new request to move an existing booking must still
           // reach staff even when the CRM records the old slot as confirmed.
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
