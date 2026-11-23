@@ -53,8 +53,12 @@ async function createPersonalized20h({
  candidate,database=pool,env=process.env,
  generate=generator.generatePersonalizedFollowUp,
 }={}){
- if(env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED!=="true" ||
-    !candidate || Number(candidate.slot_hours)!==20)return{ok:false,code:"secondary_20h_ai_disabled"};
+ const slot=Number(candidate?.slot_hours);
+ const early=slot===2 || slot===6;
+ const enabled=early
+   ? env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true"
+   : slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true";
+ if(!candidate || !enabled)return{ok:false,code:"secondary_contextual_ai_disabled"};
  const ids=[candidate.contact_id,candidate.conversation_id,candidate.sender_id,candidate.inbound_id]
    .map(Number);
  if(ids.some(n=>!Number.isSafeInteger(n)||n<1))return{ok:false,code:"secondary_20h_context_invalid"};
@@ -76,14 +80,14 @@ async function createPersonalized20h({
  let decision;
  try{
    decision=await generate({
-     conversation:context,triggerMessageId:ids[3],stepNumber:3,
+     conversation:context,triggerMessageId:ids[3],stepNumber:slot===2?1:slot===6?2:3,
      treatmentInterest:clean(candidate.adFollowUpPolicy
        ? candidate.adFollowUpPolicy.treatment
        : lead.treatment_interest),
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
-     instruction:"Second WhatsApp number; 20-hour follow-up. Reply naturally in the customer's language. Prioritize a free 1-to-1 posture assessment and experience when appropriate. No prices unless the customer explicitly asks. Do not repeat previous reminders or claim an appointment was confirmed. Keep concise. If uncertain or inappropriate, skip." +
+     instruction:"Second WhatsApp number; " + slot + "-hour follow-up. Read the verified conversation and decide if this check-in is wanted. For deferrals, polite closing, customer intent to book later, booking confirmation, staff ownership or medical concern: choose skip, stop_sequence or human_review. Otherwise send a helpful, short, natural answer in the customer language. Never invent a price, appointment or claim to attach a video." +
        (candidate.staff_discussed_followup_topic
          ? " This treatment was suggested by staff in the conversation, not explicitly selected by the customer. Refer to the staff recommendation without claiming the customer chose or requested that treatment."
          : ""),
@@ -91,8 +95,10 @@ async function createPersonalized20h({
    });
  }catch{return{ok:false,code:"secondary_20h_ai_unavailable"};}
  const message=clean(decision?.message);
+ if(["skip","stop_sequence","human_review"].includes(decision?.action))
+   return{ok:false,action:decision.action,code:"secondary_contextual_ai_"+decision.action};
  if(decision?.action!=="send" || !allowedMessage(message,context))
-   return{ok:false,code:"secondary_20h_ai_skipped"};
+   return{ok:false,code:"secondary_contextual_ai_copy_rejected"};
  return{ok:true,message,mode:"ai_personalized"};
 }
 module.exports={CONTEXT_SQL,allowedMessage,createPersonalized20h};
