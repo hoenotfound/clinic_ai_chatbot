@@ -24,7 +24,8 @@ const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
-const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
+ hasSecondaryClinicQuietHoursGuard}=
  require("../utils/secondaryDueTimeScheduler");
 
 // Select a locale only from actual sender-owned customer text. Do not infer
@@ -938,6 +939,10 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
    run,readNextDue,database,env,events,createTimer,now,
    // Avoid the expensive multi-slot candidate search when no slot is due.
    preflightDueHint:true,
+   quietHoursPreflight:[
+     CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+     generalSql.CANDIDATES_SQL,generalSql.RECHECK_SQL,
+   ].every(hasSecondaryClinicQuietHoursGuard),
  });
  return scheduler.start();
 }
