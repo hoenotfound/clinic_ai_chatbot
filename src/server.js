@@ -1303,6 +1303,7 @@ async function processIncomingMessage(
     let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
+    let modelPricingStage = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1432,6 +1433,7 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        modelPricingStage = parsedReply.pricingStage || null;
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -2327,11 +2329,12 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions, language: mediaLanguage,
+            modelPricingStage,
           })
         : resolveRepeatVisitPriceReply({
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            language: mediaLanguage,
+            language: mediaLanguage, modelPricingStage,
           })
       : null;
     if (repeatVisitPriceReply) {
@@ -2874,6 +2877,12 @@ async function processIncomingMessage(
     }
     if (reviewContinuationTextOnly) {
       await auditResultMediaEarlyExit("review_continuation_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
+    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
+      // A later-session question cannot re-enter ordinary First Trial graphics
+      // through an earlier approved promotional-pricing decision.
+      await auditResultMediaEarlyExit("subsequent_session_text_only");
       return { wasFirstMessage, keywordReason };
     }
     if (pelvicPackageComparison) {
