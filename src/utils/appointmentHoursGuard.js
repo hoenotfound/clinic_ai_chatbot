@@ -51,7 +51,10 @@ function detectDate(text,anchorDate){
     const target=/^[1-7]$/u.test(m[2])?+m[2]%7:
       m[2]==="日"||m[2]==="天"?0:"一二三四五六".indexOf(m[2])+1;
     let distance=(target-weekday(anchorDate)+7)%7;
-    if(m[1].startsWith("下")&&distance===0)distance=7;
+    if(m[1].startsWith("下")) {
+      const daysSinceMonday=(weekday(anchorDate)+6)%7;
+      distance=7-daysSinceMonday+((target+6)%7);
+    }
     add(plusDays(anchorDate,distance));
   }
   for(let d=0;d<WEEK_ALIASES.length;d++){
