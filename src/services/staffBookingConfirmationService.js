@@ -104,6 +104,65 @@ function parseTerseStaffConfirmedSlot(message, now = new Date()) {
  return utc.toISOString();
 }
 
+
+function parseNaturalStaffConfirmedSlot(message,now=new Date()){
+ const v=String(message||"").trim();
+ if(!v||v.length>300||/[?？]/u.test(v)||
+   /(?:not\s+(?:yet\s+)?confirm|not booked|unconfirmed|pending|tbc|maybe|cancel|取消|待确认|待確認|尚未确认)/iu.test(v)||
+   !/(?:appointment|booking|预约|預約)/iu.test(v)||
+   !/(?:is\s+confirm(?:ed)?|confirmed|has\s+been\s+booked|已确认|已確認|已订好|已訂好|确认成功|確認成功)/iu.test(v))return null;
+ const d=v.match(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[\/-]\s*(20\d{2}))?\b/u);
+ const t=v.match(/\b(0?[1-9]|1[0-2])(?:(?:[:.](\d{2}))|([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+ if(!d||!t)return null;
+ const clock=t[1]+":"+String(t[2]||t[3]||"00").padStart(2,"0")+t[4];
+ const result=parseTerseStaffConfirmedSlot("Confirm "+d[1]+"/"+d[2]+
+   (d[3]?"/"+d[3]:"")+" "+clock,now);
+ if(!result)return null;
+ const weekday=/\b(?:nxt|next|this)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/iu.exec(v);
+ if(weekday){
+   const named={mon:1,tue:2,wed:3,thu:4,fri:5,sat:6,sun:0}[weekday[1].slice(0,3).toLowerCase()];
+   const local=new Date(new Date(result).getTime()+8*3600_000);
+   if(local.getUTCDay()!==named)return null;
+ }
+ return result;
+}
+
+function isContextualStaffBookingConfirmed(staffText,turns=[],staffAt,now=new Date()){
+ const v=String(staffText||"").trim();
+ if(!v||v.length>150||/[?？]/u.test(v)||
+   !/(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(v)||
+   /(?:not|pending|maybe|tbc|cancel|取消|未确认|未確認|待确认|待確認)/iu.test(v))return null;
+ const at=new Date(staffAt).getTime();
+ if(!Number.isFinite(at)||!Array.isArray(turns))return null;
+ const prior=turns.map(t=>({...t,at:new Date(t.created_at).getTime()}))
+   .filter(t=>Number.isFinite(t.at)&&t.at<at&&t.at>=at-48*3600_000)
+   .sort((a,b)=>b.at-a.at);
+ const last=prior.find(t=>t.role==="user");
+ if(!last||at-last.at>30*60_000||
+   /(?:no|not|cancel|cannot|改期|不行|不能|取消|不要)/iu.test(String(last.content||"")))return null;
+ function slot(text){
+   const raw=String(text||"");
+   const d=raw.match(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[\/-]\s*(20\d{2}))?\b/u);
+   const t=raw.match(/\b(0?[1-9]|1[0-2])(?:(?:[:.](\d{2}))|([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+   if(!d||!t)return null;
+   return parseTerseStaffConfirmedSlot("Confirm "+d[1]+"/"+d[2]+
+    (d[3]?"/"+d[3]:"")+" "+t[1]+":"+
+    String(t[2]||t[3]||"00").padStart(2,"0")+t[4],now);
+ }
+ const selected=slot(last.content);
+ if(!selected)return null;
+ const proposal=prior.some(t=>
+   t.role==="assistant"&&t.sent_by_username&&t.at<last.at &&
+   !/(?:cannot|not available|cancel|不能|不可以|没办法|無法|无法)/iu.test(t.content||"") &&
+   /(?:可以吗|可以嗎|方便吗|方便嗎|安排|appointment|booking|confirm|slot|time)/iu.test(t.content||"") &&
+   slot(t.content)===selected);
+ if(!proposal)return null;
+ if(prior.some(t=>t.at>last.at &&
+   (/(?:取消|改期|不能|不行|cancel|reschedul|not available)/iu.test(t.content||"") ||
+     (slot(t.content)&&slot(t.content)!==selected))))return null;
+ return selected;
+}
+
 function bookingTimeMinutes(text) {
  const m=String(text||"").match(/\b(0?[1-9]|1[0-2])(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/iu);
  if(!m)return null;
@@ -184,7 +243,8 @@ function createStaffBookingConfirmationService({
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false, messageId = null } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
-    const strictSlot=parseStaffConfirmedSlot(staffText,now());
+    const strictSlot=parseStaffConfirmedSlot(staffText,now()) ||
+      (config.businessType==="tcm_clinic"?parseNaturalStaffConfirmedSlot(staffText,now()):null);
     const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
       ?parseTerseStaffConfirmedSlot(staffText,now()):null;
     let appointmentAt=strictSlot;
@@ -216,7 +276,9 @@ function createStaffBookingConfirmationService({
       return null;
     }
     if(!strictSlot) {
-      if(!terseSlot&&!isStaffVisitAcknowledgement(staffText))return null;
+      const contextualCandidate=config.businessType==="tcm_clinic" &&
+         /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
+       if(!terseSlot&&!contextualCandidate&&!isStaffVisitAcknowledgement(staffText))return null;
       // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
       // provider-authenticated staff evidence and independent customer
       // agreement on the same date and time. If missing, hold for review.
@@ -249,6 +311,10 @@ function createStaffBookingConfirmationService({
       if(terseSlot&&isTerseBookingCorroborated(
         staffText,terseSlot,recorded.prior_turns,recorded.created_at)){
         appointmentAt=terseSlot;
+      } else if(contextualCandidate &&
+        (appointmentAt=isContextualStaffBookingConfirmed(
+          staffText,recorded.prior_turns,recorded.created_at,now()))){
+        // Exact customer slot + prior staff offer + current staff confirmation.
       } else {
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
@@ -275,6 +341,8 @@ const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
   parseTerseStaffConfirmedSlot,
+  parseNaturalStaffConfirmedSlot,
+  isContextualStaffBookingConfirmed,
   isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
   isProactiveAppointmentReminder,
