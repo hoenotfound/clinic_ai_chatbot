@@ -100,6 +100,12 @@ test("late opening hours, elapsed times and duration all reject invalid slots", 
   }).status,"past");
 });
 
+test("next-week Chinese dates resolve to the following calendar week", () => {
+  assert.equal(detectDate("下星期一下午2点", "2026-11-23").date, "2026-11-30");
+  assert.equal(detectDate("下星期二下午2点", "2026-11-23").date, "2026-12-01");
+  assert.equal(detectDate("下星期日", "2026-11-23").date, "2026-12-06");
+});
+
 test("ambiguous alternative days fail closed for booking-ready without choosing one", () => {
   assert.equal(detectDate("星期一或星期二", "2026-11-23").ambiguous,true);
   assert.equal(evaluateAppointmentHours({
