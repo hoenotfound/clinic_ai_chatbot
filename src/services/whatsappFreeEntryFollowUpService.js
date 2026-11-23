@@ -1123,6 +1123,26 @@ function stop() {
   timer = null;
 }
 
+// Fixed, proven non-actionable events can be omitted without waiting on
+// Neon. Do not infer safety from a channel label alone: cross-channel booking,
+// consent and opt-out edits must still invalidate eligibility promptly.
+function freeEntryDueEventRequiresWake(type, payload) {
+  if (type === "conversation_changed") {
+    if (payload?.reason === "reaction" ||
+        payload?.reason === "lead_assignment_recovered") return false;
+    // Only a signed, already-processed automated follow-up receipt is
+    // explicitly marked presentation-only. An unverified receipt still wakes.
+    if (payload?.reason === "delivery_status" &&
+        payload?.followUpStateUnchanged === true) return false;
+  }
+  if (type === "pipeline_changed") {
+    return payload?.reason !== "lead_scored" &&
+      payload?.reason !== "meta_ad_enriched" &&
+      payload?.reason !== "lead_assignment_recovered";
+  }
+  return true;
+}
+
 function start({
   createTimer = createAdaptiveWorkerTimer,
   events = realtimeEvents,
@@ -1139,10 +1159,14 @@ function start({
   });
   timerSubscriptions = [
     events.subscribe("conversation_changed", (payload) => {
-      if (payload?.contactId != null) wake(CHECK_INTERVAL_MS);
+      if (payload?.contactId != null &&
+          freeEntryDueEventRequiresWake("conversation_changed",payload))
+        wake(CHECK_INTERVAL_MS);
     }),
     events.subscribe("pipeline_changed", (payload) => {
-      if (payload?.contactId != null || payload?.leadId != null) wake(CHECK_INTERVAL_MS);
+      if ((payload?.contactId != null || payload?.leadId != null) &&
+          freeEntryDueEventRequiresWake("pipeline_changed",payload))
+        wake(CHECK_INTERVAL_MS);
     }),
     events.subscribe("config_changed", (payload) => {
       if (!payload?.keys || payload.keys.includes("automatedFollowUp")) wake(0);
@@ -1159,6 +1183,7 @@ module.exports = {
   settings, alignedSettings, selectedSlot, listCandidates, claim,
   processCandidate, run, start, stop, wake, nextPotentialDueAt, nextPollDelay,
   runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
+  freeEntryDueEventRequiresWake,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
   resolveSafeTemplate, selectEligibleTemplate, selectClaimedVideoFallback,
