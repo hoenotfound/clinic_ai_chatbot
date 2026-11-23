@@ -120,6 +120,20 @@ test("approved secondary marketing billing requires one claimed attempt for each
     new Date(),"2026-11-01T00:00:00Z","ads_only",
     "2026-11-01T00:00:00Z",
   ]);
+  // Compile each batching configuration against real PostgreSQL,
+  // including the general lane's eighth timestamp parameter. This remains
+  // read-only and cannot reserve or send any WhatsApp message.
+  for(const flags of [
+    {extended:false,general:false},{extended:true,general:false},
+    {extended:false,general:true},{extended:true,general:true},
+  ]){
+   const params=[
+    "ariel","100000000000002","200000000000002",new Date(),
+    "2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
+   ];
+   if(flags.general)params.push("2026-11-01T00:00:00Z");
+   await db.query("EXPLAIN "+marketing.combinedPotentialDueSql(flags),params);
+  }
   // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
   // example; no historical attempts are opened or replayed.
   const due=await db.query(
