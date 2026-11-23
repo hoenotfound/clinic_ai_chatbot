@@ -134,8 +134,9 @@ const CANDIDATES_SQL=`
  -- For 48h/66h, the first verified reply must occur within 24h of
  -- the inbound, and can be no more than eight hours overdue. A five-day
  -- shortlist safely covers 66+24+8 hours of possible sessions.
- -- Day4/Day6 deliberately restores nine days below. The original sender,
- -- consent, staff, booking, billing and one-shot checks still authorize sends.
+ -- Day4/Day6 instead starts from a verified ad-origin within eight days
+ -- below. Sender, consent, staff, booking, billing and one-shot checks still
+ -- independently authorize sends.
  JOIN (
    WITH recent_seed AS MATERIALIZED (
      SELECT DISTINCT recent.contact_id
