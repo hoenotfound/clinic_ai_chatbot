@@ -141,7 +141,7 @@ test("RM68 clinical context keeps an uncertain hard lump on staff review, even a
  assert.equal(stillDiscussingCampaign(history),true);
  assert.equal(isRm68ClinicalConcern("没有红，没发烧。硬块就不懂"),true);
  const s=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
- assert.match(s,/const rm68ClinicalConcern=isRm68ClinicalConcern\(text\)/);
+ assert.match(s,/rm68ClinicalConcern=isRm68ClinicalConcern\(text\)/);
  assert.match(s,/isBreastLumpConcern\(text\) \|\| rm68ClinicalConcern/);
  assert.match(s,/reviewType = "clinical"/);
 });
