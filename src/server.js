@@ -2319,7 +2319,13 @@ async function processIncomingMessage(
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
+    // The model can correctly report an unknown later-session rate as an
+    // INFORMATION review. Recover only the independently verified staff
+    // handoff, never a quote, trial graphic or a clinical/safety review.
+    const repeatVisitInfoReview = flagged && reviewRequired &&
+      reviewType === "information" && modelPricingStage === "subsequent_session";
+    let repeatVisitPriceReply = !pelvicPackageComparison &&
+      (!flagged || repeatVisitInfoReview) && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -2337,6 +2343,15 @@ async function processIncomingMessage(
             language: mediaLanguage, modelPricingStage,
           })
       : null;
+    if (repeatVisitInfoReview && repeatVisitPriceReply) {
+      const evidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (repeatVisitPriceReply.mode !== "staff_handoff" ||
+          evidence?.pendingClinicalReview !== false) {
+        repeatVisitPriceReply = null;
+      }
+    }
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
       if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
