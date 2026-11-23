@@ -1249,7 +1249,8 @@ test("ambiguous signed Business App video placeholder makes media text-only, not
 test("generic staff messages mentioning video do not suppress 2h or 6h",()=>{
  assert.match(worker.CANDIDATES_SQL,/staff_video_caption_sent/);
  assert.match(worker.CANDIDATES_SQL,/slot_hours/);
- assert.match(worker.RECHECK_SQL,/deliveredStaffVideoCaptionSql/);
+ assert.match(worker.RECHECK_SQL,/FROM messages staff_caption/);
+ assert.match(worker.RECHECK_SQL,/staff_caption\.created_at>=inbound\.created_at/);
  assert.match(worker.CANDIDATES_SQL,/🎥.*这段影片简单介绍/);
  assert.match(worker.CANDIDATES_SQL,/跟你分享一位顾客/);
  assert.doesNotMatch(worker.CANDIDATES_SQL,/staff_caption\.content.*'\(\^\|\[\^\[:alpha:\]\]\)video/);

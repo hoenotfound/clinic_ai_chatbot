@@ -611,6 +611,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     let serviceQuery = false, serviceQuerySource = null;
     let details = null, flagged = false, reviewRequired = false, reviewType = null;
     let bookingReady = false, priceQuery = false, packageQuery = false;
+    let rm68ClinicalConcern = false;
     ${source}
     return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
   })`, {
@@ -621,6 +622,11 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
     correctReplyLanguage: async draft => draft,
+    isRm68ClinicalConcern: () => false,
+    isExplicitRm68Interest: () => false,
+    hasCampaignConversation: () => false,
+    stillDiscussingCampaign: () => false,
+    isBreastLumpConcern: () => false,
     ...require("../src/utils/chatLanguage"),
     console: { info: (...parts) => logs.push(parts.join(" ")) },
   });
