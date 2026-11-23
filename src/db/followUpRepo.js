@@ -106,7 +106,7 @@ function customerFollowUpIntentGuardSql(contactAlias = "c") {
         COALESCE(terminal_inbound.content,'') ~*
           '(有需要.{0,12}再.{0,8}(预约|預約|联系|聯繫|安排)|((我|先)?(再)?(考虑考虑|考慮考慮))|(先解决|先解決).{0,35}(之后|之後).{0,25}(再来|再來)|我[[:space:]]*在[[:space:]]*(jb|johor|新山|柔佛)(的|哦|啊)?)'
         AND COALESCE(terminal_inbound.content,'') !~*
-          '(价[格钱錢]|費用|费用|多少[钱錢]|[?？].{0,35}(价格|價錢|price|cost)|(?:book|booking|预约|預約).{0,15}(今天|明天|tomorrow|today))'
+          '(价[格钱錢]|費用|费用|多少[钱錢]|[?？].{0,35}(价格|價錢|price|cost)|你们有|你們有|请问|請問|有没有|有沒有|能否|能不能|(?:book|booking|预约|預約).{0,15}(今天|明天|tomorrow|today))'
       )
       OR (
         COALESCE(terminal_inbound.content,'') ~*
