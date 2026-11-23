@@ -5,6 +5,7 @@ const assert=require("node:assert/strict");
 const {
   IDLE_RECHECK_MS,ERROR_RETRY_MS,DELIVERY_RECEIPT_WAKE_DELAY_MS,
   nextAllowedClinicTime,nextSecondaryDueDelay,
+  quietHoursNextOpenHint,hasSecondaryClinicQuietHoursGuard,
   createSecondaryDueScheduler,measureSecondaryWorkerRun,
   secondaryEventRequiresWake,
 }=require("../src/utils/secondaryDueTimeScheduler");
@@ -335,6 +336,19 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  assert.equal(check("pipeline_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("conversation_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"facebook"}),true,
+  "a channel label alone cannot silence shared booking changes");
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"instagram"}),true);
+ assert.equal(check("pipeline_changed",{reason:"whatsapp_opt_out",channel:"facebook"}),true,
+  "cross-channel opt-out must never be ignored");
+ assert.equal(check("pipeline_changed",{
+  reason:"appointment_set",channel:"facebook",
+  businessPhoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+ }),true,"conflicting sender evidence must conservatively wake");
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"whatsapp"}),true,
+  "WhatsApp booking must still trigger recheck");
+ assert.equal(check("pipeline_changed",{reason:"lead_scored",channel:"facebook"}),false,
+  "only proven CRM-only pipeline reasons may skip");
  assert.equal(check("pipeline_changed",{}),true);
  assert.equal(check("config_changed",{}),true);
 });
@@ -584,4 +598,102 @@ test("incomplete object-shaped secondary due hints use five-minute recovery",asy
  assert.equal(scheduler.state().dueAt,time("2026-11-02T00:05:00Z"),
   "the incomplete post-run hint must recheck promptly");
  scheduler.stop();
+});
+
+test("quiet-hour hints enforce the original 07:00 Malaysia opening without any SQL",()=>{
+ const q=quietHoursNextOpenHint;
+ assert.equal(new Date(q(time("2026-11-22T16:00:00Z")).next_due_at).toISOString(),
+  "2026-11-22T23:00:00.000Z","midnight MYT waits until 07:00 MYT");
+ assert.equal(new Date(q(time("2026-11-22T22:59:59Z")).next_due_at).toISOString(),
+  "2026-11-22T23:00:00.000Z","06:59:59 is still quiet");
+ assert.equal(q(time("2026-11-22T23:00:00Z")),null,"07:00 is eligible");
+ assert.equal(q(time("2026-11-22T15:59:59Z")),null,"23:59:59 is eligible");
+ assert.equal(q(NaN),null);
+ assert.equal(q(Infinity),null);
+ // The service recheck binds $4 to the sender key, not current time.
+ // Full candidate discovery is the only way the worker starts a new send.
+ assert.equal(hasSecondaryClinicQuietHoursGuard(service.RECHECK_SQL),false);
+ for(const sql of [service.CANDIDATES_SQL,
+   marketing.CANDIDATES_SQL,marketing.RECHECK_SQL,
+   marketing.EXTENDED_CANDIDATES_SQL,marketing.EXTENDED_RECHECK_SQL,
+   require("../src/services/neutroSecondaryGeneralMarketingSql").CANDIDATES_SQL,
+   require("../src/services/neutroSecondaryGeneralMarketingSql").RECHECK_SQL]){
+   assert.equal(hasSecondaryClinicQuietHoursGuard(sql),true,
+    "all live send selectors must retain the hard quiet-hours predicate");
+ }
+ assert.equal(hasSecondaryClinicQuietHoursGuard("SELECT true"),false);
+ const genuineGuard = "SELECT true\n   AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n       BETWEEN 7 AND 23";
+ assert.equal(hasSecondaryClinicQuietHoursGuard(genuineGuard),true);
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true\n -- AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n -- BETWEEN 7 AND 23"),false,
+   "commented quiet-hour rule cannot enable skipping all nightly checks");
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true /*\n AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n BETWEEN 7 AND 23\n */"),false,
+   "block-commented rule must not be treated as a real guard");
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+  "EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 23"),false);
+});
+
+test("quiet-hour service and marketing wakes never query Neon and recheck at 07:00",async()=>{
+ const clock=fakeClock("2026-11-22T20:00:00Z"),events=fakeEvents();
+ const states={secondary_service:{scans:0,reads:0},
+   secondary_marketing:{scans:0,reads:0}};
+ const schedulers=[];
+ for(const lane of Object.keys(states)){
+  const state=states[lane];
+  const scheduler=createSecondaryDueScheduler({
+   label:lane==="secondary_service"
+    ?"Secondary WhatsApp service followup scheduler"
+    :"Secondary WhatsApp marketing followup scheduler",
+   env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+   quietHoursPreflight:true,preflightDueHint:true,
+   run:async()=>{state.scans++;return {attempted:0,accepted:0};},
+   readNextDue:async()=>{state.reads++;return {
+    next_due_at:null,has_overdue:true,
+   };},
+  });
+  scheduler.start();schedulers.push(scheduler);
+ }
+ try{
+  await clock.advance(0);
+  assert.equal(states.secondary_service.reads,0);
+  assert.equal(states.secondary_marketing.scans,0);
+  for(const scheduler of schedulers)
+   assert.equal(scheduler.state().dueAt,time("2026-11-22T23:00:00Z"));
+  events.publish("conversation_changed",{reason:"message",channel:"whatsapp"});
+  events.publish("pipeline_changed",{reason:"appointment_set"});
+  await Promise.resolve();await clock.advance(0);
+  events.publish("conversation_changed",{reason:"delivery_status",channel:"whatsapp"});
+  await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
+  for(const state of Object.values(states))
+   assert.deepEqual(state,{scans:0,reads:0},
+    "receipt, booking, and messages cannot cause sends or SQL before 07:00");
+  await clock.advance(time("2026-11-22T23:00:00Z")-clock.now()-1);
+  for(const state of Object.values(states))assert.equal(state.reads,0);
+  await clock.advance(1);
+  for(const state of Object.values(states))
+   assert.deepEqual(state,{scans:1,reads:2},
+    "exact opening must run fresh due SQL, full eligibility and post-scan hint");
+ }finally{for(const scheduler of schedulers)scheduler.stop();}
+});
+
+test("ordinary and all enabled marketing hints are batched in one SQL statement",()=>{
+ const general=require("../src/services/neutroSecondaryGeneralMarketingSql");
+ assert.equal(marketing.combinedPotentialDueSql({}),marketing.POTENTIAL_DUE_SQL,
+  "disabled lanes preserve exact original ordinary hint");
+ const sql=marketing.combinedPotentialDueSql({extended:true,general:true});
+ assert.ok(sql.includes(marketing.POTENTIAL_DUE_SQL));
+ assert.ok(sql.includes(marketing.EXTENDED_POTENTIAL_DUE_SQL));
+ assert.ok(sql.includes(general.POTENTIAL_DUE_SQL));
+ assert.equal(sql.split(" UNION ALL").length-1,2);
+ assert.match(sql,/COALESCE\(BOOL_OR\(has_overdue\),FALSE\)/);
+ assert.match(sql,/\$8::timestamptz/,"general marketing activation remains bound");
+ assert.doesNotMatch(sql,/\$9\b/,"candidate LIMIT binding must be removed");
+ const extendedOnly=marketing.combinedPotentialDueSql({extended:true,general:false});
+ assert.equal(extendedOnly.split(" UNION ALL").length-1,1);
+ assert.doesNotMatch(extendedOnly,/\$8::timestamptz/,
+  "only general campaign uses the eighth due-hint parameter");
+ const generalOnly=marketing.combinedPotentialDueSql({extended:false,general:true});
+ assert.ok(generalOnly.includes(general.POTENTIAL_DUE_SQL));
+ assert.equal(generalOnly.split(" UNION ALL").length-1,1);
 });

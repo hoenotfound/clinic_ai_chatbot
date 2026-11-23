@@ -24,7 +24,8 @@ const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
-const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
+ hasSecondaryClinicQuietHoursGuard}=
  require("../utils/secondaryDueTimeScheduler");
 
 // Select a locale only from actual sender-owned customer text. Do not infer
@@ -884,17 +885,26 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
  ];
- const ordinary=(await runFollowUpRead(database,pool,POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null;
- const extended=extendedEnabled(env)
-   ?(await runFollowUpRead(database,pool,EXTENDED_POTENTIAL_DUE_SQL,params,{env})).rows?.[0]||null:null;
- const generic=generalSql.enabled(env)
-   ?(await runFollowUpRead(database,pool,generalSql.POTENTIAL_DUE_SQL,
-     [...params,generalSql.activation(env)],{env})).rows?.[0]||null:null;
- return combinePotentialDueHints([
-   ordinary,
-   ...(extendedEnabled(env)?[extended]:[]),
-   ...(generalSql.enabled(env)?[generic]:[]),
- ]);
+ const isExtended=extendedEnabled(env);
+ const isGeneral=generalSql.enabled(env);
+ // PostgreSQL computes exactly the same lane aggregates as before, but one
+ // read/pool checkout replaces up to three serial reads on every wake.
+ // Every enabled lane remains mandatory; a SQL error or incomplete row
+ // falls back to the full candidate scan in the shared scheduler.
+ const sql=combinedPotentialDueSql({extended:isExtended,general:isGeneral});
+ const values=isGeneral?[...params,generalSql.activation(env)]:params;
+ const result=await runFollowUpRead(database,pool,sql,values,{env});
+ const row=result.rows?.[0]||null;
+ return combinePotentialDueHints([row]);
+}
+function combinedPotentialDueSql({extended=false,general=false}={}){
+ const lanes=[POTENTIAL_DUE_SQL];
+ if(extended)lanes.push(EXTENDED_POTENTIAL_DUE_SQL);
+ if(general)lanes.push(generalSql.POTENTIAL_DUE_SQL);
+ if(lanes.length===1)return lanes[0];
+ return `SELECT MIN(next_due_at) AS next_due_at,
+ COALESCE(BOOL_OR(has_overdue),FALSE) AS has_overdue
+ FROM (${lanes.map(sql=>`(${sql})`).join("\n UNION ALL\n")}) lane_due_hints`;
 }
 function combinePotentialDueHints(hints){
  // The short-circuit is safe only if EVERY enabled marketing lane
@@ -929,6 +939,10 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
    run,readNextDue,database,env,events,createTimer,now,
    // Avoid the expensive multi-slot candidate search when no slot is due.
    preflightDueHint:true,
+   quietHoursPreflight:[
+     CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+     generalSql.CANDIDATES_SQL,generalSql.RECHECK_SQL,
+   ].every(hasSecondaryClinicQuietHoursGuard),
  });
  return scheduler.start();
 }
@@ -938,6 +952,6 @@ module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
- POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,combinePotentialDueHints,customerTemplateLocale,
+ POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,combinedPotentialDueSql,combinePotentialDueHints,customerTemplateLocale,
  approvedStaticMarketingTemplate,finishProvenMarketingPreProviderCancellation,runOnce,nextPotentialDueAt,start,stop,
 };
