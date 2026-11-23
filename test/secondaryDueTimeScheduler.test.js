@@ -602,7 +602,10 @@ test("quiet-hour hints enforce the original 07:00 Malaysia opening without any S
  assert.equal(q(time("2026-11-22T15:59:59Z")),null,"23:59:59 is eligible");
  assert.equal(q(NaN),null);
  assert.equal(q(Infinity),null);
- for(const sql of [service.CANDIDATES_SQL,service.RECHECK_SQL,
+ // The service recheck binds $4 to the sender key, not current time.
+ // Full candidate discovery is the only way the worker starts a new send.
+ assert.equal(hasSecondaryClinicQuietHoursGuard(service.RECHECK_SQL),false);
+ for(const sql of [service.CANDIDATES_SQL,
    marketing.CANDIDATES_SQL,marketing.RECHECK_SQL,
    marketing.EXTENDED_CANDIDATES_SQL,marketing.EXTENDED_RECHECK_SQL,
    require("../src/services/neutroSecondaryGeneralMarketingSql").CANDIDATES_SQL,
