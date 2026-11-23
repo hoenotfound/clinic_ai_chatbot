@@ -51,6 +51,17 @@ test("customer #9283 today, then 1pm or 2pm, cannot create a Monday appointment"
   assert.doesNotMatch(checked.reply, /今天的空档/);
 });
 
+test("short 2pm reply inherits the previously requested Monday", () => {
+  const checked = guardAppointmentReply({
+    hours, customerText:"2pm", recentCustomerTexts:["今天可以吗"],
+    appointmentPreference:"今天 2pm",
+    reply:"Okay, I will check today's 2pm slot 😊",
+    receivedAt:monday, now:laterMonday, language:"en",
+  });
+  assert.equal(checked.blocked,true);
+  assert.match(checked.reply,/closed on monday/i);
+});
+
 test("closed day is recognized across Chinese, English and Malay", () => {
   const cases = ["下星期一下午2点", "next Monday 2pm", "Hari Isnin pukul 14:00"];
   for (const text of cases) {
