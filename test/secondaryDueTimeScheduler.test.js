@@ -622,6 +622,14 @@ test("quiet-hour hints enforce the original 07:00 Malaysia opening without any S
     "all live send selectors must retain the hard quiet-hours predicate");
  }
  assert.equal(hasSecondaryClinicQuietHoursGuard("SELECT true"),false);
+ const genuineGuard = "SELECT true\n   AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n       BETWEEN 7 AND 23";
+ assert.equal(hasSecondaryClinicQuietHoursGuard(genuineGuard),true);
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true\n -- AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n -- BETWEEN 7 AND 23"),false,
+   "commented quiet-hour rule cannot enable skipping all nightly checks");
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true /*\n AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n BETWEEN 7 AND 23\n */"),false,
+   "block-commented rule must not be treated as a real guard");
  assert.equal(hasSecondaryClinicQuietHoursGuard(
   "EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 23"),false);
 });
