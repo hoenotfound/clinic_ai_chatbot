@@ -518,8 +518,25 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
  .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)\n   AND qualified_session.first_reply_at>=rule.updated_at")
- .replace("recent.created_at > $4::timestamptz - INTERVAL '5 days'",
-   "recent.created_at > $4::timestamptz - INTERVAL '9 days'")
+ // Only Day4/Day6 needs a seven-day, verified ad-origin session. The
+ // original broad scan starts from every recent WhatsApp inbound; instead
+ // use its proven referral origin as a *shortlist* before the expensive
+ // sender/reply/receipt joins. The complete signed session + Meta billing
+ // and all customer-consent/appointment safeguards remain below unchanged.
+ //
+ // At most 167h after the first reply, and reply < origin+24h, means any
+ // valid origin must be newer than 191h ago. Eight days is a conservative
+ // superset, including the 8h overdue tolerance of the due-time hint.
+ .replace(
+   "FROM messages recent\\n     WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'",
+   `FROM whatsapp_free_entry_referrals seed_referral
+     JOIN messages recent ON recent.id=seed_referral.origin_message_id
+       AND recent.contact_id=seed_referral.contact_id
+     WHERE seed_referral.source_type='ad'
+       AND (NULLIF(BTRIM(seed_referral.ctwa_clid),'') IS NOT NULL
+         OR NULLIF(BTRIM(seed_referral.meta_ad_id),'') IS NOT NULL)
+       AND recent.created_at > $4::timestamptz - INTERVAL '8 days'`
+ )
  .replaceAll("first_reply.at","qualified_session.first_reply_at")
  .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
   "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
