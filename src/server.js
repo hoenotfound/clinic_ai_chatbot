@@ -2801,6 +2801,7 @@ async function processIncomingMessage(
       }
     }
 
+    let bookingDurationMinutes = 0;
     // Apply the same read-only weekly-hours policy before the Meta send AND
     // before booking_ready. The staff slot check must never be requested for
     // a closed day or an out-of-hours preference merely because Gemini said so.
@@ -2815,7 +2816,7 @@ async function processIncomingMessage(
         .filter(Boolean)
         .slice(-5)
         .reverse();
-      const durationMinutes = durationMinutesForPackage({
+      bookingDurationMinutes = durationMinutesForPackage({
         config: clinicConfig,
         customerTexts: [text, ...customerHistory],
         treatment: details?.treatment || "",
@@ -2825,7 +2826,8 @@ async function processIncomingMessage(
         recentCustomerTexts: customerHistory,
         appointmentPreference: details?.appointmentPreference || "",
         receivedAt: savedInbound.created_at || new Date(),
-        now: new Date(), language: mediaLanguage, durationMinutes,
+        now: new Date(), language: mediaLanguage,
+        durationMinutes: bookingDurationMinutes,
       });
       if (checked.blocked) {
         bookingReady = false;
@@ -2903,6 +2905,7 @@ async function processIncomingMessage(
           // reach staff even when the CRM records the old slot as confirmed.
           customerText: text,
           receivedAt: savedInbound.created_at || new Date(),
+          durationMinutes: bookingDurationMinutes,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
