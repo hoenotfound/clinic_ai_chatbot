@@ -2,86 +2,95 @@
 const test=require("node:test");
 const assert=require("node:assert/strict");
 const fs=require("node:fs");
-const {isExplicitRm68Interest,isRm68ClinicalConcern}=require("../src/utils/neutroRm68InterestEvidence");
-const {recordRm68CustomerInterest,SERVICE,CAMPAIGN}=require("../src/db/neutroRm68InterestRepo");
-const config={businessName:"Neutro Sense TCM",services:[{name:SERVICE},{name:"脉冲波调理"}]};
+const {isExplicitRm68Interest,isRm68ClinicalConcern}=
+  require("../src/utils/neutroRm68InterestEvidence");
+const {recordRm68CustomerInterest,CAMPAIGN}=require("../src/db/neutroRm68InterestRepo");
+const {hasClinicalMediaRisk,isBreastLumpConcern,categorizeAiReview}=
+  require("../src/utils/aiReviewPolicy");
+const config={businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",
+ services:[{name:"脉冲波调理"},{name:"草药胸部疏通乳腺护理"}]};
 const prefill="Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
-test("customer-sent RM68 event, including health question, captures event distinct from RM388",()=>{
- for(const v of [prefill,prefill+"\n\n請問有結節的人可以參加？",
-  "我想了解胸部 RM68 体验优惠", "Interested in RM68 breast care trial"]){
-  assert.equal(isExplicitRm68Interest(v),true,v);
- }
- for(const v of ["RM388 脉冲波护理","胸部健康有结节","RM68 是给谁的广告？",
-  "我对骨盆调理感兴趣", "我不感兴趣胸部 RM68 优惠"]){
-  assert.equal(isExplicitRm68Interest(v),false,v);
- }
+
+test("only explicit customer RM68 breast-care interest qualifies for campaign evidence",()=>{
+ for(const text of [prefill,
+  "我想了解胸部 RM68 体验优惠", "Interested in RM68 breast care trial",
+  prefill+" 請問有結節的人可以參加？"])
+  assert.equal(isExplicitRm68Interest(text),true,text);
+ for(const text of ["RM388 脉冲波护理","胸部健康有结节","RM68 是给谁的广告？",
+  "我对骨盆调理感兴趣","我不感兴趣胸部 RM68 优惠"])
+  assert.equal(isExplicitRm68Interest(text),false,text);
 });
-test("one bounded source-verified SQL statement, never modify marketing consent or override staff choice",async()=>{
+
+test("RM68 is a campaign ONLY: never update lead treatment, booking, marketing consent or appointment",async()=>{
  let sql,params,calls=0;
  const result=await recordRm68CustomerInterest({
-  contactId:9265,messageId:22844,text:prefill,clinicConfig:config,
-  database:{query:async(q,args)=>{sql=q;params=args;calls++;return{rows:[
-   {verified:true,treatment_updated:true,event_recorded:true},
-  ]};}},
+  contactId:9232,messageId:22289,text:prefill,clinicConfig:config,
+  database:{query:async(q,args)=>{
+   sql=q;params=args;calls++;
+   return{rows:[{verified:true,event_recorded:true}]};
+  }},
  });
  assert.equal(result.verified,true);
  assert.equal(calls,1);
- assert.deepEqual(params,[9265,22844,prefill,SERVICE,CAMPAIGN,true]);
+ assert.deepEqual(params,[9232,22289,prefill,CAMPAIGN,false]);
  assert.match(sql,/m\.role='user'/);
  assert.match(sql,/m\.whatsapp_message_id IS NOT NULL/);
- assert.match(sql,/NULLIF\(BTRIM\(l\.treatment_interest\),'\'\) IS NULL/);
  assert.match(sql,/customer_campaign_interest/);
- assert.doesNotMatch(sql,/SET\s+marketing_consent|marketing_consent\s*=/i);
- assert.doesNotMatch(sql,/UPDATE contacts/i);
+ assert.match(sql,/medicalReviewNeeded/);
+ assert.doesNotMatch(sql,/UPDATE\s+leads|UPDATE\s+contacts|treatment_interest|appointment_status|SET\s+marketing_consent/i);
+ // Neither a paid booking nor an unrelated staff selected treatment can be
+ // overwritten when CRM interest is recorded as an independent activity.
+ assert.doesNotMatch(sql,/UPDATE /i);
 });
-test("ad-only attribution, unconfigured service and unstated campaign don't write data",async()=>{
- let n=0;
- const database={query:async()=>{n++;throw Error("must not query");}};
- for(const input of [
+
+test("other clinics, unsafe identities and unverifiable customer messages don't write",async()=>{
+ let calls=0;
+ const database={query:async()=>{calls++;throw Error("Unexpected DB call");}};
+ for(const opts of [
   {text:"Neutro 胸 Jesi Number - 14/11/2026",clinicConfig:config},
-  {text:prefill,clinicConfig:{businessName:"Other",services:config.services}},
-  {text:prefill,clinicConfig:{businessName:"Neutro Sense TCM",services:[]}},
+  {text:prefill,clinicConfig:{...config,businessName:"Other"}},
+  {text:prefill,clinicConfig:{...config,businessType:"aesthetic_clinic"}},
+  {text:prefill,clinicConfig:null},
+  {text:prefill,clinicConfig:config,messageId:0},
  ]){
-  assert.equal((await recordRm68CustomerInterest({
-   contactId:9265,messageId:22844,database,...input,
-  })).matched,false);
+  const result=await recordRm68CustomerInterest({
+   contactId:9265,messageId:22844,database,...opts,
+  });
+  assert.equal(result.matched,false);
  }
- assert.equal(n,0);
+ assert.equal(calls,0);
 });
-test("capture precedes manual-only early return and does not send anything",()=>{
+
+test("clinical RM68 questions are independently clinical even if AI says information",async()=>{
+ const medical=prefill+" 請問有結節的人可以參加？";
+ assert.equal(isExplicitRm68Interest(medical),true);
+ assert.equal(isRm68ClinicalConcern(medical),true);
+ let sql,params;
+ await recordRm68CustomerInterest({
+  contactId:9265,messageId:22844,text:medical,clinicConfig:config,
+  database:{query:async(q,p)=>{sql=q;params=p;return{rows:[
+   {verified:true,event_recorded:true},
+  ]};}},
+ });
+ assert.equal(params[4],true);
+ assert.match(sql,/medicalReviewNeeded/);
+ for(const v of [medical,"我有乳腺结节，RM68 还有优惠吗？",
+  "胸有瘤可以做吗？","Breast lump: is the RM68 promotion still available?"]){
+  assert.equal(isBreastLumpConcern(v),true,v);
+  assert.equal(hasClinicalMediaRisk(v),true,v);
+  assert.equal(categorizeAiReview(v,"information"),"clinical",v);
+ }
+ for(const value of ["胸有瘤可以做吗？","胸部有瘤","乳瘤","乳腺结节"])
+  assert.equal(isRm68ClinicalConcern(value),true,value);
+ assert.equal(isBreastLumpConcern("RM68 胸部护理还有名额吗？"),false);
+});
+
+test("server enforces clinical review before sales media and keeps RM68 manual-only capture",()=>{
  const server=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
  const classify=server.indexOf("neutroRm68InterestRepo.recordRm68CustomerInterest");
  const exit=server.indexOf("if (secondaryInboxOnly && !mediaType && !unsupportedType)");
  assert.ok(classify>0&&exit>classify);
-});
-test("medical concerns may be recorded as RM68 interest but cannot auto-target a breast-care sales follow-up",async()=>{
- const medical="Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？\n請問有結節的人可以參加？";
- assert.equal(isExplicitRm68Interest(medical),true);
- assert.equal(isRm68ClinicalConcern(medical),true);
- let params,sql;
- await recordRm68CustomerInterest({
-  contactId:9265,messageId:22844,text:medical,clinicConfig:config,
-  database:{query:async(q,p)=>{sql=q;params=p;return{rows:[{verified:true,treatment_updated:false,event_recorded:true}]};}},
- });
- assert.equal(params[5],false);
- assert.match(sql,/AND \$6::boolean=TRUE/);
- assert.match(sql,/medicalReviewNeeded/);
-});
-
-test("concrete breast lump safety questions block routine promotion media but not ordinary RM68 information",()=>{
- const {hasClinicalMediaRisk}=require("../src/utils/aiReviewPolicy");
- for(const text of [
-  "胸有瘤可以做吗？","胸部有瘤适合吗？","請問有結節的人可以參加？",
-  "I have a breast lump. Is this safe?","乳腺结节可以护理吗",
- ])assert.equal(hasClinicalMediaRisk(text),true,text);
- for(const text of [
-  "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣",
-  "请问胸部护理 RM68 还有名额吗？"
- ])assert.equal(hasClinicalMediaRisk(text),false,text);
-});
-
-test("the RM68 clinical-intent detector includes natural Chinese breast-tumor wording",()=>{
- const {isRm68ClinicalConcern}=require("../src/utils/neutroRm68InterestEvidence");
- for(const value of ["胸有瘤可以做吗？","胸部有瘤","乳瘤","乳腺结节"])
-  assert.equal(isRm68ClinicalConcern(value),true,value);
+ assert.match(server,/isBreastLumpConcern\(text\)/);
+ assert.match(server,/reviewType = "clinical"/);
+ assert.match(server,/setAiReviewAttention\(/);
 });
