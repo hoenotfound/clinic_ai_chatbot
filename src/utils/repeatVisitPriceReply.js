@@ -15,9 +15,14 @@ const MAX_SESSION_AGE_MS = 3 * 60 * 60 * 1000;
 function resolveRepeatVisitPriceReply({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
   language = "zh", now = Date.now(), allowDirectNamedService = false,
+  modelPricingStage = null,
 } = {}) {
   const current = String(customerText || "").trim();
-  if (!current || !SECOND_VISIT.test(current) || !PRICE_WORDS.test(current) ||
+  // Model classification helps with natural paraphrases, but cannot authorize a
+  // price or treatment. All existing customer/staff/time checks still apply.
+  const laterSessionIntent = SECOND_VISIT.test(current) ||
+    modelPricingStage === "subsequent_session";
+  if (!current || !laterSessionIntent || !PRICE_WORDS.test(current) ||
       !hasExplicitPriceRequest(current) || TOPIC_RESET.test(current) ||
       hasClinicalMediaRisk(current)) return null;
 
