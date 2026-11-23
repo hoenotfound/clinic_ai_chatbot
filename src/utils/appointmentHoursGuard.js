@@ -224,7 +224,26 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   if(!opening.length)return {status:"closed",...info};
   if(selected<today.date)return {status:"past",...info};
   let times=timesInText(customerText);
-  if(!times.length)times=timesInText(appointmentPreference);
+  if(!times.length){
+    const history=recentCustomerMessages.length?recentCustomerMessages:
+      recentCustomerTexts.map(content=>({content,createdAt:receivedAt}));
+    for(const item of history){
+      const content=typeof item==="string"?item:String(item?.content||"");
+      const at=typeof item==="string"?receivedAt:
+        (item.createdAt||item.created_at||item.pricingCreatedAtMs||null);
+      const timestamp=new Date(at).getTime();
+      if(!Number.isFinite(timestamp)||timestamp>Date.parse(now)+120000||
+         Date.parse(now)-timestamp>36*3600000)continue;
+      const referenced=detectDate(content,localParts(timestamp)?.date);
+      if(referenced?.date&&referenced.date!==selected)continue;
+      times=timesInText(content);
+      if(times.length)break;
+    }
+  }
+  // The AI's structured booking metadata is not evidence that the customer
+  // selected that time. It cannot turn "Tuesday" into "Tuesday 2 PM".
+  if(!times.length&&trustPreferenceWithoutCustomer)
+    times=timesInText(appointmentPreference);
   if(!times.length){
     const daypart=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|morning|afternoon|evening|pagi|petang|malam|tengah hari)/iu;
     const currentDaypart=daypart.test(customerText);
