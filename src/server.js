@@ -805,10 +805,18 @@ async function processIncomingMessage(
       // health questions either. Do not overwrite an existing staff review,
       // or alert after staff has already answered this exact inbound turn.
       const actionable=manualOnlySecondaryAttention(incoming.text);
-      if(actionable && !contact.needs_attention &&
+      if(actionable &&
          !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
         try {
-          await contactsRepo.setAttention(contact.id,true,actionable.reason);
+          if(actionable.kind==="health" && contact.mode==="ai"){
+            // Manual-only does not imply AI eligibility. Record the original
+            // clinical question for staff without sending any AI reply.
+            await contactsRepo.setAiReviewAttention(
+              contact.id,savedInbound.id,
+              String(incoming.text||"").trim().slice(0,350),"clinical");
+          } else if(!contact.needs_attention){
+            await contactsRepo.setAttention(contact.id,true,actionable.reason);
+          }
         } catch(err){
           console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
         }
