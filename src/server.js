@@ -1330,6 +1330,7 @@ async function processIncomingMessage(
     let reviewRequired = false;
     let reviewType = null;
     let clinicalAcknowledgement = null;
+    let rm68ClinicalConcern = false;
     let reviewContinuationTextOnly = false;
     let bookingReady = false;
     let serviceQuery = false;
@@ -1498,7 +1499,7 @@ async function processIncomingMessage(
       // The RM68 thread itself can establish breast-health context even when
       // the customer's next answer is only "硬块就不懂", pain or fever.
       // Keep the clinical decision independent of model intent.
-      const rm68ClinicalConcern=isRm68ClinicalConcern(text) &&
+      rm68ClinicalConcern=isRm68ClinicalConcern(text) &&
         (isExplicitRm68Interest(text) ||
          (hasCampaignConversation(history)&&stillDiscussingCampaign(history)));
       // A model may mistakenly mark a combined RM68 price/clinical enquiry
