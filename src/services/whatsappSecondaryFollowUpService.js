@@ -722,8 +722,6 @@ const CANDIDATES_SQL=`
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
       OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('$4::timestamptz')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
-   AND (rule.slot_hours NOT IN (2,6) OR NOT
-     ${deliveredStaffVideoCaptionSql("c.id","sc.id","inbound.created_at","rule.slot_hours")})
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -840,6 +838,8 @@ const RECHECK_SQL=`
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
       OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('NOW()')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
+   AND (rule.slot_hours NOT IN (2,6) OR NOT
+     ${deliveredStaffVideoCaptionSql("c.id","sc.id","inbound.created_at","rule.slot_hours")})
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
