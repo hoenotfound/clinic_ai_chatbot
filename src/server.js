@@ -38,7 +38,7 @@ const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPri
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartumBudgetQuote");
-const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
+const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -2236,9 +2236,15 @@ async function processIncomingMessage(
           verifiedIndividualQuote: Boolean(twoTreatmentQuote) ||
             Boolean(approvedPricingDecision?.prices?.some(item =>
               item.price && reply.includes(item.price))),
+        }) || resolveContextualNeutroComboQuestion({
+          customerText:text,history,
+          services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          language:mediaLanguage,
         }) : null;
     if (comboOfferDecision) {
-      reply = comboOfferDecision.mode === "direct"
+      reply = ["direct","contextual"].includes(comboOfferDecision.mode)
         ? comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
       console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
