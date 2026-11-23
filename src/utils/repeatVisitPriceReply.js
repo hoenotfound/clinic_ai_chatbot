@@ -87,8 +87,8 @@ function resolveRepeatVisitPriceReply({
       Number.isFinite(turn.pricingCreatedAtMs) &&
       now - turn.pricingCreatedAtMs >= 0 &&
       now - turn.pricingCreatedAtMs <= MAX_SESSION_AGE_MS &&
-      /(?:First[\\s-]*Trial|首次体验|首次體驗|体验优惠|體驗優惠|体验价|體驗價)/iu.test(pricingMessageText(turn)) &&
-      /\\b(?:RM|MYR)\\s*[1-9]\\d+/iu.test(pricingMessageText(turn)) &&
+      /(?:First[\s-]*Trial|首次体验|首次體驗|体验优惠|體驗優惠|体验价|體驗價)/iu.test(pricingMessageText(turn)) &&
+      /\b(?:RM|MYR)\s*[1-9]\d+/iu.test(pricingMessageText(turn)) &&
       treatmentMentions(pricingMessageText(turn)).includes(selected));
   const extendedTimestampProof = Number.isFinite(selectedAt) &&
     selectedAt <= now + 60_000 && now - selectedAt <= 72 * 3600_000 &&
