@@ -221,6 +221,8 @@ test("ad creative provides context unless newer verified secondary customer choi
  assert.match(secondary,/const confirmedTreatment=candidate\.recovery_no_selection\?null:choice\.treatment/);
  assert.match(secondary,/const effectivePolicy=unsafeTopic[\s\S]{0,220}confirmedTreatment/);
  assert.match(secondary,/const followupTreatment=generalOnly\?null:/);
- assert.match(secondary,/if\(slot===20 && !candidate\.recovery_no_selection && !generalOnly/);
+ assert.match(secondary,/const contextualAiEnabled = !candidate\\.recovery_no_selection && !generalOnly/);
+ assert.match(secondary,/WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED/);
+ assert.match(secondary,/WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED/);
  assert.match(personalized,/candidate\.adFollowUpPolicy/);
 });
