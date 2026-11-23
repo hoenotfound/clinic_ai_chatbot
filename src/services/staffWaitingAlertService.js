@@ -388,7 +388,8 @@ realtimeEvents.subscribe("conversation_changed", (payload) => {
   if (
     payload?.reason === "message" ||
     payload?.reason === "message_updated" ||
-    payload?.reason === "contact_state"
+    (payload?.reason === "contact_state" &&
+     payload?.followUpStateUnchanged !== true)
   ) {
     staffWaitingChangeSignal();
   }
