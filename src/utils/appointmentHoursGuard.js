@@ -195,6 +195,11 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
       const timestamp=new Date(at).getTime();
       if(!Number.isFinite(timestamp)||timestamp>Date.parse(now)+120000||
          Date.parse(now)-timestamp>36*3600000)continue;
+      const visitIntent=/(?:预约|預約|安排|过来|過來|来店|來店|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|\b(?:appointment|booking|book|visit|slot|available|come|temujanji|janji temu)\b)/iu;
+      const bareDate=/^(?:今天|明天|后天|後天|(?:下(?:个|個)?)?(?:星期|周|週|礼拜)[一二三四五六日天]|today|tomorrow|(?:next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))[？?.!！。\s]*$/iu;
+      if(!visitIntent.test(content)&&!bareDate.test(content))continue;
+      if(/(?:优惠|促销|价格|价钱|活动|promotion|discount|promo|price|offer|diskaun)/iu.test(content)&&
+         !/(?:预约|預約|\b(?:appointment|book|visit)\b)/iu.test(content))continue;
       const local=localParts(timestamp);
       if(!local)continue;
       const found=detectDate(content,local.date);
@@ -268,11 +273,16 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   if(!hours?.weekly)return {reply:original,blocked:false,issue:{status:"unconfigured"}};
   const bookingContext=/(?:预约|預約|约时间|約時間|安排|空档|空檔|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|营业|營業|休息|开门|開門|关门|關門|\b(?:appointment|book|booking|visit|slot|available|availability|open|closed|temujanji|janji temu|pukul|boleh datang|boleh book)\b)/iu;
   const shortDay=/^(?:今天|明天|后天|後天|(?:下(?:个|個)?)?(?:星期|周|週|礼拜)[一二三四五六日天]|\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)[？?.!！。\s]*$/iu;
-  const inboundAppointment=(bookingContext.test(customerText)||
-    timesInText(customerText).length>0||
-    (String(customerText).trim().length<=25&&shortDay.test(customerText))) &&
-    !/(?:优惠|促销|价格|价钱|折扣|活动|promotion|discount|promo|price|offer|diskaun)/iu
-      .test(customerText);
+  const promotional=/(?:优惠|促销|价格|价钱|折扣|活动|promotion|discount|promo|price|offer|diskaun)/iu.test(customerText);
+  const explicitBooking=/(?:预约|預約|约时间|約時間|安排|空档|空檔|有空|\b(?:appointment|booking|book|visit|slot|temujanji|janji temu)\b)/iu.test(customerText);
+  const promotionalOnly=promotional&&!explicitBooking;
+  const inboundAppointment=!promotionalOnly&&(
+    bookingContext.test(customerText)||timesInText(customerText).length>0||
+    (String(customerText).trim().length<=25&&shortDay.test(customerText)));
+  // A spurious model booking_ready on a pricing/promotion enquiry must not
+  // replace a valid price reply with an unrelated closed-day apology.
+  if(promotionalOnly&&requireValidPreference)
+    return {reply:original,blocked:true,issue:{status:"not_appointment"}};
   const issue=inboundAppointment||requireValidPreference
     ? evaluateAppointmentHours({
         hours,customerText,recentCustomerTexts,recentCustomerMessages,
@@ -282,19 +292,53 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   // The response itself is a separate scheduling proposal: a customer can
   // ask "next week?" while the AI offers an invalid Monday unprompted.
   // Exclude descriptive opening-hours statements and genuine corrections.
-  const replyScheduling=/(?:预约|預約|安排|有空|空档|空檔|方便|可以.*(?:来|來|过来|過來|预约|預約)|\b(?:appointment|book|booking|slot|available|visit|come|suit|work(?:s)? for you|temujanji|janji temu|boleh datang)\b)/iu.test(original);
-  const alreadyCorrects=/(?:休息|不营业|不營業|没有营业|沒有營業|\bclosed\b|\btutup\b)/iu.test(original) &&
+  const replyScheduling=/(?:预约|預約|安排|有空|空档|空檔|方便|可以.*(?:来|來|过来|過來|预约|預約)|\b(?:appointment|book|booking|slot|available|visit|come|suit|work(?:s)? for you|temujanji|janji temu|boleh datang)\b)/iu;
+  const closureWords=/(?:休息|不营业|不營業|没有营业|沒有營業|\bclosed\b|\btutup\b)/iu;
+  const alreadyCorrects=closureWords.test(original)&&
     !/(?:今天|today|hari ini).{0,35}(?:确认|確認|check|semak|看空档|看空檔|安排)/iu.test(original);
-  const proposalDate=replyScheduling&&!alreadyCorrects
-    ? detectDate(original,localParts(now)?.date) : null;
   let outboundIssue=null;
-  if(proposalDate?.ambiguous) {
-    // Do not invent one specific date from multiple suggestions.
-    outboundIssue={status:"ambiguous"};
-  } else if(proposalDate?.date) {
-    outboundIssue=evaluateAppointmentHours({
-      hours,customerText:original,receivedAt:now,now,durationMinutes,
-    });
+  // Validate each positive suggestion independently. "Monday is closed,
+  // Tuesday?" must be allowed, but "Monday or Tuesday?" is unsafe.
+  const segments=original.split(/[\n。！？?!，,；;]/u).map(s=>s.trim()).filter(Boolean);
+  for(const segment of segments){
+    if(closureWords.test(segment)||!replyScheduling.test(segment))continue;
+    const anchor=localParts(now)?.date;
+    const date=detectDate(segment,anchor);
+    if(date?.date){
+      const inspected=evaluateAppointmentHours({
+        hours,customerText:segment,receivedAt:now,now,durationMinutes,
+      });
+      if(["closed","past","outside_hours"].includes(inspected.status)){
+        outboundIssue=inspected;break;
+      }
+    }else if(date?.ambiguous){
+      // Multiple date alternatives in one proposal. Evaluate each weekday
+      // separately, not as one arbitrary selected date.
+      const options=[
+        ...(segment.match(/(?:下(?:个|個)?)?(?:星期|周|週|礼拜|禮拜)[一二三四五六日天]/gu)||[]),
+        ...(segment.match(/\b(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/giu)||[]),
+      ];
+      for(const option of options){
+        const result=evaluateAppointmentHours({
+          hours,customerText:option,receivedAt:now,now,durationMinutes,
+        });
+        if(["closed","past","outside_hours"].includes(result.status)){
+          outboundIssue=result;break;
+        }
+      }
+      if(outboundIssue)break;
+    }
+  }
+  // One unsplit, natural standalone suggestion can be just "Monday 2pm".
+  if(!outboundIssue&&replyScheduling.test(original)&&segments.length===1){
+    const date=detectDate(original,localParts(now)?.date);
+    if(date?.date){
+      const inspected=evaluateAppointmentHours({
+        hours,customerText:original,receivedAt:now,now,durationMinutes,
+      });
+      if(["closed","past","outside_hours"].includes(inspected.status))
+        outboundIssue=inspected;
+    }
   }
   const invalid=["closed","past","outside_hours"];
   const conflict=invalid.includes(issue.status)?issue:
