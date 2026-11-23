@@ -15,6 +15,14 @@ const WITHDRAWN=[
  /(?:^|[，,。!！\s])(?:暂时|暫時)?(?:不要了|不用了|不需要了|不做了|不考虑了|不考慮了)(?:[。!！\s😊🙏]*$)/iu,
  /(?:没兴趣|沒興趣|不感兴趣|不感興趣|不想(?:做|考虑|考慮)|不想要(?:这个|這個|骨盆|3\s*d|9\s*d|疗程|療程|护理|護理)|不要(?:做|安排)(?:这个|這個)?|不要\s*(?:骨盆|3\s*d|9\s*d|小颜|小顏|脉冲|脈衝)|\b(?:not interested|no longer interested|don't want (?:it|this|the treatment)|do not want (?:it|this|the treatment)|(?:don't|do not)\s+want\s+(?:(?:the|this|that|any|a|my)\s+)?(?:pelvic|pelvis|3\s*d|9\s*d|facial|posture|treatment|rawatan|session|therapy|care)\b|rather not|not for me|tak berminat|tak nak|tak mahu|tidak berminat)\b)/iu,
 ];
+// Do not create new reminders after a polite decision to contact us later.
+// A question or an explicit new request is not a deferral.
+const POLITE_FUTURE_BOOKING=/(?:有需要(?:我)?(?:再|就)(?:预约|預約|联系|聯繫|找你|通知)|(?:之后|之後|下次|下回)(?:有需要)?再(?:来|來|安排|预约|預約)|(?:我|让|讓)?先(?:解决|解決).{0,30}(?:之后|之後|再来|再來)|(?:我)?(?:再)?考虑考虑|(?:我)?(?:再)?考慮考慮|(?:i(?:'ll| will)?|we(?:'ll| will)?)\s*(?:book|contact|reach out)\s*(?:when|if)\s*(?:needed|ready|later)|(?:let me decide later))/iu;
+const REMOTE_JOHOR_STATEMENT=/^(?:(?:哦|噢|啊|sorry|不好意思|oh)[，,\s]*)?(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
+function customerPolitelyDeferred(value) {
+  return !/[?？]/u.test(value) &&
+    (POLITE_FUTURE_BOOKING.test(value) || REMOTE_JOHOR_STATEMENT.test(value));
+}
 const DEFERRED=/(?:^(?:我|让我|讓我|先|暂时|暫時)?(?:再)?(?:考虑|考慮)(?:一下|看看|下|先)?[吧哦啊。.!！\s😊]*$|^(?:我再|我会再|我會再|迟点|遲點|过后|過後|之后|之後)(?:联系|聯繫|找|告诉|告訴|回复|回覆|通知)你|(?:let me (?:think|consider)|i(?:'ll| will) (?:let you know|get back(?: to you)?|contact you)|saya (?:akan )?(?:hubungi|beritahu) (?:nanti|kemudian)))/iu;
 
 // A customer may reject one treatment and select another in the SAME turn.
@@ -40,7 +48,7 @@ function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
    if(replacement)return {status:"selected",treatment:replacement};
    return {status:"declined",treatment:null};
  }
- if(DISTANCE_OBJECTION.test(value) || DEFERRED.test(value))
+ if(DISTANCE_OBJECTION.test(value) || DEFERRED.test(value) || customerPolitelyDeferred(value))
    return {status:"deferred",treatment:null};
  // "产后" by itself describes a concern, not a verified switch to the
  // separately named postpartum treatment. Keep the earlier signed choice.
@@ -136,4 +144,5 @@ function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinic
 }
 module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,
  chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,WITHDRAWN,DEFERRED,
+  customerPolitelyDeferred,
  DISTANCE_OBJECTION,DISTANCE_OBJECTION_SQL};
