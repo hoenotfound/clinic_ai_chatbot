@@ -1303,6 +1303,7 @@ async function processIncomingMessage(
     let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
+    let modelPricingStage = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1432,6 +1433,7 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        modelPricingStage = parsedReply.pricingStage || null;
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -2317,7 +2319,13 @@ async function processIncomingMessage(
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
+    // The model can correctly report an unknown later-session rate as an
+    // INFORMATION review. Recover only the independently verified staff
+    // handoff, never a quote, trial graphic or a clinical/safety review.
+    const repeatVisitInfoReview = flagged && reviewRequired &&
+      reviewType === "information" && modelPricingStage === "subsequent_session";
+    let repeatVisitPriceReply = !pelvicPackageComparison &&
+      (!flagged || repeatVisitInfoReview) && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -2327,13 +2335,23 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions, language: mediaLanguage,
+            modelPricingStage,
           })
         : resolveRepeatVisitPriceReply({
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            language: mediaLanguage,
+            language: mediaLanguage, modelPricingStage,
           })
       : null;
+    if (repeatVisitInfoReview && repeatVisitPriceReply) {
+      const evidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (repeatVisitPriceReply.mode !== "staff_handoff" ||
+          evidence?.pendingClinicalReview !== false) {
+        repeatVisitPriceReply = null;
+      }
+    }
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
       if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
@@ -2874,6 +2892,12 @@ async function processIncomingMessage(
     }
     if (reviewContinuationTextOnly) {
       await auditResultMediaEarlyExit("review_continuation_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
+    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
+      // A later-session question cannot re-enter ordinary First Trial graphics
+      // through an earlier approved promotional-pricing decision.
+      await auditResultMediaEarlyExit("subsequent_session_text_only");
       return { wasFirstMessage, keywordReason };
     }
     if (pelvicPackageComparison) {

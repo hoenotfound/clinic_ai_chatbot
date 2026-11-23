@@ -1140,3 +1140,72 @@ test("unresolved staff menu cannot re-send stale pulse service/video",async()=>{
  assert.match(saved[2],/practitioner|中医师|Pengamal/);
  assert.doesNotMatch(saved[2],/脉冲波调理|3D 小颜术|9D 逆龄抗衰/);
 });
+
+test("early secondary AI skip and stop are never replaced by generic follow-ups",async()=>{
+  for(const [slot,action] of [[2,"skip"],[6,"stop_sequence"]]){
+    const f=fake({rows:[{...candidate,slot_hours:slot,media_key:null}]});
+    let decisions=0;
+    const result=await worker.runOnce({
+      ...f,
+      env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+      getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+        automatedFollowUp:{message:"2h",additionalSteps:[
+          {message:"6h"},{message:"20h"}]}}),
+      personalize20h:async()=>{decisions++;return{
+        ok:false,action,code:"secondary_contextual_ai_"+action,
+      };},
+    });
+    assert.equal(decisions,1,"slot "+slot);
+    assert.equal(result.attempted,1);
+    assert.equal(result.accepted,0);
+    assert.equal(f.sends,0);
+    assert.equal(f.calls.some(x=>x.save),false);
+    assert.equal(f.calls.find(x=>x.sql?.includes("status='blocked'"))?.args?.[1],
+      "secondary_contextual_ai_"+action);
+  }
+});
+
+test("secondary AI human-review decision creates staff attention without sending",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:2,media_key:null}]});
+  const alerts=[];
+  const result=await worker.runOnce({
+    ...f,
+    env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+    getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+      automatedFollowUp:{message:"2h",additionalSteps:[
+        {message:"6h"},{message:"20h"}]}}),
+    contacts:{
+      getContactById:async()=>({...contact}),
+      setAttention:async(...args)=>{alerts.push(args);return {...contact,needs_attention:true};},
+    },
+    personalize20h:async()=>({
+      ok:false,action:"human_review",code:"secondary_contextual_ai_human_review",
+    }),
+  });
+  assert.equal(result.attempted,1);
+  assert.equal(result.accepted,0);
+  assert.equal(f.sends,0);
+  assert.equal(f.calls.some(x=>x.save),false);
+  assert.equal(alerts.length,1);
+  assert.equal(alerts[0][0],80);
+  assert.equal(alerts[0][1],true);
+  assert.match(alerts[0][2],/staff review/i);
+});
+
+test("secondary AI review does not flag a staff-owned contact after ownership changes",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:2,media_key:null}]});
+  const alerts=[];
+  await worker.runOnce({
+    ...f,env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+    getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+      automatedFollowUp:{message:"2h",additionalSteps:[
+        {message:"6h"},{message:"20h"}]}}),
+    contacts:{
+      getContactById:async()=>({...contact,mode:"human"}),
+      setAttention:async(...args)=>alerts.push(args),
+    },
+    personalize20h:async()=>({ok:false,action:"human_review"}),
+  });
+  assert.equal(alerts.length,0);
+  assert.equal(f.sends,0);
+});

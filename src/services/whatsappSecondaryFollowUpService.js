@@ -1068,12 +1068,40 @@ async function runOnce({
         ?textWithoutVideo(replyLanguage):safeText;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
-         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+      const contextualAiEnabled = !candidate.recovery_no_selection && !generalOnly &&
+        (slot===20
+          ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
+          : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
+      if(contextualAiEnabled){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
-          const code=personalized?.code||"secondary_20h_ai_unavailable";
-          const fallback=SAFE_20H_FALLBACK_CODES.has(code)
+          const code=personalized?.code||"secondary_contextual_ai_unavailable";
+          if(["skip","stop_sequence","human_review"].includes(personalized?.action)){
+            // Never replace a do-not-send decision with generic sales copy.
+            // A clinical/staff review must also be visible in Inbox: silently
+            // blocking one slot would otherwise leave the patient unassisted.
+            if(personalized.action==="human_review"){
+              try {
+                if(await preSendCheck()){
+                  const reviewOwner=await contacts.getContactById(candidate.contact_id);
+                  if(reviewOwner?.mode==="ai" &&
+                     reviewOwner.whatsapp_sender_key===env.WHATSAPP_SECONDARY_SENDER_KEY &&
+                     String(reviewOwner.whatsapp_sender_id)===String(candidate.sender_id)){
+                    await contacts.setAttention(candidate.contact_id,true,
+                      "Secondary WhatsApp AI follow-up needs staff review. Check the latest customer request before contacting them.");
+                  }
+                }
+              } catch(error){
+                console.error("[Secondary follow-up] Could not alert staff after AI review:",
+                  error?.message||error);
+              }
+            }
+            await fail(code);
+            continue;
+          }
+          // Preserve the pre-existing 20h neutral fallback for transient errors.
+          // A failed early-stage review must not fall back to an unreviewed send.
+          const fallback=slot===20 && SAFE_20H_FALLBACK_CODES.has(code)
             ? neutral20hFallbackText(replyLanguage):null;
           if(!fallback){await fail(code);continue;}
           outboundText=fallback;
