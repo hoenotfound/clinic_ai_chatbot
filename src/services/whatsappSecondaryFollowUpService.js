@@ -1076,8 +1076,25 @@ async function runOnce({
         if(!personalized?.ok){
           const code=personalized?.code||"secondary_contextual_ai_unavailable";
           if(["skip","stop_sequence","human_review"].includes(personalized?.action)){
-            // The model made a do-not-send decision on the verified conversation.
-            // Never replace that decision with a generic sales reminder.
+            // Never replace a do-not-send decision with generic sales copy.
+            // A clinical/staff review must also be visible in Inbox: silently
+            // blocking one slot would otherwise leave the patient unassisted.
+            if(personalized.action==="human_review"){
+              try {
+                if(await preSendCheck()){
+                  const reviewOwner=await contacts.getContactById(candidate.contact_id);
+                  if(reviewOwner?.mode==="ai" &&
+                     reviewOwner.whatsapp_sender_key===env.WHATSAPP_SECONDARY_SENDER_KEY &&
+                     String(reviewOwner.whatsapp_sender_id)===String(candidate.sender_id)){
+                    await contacts.setAttention(candidate.contact_id,true,
+                      "Secondary WhatsApp AI follow-up needs staff review. Check the latest customer request before contacting them.");
+                  }
+                }
+              } catch(error){
+                console.error("[Secondary follow-up] Could not alert staff after AI review:",
+                  error?.message||error);
+              }
+            }
             await fail(code);
             continue;
           }
