@@ -1219,7 +1219,10 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
    run,readNextDue,database,env,events,createTimer,now,
    // Keep full send guards; skip only when the fresh hint proves no due slot.
    preflightDueHint:true,
-   quietHoursPreflight:[CANDIDATES_SQL,RECHECK_SQL].every(hasSecondaryClinicQuietHoursGuard),
+   // The service RECHECK_SQL binds $4 to sender key, not wall-clock time.
+   // Candidate discovery alone gates new sends and hard-blocks 00:00-06:59.
+   // Do not treat the differently bound recheck SQL as a time predicate.
+   quietHoursPreflight:hasSecondaryClinicQuietHoursGuard(CANDIDATES_SQL),
  });
  return scheduler.start();
 }
