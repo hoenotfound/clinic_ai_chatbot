@@ -1129,7 +1129,9 @@ function stop() {
 function freeEntryDueEventRequiresWake(type, payload) {
   if (type === "conversation_changed") {
     if (payload?.reason === "reaction" ||
-        payload?.reason === "lead_assignment_recovered") return false;
+        payload?.reason === "lead_assignment_recovered" ||
+        (payload?.reason === "contact_state" &&
+          payload?.followUpStateUnchanged === true)) return false;
     // Only a signed, already-processed automated follow-up receipt is
     // explicitly marked presentation-only. An unverified receipt still wakes.
     if (payload?.reason === "delivery_status" &&
