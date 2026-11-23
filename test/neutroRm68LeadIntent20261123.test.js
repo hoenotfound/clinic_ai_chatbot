@@ -113,7 +113,17 @@ test("an RM68 Booking Ready outcome preserves slot but cannot write a herbal tre
  });
  assert.equal(guarded.treatment,null);
  assert.equal(guarded.appointmentPreference,"24/11 12pm");
- assert.match(guarded.staffSummary,/RM68 breast-care event/);
+ assert.match(guarded.staffSummary,/RM68 enquiry/);
+ assert.equal(sanitizeRm68BookingReadyDetails({
+  details:modelDetails,customerText:"24/11 12pm 方便吗",
+  history:[{role:"user",content:"24/11 12pm 方便吗"}],
+  channel:"whatsapp",clinicConfig:config,
+ }).treatment,null,"do not infer herbal care when the RM68 opener was trimmed");
+ assert.equal(sanitizeRm68BookingReadyDetails({
+  details:modelDetails,customerText:"我想了解草药胸部疏通乳腺护理",
+  history:[],channel:"whatsapp",clinicConfig:config,
+ }).treatment,"草药胸部疏通乳腺护理",
+ "an explicit customer-named herbal service remains allowed");
  assert.equal(modelDetails.treatment,"草药胸部疏通乳腺护理",
   "do not mutate original model output");
  assert.deepEqual(sanitizeRm68BookingReadyDetails({
