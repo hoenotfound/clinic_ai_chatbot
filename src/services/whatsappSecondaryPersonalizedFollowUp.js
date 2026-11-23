@@ -87,7 +87,7 @@ async function createPersonalized20h({
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
-     instruction:"Second WhatsApp number; " + slot + "-hour follow-up. Read the verified conversation and decide if this check-in is wanted. For deferrals, polite closing, customer intent to book later, booking confirmation, staff ownership or medical concern: choose skip, stop_sequence or human_review. Otherwise send a helpful, short, natural answer in the customer language. Never invent a price, appointment or claim to attach a video." +
+     instruction:"Second WhatsApp number; " + slot + "-hour follow-up. Read the verified conversation and decide if this check-in is wanted. For deferrals, polite closing, customer intent to book later, booking confirmation, staff ownership or medical concern: choose skip, stop_sequence or human_review. Otherwise send a helpful, short, natural answer in the customer language. No prices unless the customer explicitly asks, and never invent a price, appointment or claim to attach a video." +
        (candidate.staff_discussed_followup_topic
          ? " This treatment was suggested by staff in the conversation, not explicitly selected by the customer. Refer to the staff recommendation without claiming the customer chose or requested that treatment."
          : ""),
