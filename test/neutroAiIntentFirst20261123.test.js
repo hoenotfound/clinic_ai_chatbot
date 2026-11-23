@@ -73,6 +73,31 @@ test("returning customer treatment choice can be older than a day only with a fr
  assert.equal(priceRoute(text,"subsequent_session",staff),null,"staff-authored price messages do not transfer AI ownership");
 });
 
+test("do not repeat a recent First Trial quote when customer asks about later-session pricing",async()=>{
+ const {createNeutroSubsequentPricingService}=
+   require("../src/services/neutroSubsequentPricingService");
+ const txt="第一次体验后又是什么价格？";
+ const history=pricingConversation(txt);
+ const resolve=createNeutroSubsequentPricingService({
+   wasMediaRecentlySent:async()=>false,
+   hasRecentAcceptedPackageSuggestion:async()=>false,
+ });
+ const result=await resolve({
+   contactId:9218,inboundMessageId:23138,customerText:txt,
+   conversationHistory:history,services,serviceAliases:aliases,
+   promotions:[{name:"3D First Trial",linkedService:"3D 小颜术",
+     sendOnPriceQuery:true,imageUrl:"https://example.test/promo-images/32",
+     caption:"3D First Trial RM388",
+     pricing:{offer:388,normal:888,currency:"MYR"},
+     validFrom:"2026-11-01",validUntil:"2026-12-24"}],
+   language:"zh",modelPricingStage:"subsequent_session",now,
+ });
+ assert.equal(result?.mode,"staff_handoff");
+ assert.match(result.reply,/续做|单次/u);
+ assert.doesNotMatch(result.reply,/RM\s*(388|888)/u);
+ assert.match(result.staffReason,/subsequent/i);
+});
+
 test("structured AI price-stage classification is optional and validated",()=>{
  const base={reply:"我帮你确认续做价格 😊",outcome:"normal",priceQuery:true,
    packageQuery:false,serviceQuery:false,treatment:null,branch:null,
