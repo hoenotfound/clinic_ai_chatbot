@@ -19,7 +19,7 @@ const WITHDRAWN=[
 // A question or an explicit new request is not a deferral.
 const POLITE_FUTURE_BOOKING=/(?:有需要(?:我)?(?:再|就)(?:预约|預約|联系|聯繫|找你|通知)|(?:之后|之後|下次|下回)(?:有需要)?再(?:来|來|安排|预约|預約)|(?:我|让|讓)?先(?:解决|解決).{0,30}(?:之后|之後|再来|再來)|(?:我)?(?:再)?考虑考虑|(?:我)?(?:再)?考慮考慮|(?:i(?:'ll| will)?|we(?:'ll| will)?)\s*(?:book|contact|reach out)\s*(?:when|if)\s*(?:needed|ready|later)|(?:let me decide later))/iu;
 const REMOTE_JOHOR_STATEMENT=/^(?:(?:哦|噢|啊|sorry|不好意思|oh)[，,\s]*)?(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
-const POLITE_REMOTE_CLOSING=/^(?:(?:哦|噢|啊|嗯|sorry|不好意思|oh|ok|谢谢|謝謝|thank\s+you|thanks|tq|terima\s+kasih)[，,、.!！。\s😊🙏]*){1,5}(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
+const POLITE_REMOTE_CLOSING=/^(?:(?:哦|噢|啊|嗯|sorry|不好意思|oh|ok|谢谢(?:你)?|謝謝(?:你)?|thank\s+you|thanks|tq|terima\s+kasih)[，,、.!！。\s😊🙏]*){1,5}(?:我(?:是|在|住在)?|i(?:'m| am)\s+(?:in|from)\s+)?(?:jb|johor(?:\s+bahru)?|新山|柔佛|penang|槟城|檳城)(?:的|哦|啊|呢|啦|咯|呀|了)?[。.!！\s😊🙏]*$/iu;
 function customerPolitelyDeferred(value) {
   // Location alone is not opt-out: do not suppress a price, service or
   // scheduling question just because a customer happens to live in JB.
