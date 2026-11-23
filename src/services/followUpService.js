@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
 const { adaptNeutroAppointmentInvitation } = require("../utils/appointmentInviteContinuity");
+const { guardAppointmentReply } = require("../utils/appointmentHoursGuard");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const policyHoldRepo = require("../db/whatsappFollowUpPolicyHoldRepo");
@@ -1667,6 +1668,21 @@ async function sendCandidate(candidate) {
       customerTexts: [...(candidate.recent_inbound_messages || [])].reverse(),
       language, businessConfig: clinicConfig,
     });
+  }
+  // Final textual invitation boundary: the AI and fixed templates may not
+  // propose a date on a configured closed day. Does not modify consent, media,
+  // sender routing or real staff-confirmed bookings.
+  if (clinicConfig.hours?.weekly && followUpAiService.isSchedulingNudge(followUpMessage)) {
+    const checked = guardAppointmentReply({
+      hours: clinicConfig.hours, customerText: followUpMessage,
+      reply: followUpMessage, receivedAt: new Date(), now: new Date(),
+      language,
+    });
+    if (checked.blocked && checked.reply !== followUpMessage) {
+      followUpMessage = checked.reply;
+      console.info("[Appointment hours] corrected follow-up invitation contact=" +
+        candidate.contact_id + " reason=" + checked.issue?.status);
+    }
   }
   const safeFollowUp = rm68FollowUp
     ? { message: rm68FollowUp.message, suppressMedia: false }
