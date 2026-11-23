@@ -37,7 +37,8 @@ const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAccepted
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const { runFollowUpRead } = require("../utils/namedFollowUpRead");
-const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
+  hasSecondaryClinicQuietHoursGuard}=
   require("../utils/secondaryDueTimeScheduler");
 
 // Primary-parity 24h service follow-ups are separate from opted-in marketing.
@@ -1218,6 +1219,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
    run,readNextDue,database,env,events,createTimer,now,
    // Keep full send guards; skip only when the fresh hint proves no due slot.
    preflightDueHint:true,
+   quietHoursPreflight:[CANDIDATES_SQL,RECHECK_SQL].every(hasSecondaryClinicQuietHoursGuard),
  });
  return scheduler.start();
 }
