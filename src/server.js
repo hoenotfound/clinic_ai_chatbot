@@ -69,6 +69,8 @@ const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
 const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
+const {isRm68ClinicalConcern,isExplicitRm68Interest}=
+  require("./utils/neutroRm68InterestEvidence");
 const {sanitizeRm68BookingReadyDetails}=require("./utils/neutroRm68BookingSafety");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
@@ -88,7 +90,8 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { campaignContextReply, guardCampaignPriceConflicts,
-  configuredFirstReplyImage, isCampaignAvailabilityQuestion } =
+  configuredFirstReplyImage, isCampaignAvailabilityQuestion,
+  hasCampaignConversation,stillDiscussingCampaign } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -1492,12 +1495,19 @@ async function processIncomingMessage(
         } = languageCheckedReply);
       }
 
+      // The RM68 thread itself can establish breast-health context even when
+      // the customer's next answer is only "硬块就不懂", pain or fever.
+      // Keep the clinical decision independent of model intent.
+      const rm68ClinicalConcern=isRm68ClinicalConcern(text) &&
+        (isExplicitRm68Interest(text) ||
+         (hasCampaignConversation(history)&&stillDiscussingCampaign(history)));
       // A model may mistakenly mark a combined RM68 price/clinical enquiry
       // informational. A breast lump, nodule or tumor requires staff review.
       if (clinicConfig.businessType === "tcm_clinic" &&
           /^neutro\s+sense\b/iu.test(
             String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-          isBreastLumpConcern(text) && !keywordReason && !urgentSafety &&
+          (isBreastLumpConcern(text) || rm68ClinicalConcern) &&
+          !keywordReason && !urgentSafety &&
           !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
           (!flagged || reviewRequired)) {
         flagged = true;
@@ -2566,7 +2576,7 @@ async function processIncomingMessage(
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      clinicalAcknowledgement = isBreastLumpConcern(text)
+      clinicalAcknowledgement = (isBreastLumpConcern(text) || rm68ClinicalConcern)
         ? (mediaLanguage === "ms"
           ? "Jika ada ketulan atau nodul pada payudara, kesesuaian rawatan RM68 tidak boleh dipastikan melalui chat. Sila dapatkan pemeriksaan doktor dahulu. Kami akan minta staf semak pertanyaan anda. 💚"
           : mediaLanguage === "en"
