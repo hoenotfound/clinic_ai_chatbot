@@ -263,6 +263,37 @@ test("the final follow-up step checks invalid promotional appointment proposals"
   assert.doesNotMatch(checked.reply,/本月活动还在进行/);
 });
 
+
+test("Booking Ready requires a customer-provided time or daypart", async () => {
+  const dateOnly=evaluateAppointmentHours({
+    hours,customerText:"明天可以预约吗？",receivedAt:monday,now:laterMonday,
+    appointmentPreference:"明天 2pm",
+  });
+  assert.equal(dateOnly.status,"valid_day");
+  const withDaypart=evaluateAppointmentHours({
+    hours,customerText:"明天下午方便",receivedAt:monday,now:laterMonday,
+    appointmentPreference:"明天下午",
+  });
+  assert.equal(withDaypart.status,"valid_preference");
+  const checked=guardAppointmentReply({
+    hours,customerText:"明天可以预约吗？",
+    reply:"好的，我们帮您确认2pm",appointmentPreference:"明天2pm",
+    receivedAt:monday,now:laterMonday,requireValidPreference:true,
+  });
+  assert.equal(checked.blocked,true);
+  assert.match(checked.reply,/哪一天、几点/);
+});
+test("the most recent pelvic package wins over an older package in chat history", () => {
+  const config={promotions:[{linkedService:"骨盆调理",packages:[
+    {name:"Package A",caption:"2小时30分钟"},
+    {name:"Package B",caption:"60分钟"},
+  ]}]};
+  assert.equal(durationMinutesForPackage({
+    config,customerTexts:["我选 Package B","我之前看过 Package A"],
+    treatment:"骨盆调理",
+  }),60);
+});
+
 test("booking-ready backstop rejects the closed day BEFORE any database mutation", async () => {
   const originalHours=config.hours;
   const originalType=config.businessType;
