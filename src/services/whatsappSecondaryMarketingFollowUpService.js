@@ -528,7 +528,7 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  // valid origin must be newer than 191h ago. Eight days is a conservative
  // superset, including the 8h overdue tolerance of the due-time hint.
  .replace(
-   "FROM messages recent\\n     WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'",
+   "FROM messages recent\n     WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'",
    `FROM whatsapp_free_entry_referrals seed_referral
      JOIN messages recent ON recent.id=seed_referral.origin_message_id
        AND recent.contact_id=seed_referral.contact_id
