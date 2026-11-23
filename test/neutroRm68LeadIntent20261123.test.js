@@ -67,3 +67,15 @@ test("medical concerns may be recorded as RM68 interest but cannot auto-target a
  assert.match(sql,/AND \$6::boolean=TRUE/);
  assert.match(sql,/medicalReviewNeeded/);
 });
+
+test("concrete breast lump safety questions block routine promotion media but not ordinary RM68 information",()=>{
+ const {hasClinicalMediaRisk}=require("../src/utils/aiReviewPolicy");
+ for(const text of [
+  "胸有瘤可以做吗？","請問有結節的人可以參加？",
+  "I have a breast lump. Is this safe?","乳腺结节可以护理吗",
+ ])assert.equal(hasClinicalMediaRisk(text),true,text);
+ for(const text of [
+  "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣",
+  "请问胸部护理 RM68 还有名额吗？"
+ ])assert.equal(hasClinicalMediaRisk(text),false,text);
+});
