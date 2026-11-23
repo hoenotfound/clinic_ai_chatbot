@@ -143,7 +143,7 @@ function createNeutroSubsequentPricingService({
         findServicesInText(pricingMessageText(turn),
           serviceCandidates(services, serviceAliases)).includes(service)
       );
-    if (!promoAccepted && recentTrialText) return {
+    if (recentTrialText) return {
       treatment: service, mode: "staff_handoff",
       reply: textForStage(service, language, "staff_handoff"),
       staffReason: "Customer asked for later-session pricing after receiving the " +
