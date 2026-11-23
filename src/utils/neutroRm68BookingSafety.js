@@ -1,5 +1,6 @@
 "use strict";
 const {isExplicitRm68Interest}=require("./neutroRm68InterestEvidence");
+const {latestCustomerTreatmentChoice}=require("./neutroRm68TreatmentChoice");
 const {isNeutro,hasCampaignConversation,stillDiscussingCampaign,
  isOtherTreatmentQuery}=require("./neutroBreastRm68Campaign");
 // An event name is not a configured treatment choice. Booking readiness may
@@ -13,11 +14,7 @@ function sanitizeRm68BookingReadyDetails({
     !isNeutro(clinicConfig?.businessName||clinicConfig?.clinicName)||
     !original.treatment)return original;
  const latest=String(customerText||"");
- const customerExplicitHerbal=[latest,...(Array.isArray(history)?history
-    .filter(turn=>turn?.role==="user")
-    .map(turn=>String(turn.content||"")):[])]
-   .some(message=>
-     /(?:草药|草藥|herbal).{0,14}(?:胸部|乳腺|breast)|草药胸部疏通乳腺护理/iu.test(message));
+ const customerExplicitHerbal=latestCustomerTreatmentChoice(history,latest,"herbal");
  // The AI must never create herbal-care booking interest from just "RM68",
  // "breast care", or a date/time. A directly customer-named herbal treatment
  // may still be recorded through the existing normal booking flow.
