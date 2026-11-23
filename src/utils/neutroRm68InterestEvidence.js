@@ -9,6 +9,6 @@ function isExplicitRm68Interest(value){
    !/(?:不感兴趣|不感興趣|不想了解|不要这个|不要這個|退订|退訂|stop\s+promotion|not\s+interested)/iu.test(text);
 }
 function isRm68ClinicalConcern(text){
- return /(?:结节|結節|乳瘤|腫瘤|肿瘤|肿块|腫塊|硬块|硬塊|乳腺癌|乳癌|胸痛|乳房痛|乳头溢液|乳頭溢液|红肿|紅腫|\b(?:lump|nodule|cyst|tumou?r|cancer|breast\s+pain|bleed(?:ing)?|discharge|redness|fever|breastfeeding|pregnan\w*)\b)/iu.test(String(text||""));
+ return /(?:结节|結節|乳瘤|胸(?:部)?(?:有)?瘤|腫瘤|肿瘤|肿块|腫塊|硬块|硬塊|乳腺癌|乳癌|胸痛|乳房痛|乳头溢液|乳頭溢液|红肿|紅腫|\b(?:lump|nodule|cyst|tumou?r|cancer|breast\s+pain|bleed(?:ing)?|discharge|redness|fever|breastfeeding|pregnan\w*)\b)/iu.test(String(text||""));
 }
 module.exports={isExplicitRm68Interest,isRm68ClinicalConcern};
