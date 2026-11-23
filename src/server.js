@@ -2804,6 +2804,7 @@ async function processIncomingMessage(
     }
 
     let bookingDurationMinutes = 0;
+    let appointmentCustomerHistory = [];
     const verifiedExistingBooking = Boolean(
       verifiedBookingForHours?.acceptedStaffOffer ||
       (verifiedBookingForHours?.appointmentAt &&
@@ -2821,24 +2822,30 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         clinicConfig.hours?.weekly &&
         (!verifiedExistingBooking || explicitRescheduleForHours)) {
-      const customerHistory = (Array.isArray(history) ? history : [])
+      appointmentCustomerHistory = (Array.isArray(history) ? history : [])
         .filter(item => item?.role === "user")
-        .map(item => String(item.content || ""))
-        .filter(Boolean)
-        .slice(-5)
-        .reverse();
+        .slice(-8)
+        .reverse()
+        .map(item => ({
+          content: typeof item.content === "string" ? item.content : "",
+          // conversationStore attaches this metadata from PostgreSQL
+          // non-enumerably; it never reaches the AI model.
+          createdAt: item.pricingCreatedAtMs ?? null,
+        }))
+        .filter(item => item.content && item.createdAt);
       bookingDurationMinutes = durationMinutesForPackage({
         config: clinicConfig,
-        customerTexts: [text, ...customerHistory],
+        customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
         treatment: details?.treatment || "",
       });
       const checked = guardAppointmentReply({
         hours: clinicConfig.hours, reply, customerText: text,
-        recentCustomerTexts: customerHistory,
+        recentCustomerMessages: appointmentCustomerHistory,
         appointmentPreference: details?.appointmentPreference || "",
         receivedAt: savedInbound.created_at || new Date(),
         now: new Date(), language: mediaLanguage,
         durationMinutes: bookingDurationMinutes,
+        requireValidPreference: bookingReady,
       });
       if (checked.blocked) {
         bookingReady = false;
@@ -2917,6 +2924,7 @@ async function processIncomingMessage(
           customerText: text,
           receivedAt: savedInbound.created_at || new Date(),
           durationMinutes: bookingDurationMinutes,
+          recentCustomerMessages: appointmentCustomerHistory,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
