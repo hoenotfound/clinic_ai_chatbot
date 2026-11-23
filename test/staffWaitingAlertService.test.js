@@ -392,6 +392,16 @@ test("staff-waiting service only queues alerts and never performs Telegram I/O i
   assert.match(block, /queueAlert\(\{/);
 });
 
+test("staff waiting alert publisher ignores verified profile-only but not ownership changes",()=>{
+  const fs=require("node:fs");
+  const path=require("node:path");
+  const source=fs.readFileSync(path.join(__dirname,
+    "../src/services/staffWaitingAlertService.js"),"utf8");
+  assert.match(source,/payload\?\.reason === "contact_state" &&\s*payload\?\.followUpStateUnchanged !== true/);
+  assert.match(source,/payload\?\.reason === "message"/);
+  assert.match(source,/payload\?\.reason === "message_updated"/);
+});
+
 test("staff waiting updates coalesce only same-turn events without losing future wakes",()=>{
   let n=0;
   const microtasks=[];
