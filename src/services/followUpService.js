@@ -1672,7 +1672,7 @@ async function sendCandidate(candidate) {
   // Final textual invitation boundary: the AI and fixed templates may not
   // propose a date on a configured closed day. Does not modify consent, media,
   // sender routing or real staff-confirmed bookings.
-  if (clinicConfig.hours?.weekly && followUpAiService.isSchedulingNudge(followUpMessage)) {
+  if (clinicConfig.hours?.weekly) {
     const checked = guardAppointmentReply({
       hours: clinicConfig.hours, customerText: followUpMessage,
       reply: followUpMessage, receivedAt: new Date(), now: new Date(),
@@ -1793,8 +1793,7 @@ async function sendCandidate(candidate) {
   // A staff-approved recorded voice note cannot be rewritten. If its
   // transcript offers a closed/past time, send the already guarded text
   // instead of delivering contradictory appointment guidance by audio.
-  if (effectiveVoice && clinicConfig.hours?.weekly &&
-      followUpAiService.isSchedulingNudge(effectiveVoice.transcript)) {
+  if (effectiveVoice && clinicConfig.hours?.weekly) {
     const voiceCheck = guardAppointmentReply({
       hours: clinicConfig.hours,
       customerText: effectiveVoice.transcript,
