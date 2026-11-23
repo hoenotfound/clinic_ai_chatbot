@@ -183,7 +183,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const explicitTime = timesInText(customerText).length > 0;
   const shortDayAnswer = String(customerText).trim().length <= 15 &&
     /^(?:今天|明天|后天|後天|星期[一二三四五六日天]|(?:下星期|周|週|下周|下週)[一二三四五六日天]|\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)[？?.!！。\s]*$/iu.test(customerText);
-  if (!SCHEDULE_TURN.test(customerText) ||
+  if (!(SCHEDULE_TURN.test(customerText) || explicitTime || shortDayAnswer) ||
       (!schedulingRequest && !explicitTime && !shortDayAnswer)) {
     return {reply:original,blocked:false};
   }
