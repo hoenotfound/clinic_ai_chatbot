@@ -5,7 +5,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { recordWorkerWake, recordInboxFullList, recordInboxRevisionCheck,
-  recordInboxRevisionFallback, recordSseLifecycle, snapshot, classifyChannel } =
+  recordInboxRevisionFallback, recordSseLifecycle, snapshot, classifyChannel,
+  recordSecondaryDueDecision, snapshotSecondaryDue } =
   require("../src/utils/refreshWakeDiagnostics");
 
 test("passive counters classify wake decisions without retaining sensitive event fields", () => {
@@ -170,4 +171,24 @@ test("live SSE route survives request close, sends updates and unregisters only 
   } finally {
     reconnect.res.emit("close");
   }
+});
+
+test("secondary due counters measure skipped scans without altering existing wake totals", () => {
+ const previousWake = snapshot().last15Minutes;
+ const before = snapshotSecondaryDue();
+ const key = "secondary_due|secondary_marketing|scan_skipped";
+ const previous = before.counters.find(x=>x.key===key)?.total||0;
+ recordSecondaryDueDecision("secondary_marketing", "scan_skipped");
+ recordSecondaryDueDecision("secondary_marketing", "hint_query");
+ recordSecondaryDueDecision("secondary_service", "quiet_hours_skipped");
+ for(const suspicious of ["customer=PRIVATE","status=failed? id=77"]) {
+   recordSecondaryDueDecision("secondary_marketing", suspicious);
+   recordSecondaryDueDecision(suspicious, "scan_performed");
+ }
+ const after = snapshotSecondaryDue();
+ assert.equal(after.counters.find(x=>x.key===key)?.total, previous+1);
+ assert.equal(snapshot().last15Minutes, previousWake,
+  "existing wake counters must not include due-scheduler decisions");
+ assert.doesNotMatch(JSON.stringify(after), /PRIVATE|id=77|customer=/);
+ assert.ok(after.counters.length<=20,"fixed lanes and decision categories stay bounded");
 });
