@@ -72,9 +72,12 @@ configurations remain unchanged.
   result. One pool checkout replaces two or three serial pool checkouts.
   This saves network round trips, **not necessarily the SQL CPU work**.
 - From 00:00 through 06:59 MYT, the two secondary schedulers use a
-  **clock-only 07:00 hint**. This is allowed only when every full candidate
-  and pre-send recheck SQL contains the original
-  `EXTRACT(HOUR ...) BETWEEN 7 AND 23` guard. No WhatsApp follow-up is
+  **clock-only 07:00 hint**. This is allowed only when every relevant
+  candidate-discovery query contains the original
+  `EXTRACT(HOUR ...) BETWEEN 7 AND 23` guard. Service pre-send
+  `RECHECK_SQL` binds $4 to sender identity instead of clock time; the
+  scheduler must never mistake that query for a time-bound candidate scan.
+  No WhatsApp follow-up is
   authorized or sent at night. At 07:00, fresh SQL executes; overnight
   customer messages, delivery receipts, opt-outs, booking changes and rule
   updates are re-evaluated there. A clock-boundary race retries in one second.
