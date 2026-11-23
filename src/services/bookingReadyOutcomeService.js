@@ -119,7 +119,7 @@ function createBookingReadyOutcomeService({
         recentCustomerMessages,
         receivedAt, now: new Date(), durationMinutes,
       });
-      if (["closed", "past", "outside_hours", "ambiguous", "unknown", "unconfigured"].includes(hoursCheck.status)) {
+      if (["closed", "past", "outside_hours", "ambiguous", "unknown", "unconfigured", "valid_day"].includes(hoursCheck.status)) {
         console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
           " reason=" + hoursCheck.status);
         return {
