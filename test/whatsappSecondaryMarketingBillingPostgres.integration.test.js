@@ -39,8 +39,16 @@ test("approved secondary marketing billing requires one claimed attempt for each
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    },query:(...args)=>db.query(...args),
   };
-  assert.ok(loadMigrations().at(-1).version>=118);
+  assert.ok(loadMigrations().at(-1).version>=135);
   await runMigrations(pool,{quiet:true});
+  // The sender-owned Meta receipt lookup must have a real index on both
+  // dimensions used by Day4/Day6 session proof and billing conflict checks.
+  // This test uses only the disposable migrated PostgreSQL schema.
+  const receiptIndex=(await db.query(
+    "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() " +
+      "AND indexname='idx_whatsapp_sender_receipts_sender_wamid'"
+  )).rows?.[0]?.indexdef;
+  assert.match(receiptIndex||"",/ON .*whatsapp_sender_status_receipts USING btree \\(sender_id, wamid\\)/);
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
    "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
