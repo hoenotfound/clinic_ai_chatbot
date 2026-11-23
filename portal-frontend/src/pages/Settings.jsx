@@ -1247,18 +1247,23 @@ function HoursContactTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading title="Hours & Contact" description="Opening hours and social/contact links the AI can share." />
       <Field label="Opening hours">
-        <input className={inputClass} value={form.hours.general} onChange={(e) => setHours("general", e.target.value)} />
+        <input className={inputClass} value={form.hours.general}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("general", e.target.value)} />
       </Field>
       <Field label="Closed days / note">
-        <input className={inputClass} value={form.hours.closed} onChange={(e) => setHours("closed", e.target.value)} />
+        <input className={inputClass} value={form.hours.closed}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("closed", e.target.value)} />
       </Field>
       {weekly && (
         <div className="mb-5 rounded-xl border border-slate-200 p-4">
           <div className="mb-2 text-sm font-semibold">Weekly appointment hours</div>
           <p className="mb-3 text-xs text-slate-500">
             These hours control which days the AI can offer for appointments.
-            Keep the written opening-hours description above consistent.
-            Changes apply to both WhatsApp numbers and social channels.
+            The weekly schedule is the source of truth. On save, the descriptions
+            above are regenerated automatically from these times. Changes apply
+            to both WhatsApp numbers and social channels.
           </p>
           <div className="space-y-2">
             {weekdayLabels.map(([day, label]) => {
