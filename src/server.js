@@ -68,6 +68,7 @@ const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
+const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
@@ -773,6 +774,21 @@ async function processIncomingMessage(
       ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken) &&
         aiReplyCancellation.inboundMessageCanSend(savedInbound.id)
       : null;
+
+    // A customer's own explicit RM68 enquiry may classify the lead even
+    // when secondary conversation AI is disabled. No outbound action or
+    // permission is implied. Clinical and sender safety gates stay intact.
+    if(channel==="whatsapp" && !mediaType && !unsupportedType &&
+       typeof incoming.text==="string" && incoming.text.trim()){
+      try {
+        await neutroRm68InterestRepo.recordRm68CustomerInterest({
+          contactId:contact.id,messageId:savedInbound.id,
+          text:incoming.text,clinicConfig,
+        });
+      } catch(error){
+        console.warn("[RM68 lead interest] categorization unavailable:",error?.message);
+      }
+    }
 
     // Skip ordinary excluded text before lead scoring, model generation,
     // pricing/media selection and assistant draft creation. The inbound
