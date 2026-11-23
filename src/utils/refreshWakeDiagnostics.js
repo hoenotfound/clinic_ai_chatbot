@@ -5,6 +5,7 @@
 // Counters reset on process restart. The ops endpoint is token protected.
 const nowMinute = () => Math.floor(Date.now() / 60000);
 const rows = new Map();
+const secondaryDueRows = new Map();
 const STARTED_AT = new Date().toISOString();
 const MAX_KEYS = 512;
 
@@ -29,13 +30,13 @@ const TYPES = new Set(["conversation_changed", "pipeline_changed",
 const CHANNELS = new Set(["primary_whatsapp", "secondary_whatsapp",
   "social", "unknown_whatsapp", "unknown"]);
 
-function count(key) {
+function count(key, store = rows) {
   const minute = nowMinute();
-  let row = rows.get(key);
+  let row = store.get(key);
   if (!row) {
-    if (rows.size >= MAX_KEYS) return;
+    if (store.size >= MAX_KEYS) return;
     row = { total: 0, byMinute: new Map() };
-    rows.set(key, row);
+    store.set(key, row);
   }
   row.total++;
   row.byMinute.set(minute, (row.byMinute.get(minute) || 0) + 1);
@@ -110,9 +111,24 @@ function recordSseLifecycle(event, durationMs) {
   count("sse|closed|" + bucket);
 }
 
-function snapshot() {
+// Fixed categories only. No contact IDs, SQL, message bodies, phone numbers,
+// timers, or database queries. Separate from wake counters so historic wake
+// totals retain their original meaning after this instrumentation is enabled.
+const SECONDARY_DUE_DECISIONS = new Set([
+  "quiet_hours_skipped", "hint_query", "hint_failed", "scan_skipped",
+  "scan_performed", "due_found", "hint_uncertain", "post_hint_query",
+  "backlog", "receipt_coalesced",
+]);
+const SECONDARY_DUE_LANES = new Set(["secondary_service", "secondary_marketing"]);
+function recordSecondaryDueDecision(lane, decision) {
+  if (SECONDARY_DUE_LANES.has(lane) && SECONDARY_DUE_DECISIONS.has(decision)) {
+    count("secondary_due|" + lane + "|" + decision, secondaryDueRows);
+  }
+}
+
+function snapshotRows(store) {
   const minute = nowMinute();
-  const buckets = [...rows].map(([key, row]) => {
+  const buckets = [...store].map(([key, row]) => {
     let last5Minutes = 0, last15Minutes = 0;
     for (const [when, hits] of row.byMinute) {
       if (when < minute - 14) {
@@ -127,7 +143,10 @@ function snapshot() {
   return { startedAt: STARTED_AT, last5Minutes: buckets.reduce((s,x)=>s+x.last5Minutes,0),
     last15Minutes: buckets.reduce((s,x)=>s+x.last15Minutes,0), counters: buckets };
 }
+const snapshot = () => snapshotRows(rows);
+const snapshotSecondaryDue = () => snapshotRows(secondaryDueRows);
 
 module.exports = { recordWorkerWake, recordInboxFullList,
   recordInboxRevisionCheck, recordInboxRevisionFallback, recordSseLifecycle,
+  recordSecondaryDueDecision, snapshotSecondaryDue,
   snapshot, classifyChannel, INBOX_REASONS };
