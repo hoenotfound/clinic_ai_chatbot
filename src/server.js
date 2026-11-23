@@ -25,6 +25,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
+const { guardAppointmentReply, durationMinutesForPackage } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -2800,6 +2801,40 @@ async function processIncomingMessage(
       }
     }
 
+    // Apply the same read-only weekly-hours policy before the Meta send AND
+    // before booking_ready. The staff slot check must never be requested for
+    // a closed day or an out-of-hours preference merely because Gemini said so.
+    // Clinic hours are loaded from Neon and shared across both WA senders/social.
+    if (!flagged && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        clinicConfig.hours?.weekly) {
+      const customerHistory = (Array.isArray(history) ? history : [])
+        .filter(item => item?.role === "user")
+        .map(item => String(item.content || ""))
+        .filter(Boolean)
+        .slice(-5)
+        .reverse();
+      const durationMinutes = durationMinutesForPackage({
+        config: clinicConfig,
+        customerTexts: [text, ...customerHistory],
+        treatment: details?.treatment || "",
+      });
+      const checked = guardAppointmentReply({
+        hours: clinicConfig.hours, reply, customerText: text,
+        recentCustomerTexts: customerHistory,
+        appointmentPreference: details?.appointmentPreference || "",
+        receivedAt: savedInbound.created_at || new Date(),
+        now: new Date(), language: mediaLanguage, durationMinutes,
+      });
+      if (checked.blocked) {
+        bookingReady = false;
+        reply = checked.reply;
+        console.info("[Appointment hours] corrected invalid booking preference contact=" +
+          contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
+      }
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
@@ -2866,6 +2901,8 @@ async function processIncomingMessage(
           }),
           // A genuinely new request to move an existing booking must still
           // reach staff even when the CRM records the old slot as confirmed.
+          customerText: text,
+          receivedAt: savedInbound.created_at || new Date(),
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
