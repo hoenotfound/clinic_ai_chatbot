@@ -48,7 +48,7 @@ test("approved secondary marketing billing requires one claimed attempt for each
     "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() " +
       "AND indexname='idx_whatsapp_sender_receipts_sender_wamid'"
   )).rows?.[0]?.indexdef;
-  assert.match(receiptIndex||"",/ON .*whatsapp_sender_status_receipts USING btree \\(sender_id, wamid\\)/);
+  assert.match(receiptIndex||"",/ON .*whatsapp_sender_status_receipts USING btree \(sender_id, wamid\)/);
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
    "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
