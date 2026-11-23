@@ -370,9 +370,14 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   }
   if(requireValidPreference&&["unknown","ambiguous","unconfigured","valid_day"].includes(issue.status)){
     const lang=String(language||"zh").toLowerCase().slice(0,2);
-    const question=lang==="en"?"Which date and time would you prefer? I'll have the clinic check availability 😊":
-      lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
-      "请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️";
+    const needsOnlyTime=issue.status==="valid_day";
+    const question=needsOnlyTime
+      ? lang==="en"?"What time on that day would suit you? I can check with the clinic 😊"
+        : lang==="ms"?"Pukul berapa pada hari itu yang sesuai? Kami boleh semak dengan pusat 😊"
+        : "那一天大概几点方便呢？我帮您向诊所确认空档哦☺️"
+      : lang==="en"?"Which date and time would you prefer? I'll have the clinic check availability 😊":
+        lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
+        "请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️";
     return {reply:question,blocked:true,issue};
   }
   return {reply:original,blocked:false,issue};
