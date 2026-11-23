@@ -1179,6 +1179,11 @@ function BranchesTab({ config, onSaved, onError }) {
 }
 
 function HoursContactTab({ config, onSaved, onError }) {
+  const weekdayLabels = [
+    ["monday", "Monday"], ["tuesday", "Tuesday"], ["wednesday", "Wednesday"],
+    ["thursday", "Thursday"], ["friday", "Friday"], ["saturday", "Saturday"],
+    ["sunday", "Sunday"],
+  ];
   const [form, setForm] = useState({
     hours: { ...config.hours },
     contact: { ...config.contact },
@@ -1191,11 +1196,37 @@ function HoursContactTab({ config, onSaved, onError }) {
   function setContact(key, value) {
     setForm((prev) => ({ ...prev, contact: { ...prev.contact, [key]: value } }));
   }
+  function setWeeklyDay(day, nextValue) {
+    setForm((prev) => ({
+      ...prev, hours: {
+        ...prev.hours, weekly: { ...prev.hours.weekly, [day]: nextValue },
+      },
+    }));
+  }
+  const weekly = form.hours.weekly && typeof form.hours.weekly === "object" &&
+    !Array.isArray(form.hours.weekly) ? form.hours.weekly : null;
 
   async function handleSave() {
     if (!form.hours.general.trim()) {
       onError("Opening hours can't be empty.");
       return;
+    }
+    if (weekly) {
+      const minute = (value) => {
+        if (!/^\d{1,2}:\d{2}$/.test(value || "")) return null;
+        const [hour, minutes] = value.split(":").map(Number);
+        return hour < 24 && minutes < 60 ? hour * 60 + minutes : null;
+      };
+      for (const [day, label] of weekdayLabels) {
+        const slot = weekly[day];
+        if (slot == null) continue;
+        const start = minute(slot.open);
+        const end = minute(slot.close);
+        if (start === null || end === null || start >= end) {
+          onError(label + ": please enter valid opening and closing times.");
+          return;
+        }
+      }
     }
     if (!isValidWhatsapp(form.contact.whatsapp)) {
       onError("Enter a valid WhatsApp number or WhatsApp link.");
@@ -1216,11 +1247,53 @@ function HoursContactTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading title="Hours & Contact" description="Opening hours and social/contact links the AI can share." />
       <Field label="Opening hours">
-        <input className={inputClass} value={form.hours.general} onChange={(e) => setHours("general", e.target.value)} />
+        <input className={inputClass} value={form.hours.general}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("general", e.target.value)} />
       </Field>
       <Field label="Closed days / note">
-        <input className={inputClass} value={form.hours.closed} onChange={(e) => setHours("closed", e.target.value)} />
+        <input className={inputClass} value={form.hours.closed}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("closed", e.target.value)} />
       </Field>
+      {weekly && (
+        <div className="mb-5 rounded-xl border border-slate-200 p-4">
+          <div className="mb-2 text-sm font-semibold">Weekly appointment hours</div>
+          <p className="mb-3 text-xs text-slate-500">
+            These hours control which days the AI can offer for appointments.
+            The weekly schedule is the source of truth. On save, the descriptions
+            above are regenerated automatically from these times. Changes apply
+            to both WhatsApp numbers and social channels.
+          </p>
+          <div className="space-y-2">
+            {weekdayLabels.map(([day, label]) => {
+              const value = weekly[day];
+              const closed = value == null || value.closed === true;
+              return (
+                <div key={day} className="flex flex-wrap items-center gap-3 text-sm">
+                  <label className="flex w-28 items-center gap-2">
+                    <input type="checkbox" checked={!closed}
+                      onChange={(e) => setWeeklyDay(day,
+                        e.target.checked ? { open: "10:00", close: "18:00" } : null)} />
+                    {label}
+                  </label>
+                  {!closed ? (
+                    <>
+                      <input type="time" className={inputClass}
+                        aria-label={label + " opens"} value={value.open || ""}
+                        onChange={(e) => setWeeklyDay(day, { ...value, open: e.target.value })} />
+                      <span>to</span>
+                      <input type="time" className={inputClass}
+                        aria-label={label + " closes"} value={value.close || ""}
+                        onChange={(e) => setWeeklyDay(day, { ...value, close: e.target.value })} />
+                    </>
+                  ) : <span className="text-slate-500">Closed</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <Field label="Main WhatsApp number" hint="Phone number or wa.me / WhatsApp link.">
         <input className={inputClass} value={form.contact.whatsapp} onChange={(e) => setContact("whatsapp", e.target.value)} />
       </Field>
