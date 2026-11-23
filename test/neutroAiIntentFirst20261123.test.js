@@ -51,6 +51,28 @@ test("model metadata cannot create repeat price without a current price question
  ]),null,"staff-owned conversation must not be overridden");
 });
 
+test("returning customer treatment choice can be older than a day only with a fresh verified trial quote",()=>{
+ const old=now-36*3600_000;
+ const text="第一次体验后又是什么价格？";
+ const history=[
+  {role:"user",content:"想了解3D 小颜术",pricingCreatedAtMs:old},
+  {role:"assistant",content:"3D 小颜术是脸部轮廓护理",pricingCreatedAtMs:old+1000},
+  {role:"user",content:"价格",pricingCreatedAtMs:now-120000},
+  {role:"assistant",content:"3D 小颜术 First Trial 体验优惠价是 RM388",pricingCreatedAtMs:now-115000},
+  {role:"user",content:text,pricingCreatedAtMs:now-1000},
+ ];
+ assert.equal(priceRoute(text,"subsequent_session",history)?.treatment,"3D 小颜术");
+ const stale=history.map(turn=>({...turn}));
+ stale[3].pricingCreatedAtMs=now-24*3600_000;
+ assert.equal(priceRoute(text,"subsequent_session",stale),null,"stale trial quote does not justify repeat session");
+ const unverified=history.map(turn=>({...turn}));
+ unverified[3].content="3D 小颜术价格是 RM388";
+ assert.equal(priceRoute(text,"subsequent_session",unverified),null,"ordinary amount without trial proof");
+ const staff=history.map(turn=>({...turn}));
+ staff[3].pricingStaffAuthored=true;
+ assert.equal(priceRoute(text,"subsequent_session",staff),null,"staff-authored price messages do not transfer AI ownership");
+});
+
 test("structured AI price-stage classification is optional and validated",()=>{
  const base={reply:"我帮你确认续做价格 😊",outcome:"normal",priceQuery:true,
    packageQuery:false,serviceQuery:false,treatment:null,branch:null,
