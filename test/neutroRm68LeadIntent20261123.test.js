@@ -122,8 +122,13 @@ test("an RM68 Booking Ready outcome preserves slot but cannot write a herbal tre
  assert.equal(sanitizeRm68BookingReadyDetails({
   details:modelDetails,customerText:"我想了解草药胸部疏通乳腺护理",
   history:[],channel:"whatsapp",clinicConfig:config,
+ }).treatment,null,
+ "asking to learn about herbal care is not a booking choice");
+ assert.equal(sanitizeRm68BookingReadyDetails({
+  details:modelDetails,customerText:"我想做草药胸部疏通乳腺护理",
+  history:[],channel:"whatsapp",clinicConfig:config,
  }).treatment,"草药胸部疏通乳腺护理",
- "an explicit customer-named herbal service remains allowed");
+ "a customer who affirmatively selects herbal care remains eligible");
  assert.equal(modelDetails.treatment,"草药胸部疏通乳腺护理",
   "do not mutate original model output");
  assert.deepEqual(sanitizeRm68BookingReadyDetails({
