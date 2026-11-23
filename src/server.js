@@ -71,7 +71,8 @@ const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTr
 const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
-const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
+const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
+  isBreastLumpConcern } =
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
@@ -1490,6 +1491,26 @@ async function processIncomingMessage(
         } = languageCheckedReply);
       }
 
+      // A model may mistakenly mark a combined RM68 price/clinical enquiry
+      // informational. A breast lump, nodule or tumor requires staff review.
+      if (clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(
+            String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+          isBreastLumpConcern(text) && !keywordReason && !urgentSafety &&
+          !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+          (!flagged || reviewRequired)) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "clinical";
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        details = null;
+        clinicalAcknowledgement = null;
+      }
+
       // A confirmed urinary-leakage report needs staff clinical review even
       // when the model incorrectly returned a normal or information outcome.
       // Genuine urgent events and explicit staff ownership remain separate.
@@ -2544,7 +2565,13 @@ async function processIncomingMessage(
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      clinicalAcknowledgement = nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+      clinicalAcknowledgement = isBreastLumpConcern(text)
+        ? (mediaLanguage === "ms"
+          ? "Jika ada ketulan atau nodul pada payudara, kesesuaian rawatan RM68 tidak boleh dipastikan melalui chat. Sila dapatkan pemeriksaan doktor dahulu. Kami akan minta staf semak pertanyaan anda. 💚"
+          : mediaLanguage === "en"
+            ? "For a breast lump or nodule, we cannot confirm whether the RM68 care is suitable through chat. Please seek a medical evaluation first. Our staff will review your enquiry. 💚"
+            : "关于乳房结节或肿块，我们不能仅通过聊天判断是否适合 RM68 护理。建议先由医生检查，我们也会请工作人员跟进您的咨询。💚")
+        : nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
