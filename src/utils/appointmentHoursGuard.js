@@ -177,7 +177,16 @@ function issueReply(issue,{hours,language="zh"}={}){
 function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=[],
   appointmentPreference="",receivedAt,now,language="zh",durationMinutes=0}={}){
   const original=String(reply||"");
-  if(!SCHEDULE_TURN.test(customerText))return {reply:original,blocked:false};
+  // Merely mentioning "today" in a promotion or price question must NOT
+  // turn that enquiry into an appointment correction.
+  const schedulingRequest = /(?:预约|預約|约时间|約時間|安排|空档|空檔|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|营业|營業|休息|开门|開門|关门|關門|\b(?:appointment|book|booking|visit|slot|available|availability|open|closed|temujanji|janji temu|pukul|boleh datang|boleh book)\b)/iu.test(customerText);
+  const explicitTime = timesInText(customerText).length > 0;
+  const shortDayAnswer = String(customerText).trim().length <= 15 &&
+    /^(?:今天|明天|后天|後天|星期[一二三四五六日天]|(?:下星期|周|週|下周|下週)[一二三四五六日天]|\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b)[？?.!！。\s]*$/iu.test(customerText);
+  if (!SCHEDULE_TURN.test(customerText) ||
+      (!schedulingRequest && !explicitTime && !shortDayAnswer)) {
+    return {reply:original,blocked:false};
+  }
   const issue=evaluateAppointmentHours({hours,customerText,recentCustomerTexts,
     appointmentPreference,receivedAt,now,durationMinutes});
   if(!["closed","past","outside_hours"].includes(issue.status))
