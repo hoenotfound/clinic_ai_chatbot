@@ -6,7 +6,8 @@
 const { readFileSync } = require("node:fs");
 const { takeOutboundPayloadSnapshot } = require("../utils/outboundPayloadDiagnostics");
 const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
-const { snapshot: getWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
+const { snapshot: getWakeDiagnostics, snapshotSecondaryDue } =
+  require("../utils/refreshWakeDiagnostics");
 const { getPoolActivitySnapshot } = require("./databasePoolActivity");
 const { pool } = require("../db/db");
 const { installOutboundNetworkDiagnostics, takeOutboundNetworkSnapshot } =
@@ -179,6 +180,9 @@ function startMemoryDiagnostics({
             .map(item => ({ key: item.key, count: item.last5Minutes })),
         };
         logger.info?.(`[Refresh/wake diagnostics] ${JSON.stringify(summary)}`);
+        // Existing five-minute diagnostics tick, no additional interval/SQL.
+        // Reports exact skipped vs performed scans for both secondary lanes.
+        logger.info?.(`[Secondary due scheduling] ${JSON.stringify(snapshotSecondaryDue())}`);
         // Piggyback on the same fifth-minute tick. In-memory node-pg pool
         // counters only: no SQL, new timer, network request, or DB wake-up.
         logger.info?.(`[Neon pool activity] ${JSON.stringify(summarizePoolActivity(poolSnapshot()))}`);
