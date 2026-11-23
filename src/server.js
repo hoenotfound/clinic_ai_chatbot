@@ -1342,6 +1342,7 @@ async function processIncomingMessage(
     let rm68ClinicalConcern = false;
     let reviewContinuationTextOnly = false;
     let bookingReady = false;
+    let verifiedBookingForHours = null;
     let serviceQuery = false;
     let serviceQuerySource = null;
     let metaAdContext = null;
@@ -1406,6 +1407,7 @@ async function processIncomingMessage(
             appointmentAt: lead.appointment_at,
             ...(acceptedStaffOffer ? { acceptedStaffOffer: acceptedStaffOffer.agreedTimeText } : {}),
           };
+          verifiedBookingForHours = bookingContext;
         }
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
@@ -2809,7 +2811,15 @@ async function processIncomingMessage(
     if (!flagged && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
-        clinicConfig.hours?.weekly) {
+        clinicConfig.hours?.weekly &&
+        // Existing staff/provider-verified appointments are not unbooked by
+        // the weekly schedule. An explicit reschedule is still revalidated.
+        (!verifiedBookingForHours ||
+         (!verifiedBookingForHours.acceptedStaffOffer &&
+          !(/^(?:set|visited|booked|confirmed|scheduled)$/iu.test(
+            String(verifiedBookingForHours.status || "")) &&
+            verifiedBookingForHours.appointmentAt))) ||
+         /(?:改期|改时间|改時間|换到|換到|重新预约|重新預約|reschedul|move my appointment|change my appointment)/iu.test(String(text || "")))) {
       const customerHistory = (Array.isArray(history) ? history : [])
         .filter(item => item?.role === "user")
         .map(item => String(item.content || ""))
