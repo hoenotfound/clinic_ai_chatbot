@@ -69,6 +69,7 @@ const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
 const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
+const {sanitizeRm68BookingReadyDetails}=require("./utils/neutroRm68BookingSafety");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
@@ -2841,7 +2842,9 @@ async function processIncomingMessage(
     if (bookingReady) {
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
-          details,
+          details:sanitizeRm68BookingReadyDetails({
+            details,customerText:text,history,channel,clinicConfig,
+          }),
           // A genuinely new request to move an existing booking must still
           // reach staff even when the CRM records the old slot as confirmed.
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),

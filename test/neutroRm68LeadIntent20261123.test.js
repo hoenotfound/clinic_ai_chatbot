@@ -94,3 +94,37 @@ test("server enforces clinical review before sales media and keeps RM68 manual-o
  assert.match(server,/reviewType = "clinical"/);
  assert.match(server,/setAiReviewAttention\(/);
 });
+
+test("an RM68 Booking Ready outcome preserves slot but cannot write a herbal treatment",()=>{
+ const {sanitizeRm68BookingReadyDetails}=require("../src/utils/neutroRm68BookingSafety");
+ const {firstReply}=require("../src/utils/neutroBreastRm68Campaign");
+ const history=[
+   {role:"user",content:prefill},
+   {role:"assistant",content:firstReply(Date.parse("2026-11-22T02:00:00Z"))},
+   {role:"user",content:"好的，麻烦帮我安排24/11 12pm"},
+ ];
+ const modelDetails={treatment:"草药胸部疏通乳腺护理",
+   appointmentPreference:"24/11 12pm",
+   staffSummary:"Herbal breast treatment arranged",
+ };
+ const guarded=sanitizeRm68BookingReadyDetails({
+  details:modelDetails,customerText:"好的，麻烦帮我安排24/11 12pm",
+  history,channel:"whatsapp",clinicConfig:config,
+ });
+ assert.equal(guarded.treatment,null);
+ assert.equal(guarded.appointmentPreference,"24/11 12pm");
+ assert.match(guarded.staffSummary,/RM68 breast-care event/);
+ assert.equal(modelDetails.treatment,"草药胸部疏通乳腺护理",
+  "do not mutate original model output");
+ assert.deepEqual(sanitizeRm68BookingReadyDetails({
+  details:{...modelDetails,treatment:"3D 小颜术"},
+  customerText:"我想做3D 小颜术",history,channel:"whatsapp",
+  clinicConfig:config,
+ }).treatment,"3D 小颜术");
+ assert.equal(sanitizeRm68BookingReadyDetails({
+  details:modelDetails,customerText:"预约胸部护理",
+  history:[],channel:"facebook",clinicConfig:config,
+ }).treatment,"草药胸部疏通乳腺护理");
+ const server=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+ assert.match(server,/details:sanitizeRm68BookingReadyDetails\(/);
+});
