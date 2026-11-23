@@ -83,7 +83,9 @@ function hasSecondaryClinicQuietHoursGuard(sql) {
   if (typeof sql !== "string") return false;
   // Require a standalone AND predicate, not a quoted or commented mention
   // of the previous policy. A removed guard disables this optimization.
-  return /(?:^|\n)[ \t]*AND[ \t]+EXTRACT\(HOUR FROM \(\$4::timestamptz AT TIME ZONE 'Asia\/Kuala_Lumpur'\)\)[ \t\r\n]+BETWEEN[ \t]+7[ \t]+AND[ \t]+23\b/.test(sql);
+  // Block-commented policy examples are not executable SQL either.
+  const executable = sql.replace(/\/\*[\s\S]*?\*\//g, "");
+  return /(?:^|\n)[ \t]*AND[ \t]+EXTRACT\(HOUR FROM \(\$4::timestamptz AT TIME ZONE 'Asia\/Kuala_Lumpur'\)\)[ \t\r\n]+BETWEEN[ \t]+7[ \t]+AND[ \t]+23\b/.test(executable);
 }
 
 // A read-only due hint is a superset of sendable slots. If none can be due
