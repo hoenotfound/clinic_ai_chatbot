@@ -2804,22 +2804,23 @@ async function processIncomingMessage(
     }
 
     let bookingDurationMinutes = 0;
-    // Apply the same read-only weekly-hours policy before the Meta send AND
-    // before booking_ready. The staff slot check must never be requested for
-    // a closed day or an out-of-hours preference merely because Gemini said so.
-    // Clinic hours are loaded from Neon and shared across both WA senders/social.
+    const verifiedExistingBooking = Boolean(
+      verifiedBookingForHours?.acceptedStaffOffer ||
+      (verifiedBookingForHours?.appointmentAt &&
+       /^(?:set|visited|booked|confirmed|scheduled)$/iu.test(
+         String(verifiedBookingForHours.status || "")))
+    );
+    const explicitRescheduleForHours =
+      /(?:改期|改时间|改時間|换到|換到|重新预约|重新預約|reschedul|move my appointment|change my appointment)/iu
+        .test(String(text || ""));
+    // Correct an invalid day before the Meta send AND before booking_ready.
+    // Never contradict a provider/staff-verified appointment or override
+    // the staff's accepted offer unless the customer asks to reschedule.
     if (!flagged && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         clinicConfig.hours?.weekly &&
-        // Existing staff/provider-verified appointments are not unbooked by
-        // the weekly schedule. An explicit reschedule is still revalidated.
-        (!verifiedBookingForHours ||
-         (!verifiedBookingForHours.acceptedStaffOffer &&
-          !(/^(?:set|visited|booked|confirmed|scheduled)$/iu.test(
-            String(verifiedBookingForHours.status || "")) &&
-            verifiedBookingForHours.appointmentAt))) ||
-         /(?:改期|改时间|改時間|换到|換到|重新预约|重新預約|reschedul|move my appointment|change my appointment)/iu.test(String(text || "")))) {
+        (!verifiedExistingBooking || explicitRescheduleForHours)) {
       const customerHistory = (Array.isArray(history) ? history : [])
         .filter(item => item?.role === "user")
         .map(item => String(item.content || ""))
