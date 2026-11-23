@@ -10,6 +10,7 @@ const {
   buildStaffWaitingAlertMessage,
   createStaffWaitingAlertRunner,
   createStaffWaitingAlertService,
+  createStaffWaitingChangeSignal,
   findWaitingStaffOwnedConversations,
   isStillWaitingForStaff,
   staffWaitingEventKey,
@@ -389,4 +390,21 @@ test("staff-waiting service only queues alerts and never performs Telegram I/O i
   assert.doesNotMatch(block, /BEGIN|COMMIT|ROLLBACK/);
   assert.doesNotMatch(block, /pg_advisory_xact_lock/);
   assert.match(block, /queueAlert\(\{/);
+});
+
+test("staff waiting updates coalesce only same-turn events without losing future wakes",()=>{
+  let n=0;
+  const microtasks=[];
+  const signal=createStaffWaitingChangeSignal(()=>{n++;},fn=>microtasks.push(fn));
+  assert.equal(signal(),true);
+  assert.equal(signal(),false);
+  assert.equal(signal(),false);
+  assert.equal(microtasks.length,1);
+  assert.equal(n,0);
+  microtasks.shift()();
+  assert.equal(n,1,"first wake remains immediate within next microtask");
+  assert.equal(signal(),true,"a new customer update in a later turn must wake");
+  assert.equal(microtasks.length,1);
+  microtasks.shift()();
+  assert.equal(n,2);
 });
