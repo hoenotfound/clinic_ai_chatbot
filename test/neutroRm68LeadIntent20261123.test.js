@@ -161,9 +161,44 @@ test("AI lead scoring preserves RM68 campaign interest against herbal/full-body 
  assert.match(s,/function preserveRm68CampaignScoringSql/);
  assert.match(s,/customer_campaign_interest/);
  assert.match(s,/neutro_breast_rm68_2026/);
- assert.match(s,/explicit_choice\.role='user'/);
+ assert.doesNotMatch(s,/explicit_choice\.role='user'/);
+ assert.match(s,/Genuine subsequent service choices must use an/);
  assert.match(s,/草药胸部疏通乳腺护理/);
  assert.match(s,/脉冲波调理/);
  assert.match(s,/preserveRm68CampaignScoringSql\('\$4'\)/);
  assert.match(s,/preserveRm68CampaignScoringSql\('\$3'\)/);
+});
+
+test("customer selection is affirmative, not a rejection or price comparison",()=>{
+ const {customerExplicitTreatmentChoice,latestCustomerTreatmentChoice}=
+  require("../src/utils/neutroRm68TreatmentChoice");
+ for(const v of ["我想做草药胸部疏通乳腺护理","帮我预约草药胸部护理",
+   "我要预约草药胸部护理","I want to book herbal breast care"])
+   assert.equal(customerExplicitTreatmentChoice(v,"herbal"),true,v);
+ for(const v of ["我不想做草药胸部护理","我不要草药胸部护理",
+   "草药胸部护理和RM68有什么不同？","草药胸部护理价钱多少？",
+   "请问你们有草药胸部护理吗","I don't want herbal breast care",
+   "我想做3D和草药胸部护理多少钱"])
+   assert.equal(customerExplicitTreatmentChoice(v,"herbal"),false,v);
+ assert.equal(customerExplicitTreatmentChoice("我要预约脉冲波调理","pulse"),true);
+ assert.equal(customerExplicitTreatmentChoice("脉冲波调理和RM68有什么不同","pulse"),false);
+ assert.equal(latestCustomerTreatmentChoice([
+  {role:"user",content:"我想做草药胸部护理"},
+  {role:"user",content:"我不想做草药胸部护理"},
+ ],"我只想了解RM68","herbal"),false);
+ const {sanitizeRm68BookingReadyDetails}=require("../src/utils/neutroRm68BookingSafety");
+ const opts={channel:"whatsapp",clinicConfig:config,
+   details:{treatment:"草药胸部疏通乳腺护理",appointmentPreference:"24/11 12pm"}};
+ for(const v of ["我不想做草药胸部护理","草药胸部护理价钱多少？",
+  "草药胸部护理和RM68有什么不同？"])
+   assert.equal(sanitizeRm68BookingReadyDetails({...opts,customerText:v}).treatment,null,v);
+ assert.equal(sanitizeRm68BookingReadyDetails({
+   ...opts,customerText:"我要预约草药胸部疏通乳腺护理",
+ }).treatment,"草药胸部疏通乳腺护理");
+});
+test("RM68 AI scoring never turns event interest into inferred herbal or full-body pulse",()=>{
+ const s=fs.readFileSync(require.resolve("../src/db/leadScoringRepo.js"),"utf8");
+ assert.match(s,/function preserveRm68CampaignScoringSql/);
+ assert.match(s,/customer_campaign_interest/);
+ assert.doesNotMatch(s,/explicit_choice/);
 });

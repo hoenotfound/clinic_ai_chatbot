@@ -6,7 +6,7 @@ const NAME={
  pulse:/(?:全身脉冲|全身脈衝|脉冲波调理|脈衝波調理|黄金脉冲|黃金脈衝|full.body\s+pulse)/iu,
 };
 const POSITIVE=/(?:我(?:想|要)(?:做|预约|預約|安排|试|試|选|選)|(?:请|請)?(?:帮|幫)我(?:预约|預約|安排)|(?:我)?(?:决定|決定|确定|確定|选择|選擇)(?:做|这个|這個)?|i(?:'d| would)\s+like\s+to\s+(?:book|try|have|do)|i\s+want\s+to\s+(?:book|try|have|do)|please\s+book|book\s+me|(?:nak|mahu)\s+(?:book|tempah|buat))/iu;
-const NEGATIVE=/(?:不想|不要|不做|不需要|不选|不選|不考虑|不考慮|没兴趣|沒興趣|不感兴趣|不感興趣|不是|不适合|不適合|不能|取消|退订|退訂|拒绝|拒絕|只是(?:问|問|了解|看看|比较|比較)|仅(?:想)?(?:了解|问|問)|只有(?:问|問)|比较|比較|对比|對比|区别|區別|差别|差別|不同|而不是|并非|並非|instead\s+of|not\s+(?:interested|book|want)|(?:do\s+not|don't|dont|won't|wouldn't)\s+(?:want|book|choose|do)|cancel)/iu;
+const NEGATIVE=/(?:多少钱|多少錢|价钱|價錢|价格|價格|费用|費用|how\s+much|不想|不要|不做|不需要|不选|不選|不考虑|不考慮|没兴趣|沒興趣|不感兴趣|不感興趣|不是|不适合|不適合|不能|取消|退订|退訂|拒绝|拒絕|只是(?:问|問|了解|看看|比较|比較)|仅(?:想)?(?:了解|问|問)|只有(?:问|問)|比较|比較|对比|對比|区别|區別|差别|差別|不同|而不是|并非|並非|instead\s+of|not\s+(?:interested|book|want)|(?:do\s+not|don't|dont|won't|wouldn't)\s+(?:want|book|choose|do)|cancel)/iu;
 function customerExplicitTreatmentChoice(message,treatment){
  const v=String(message||"").normalize("NFKC").replace(/\s+/gu," ").trim();
  const name=NAME[treatment];
