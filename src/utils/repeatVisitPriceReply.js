@@ -76,14 +76,35 @@ function resolveRepeatVisitPriceReply({
           "第一次体验之后，第二次继续护理的收费对吗？😊\n首次体验优惠不一定适用于第二次，后续收费需要由门店同事确认，避免给你错误的价格。";
     return { treatment: selected, reply };
   }
-  if (!isRecentPricingThread(turns, selectionAt, now)) return null;
   const selectedAt = earlier[selectionAt].pricingCreatedAtMs;
-  if (!Number.isFinite(selectedAt) || now - selectedAt > MAX_SESSION_AGE_MS) return null;
+  // In real returning conversations a customer may have named the treatment
+  // yesterday yet received a NEW First Trial quote minutes ago. A model
+  // observation alone cannot carry that old treatment forward. Require both
+  // independently timestamped customer selection and a recent assistant quote.
+  const subsequent = earlier.slice(selectionAt + 1);
+  const verifiedRecentTrialQuote = modelPricingStage === "subsequent_session" &&
+    subsequent.some(turn => turn.role === "assistant" &&
+      Number.isFinite(turn.pricingCreatedAtMs) &&
+      now - turn.pricingCreatedAtMs >= 0 &&
+      now - turn.pricingCreatedAtMs <= MAX_SESSION_AGE_MS &&
+      /(?:First[\\s-]*Trial|首次体验|首次體驗|体验优惠|體驗優惠|体验价|體驗價)/iu.test(pricingMessageText(turn)) &&
+      /\\b(?:RM|MYR)\\s*[1-9]\\d+/iu.test(pricingMessageText(turn)) &&
+      treatmentMentions(pricingMessageText(turn)).includes(selected));
+  const extendedTimestampProof = Number.isFinite(selectedAt) &&
+    selectedAt <= now + 60_000 && now - selectedAt <= 72 * 3600_000 &&
+    turns.slice(selectionAt).every((turn, index, scoped) =>
+      Number.isFinite(turn.pricingCreatedAtMs) &&
+      turn.pricingCreatedAtMs >= selectedAt &&
+      turn.pricingCreatedAtMs <= now + 60_000 &&
+      (index === 0 || turn.pricingCreatedAtMs >= scoped[index - 1].pricingCreatedAtMs));
+  const extendedContext = verifiedRecentTrialQuote && extendedTimestampProof;
+  if (!isRecentPricingThread(turns, selectionAt, now) && !extendedContext) return null;
+  if (!Number.isFinite(selectedAt) ||
+      (now - selectedAt > MAX_SESSION_AGE_MS && !extendedContext)) return null;
 
   // Customer-authored selection AND an actual matching bot reply are required.
   // The ad name, lead CRM label and model-generated treatment label alone
   // cannot establish which repeat-visit price the customer means.
-  const subsequent = earlier.slice(selectionAt + 1);
   if (!subsequent.some(turn => turn.role === "assistant" &&
       treatmentMentions(pricingMessageText(turn)).includes(selected))) return null;
   if (subsequent.some(turn => turn.role === "user" &&
