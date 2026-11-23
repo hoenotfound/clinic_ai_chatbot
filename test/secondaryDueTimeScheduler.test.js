@@ -336,11 +336,19 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  assert.equal(check("pipeline_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("conversation_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
- assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"facebook"}),false,
-  "verified social-only contact cannot change secondary WhatsApp eligibility");
- assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"instagram"}),false);
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"facebook"}),true,
+  "a channel label alone cannot silence shared booking changes");
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"instagram"}),true);
+ assert.equal(check("pipeline_changed",{reason:"whatsapp_opt_out",channel:"facebook"}),true,
+  "cross-channel opt-out must never be ignored");
+ assert.equal(check("pipeline_changed",{
+  reason:"appointment_set",channel:"facebook",
+  businessPhoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+ }),true,"conflicting sender evidence must conservatively wake");
  assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"whatsapp"}),true,
   "WhatsApp booking must still trigger recheck");
+ assert.equal(check("pipeline_changed",{reason:"lead_scored",channel:"facebook"}),false,
+  "only proven CRM-only pipeline reasons may skip");
  assert.equal(check("pipeline_changed",{}),true);
  assert.equal(check("config_changed",{}),true);
 });
