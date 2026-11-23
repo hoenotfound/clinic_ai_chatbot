@@ -309,6 +309,7 @@ test("booking-ready backstop rejects the closed day BEFORE any database mutation
     const result=await mark(9283,23208,{
       details:{appointmentPreference:"今天 下午1点或2点"},
       customerText:"下午1点或2点都可以",
+      recentCustomerMessages:[{content:"今天可以吗",createdAt:monday}],
       receivedAt:monday,
     });
     assert.equal(result.contactUpdated,false);
