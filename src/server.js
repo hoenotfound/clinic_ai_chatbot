@@ -108,6 +108,7 @@ const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { isSecondaryAiReplyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
 const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsappSecondarySupervisedAiTextTest");
+const { manualOnlySecondaryAttention } = require("./utils/manualOnlySecondaryAttention");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
@@ -778,6 +779,19 @@ async function processIncomingMessage(
     // pricing/media selection and assistant draft creation. The inbound
     // remains saved and unread for staff in the secondary Inbox.
     if (secondaryInboxOnly && !mediaType && !unsupportedType) {
+      // An imported/old secondary contact is intentionally staff-managed.
+      // Do not start AI, but do not silently lose urgent scheduling or
+      // health questions either. Do not overwrite an existing staff review,
+      // or alert after staff has already answered this exact inbound turn.
+      const actionable=manualOnlySecondaryAttention(incoming.text);
+      if(actionable && !contact.needs_attention &&
+         !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
+        try {
+          await contactsRepo.setAttention(contact.id,true,actionable.reason);
+        } catch(err){
+          console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
+        }
+      }
       return { wasFirstMessage, keywordReason };
     }
 
