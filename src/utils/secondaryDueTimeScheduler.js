@@ -81,9 +81,9 @@ function quietHoursNextOpenHint(nowMs) {
 // quiet-hours policy. Never skip SQL based solely on a configuration name.
 function hasSecondaryClinicQuietHoursGuard(sql) {
   if (typeof sql !== "string") return false;
-  const marker = "EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))";
-  const i = sql.indexOf(marker);
-  return i >= 0 && /BETWEEN\s+7\s+AND\s+23/.test(sql.slice(i + marker.length, i + marker.length + 80));
+  // Require a standalone AND predicate, not a quoted or commented mention
+  // of the previous policy. A removed guard disables this optimization.
+  return /(?:^|\n)[ \t]*AND[ \t]+EXTRACT\(HOUR FROM \(\$4::timestamptz AT TIME ZONE 'Asia\/Kuala_Lumpur'\)\)[ \t\r\n]+BETWEEN[ \t]+7[ \t]+AND[ \t]+23\b/.test(sql);
 }
 
 // A read-only due hint is a superset of sendable slots. If none can be due
