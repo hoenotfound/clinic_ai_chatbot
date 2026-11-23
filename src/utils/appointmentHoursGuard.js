@@ -149,23 +149,24 @@ function durationFromText(text){
   return length>0&&length<=480?length:0;
 }
 function durationMinutesForPackage({config,customerTexts=[],treatment=""}={}){
-  const selected=(Array.isArray(customerTexts)?customerTexts:[]).map(s=>String(s||"")).join(" ").toLowerCase();
-  const matching=[];
-  for(const promotion of config?.promotions||[]){
-    if(treatment&&promotion.linkedService&&promotion.linkedService!==treatment)continue;
-    for(const pkg of promotion.packages||[]){
-      const names=[pkg.name,pkg.title,...(Array.isArray(pkg.aliases)?pkg.aliases:[])]
-        .map(x=>String(x||"").trim().toLowerCase()).filter(Boolean);
-      if(!names.some(name=>selected.includes(name)))continue;
-      const duration=Number(pkg.durationMinutes)||durationFromText(
-        [pkg.duration,pkg.title,pkg.caption,...Object.values(pkg.mediaTranslations||{}).map(x=>x?.caption)].join(" "));
-      if(duration>0&&duration<=480)matching.push(duration);
+  const source=(Array.isArray(customerTexts)?customerTexts:[]).map(s=>String(s||"").toLowerCase());
+  // The newest explicit package choice wins; old A enquiries must not
+  // override a new B choice merely because both appear in bounded history.
+  for(const turn of source){
+    const matching=[];
+    for(const promotion of config?.promotions||[]){
+      if(treatment&&promotion.linkedService&&promotion.linkedService!==treatment)continue;
+      for(const pkg of promotion.packages||[]){
+        const names=[pkg.name,pkg.title,...(Array.isArray(pkg.aliases)?pkg.aliases:[])]
+          .map(x=>String(x||"").trim().toLowerCase()).filter(Boolean);
+        if(!names.some(name=>turn.includes(name)))continue;
+        const duration=Number(pkg.durationMinutes)||durationFromText(
+          [pkg.duration,pkg.title,pkg.caption,...Object.values(pkg.mediaTranslations||{}).map(x=>x?.caption)].join(" "));
+        if(duration>0&&duration<=480)matching.push(duration);
+      }
     }
+    if(matching.length)return Math.max(...matching);
   }
-  if(matching.length===1)return matching[0];
-  // Never silently downgrade an explicitly named long package to a shorter
-  // generic treatment when several package names are present.
-  if(matching.length>1)return Math.max(...matching);
   const service=(config?.services||[]).find(item=>
     String(item?.name||"").toLowerCase()===String(treatment||"").toLowerCase());
   if(!service)return 0;
@@ -219,7 +220,16 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   if(selected<today.date)return {status:"past",...info};
   let times=timesInText(customerText);
   if(!times.length)times=timesInText(appointmentPreference);
-  if(!times.length)return {status:"valid_day",...info};
+  if(!times.length){
+    const daypart=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|morning|afternoon|evening|pagi|petang|malam|tengah hari)/iu;
+    const currentDaypart=daypart.test(customerText);
+    const recentDaypart=recentCustomerMessages.some(item=>{
+      const at=new Date(item?.createdAt||item?.created_at||item?.pricingCreatedAtMs).getTime();
+      return Number.isFinite(at)&&at<=new Date(now).getTime()+120000&&
+        new Date(now).getTime()-at<=36*3600000&&daypart.test(String(item?.content||""));
+    });
+    return {status:currentDaypart||recentDaypart?"valid_preference":"valid_day",...info};
+  }
   const length=Math.max(0,Math.min(480,Number(durationMinutes)||0));
   const inHours=times.some(t=>opening.some(([open,close])=>t>=open&&t+length<=close));
   const possible=times.some(t=>opening.some(([open,close])=>
@@ -293,7 +303,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     return {reply:alreadyCorrects&&issue.status==="closed"?original:
       issueReply(conflict,{hours,language}),blocked:true,issue:conflict};
   }
-  if(requireValidPreference&&["unknown","ambiguous","unconfigured"].includes(issue.status)){
+  if(requireValidPreference&&["unknown","ambiguous","unconfigured","valid_day"].includes(issue.status)){
     const lang=String(language||"zh").toLowerCase().slice(0,2);
     const question=lang==="en"?"Which date and time would you prefer? I'll have the clinic check availability 😊":
       lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
