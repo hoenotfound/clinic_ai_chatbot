@@ -21,7 +21,7 @@ const normalize=v=>String(v||"").normalize("NFKC").replace(/[^\p{L}\p{N}+&]+/gu,
 function isCustomerSelection(text,selected,candidates){
  const body=text.normalize("NFKC").trim()
    .replace(/^(?:(?:您好|你好|hello|hi)[,，!！\s]*)?/iu,"")
-   .replace(/^(?:(?:我)?\s*(?:想(?:要)?(?:了解|知道|做|体验|體驗|问|問)|要(?:做|了解)|对|對)\s*|(?:i\s*(?:would like|want|am interested in|'m interested in|would like to know about|want to know about|want to try))\s+|(?:saya\s+)?(?:nak tahu|mahu tahu|nak cuba|mahu cuba|berminat dengan|berminat|nak|mahu)\s+)/iu,"")
+   .replace(/^(?:(?:我)?\s*(?:想(?:要)?(?:了解|知道|做|体验|體驗|问|問)|要(?:做|了解)|对|對)\s*|(?:i\s*(?:would like to know about|want to know about|would like to try|want to try|am interested in|'m interested in|would like|want))\s+|(?:saya\s+)?(?:nak tahu|mahu tahu|nak cuba|mahu cuba|berminat dengan|berminat|nak|mahu)\s+)/iu,"")
    .replace(/(?:\s*(?:有兴趣|有興趣|的详情|的詳情|了解一下|一下|please|ya))?[\s。.!！?？]*$/iu,"").trim();
  const terms=candidates.find(c=>c.name===selected.name)?.terms||[];
  return normalize(body)===normalize(selected.name)||
