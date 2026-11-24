@@ -865,6 +865,7 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about price, availability, or how the process works.
 ${appointmentLocationRule}
 - The ${terms.customerSingular} has given a usable schedule preference: a day/date PLUS a time, time range, or daypart such as morning/afternoon/evening.
+- Read the current scheduling exchange as a whole. Written month names, ordinal dates, abbreviated dates and separate consecutive customer messages are valid evidence (for example, "29th November" followed by "3.00 PM"). Resolve relative dates using the original customer message's local date. If both date and time are known, acknowledge the preference and offer to check availability rather than asking for them again. If only one is missing, ask only for that missing detail. Never invent a missing time or carry over a superseded preference.
 - The preferred day must be open under current BUSINESS INFO, and a stated time must be within operating hours and not already passed. Otherwise answer naturally with the closure/operating hours and ask for another day; do NOT set booking_ready. Never treat open hours as proof that a practitioner is available.
 - The intent, configured location, and schedule preference belong to the ${terms.customerSingular}'s CURRENT attempt. Do not reuse details from an older completed, cancelled, visited, abandoned, or clearly separate discussion.
 - No safety, complaint, or human-handoff condition applies.
