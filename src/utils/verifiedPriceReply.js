@@ -321,23 +321,40 @@ function safeNonPriceExplanation(customerText, original, language) {
 // This is a text validation step, not another intent classifier.
 function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={}) {
   const original=String(reply||"").trim();
-  if (!original || original.length>240 || prices?.length!==1 ||
-      prices[0].name!=="Main offer" || prices[0].afterVoucher ||
+  if (!original || original.length>400 || !prices?.length ||
       hasClinicalMediaRisk(original) || MEDIA_SEND_PROMISE.test(original)) return null;
-  const price=prices[0].price;
   const normalized=original.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
   const amounts=[...normalized.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
-  if(amounts.length!==1 || "RM"+amounts[0][1]!==price ||
+  if(amounts.length!==prices.length ||
      !normalized.includes(treatment.normalize("NFKC"))) return null;
-  // Only a plainly labelled current/First Trial price with conversational
-  // connectors is safe to retain. Never accept a duration, per-session
-  // guarantee, extra discount, gift, deadline or new treatment claim.
-  const residual=normalized.replace(treatment.normalize("NFKC")," ")
-    .replace(amounts[0][0]," ").replace(/[\p{P}\p{S}\s]/gu," ").trim();
+  let residual=normalized.replace(treatment.normalize("NFKC")," ");
+  // A package quotation must name each approved option next to its exact
+  // amount. Do not retain a menu just because the numeric set matches.
+  if(prices.length===1 && prices[0].name==="Main offer"){
+    if("RM"+amounts[0][1]!==prices[0].price || prices[0].afterVoucher)return null;
+    residual=residual.replace(amounts[0][0]," ");
+  }else{
+    if(prices.some(p=>p.name==="Main offer" || p.afterVoucher))return null;
+    const lines=normalized.split(/\n+/u);
+    for(const p of prices){
+      const name=p.name.normalize("NFKC");
+      const matches=lines.filter(line=>line.includes(name));
+      if(matches.length!==1)return null;
+      const line=matches[0];
+      if(prices.filter(other=>line.includes(other.name.normalize("NFKC"))).length!==1)return null;
+      const money=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+      if(money.length!==1 || "RM"+money[0][1]!==p.price)return null;
+      residual=residual.replace(name," ").replace(money[0][0]," ");
+    }
+  }
+  // Preserve natural connectors around verified facts. Unverified gifts,
+  // deadlines, session counts, efficacy claims and voucher terms fall back
+  // to the configured formatter rather than being released unchecked.
   const trial=/(?:first\s*trial|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|percubaan pertama)/iu.test(normalized);
   if(firstTrialQuote!==trial) return null;
-  const connectors=/(?:亲爱的|親愛的|您好|你好|是的|好的|我们|我們|目前|现在|現在|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|体验价|體驗價|优惠价|優惠價|价格|價格|价钱|價錢|只需|仅需|僅需|的|是|为|為|哦|呀|呢|啦|哈|first\s*trial|percubaan pertama|\b(?:hi|hello|dear|yes|of course|currently|now|our|the|for|is|at|only|price|promotional|promo|harga|promosi|untuk|ialah|adalah|semasa|hanya|ya|awak|anda|kami)\b)/giu;
-  if(residual.replace(connectors,"").trim()) return null;
+  const connectors=/(?:亲爱的|親愛的|您好|你好|是的|好的|我们|我們|目前|现在|現在|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|体验价|體驗價|优惠价|優惠價|价格|價格|价钱|價錢|只需|仅需|僅需|以下|有两个|有兩個|两个|兩個|配套|套餐|优惠|優惠|的|是|为|為|哦|呀|呢|啦|哈|first\s*trial|percubaan pertama|\b(?:hi|hello|dear|yes|of course|currently|now|our|the|for|is|are|at|only|price|prices|package|packages|options|promotional|promo|harga|promosi|pakej|pilihan|untuk|ialah|adalah|semasa|hanya|ya|awak|anda|kami)\b)/giu;
+  residual=residual.replace(/[\p{P}\p{S}\s]/gu," ").replace(connectors,"").trim();
+  if(residual)return null;
   return original;
 }
 
