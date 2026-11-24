@@ -551,6 +551,32 @@ function relativePackageReference(current) {
   return {cheaper,dearer};
 }
 
+// Negative evidence only: a complete, ordinary introduction to a configured
+// service is not an amount request. Match the whole message around the
+// configured name/alias, not individual positive pricing keywords. Any
+// additional question remains for the model and existing validators.
+function isPlainNamedTreatmentInterest(current, candidate) {
+  if (!candidate || hasExplicitPriceRequest(current) ||
+      hasExplicitPackageOptionsRequest(current)) return false;
+  const key=value=>String(value||"").normalize("NFKC").toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu,"");
+  const text=key(current);
+  for (const term of candidate.terms) {
+    const name=key(term.value);
+    if (!name) continue;
+    const at=text.indexOf(name);
+    if(at<0) continue;
+    const before=text.slice(0,at), after=text.slice(at+name.length);
+    if (/^(?:(?:你好|您好|hi|hello))?(?:我)?(?:也|还|還|现在|現在|这次|這次)?(?:想|要|希望)(?:了解|知道|咨询|諮詢|问问|問問|看看|做|试试|試試)$/u.test(before) &&
+        /^(?:疗程|療程|护理|護理|治疗|治療|的资料|的資料|的介绍|的介紹|一下)?$/u.test(after)) return true;
+    if (/^(?:(?:hi|hello))?(?:im|iam|idlike|iwouldlike|iwant)(?:also)?(?:interestedin|toknowmoreabout|tolearnmoreabout|toknowabout|tolearnabout|tofindoutabout|totry|toaskabout)(?:the|your)?$/u.test(before) &&
+        /^(?:facial)?(?:treatment|care|service)?(?:please)?$/u.test(after)) return true;
+    if (/^(?:(?:hi|hello))?(?:saya)?(?:juga)?(?:berminat(?:dengan|tentang|untuk)?|nak(?:tahu(?:tentang)?|cuba)|mahu(?:tahu(?:tentang)?|cuba))(?:rawatan)?$/u.test(before) &&
+        /^(?:rawatan|care)?$/u.test(after)) return true;
+  }
+  return false;
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -597,7 +623,9 @@ function resolveModelLedPricingDecision({
   const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();
   // A bare service name is interest, not a price request, unless a preceding
   // verified pricing clarification actually asked the customer to select it.
-  if (direct && candidates.find(c=>c.name===direct.name)?.terms.some(t=>bareKey(t.value)===bareKey(current)) &&
+  const namedCandidate=direct && candidates.find(c=>c.name===direct.name);
+  if (namedCandidate && (namedCandidate.terms.some(t=>bareKey(t.value)===bareKey(current)) ||
+      isPlainNamedTreatmentInterest(current,namedCandidate)) &&
       !resolveClarifiedPriceService({customerText:current,conversationHistory:turns,services,serviceAliases})) return null;
   if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
       (direct && direct.name !== intent.treatment) ||
@@ -800,7 +828,10 @@ function hasConflictingStaffPrice({treatment,conversationHistory=[],services=[],
 function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
   semanticApproval,legacyApproval,hasSpecialDecision=false,customerText,
   promotions=[]}={}){
-  if(mode!=="enabled" || hasSpecialDecision || semanticApproval?.decision ||
+  // Returning-treatment recovery proves the treatment, not permission to
+  // widen a verified or requested package. Other protected paths stay intact.
+  const returning=legacyApproval?.decision?.source==="customer_returning_treatment_price";
+  if(mode!=="enabled" || (hasSpecialDecision && !returning) || semanticApproval?.decision ||
     !modelIntent?.structured || modelIntent.outcome!=="normal" ||
     !(modelIntent.priceQuery===true || modelIntent.packageQuery===true))return false;
   const legacy=legacyApproval?.decision;
@@ -826,9 +857,18 @@ function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
 // the authorization boundary, or a verified special case, is never bypassed.
 function shouldApplyModelLedPricing({mode,legacyCandidate,
   legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
-  return mode==="enabled" && !hasSpecialDecision &&
-    (!legacyCandidate || Boolean(legacyApproval?.decision)) &&
-    Boolean(semanticApproval?.decision);
+  const legacy=legacyApproval?.decision, semantic=semanticApproval?.decision;
+  if(mode!=="enabled" || !semantic || (legacyCandidate && !legacy)) return false;
+  if(!hasSpecialDecision) return true;
+  // Only this broad returning-customer fallback may yield to a narrower
+  // independently approved package scope. Do not change treatment, amounts,
+  // or override other protected special decisions or a final rejection.
+  return legacy?.source==="customer_returning_treatment_price" &&
+    legacy.type==="price" && semantic.type==="price" &&
+    legacy.treatment===semantic.treatment &&
+    Array.isArray(legacy.prices) && Array.isArray(semantic.prices) &&
+    semantic.prices.length>0 && semantic.prices.length<legacy.prices.length &&
+    semantic.prices.every(p=>legacy.prices.some(old=>old.name===p.name && old.price===p.price));
 }
 
 // Use the same customer-authored evidence at the outbound text boundary as
