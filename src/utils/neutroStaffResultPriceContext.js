@@ -25,7 +25,7 @@ function isCustomerSelection(text,selected,candidates){
    .replace(/(?:\s*(?:有兴趣|有興趣|的详情|的詳情|了解一下|一下|please|ya))?[\s。.!！?？]*$/iu,"").trim();
  const terms=candidates.find(c=>c.name===selected.name)?.terms||[];
  return normalize(body)===normalize(selected.name)||
-   terms.some(t=>normalize(t.key)===normalize(body));
+   terms.some(t=>normalize(t.value)===normalize(body));
 }
 const CHOICE_MENU=/(?:package\s*[a-z]|配套\s*[a-z]|套餐\s*[a-z]|(?:两个|兩個|两种|兩種|两项|兩項|多种|多種|其他|其它|或者|还是|還是|任选|任選|选项|選項|分别|分別)|\b(?:both|either|options?|alternatives?|another|other|or|dua|atau|pilihan)\b|(?:^|\n)\s*\d+[.)、])/iu;
 const GENERIC_CLARIFICATION=/^(?:(?:请问|請問|你好|您好)[,，\s]*)?(?:你|您)?\s*(?:想|要)?\s*(?:了解|知道|问|問|看)?\s*哪(?:一)?(?:项|項|个|個|种|種)?\s*(?:疗程|療程|护理|護理|服务|服務)?\s*(?:的)?\s*(?:价格|價格|价钱|價錢|多少钱|多少錢)[\s呢呀啊吗嗎?？。!！]*(?:我可以帮你确认[\s😊☺️。!！]*)?$|^(?:which (?:treatment|service)(?:'s)? (?:price|cost)(?: would you like to know)?|which (?:treatment|service) (?:would you like|are you asking) (?:the )?(?:price|cost)(?: of| for)?|harga rawatan mana(?: yang anda ingin tahu)?|rawatan mana(?: yang anda nak tahu harga)?)[\s?？.!！]*$/iu;
@@ -109,7 +109,7 @@ function resolveStaffResultPriceContext({customerText,conversationHistory=[],ser
      // A later menu can change what "this" or even a bare price means.
      // Reject actual alternative packages/treatments, not ordinary
      // explanatory questions about concerns or appointment arrangements.
-     if(/(?:package\s*[ab]|配套\s*[ab]|套餐\s*[ab]|(?:^|\n)\s*\d+[.)、])/iu.test(caption))return null;
+     if(/(?:package\s*[ab]|配套\s*[ab]|套餐\s*[ab]|(?:两|兩|多|[2-9])\s*(?:个|個|项|項|种|種|套)?\s*(?:疗程|療程|护理|護理|配套|套餐|方案)|\b(?:two|multiple|several|different|dua|beberapa)\s+(?:treatments?|services?|packages?|options?|rawatan|pakej)\b|(?:^|\n)\s*\d+[.)、])/iu.test(caption))return null;
      if(findServicesInText(caption,candidates).includes(selected.name)){
        if(!matchedImage){botAcknowledged=true;ackAt=turn.pricingCreatedAtMs;}
      }
