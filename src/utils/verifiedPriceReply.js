@@ -293,6 +293,32 @@ function safeNonPriceExplanation(customerText, original, language) {
   return "具体做几次需要中医师评估后确认，护理时间也会根据个人情况而有所不同。";
 }
 
+// Preserve a complete, simple AI-authored quote when all its commercial
+// claims can be verified locally. More elaborate wording, additional terms,
+// unsupported clinical claims or missing conditions use the existing formatter.
+// This is a text validation step, not another intent classifier.
+function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={}) {
+  const original=String(reply||"").trim();
+  if (!original || original.length>240 || prices?.length!==1 ||
+      prices[0].name!=="Main offer" || prices[0].afterVoucher ||
+      hasClinicalMediaRisk(original) || MEDIA_SEND_PROMISE.test(original)) return null;
+  const price=prices[0].price;
+  const normalized=original.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
+  const amounts=[...normalized.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+  if(amounts.length!==1 || "RM"+amounts[0][1]!==price ||
+     !normalized.includes(treatment.normalize("NFKC"))) return null;
+  // Only a plainly labelled current/First Trial price with conversational
+  // connectors is safe to retain. Never accept a duration, per-session
+  // guarantee, extra discount, gift, deadline or new treatment claim.
+  const residual=normalized.replace(treatment.normalize("NFKC")," ")
+    .replace(amounts[0][0]," ").replace(/[\p{P}\p{S}\s]/gu," ").trim();
+  const trial=/(?:first\s*trial|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|percubaan pertama)/iu.test(normalized);
+  if(firstTrialQuote!==trial) return null;
+  const connectors=/(?:亲爱的|親愛的|您好|你好|是的|好的|我们|我們|目前|现在|現在|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|体验价|體驗價|优惠价|優惠價|价格|價格|价钱|價錢|只需|仅需|僅需|的|是|为|為|哦|呀|呢|啦|哈|first\s*trial|percubaan pertama|\b(?:hi|hello|dear|yes|of course|currently|now|our|the|for|is|at|only|price|promotional|promo|harga|promosi|untuk|ialah|adalah|semasa|hanya|ya|awak|anda|kami)\b)/giu;
+  if(residual.replace(connectors,"").trim()) return null;
+  return original;
+}
+
 // If Gemini ignores an already verified price question, reply using active
 // configured package prices. Do not depend on optional images being sent: the
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
@@ -487,7 +513,12 @@ function ensureVerifiedPriceReply({
         ? `The listed price for ${voucherNames} is after applying the voucher`
         : `${voucherNames} 的上述价格为使用优惠券后的价格`)
     : "";
-  const quote = firstTrialQuote
+  const preservedModelQuote = aiLed && pricingDecision.source === "model_led_customer_context"
+    ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
+    : null;
+  if (preservedModelQuote) return {reply:preservedModelQuote,restored:false};
+  const quote = firstTrialQuote &&
+    !(aiLed && pricingDecision.source === "model_led_customer_context" && prices[0].name !== "Main offer")
     ? (locale.startsWith("ms")
       ? `Harga promosi First Trial untuk ${treatment}: ${prices[0].price} 😊`
       : locale.startsWith("en")
@@ -633,4 +664,4 @@ function guardUnfulfilledPriceQuote(reply, language = "zh") {
   return { reply: safe, changed: true };
 }
 
-module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
