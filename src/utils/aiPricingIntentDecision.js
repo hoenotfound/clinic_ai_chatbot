@@ -577,6 +577,47 @@ function isPlainNamedTreatmentInterest(current, candidate) {
   return false;
 }
 
+// A delivered recommendation can establish a service only after the customer
+// participates in that particular treatment discussion. This is not a service
+// inference from symptoms, an ad, a CRM field or an isolated assistant name.
+function engagedRecommendationAnchor({turns, treatment, candidates, current, now}) {
+  if (!hasExplicitPriceRequest(current) && !isStandalonePriceQuestion(current)) return -1;
+  const end=turns.length-1;
+  for (let i=end-2;i>=Math.max(1,end-8);i--) {
+    const t=turns[i], copy=pricingMessageText(t).trim();
+    if (t?.role!=="assistant" || t.pricingDeliveredBotMessage!==true ||
+        isVerifiedStaffTurn(t) || t.verifiedOutboundImageUrl ||
+        !findServicesInText(copy,candidates).includes(treatment) ||
+        assistantIntroducesCompetingPaidService(t,treatment,candidates) ||
+        !/[?？]\\s*$/u.test(copy) || !isRecentPricingThread(turns,i,now)) continue;
+    const before=turns[i-1], answer=turns[i+1];
+    const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
+      t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
+      !RESET.test(t.content) && !REFUSAL.test(t.content) &&
+      !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
+      !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
+      !hasExplicitPriceRequest(t.content) &&
+      !/^\\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\\s.!！。]*$/iu.test(t.content);
+    if (!meaningful(before) || !meaningful(answer) || /[?？]/u.test(answer.content)) continue;
+    const safe=turns.slice(i+1,end).every(t=>{
+      const value=pricingMessageText(t);
+      if(t?.role==="user") return meaningful(t) &&
+        findServicesInText(value,candidates).every(name=>name===treatment);
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+          t.pricingDeliveredBotMessage!==true || t.verifiedOutboundImageUrl ||
+          /\\b(?:RM|MYR)\\s*\\d/iu.test(value)) return false;
+      // A clearly complimentary introductory assessment is not a second
+      // paid recommendation, even if this particular turn omits the service.
+      const names=findServicesInText(value,candidates);
+      if(names.length && names.every(name=>name==="1对1体态评估") &&
+          /(?:免费|免費|complimentary|free|percuma)/iu.test(value)) return true;
+      return !assistantIntroducesCompetingPaidService(t,treatment,candidates);
+    });
+    if(safe) return i;
+  }
+  return -1;
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -643,7 +684,7 @@ function resolveModelLedPricingDecision({
     // customer-named service, allowing ordinary intermediate questions.
     // An intervening contradictory selection or an unknown topic reset
     // invalidates the older anchor. Never infer treatment solely from an ad,
-    // CRM label, assistant recommendation or model guess.
+    // CRM label, isolated assistant recommendation or model guess.
     anchorIndex=-1;
     for (let i=turns.length-2;i>=0;i--) {
       const turn=turns[i], at=turn?.pricingCreatedAtMs;
@@ -662,6 +703,8 @@ function resolveModelLedPricingDecision({
       anchorIndex=i;
       break;
     }
+    const recommendationOnly=anchorIndex<0;
+    if (recommendationOnly) anchorIndex=engagedRecommendationAnchor({turns,treatment:intent.treatment,candidates,current,now});
     if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
     const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
     // Assistant explanations and generic safety disclaimers are not customer
@@ -670,10 +713,10 @@ function resolveModelLedPricingDecision({
     // independent customer, staff, and current clinical/safety vetoes.
     const latestNamedResponse=responses.findLast(t=>
       findServicesInText(pricingMessageText(t),candidates).length>0);
-    if (!latestNamedResponse ||
+    if (!recommendationOnly && (!latestNamedResponse ||
         !findServicesInText(pricingMessageText(latestNamedResponse),candidates)
           .includes(intent.treatment) ||
-        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates)) return null;
+        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates))) return null;
   }
   // Known readable staff assistance is conversation evidence, not a
   // takeover. Unknown/deleted echoes and unverified/conflicting staff prices
