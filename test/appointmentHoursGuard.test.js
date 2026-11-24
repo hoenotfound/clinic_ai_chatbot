@@ -306,11 +306,17 @@ test("booking-ready backstop rejects the closed day BEFORE any database mutation
       publish(){throw Error("must not publish");},
       sendBookingReadyAlert(){alerts++;throw Error("must not alert");},
     });
+    // The service uses its real current time. Use a future Monday so this
+    // regression continues to exercise the closed-day path on any run date.
+    const now=new Date();
+    let nextMonday=new Date(now.getTime()+86400000);
+    while(localParts(nextMonday).weekday!==1)nextMonday=new Date(nextMonday.getTime()+86400000);
+    const date=localParts(nextMonday).date;
     const result=await mark(9283,23208,{
-      details:{appointmentPreference:"今天 下午1点或2点"},
+      details:{appointmentPreference:date+" 下午1点或2点"},
       customerText:"下午1点或2点都可以",
-      recentCustomerMessages:[{content:"今天可以吗",createdAt:monday}],
-      receivedAt:monday,
+      recentCustomerMessages:[{content:date,createdAt:now}],
+      receivedAt:now,
     });
     assert.equal(result.contactUpdated,false);
     assert.equal(result.blockedReason,"closed");
@@ -320,4 +326,253 @@ test("booking-ready backstop rejects the closed day BEFORE any database mutation
     config.hours=originalHours;
     config.businessType=originalType;
   }
+});
+
+test("written English and Malay calendar dates, including the original newline format", () => {
+  const now="2026-11-23T23:20:35.826Z";
+  for(const customerText of ["29th November \n3.00 PM","29 November 3.00 PM",
+    "November 29 at 3pm","29 Nov, 2026 3:00 PM","29 November pukul 3 petang",
+    "2026年11月29日 下午3点"]){
+    const result=evaluateAppointmentHours({hours,customerText,receivedAt:now,now});
+    assert.equal(result.date,"2026-11-29",customerText);
+    assert.equal(result.status,"valid_preference",customerText);
+  }
+  assert.equal(detectDate("5 Disember 2026","2026-11-24").date,"2026-12-05");
+  assert.equal(detectDate("1 Mac 2027","2026-11-24").date,"2027-03-01");
+  assert.equal(detectDate("November 29, 2026","2026-11-24").date,"2026-11-29");
+  assert.equal(detectDate("day after tomorrow","2026-11-24").date,"2026-11-26");
+  assert.equal(detectDate("Next Monday","2026-11-23").date,"2026-11-30");
+  assert.equal(detectDate("29 November or 30 November","2026-11-24").ambiguous,true);
+  assert.equal(detectDate("31 November","2026-11-24"),null);
+  assert.deepEqual(timesInText("3:11 PM"),[15*60+11]);
+});
+test("a natural written date and separate clock time are joined from timestamped customer evidence", () => {
+  const now="2026-11-23T23:48:20Z";
+  for(const content of ["29 November","29th November","29/11","2026-11-29","11月29日","Ahad"]){
+    const args={hours,customerText:"3.00 PM",
+      recentCustomerMessages:[{content,createdAt:"2026-11-23T23:48:15Z"}],
+      receivedAt:now,now};
+    const result=evaluateAppointmentHours(args);
+    assert.equal(result.status,"valid_preference",content);
+    assert.equal(result.date,"2026-11-29",content);
+    const reply="Sunday at 3 PM, I'll check availability with our team 😊";
+    const checked=guardAppointmentReply({...args,reply,language:"en",requireValidPreference:true});
+    assert.equal(checked.blocked,false,content);
+    assert.equal(checked.reply,reply,content);
+  }
+});
+test("a repeated full preference does not trigger the generic booking clarification", () => {
+  const now="2026-11-23T23:20:35.826Z";
+  const reply="Which date and time would you prefer? I'll have the clinic check availability 😊";
+  const checked=guardAppointmentReply({hours,customerText:"29th November \n3.00 PM",reply,
+    receivedAt:now,now,language:"en",requireValidPreference:true});
+  assert.equal(checked.blocked,false);
+  assert.equal(checked.issue.status,"valid_preference");
+  assert.doesNotMatch(checked.reply,/which date and time/i);
+  assert.match(checked.reply,/check your preferred date and time/);
+});
+test("only the genuinely missing scheduling detail is requested", () => {
+  const now="2026-11-23T23:48:20Z";
+  const args={hours,receivedAt:now,now,language:"en",requireValidPreference:true,reply:"I'll check"};
+  assert.match(guardAppointmentReply({...args,customerText:"29 November"}).reply,/What time on that day/);
+  const timeOnly=guardAppointmentReply({...args,customerText:"3.00 PM"});
+  assert.match(timeOnly.reply,/Which date would suit you/);
+  assert.doesNotMatch(timeOnly.reply,/date and time/);
+  // A date alone does not inherit a different date's time.
+  const changed=evaluateAppointmentHours({...args,customerText:"29 November",
+    recentCustomerMessages:[{content:"28 November 3pm",createdAt:"2026-11-23T23:45:00Z"}]});
+  assert.equal(changed.status,"valid_day");
+  const unrelated=evaluateAppointmentHours({...args,customerText:"3pm",
+    recentCustomerMessages:[{content:"Promotion ends 29 November",createdAt:"2026-11-23T23:45:00Z"}]});
+  assert.equal(unrelated.status,"unknown");
+  const future=evaluateAppointmentHours({...args,customerText:"3pm",
+    recentCustomerMessages:[{content:"29 November",createdAt:"2026-11-23T23:48:30Z"}]});
+  assert.equal(future.status,"unknown");
+});
+test("written dates still enforce Monday closures and configured treatment durations", () => {
+  const now="2026-11-23T23:48:20Z";
+  const args={hours,receivedAt:now,now,language:"en",requireValidPreference:true,reply:"I'll check availability"};
+  assert.equal(guardAppointmentReply({...args,customerText:"30 November 3 PM"}).issue.status,"closed");
+  assert.equal(guardAppointmentReply({...args,customerText:"3 PM",recentCustomerMessages:[
+    {content:"30 November",createdAt:"2026-11-23T23:48:15Z"}]}).issue.status,"closed");
+  assert.equal(guardAppointmentReply({...args,customerText:"29 November 5 PM",durationMinutes:150}).issue.status,"outside_hours");
+  assert.equal(guardAppointmentReply({...args,customerText:"29 November 3 PM",durationMinutes:150}).blocked,false);
+  const promo=guardAppointmentReply({...args,customerText:"What is the promotion price on 30 November?",reply:"Here are the current prices"});
+  assert.equal(promo.issue.status,"not_appointment");
+  assert.equal(promo.reply,"Here are the current prices");
+});
+
+test("written dates respect explicit weekdays, invalid dates, and past dates",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now};
+  assert.equal(evaluateAppointmentHours({...args,customerText:"Sunday 6 December at 3pm"}).date,"2026-12-06");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"Monday 7 December at 3pm"}).status,"closed");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"23 November 3pm"}).status,"past");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"31 November 3pm",recentCustomerMessages:[
+    {content:"29 November 2pm",createdAt:"2026-11-24T01:14:00Z"}]}).status,"invalid_date");
+  assert.equal(detectDate("1 January","2026-12-31").date,"2027-01-01");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 6pm"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November evening"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 3:75 PM"}).status,"valid_day");
+});
+test("cancellation, superseded dates, and polite split replies are handled conservatively",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now};
+  const history=(...messages)=>messages.map((content,i)=>({content,createdAt:new Date(Date.parse(now)-(i+1)*10000).toISOString()}));
+  assert.equal(evaluateAppointmentHours({...args,customerText:"3pm",recentCustomerMessages:history("Actually cancel the appointment","29 November")}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 3pm cannot"}).status,"not_appointment");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November",recentCustomerMessages:history("28 November 2pm","29 November 3pm")}).status,"valid_day");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"3pm",recentCustomerMessages:history("29 November please")}).status,"valid_preference");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"yes please",recentCustomerMessages:history("3pm please","29 November")}).status,"valid_preference");
+});
+test("normal and booking-ready replies cannot repeat or invent a verified preference",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now,customerText:"29 November 3pm",language:"en",durationMinutes:90};
+  for(const reply of ["Which date and time would you prefer? I'll have the clinic check availability 😊",
+    "I will check November 29 at 4pm for your appointment","I will check November 28 at 3pm for your appointment",
+    "Would 7pm work for your appointment?","29 November\n7pm","Would 29 November at 3pm or 7pm work for your appointment?"]){
+    const checked=guardAppointmentReply({...args,reply,requireValidPreference:true});
+    assert.equal(checked.blocked,false,reply);
+    assert.match(checked.reply,/2026-11-29, 3:00 PM/);
+  }
+  const normal=guardAppointmentReply({...args,reply:"Which date and time would you prefer?",requireValidPreference:false});
+  assert.equal(normal.repairedPreference,true);
+  assert.equal(normal.redundantClarification,true);
+  assert.match(normal.reply,/2026-11-29, 3:00 PM/);
+  const mixed=guardAppointmentReply({...args,customerText:"Can I visit?",reply:"Would 29 November or 30 November work for your appointment?",requireValidPreference:false});
+  assert.equal(mixed.blocked,true);
+  assert.equal(mixed.issue.status,"closed");
+  const morning=guardAppointmentReply({...args,customerText:"Can I visit?",reply:"Would Sunday 7am work for your appointment?",requireValidPreference:false});
+  assert.equal(morning.issue.status,"outside_hours");
+});
+test("booking-ready recovery requires a prior scheduling question and verified customer input",()=>{
+  const {canRecoverBookingReady,verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const issue=evaluateAppointmentHours({hours,customerText:"29 November 3pm",receivedAt:now,now});
+  assert.equal(verifiedAppointmentPreference(issue),"2026-11-29 15:00");
+  assert.equal(canRecoverBookingReady({customerText:"29 November 3pm",previousAssistantText:"Which day would be convenient for you, weekday or weekend?",issue}),true);
+  assert.equal(canRecoverBookingReady({customerText:"29 November 3pm",previousAssistantText:"Here is our promotion",issue}),false);
+  assert.equal(canRecoverBookingReady({customerText:"thanks",previousAssistantText:"Which day would be convenient?",issue}),false);
+  assert.equal(verifiedAppointmentPreference({status:"invalid_date"}),null);
+});
+
+test("booking-ready backstop persists only independently verified customer schedule",async()=>{
+  const originalHours=config.hours;
+  const originalType=config.businessType;
+  config.hours=hours;
+  config.businessType="tcm_clinic";
+  const now=new Date();
+  // Select a future open date relative to the test runner's clock.
+  let day=new Date(now.getTime()+7*86400000);
+  while([0,1].includes(localParts(day).weekday))day=new Date(day.getTime()+86400000);
+  const date=localParts(day).date;
+  let updateParams=null;
+  try{
+    const mark=createBookingReadyOutcomeService({
+      database:{async connect(){return {
+        async query(sql,params){
+          if(sql.includes("UPDATE contacts c"))updateParams=params;
+          return {rows:[]};
+        },
+        release(){},
+      };}},
+      lockContactAlertQueue:async()=>{},
+      publish(){throw Error("no update expected");},
+      sendBookingReadyAlert(){throw Error("no update expected");},
+    });
+    const result=await mark(9294,23511,{
+      details:{appointmentPreference:"Wrong day at 4pm",staffSummary:"Wrong day at 4pm"},
+      customerText:date+" 3pm",receivedAt:now,durationMinutes:90,
+    });
+    assert.equal(updateParams[4],date+" 15:00");
+    assert.equal(result.details.appointmentPreference,date+" 15:00");
+    assert.match(result.details.staffSummary,/Customer preference:/);
+    assert.doesNotMatch(result.details.staffSummary,/Wrong day|4pm/);
+  }finally{
+    config.hours=originalHours;
+    config.businessType=originalType;
+  }
+});
+
+test("clock extraction preserves exact minutes, corrections, and invalid syntax",()=>{
+  const {parseClockPreference,verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now};
+  for(const [customerText,expected] of [
+    ["29 November 下午3点半","2026-11-29 15:30"],
+    ["29 November 3pm not possible, 4pm please","2026-11-29 16:00"],
+    ["29 November 3pm but not 4pm","2026-11-29 15:00"],
+    ["29 November 3pm, no actually 4pm","2026-11-29 16:00"],
+    ["29 November 2.30 petang","2026-11-29 14:30"],
+    ["29 November 下午1点或2点都可以","2026-11-29 13:00 or 14:00"],
+  ])assert.equal(verifiedAppointmentPreference(evaluateAppointmentHours({...args,customerText})),expected,customerText);
+  for(const customerText of ["29 November 14 PM","29 November 0 AM","29 November 3pm or 25:00"]){
+    assert.equal(evaluateAppointmentHours({...args,customerText}).status,"valid_day",customerText);
+    assert.equal(parseClockPreference(customerText).invalid,true,customerText);
+  }
+});
+test("time windows are continuous, and feasible start windows respect duration",()=>{
+  const {verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now,durationMinutes:90};
+  for(const customerText of ["29 November 3pm to 5pm","29 November 3 to 5pm","29 November 下午3点到5点","29 November 15:00–17:00"]){
+    const result=evaluateAppointmentHours({...args,customerText});
+    assert.equal(verifiedAppointmentPreference(result),"2026-11-29 15:00–17:00",customerText);
+    assert.deepEqual(result.range,[900,1020],customerText);
+    assert.deepEqual(result.validWindows,[[900,990]],customerText);
+  }
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 5pm to 7pm"}).status,"outside_hours");
+  const alternatives=evaluateAppointmentHours({...args,customerText:"29 November 3pm or 4pm"});
+  assert.equal(verifiedAppointmentPreference(alternatives),"2026-11-29 15:00 or 16:00");
+  const original="I will check 29 November from 3pm to 5pm with our clinic.";
+  assert.equal(guardAppointmentReply({...args,customerText:"29 November 3pm to 5pm",reply:original,requireValidPreference:true}).reply,original);
+});
+test("unverified booking claims and repeated scheduling questions are repaired",()=>{
+  const {claimsConfirmedAppointment}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now,language:"en",customerText:"29 November 3pm"};
+  for(const reply of ["Your booking is confirmed for 29 November at 3pm.","Appointment confirmed for Sunday at 3pm.","See you on Sunday!","您的预约已经确认","预约成功啦","Temujanji anda telah disahkan."]){
+    assert.equal(claimsConfirmedAppointment(reply),true,reply);
+    const checked=guardAppointmentReply({...args,reply,requireValidPreference:true});
+    assert.equal(checked.blocked,false,reply);
+    assert.match(checked.reply,/check your preferred date and time/);
+    assert.equal(claimsConfirmedAppointment(checked.reply),false);
+  }
+  for(const reply of ["I will check and confirm your appointment.","Your appointment is not confirmed yet.","I'll get back to you once confirmed."])
+    assert.equal(claimsConfirmedAppointment(reply),false,reply);
+  for(const reply of ["May I know when you are free?","What is your preferred date and time?","When would be convenient for you?"]){
+    const checked=guardAppointmentReply({...args,reply});
+    assert.equal(checked.repairedPreference,true,reply);
+    assert.match(checked.reply,/2026-11-29, 3:00 PM/);
+  }
+  const noPreference=guardAppointmentReply({...args,customerText:"Can I visit?",reply:"Your booking is confirmed."});
+  assert.equal(noPreference.blocked,true);
+  assert.equal(claimsConfirmedAppointment(noPreference.reply),false);
+});
+test("positive offers cannot hide behind closure statements or cancelled context",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now,language:"en"};
+  for(const reply of ["We are closed on Monday but you can come on Monday at 3pm.",
+    "Monday is closed, but you can come on Monday at 3pm."]){
+    const checked=guardAppointmentReply({...args,customerText:"Can I visit?",reply});
+    assert.equal(checked.blocked,true,reply);
+    assert.equal(checked.issue.status,"closed",reply);
+  }
+  const valid="We are closed on Monday, but Tuesday at 3pm works for your appointment.";
+  assert.equal(guardAppointmentReply({...args,customerText:"Can I visit?",reply:valid}).reply,valid);
+  const result=evaluateAppointmentHours({...args,customerText:"3pm",recentCustomerMessages:[
+    {content:"I have decided not to proceed",createdAt:"2026-11-24T01:14:50Z"},
+    {content:"29 November",createdAt:"2026-11-24T01:14:40Z"}]});
+  assert.equal(result.status,"unknown");
+});
+test("verified staff recap retains customer-authored non-scheduling context",()=>{
+  const {appointmentCustomerContext}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const result=appointmentCustomerContext({customerText:"3pm",receivedAt:now,now,recentCustomerMessages:[
+    {content:"29 November",createdAt:"2026-11-24T01:14:50Z"},
+    {content:"My lower back feels stiff and I want to improve my posture.",createdAt:"2026-11-24T01:14:40Z"},
+    {content:"I am interested in Package A.",createdAt:"2026-11-24T01:14:30Z"},
+    {content:"My old booking was 28 November at 4pm.",createdAt:"2026-11-24T01:14:20Z"},
+  ]});
+  assert.deepEqual(result,["I am interested in Package A.","My lower back feels stiff and I want to improve my posture."]);
 });
