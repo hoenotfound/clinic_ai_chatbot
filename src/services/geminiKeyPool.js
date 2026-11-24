@@ -384,6 +384,8 @@ async function runWithGeminiKeys(
     smartRetry = false,
     confirmModelUnavailableAcrossKeys = true,
     stopKeyRotationOnTimeout = false,
+    stopKeyRotationOnInvalidResponse = false,
+    minAttemptWindowMs = 0,
     smartRetryDelayMinMs = 500,
     smartRetryDelayMaxMs = 1000,
     persistHealth = true,
@@ -431,7 +433,10 @@ async function runWithGeminiKeys(
       const remainingBudgetMs = globalBudgetMs > 0
         ? globalBudgetMs - elapsedMs
         : Number.POSITIVE_INFINITY;
-      if (remainingBudgetMs <= 0) throw createBudgetError(failures);
+      if (remainingBudgetMs <= 0 ||
+          ((candidatePosition > 0 || attempt > 0) && remainingBudgetMs < minAttemptWindowMs)) {
+        throw createBudgetError(failures);
+      }
 
       const attemptTimeoutMs = globalBudgetMs > 0
         ? computeAttemptTimeoutMs({
@@ -501,6 +506,13 @@ async function runWithGeminiKeys(
 
         lastError = err;
         const outcome = classifyCandidateHealthFailure(err);
+
+        // Malformed model output is not a credential fault. On the bounded
+        // Flash-Lite reply path do not repeat the same generation on other keys.
+        if (stopKeyRotationOnInvalidResponse && outcome.failureKind === "invalid_response") {
+          console.warn(`${candidate.label} produced invalid model output; stopping key rotation:`, err?.message || err);
+          throw err;
+        }
 
         // A customer-reply timeout says the generation path was too slow, not
         // that this API key is unhealthy. Never poison key health for it. When
