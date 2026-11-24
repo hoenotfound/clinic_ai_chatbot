@@ -18,8 +18,10 @@ function isProvenPreProviderBlock(result){
 // draft. Keep the stricter AI text retry predicate unchanged.
 function isDeferrableFollowUpBlock(result){
  return isProvenPreProviderBlock(result) ||
-   (result?.code==="secondary_billing_unknown_hold_not_reviewed" &&
-    isProvenPreProviderBlock({...result,code:PRE_PROVIDER_CODE}));
+   (["secondary_billing_unknown_hold_not_reviewed","secondary_billing_sender_alarm"].includes(result?.code) &&
+    isProvenPreProviderBlock({...result,code:PRE_PROVIDER_CODE})) ||
+   (result?.preProviderCancelled===true && result?.success===false &&
+    result?.unknown!==true && result?.ambiguous!==true && !result?.wamid);
 }
 // This single SQL statement atomically marks an unsent Inbox draft cancelled
 // and retains the unique attempt row as deferred. No delete or blind replay.
@@ -43,7 +45,13 @@ async function deferProvenUnsent({
      AND m.whatsapp_accepted_at IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM whatsapp_sender_billing_attempts billing
-       WHERE billing.message_id=m.id)
+       WHERE billing.message_id=m.id
+         AND (NOT $4::boolean OR billing.state<>'rejected' OR billing.wamid IS NOT NULL
+           OR billing.contact_id<>a.contact_id OR billing.sender_id<>a.sender_id))
+     AND NOT EXISTS (
+       SELECT 1 FROM whatsapp_sender_status_receipts receipt
+       JOIN whatsapp_sender_billing_attempts b ON b.reservation_id=receipt.reservation_id
+       WHERE b.message_id=m.id)
      AND NOT EXISTS (
        SELECT 1 FROM outbound_message_evidence evidence
        WHERE evidence.message_id=m.id)
@@ -51,7 +59,7 @@ async function deferProvenUnsent({
   ), cancelled AS (
    UPDATE messages m
    SET delivery_status='cancelled',
-     delivery_error='Secondary follow-up deferred before provider send; no billing reservation.'
+     delivery_error='Secondary follow-up deferred before provider send; no accepted or unresolved billing reservation.'
    WHERE m.id=$2 AND EXISTS(SELECT 1 FROM eligible)
    RETURNING m.id
   ), deferred AS (
@@ -66,7 +74,7 @@ async function deferProvenUnsent({
    RETURNING a.id
   )
   SELECT id FROM deferred`;
- const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId)]);
+ const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId),result?.preProviderCancelled===true]);
  return rows.rows?.length===1;
 }
 // The caller must retain the current contact, slot, consent and 24h
