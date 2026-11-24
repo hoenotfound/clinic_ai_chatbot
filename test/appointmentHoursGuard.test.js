@@ -303,6 +303,7 @@ test("booking-ready backstop rejects the closed day BEFORE any database mutation
   try {
     const mark=createBookingReadyOutcomeService({
       database:{async connect(){connects++;throw Error("must not connect");}},
+      now:()=>new Date(laterMonday),
       publish(){throw Error("must not publish");},
       sendBookingReadyAlert(){alerts++;throw Error("must not alert");},
     });
