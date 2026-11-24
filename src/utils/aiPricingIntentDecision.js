@@ -15,7 +15,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
   isRecentPricingThread, isVerifiedStaffTurn, pricingMessageText,
   assistantIntroducesCompetingPaidService,
 } = require("./priceFollowUpContext");
-const { verifiedPricesForService } = require("./verifiedPriceReply");
+const { verifiedPricesForService, staffQuoteMatchesConfiguredPrice } = require("./verifiedPriceReply");
 const { getActivePromotions, promotionPackages, findMentionedPromotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 const { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote } = require("./independentRefusalPriceRequest");
@@ -727,28 +727,60 @@ function hasConflictingStaffPrice({treatment,conversationHistory=[],services=[],
     const names=findServicesInText(content,candidates);
     if(turn.role==="user" && names.length && !names.includes(treatment)) break;
     if(!isVerifiedStaffTurn(turn) || (names.length && !names.includes(treatment))) continue;
-    const amounts=[...content.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"")
-      .matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
-    if(!amounts.length) continue;
-    // An explicit incompatible quote, or a quote whose package association
-    // cannot be verified, must be confirmed by the team rather than guessed.
-    if(!verified?.length || names.length>1 ||
-      amounts.some(m=>!verified.some(p=>p.price==="RM"+m[1]))) return true;
-    if(verified.length>1) {
-      const options=getActivePromotions(promotions,new Date(now))
-        .filter(p=>p.linkedService===treatment && p.sendOnPriceQuery===true);
-      if(options.length!==1) return true;
-      const packages=promotionPackages(options[0]);
-      const lines=content.split(/\n+/u).filter(line=>/\b(?:RM|MYR)\s*\d/iu.test(line));
-      if(lines.some(line=>{
-        const matches=findMentionedPromotionPackages(packages,line);
-        const prices=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?!\d)/giu)];
-        return matches.length!==1 || prices.length!==1 ||
-          !verified.some(p=>p.name===matches[0].name && p.price==="RM"+prices[0][1]);
-      })) return true;
+    if (!/\b(?:RM|MYR)\s*\d/iu.test(content.normalize("NFKC"))) continue;
+    const active=getActivePromotions(promotions,new Date(now))
+      .filter(p=>p.linkedService===treatment && p.sendOnPriceQuery===true);
+    if (!verified?.length || active.length!==1 || names.length>1) return true;
+    const options=promotionPackages(active[0]);
+    const matches=(copy,option)=>{
+      const price=verified.find(p=>p.name===option.name);
+      return Boolean(price && staffQuoteMatchesConfiguredPrice(copy,option.pricing,price));
+    };
+    if (options.length===1) {
+      if (!matches(content,options[0])) return true;
+      continue;
     }
+    // Associate labelled package blocks, including continuation lines with
+    // original prices and voucher terms, before checking payable amounts.
+    const groups=[];
+    let group=null;
+    for (const line of content.split(/\n+/u)) {
+      const named=findMentionedPromotionPackages(options,line);
+      if(named.length>1) return true;
+      if(named.length===1) {
+        if(group?.option.name!==named[0].name){
+          group={option:named[0],lines:[]};groups.push(group);
+        }
+      }
+      if(group)group.lines.push(line);
+      else if(/\b(?:RM|MYR)\s*\d/iu.test(line))return true;
+    }
+    if(!groups.length || groups.some(g=>!matches(g.lines.join("\n"),g.option)))return true;
   }
   return false;
+}
+
+// A failed semantic package selection must not widen into an unrelated
+// legacy menu. Preserve independently established special cases and direct
+// customer package selections that exactly match a verified legacy quote.
+function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
+  semanticApproval,legacyApproval,hasSpecialDecision=false,customerText,
+  promotions=[]}={}){
+  if(mode!=="enabled" || hasSpecialDecision || semanticApproval?.decision ||
+    !modelIntent?.structured || modelIntent.outcome!=="normal" ||
+    !(modelIntent.priceQuery===true || modelIntent.packageQuery===true))return false;
+  const legacy=legacyApproval?.decision;
+  if(semanticCandidate)return true; // final commercial rejection
+  if(modelIntent.promotionOption!=null){
+    const active=getActivePromotions(promotions)
+      .filter(p=>p.linkedService===modelIntent.treatment && p.sendOnPriceQuery===true);
+    const named=active.length===1
+      ? findMentionedPromotionPackages(promotionPackages(active[0]),customerText):[];
+    return !(named.length===1 && named[0].name===modelIntent.promotionOption &&
+      legacy?.treatment===modelIntent.treatment && legacy.prices?.length===1 &&
+      legacy.prices[0].name===named[0].name);
+  }
+  return Boolean(legacy && modelIntent.treatment && legacy.treatment!==modelIntent.treatment);
 }
 
 // Enabled prioritizes a validated Gemini decision. A legacy rejection at
@@ -778,4 +810,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
