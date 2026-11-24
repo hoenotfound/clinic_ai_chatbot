@@ -32,7 +32,7 @@ test("defer requires provider-proof exclusions and atomic cancelled Inbox draft"
    assert.match(sql,/LEAST\(900,30\*POWER/);
   assert.match(sql,/SET delivery_status='cancelled'/);
   assert.match(sql,/status='deferred',message_id=NULL/);
-  assert.deepEqual(args,[7,42,9001]);
+  assert.deepEqual(args,[7,42,9001,false]);
   return {rows:[{id:7}]};
  }};
  assert.equal(await deferProvenUnsent({
