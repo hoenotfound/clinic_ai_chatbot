@@ -411,3 +411,43 @@ test("live retest: approved relative selection narrows the protected returning-t
    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
  assert.deepEqual(media?.packages?.map(p=>p.name),["Package B"]);
 });
+
+test("delivered AI recommendation plus customer engagement grounds the real Pulse Wave price request", async()=>{
+ const name="脉冲波调理",current="价格？";
+ const bot=(content,ms)=>({...turn("assistant",content,ms),pricingDeliveredBotMessage:true});
+ const a=args(current,name,{
+   services:[...services,{name},{name:"1对1体态评估"}],
+   promotions:[...promotions,promo(name,388)],
+   conversationHistory:[
+     turn("user","瘦身",9000),
+     bot("脉冲波调理可以用于局部身体塑形。你主要想改善哪个部位呢？",8000),
+     turn("user","肚子，腿",7000),
+     bot("脉冲波调理主要针对局部身体线条和肌肉紧绷放松。你平时会经常久坐吗？",6000),
+     turn("user","会",5000),
+     bot("可以先安排免费的1对1体态评估 + 入门体验。你下星期哪一天比较方便？",4000),
+     turn("user",current,0),
+   ],
+ });
+ const d=resolveModelLedPricingDecision(a);
+ assert.equal(d?.treatment,name);
+ assert.deepEqual(d.prices.map(p=>p.price),["RM388"]);
+ const approval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:d});
+ assert.equal(approval.reason,"approved");
+ assert.equal(resolveApprovedPricingAssessment({...a,mode:"shadow",aiDecision:d}).decision,null);
+ const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:approval.decision,
+   treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,
+   wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.equal(media?.packages?.length,1);
+ for (const kind of ["unverified","competing","staff","no_engagement","stale","nonprice","clinical","later_session"]) {
+   const b={...a,modelIntent:{...a.modelIntent},conversationHistory:a.conversationHistory.map(t=>({...t}))};
+   if(kind==="unverified") b.conversationHistory.filter(t=>t.role==="assistant").forEach(t=>t.pricingDeliveredBotMessage=false);
+   if(kind==="competing") b.conversationHistory[5].content="也可以选择3D 小颜术。";
+   if(kind==="staff") b.conversationHistory[5].pricingStaffAuthored=true;
+   if(kind==="no_engagement") b.conversationHistory[4].content="谢谢";
+   if(kind==="stale") b.conversationHistory.slice(0,-1).forEach(t=>t.pricingCreatedAtMs-=25*3600000);
+   if(kind==="nonprice"){b.customerText="多久？";b.conversationHistory.at(-1).content=b.customerText;}
+   if(kind==="clinical") b.conversationHistory[2].content="我怀孕了";
+   if(kind==="later_session") b.modelIntent.pricingStage="subsequent_session";
+   assert.equal(resolveModelLedPricingDecision(b),null,kind);
+ }
+});
