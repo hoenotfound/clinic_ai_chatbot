@@ -18,7 +18,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions, promotionPackages, findMentionedPromotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
-const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
+const { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
 const { resolveStaffResultPriceContext } = require("./neutroStaffResultPriceContext");
 const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
@@ -556,6 +556,7 @@ function resolveModelLedPricingDecision({
     customerText:original,services,serviceAliases,
   });
   if (independent && independent.treatment!==intent.treatment) return null;
+  if (!independent && hasCustomerRefusedPriceQuote(original)) return null;
   const current=independent?.priceText || original;
   // Negative safety/permission gates remain independent of model output.
   // The existing refusal resolver permits a distinctly requested NEW service.
@@ -565,6 +566,8 @@ function resolveModelLedPricingDecision({
       /\\b(?:stop|unsubscribe)\\b|退订|退訂/iu.test(original) ||
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
       isContextualAdServiceEnquiry(current) ||
+      /^(?:谢谢(?:你|您)?|多谢|thanks?|thank you|terima kasih|tq|ok(?:ay)?|好的|好啊|明白了|了解了)[\s。.!！😊🙏]*$/iu.test(current) ||
+      /^(?:一次(?:就)?(?:有)?效(?:果)?(?:吗|嗎|么|呢)?|(?:how effective|does it work|will it work|berkesan(?: ke| tak)?)\b)[\s?？。.!！]*$/iu.test(current) ||
       (UNRELATED.test(current) && !hasExplicitPriceRequest(current)) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(current,
@@ -578,6 +581,11 @@ function resolveModelLedPricingDecision({
   const candidates = serviceCandidates(services, serviceAliases);
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
+  const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();
+  // A bare service name is interest, not a price request, unless a preceding
+  // verified pricing clarification actually asked the customer to select it.
+  if (direct && candidates.find(c=>c.name===direct.name)?.terms.some(t=>bareKey(t.value)===bareKey(current)) &&
+      !resolveClarifiedPriceService({customerText:current,conversationHistory:turns,services,serviceAliases})) return null;
   if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
       (direct && direct.name !== intent.treatment) ||
       (RESET.test(current) && !direct)) return null;
