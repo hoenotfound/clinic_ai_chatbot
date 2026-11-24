@@ -543,6 +543,14 @@ function resolveAiPricingDecision({
 
 // Gemini classifies the current intent. Verify factual service/package evidence,
 // rather than requiring another affirmative price-keyword match.
+// Existing price-relative phrases are negative validation evidence only;
+// they cannot independently authorize a quote or override a model selection.
+function relativePackageReference(current) {
+  const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
+  const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+  return {cheaper,dearer};
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -709,8 +717,7 @@ function resolveModelLedPricingDecision({
     // or highest-priced option. Other semantic references rely on a grounded
     // menu and the model; do not treat ambiguous price ties as a selection.
     if (!mentioned.length && options.length>1) {
-      const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
-      const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+      const {cheaper,dearer}=relativePackageReference(current);
       if (cheaper || dearer) {
         if (!menuSupports || (cheaper && dearer)) return null;
         const amount=p=>Number(p.price.slice(2));
@@ -720,6 +727,10 @@ function resolveModelLedPricingDecision({
       }
     }
     prices=[selected];
+  } else if (mentioned.length===0 && options.length>1 &&
+      Object.values(relativePackageReference(current)).some(Boolean)) {
+    // A missing model selection is not authorization to quote every package.
+    return null;
   } else if (mentioned.length===1) {
     // A specific customer choice cannot be silently widened to all packages.
     return null;
@@ -802,6 +813,11 @@ function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
     return !(named.length===1 && named[0].name===modelIntent.promotionOption &&
       legacy?.treatment===modelIntent.treatment && legacy.prices?.length===1 &&
       legacy.prices[0].name===named[0].name);
+  }
+  if (Object.values(relativePackageReference(String(customerText||""))).some(Boolean)) {
+    const active=getActivePromotions(promotions)
+      .filter(p=>p.linkedService===modelIntent.treatment && p.sendOnPriceQuery===true);
+    if(active.length===1 && promotionPackages(active[0]).length>1) return true;
   }
   return Boolean(legacy && modelIntent.treatment && legacy.treatment!==modelIntent.treatment);
 }
