@@ -360,7 +360,9 @@ async function sendSecondaryStaffText({
     }
   }
   if (!reserved.reserved || !reserved.reservationId) {
-    return preBlock(reserved.code || "secondary_staff_billing_blocked");
+    return firstRecoveryMessageId!=null
+      ? preBlock(reserved.code || "secondary_staff_billing_blocked")
+      : block(reserved.code || "secondary_staff_billing_blocked");
   }
   // Freeze the exact destination used for both provider dispatch and later
   // billing receipts. An intervening customer webhook can change the contact's

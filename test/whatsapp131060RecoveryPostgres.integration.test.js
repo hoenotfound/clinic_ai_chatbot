@@ -109,6 +109,13 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
     await runOnce(deps);
     assert.equal(sends,0);
     assert.equal((await db.query("SELECT state FROM whatsapp_131060_continuations WHERE first_message_id=$1",[recoveryMessage])).rows[0].state,"pending");
+    // A fresh readable turn OR a human reply blocks the second menu even
+    // if Meta has not yet settled the first one. No earlier text is inferred.
+    for(const role of ["user","assistant"]){
+      const intervening=(await db.query("INSERT INTO messages(contact_id,role,content) VALUES($1,$2,$3) RETURNING id",[contact,role,role==="user"?"脉冲波调理":"Staff reply"])).rows[0].id;
+      assert.equal(await canSend131060Recovery({contactId:contact,inboundMessageId:initial,firstRecoveryMessageId:recoveryMessage,database:db,env}),false);
+      await db.query("DELETE FROM messages WHERE id=$1",[intervening]);
+    }
     await db.query("INSERT INTO whatsapp_sender_billing_gates(sender_id,owner_contact_id) VALUES($1,$2)",[sender,contact]);
     await db.query("INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-out',NOW())",[recoveryMessage,contact]);
     await runOnce(deps);

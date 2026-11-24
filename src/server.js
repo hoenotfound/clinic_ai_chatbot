@@ -1484,6 +1484,7 @@ async function processIncomingMessage(
             },
           }) : null;
       if (!fixedAdFirstReply && recoveryPromptProof && !keywordReason && !marketingStopQuestion &&
+          !hasClinicalMediaRisk(text) && !isRm68ClinicalConcern(text) &&
           !acceptedStaffOffer && !bookingContext?.appointmentAt &&
           !/^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))) {
         fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig});

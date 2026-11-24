@@ -58,7 +58,8 @@ async function runOnce({database=pool,env=process.env,contacts=contactsRepo,mess
    if(!await current()){await finish(database,id,"cancelled");continue;}
    saved=await reserve({...args,buttons:job.buttons});
    if(!saved){await finish(database,id,"cancelled");continue;}
-   await database.query("UPDATE whatsapp_131060_continuations SET second_message_id=$2 WHERE first_message_id=$1 AND state='claimed'",[id,saved.id]);
+   const bound=await database.query("UPDATE whatsapp_131060_continuations SET second_message_id=$2 WHERE first_message_id=$1 AND state='claimed' AND expires_at>NOW() RETURNING first_message_id",[id,saved.id]);
+   if(bound.rows.length!==1){await cancel(saved.id,contactId,database);await finish(database,id,"cancelled");continue;}
    const result=await send({contact,messageId:saved.id,text:RECOVERY_SECOND_TEXT,
      origin:"system_fallback",interactiveButtons:job.buttons,anchorMessageId:inboundMessageId,
      firstRecoveryMessageId:id,preSendCheck:()=>current(saved.id)},{database,env});
