@@ -2850,7 +2850,7 @@ async function processIncomingMessage(
       // Always apply a corrected reply, even when the validated preference
       // stays eligible for Booking Ready.
       reply = checked.reply;
-      if (!checked.blocked && checked.redundantClarification && !bookingReady &&
+      if (!checked.blocked && checked.repairedPreference && !bookingReady &&
           ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType) &&
           !contact.needs_attention && !priceQuery && !packageQuery && !serviceQuery &&
           !isDefiniteAppointmentCancellation(text)) {
