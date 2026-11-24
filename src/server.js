@@ -2085,7 +2085,7 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
-    let pricingApproval = resolveApprovedPricingAssessment({
+    const legacyPricingApproval = resolveApprovedPricingAssessment({
       mode: aiPricingMode, aiDecision: pricingDecision,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
@@ -2102,16 +2102,15 @@ async function processIncomingMessage(
     // same existing provider result without altering a reply or sending media.
     // Enabled fills only gaps; existing approved and special-case decisions
     // keep precedence until the new path has been independently reviewed.
-    const semanticMode = clinicConfig.aiPricingSemanticMode || "off";
-    let semanticPricingApplied = false;
-    if (["shadow","enabled"].includes(semanticMode) &&
-        ["shadow","enabled"].includes(aiPricingMode) &&
+    let semanticPricingApproval = null;
+    if (["shadow","enabled"].includes(aiPricingMode) &&
         !flagged && !bookingReady && !keywordReason && !urgentSafety &&
         !marketingStopQuestion && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
         !fixedAdFirstReply && !twoTreatmentQuote &&
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
-        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || pricingApproval.decision)) {
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
+      try {
       const semanticCandidate = resolveModelLedPricingDecision({
         modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
         services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
@@ -2127,18 +2126,18 @@ async function processIncomingMessage(
         promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
         marketingStopQuestion,
       });
-      const old=pricingApproval.decision, next=semanticApproval.decision;
+      const old=legacyPricingApproval.decision, next=semanticApproval.decision;
       const signature=d=>d ? JSON.stringify([d.type,d.treatment,
         (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
       // Compare exact treatment and package amounts, not only a boolean.
       // No raw message content, extra provider calls or new DB writes.
-      semanticPricingApplied = shouldApplyModelLedPricing({
-        mode:semanticMode,legacyMode:aiPricingMode,legacyCandidate:pricingDecision,
-        legacyApproval:pricingApproval,semanticApproval,
+      const apply = shouldApplyModelLedPricing({
+        mode:aiPricingMode,legacyCandidate:pricingDecision,
+        legacyApproval:legacyPricingApproval,semanticApproval,
         hasSpecialDecision:Boolean(shadowPriceException),
       });
       console.info("[Semantic pricing] "+JSON.stringify({
-        contact:contact.id,inbound:savedInbound.id,mode:semanticMode,
+        contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
         modelPriceQuery:modelPricingIntent.priceQuery===true,
         modelPackageQuery:modelPricingIntent.packageQuery===true,
         legacyApproved:Boolean(old),semanticApproved:Boolean(next),
@@ -2146,10 +2145,16 @@ async function processIncomingMessage(
         legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
         legacyPackages:old?.prices?.map(p=>p.name)||[],
         semanticPackages:next?.prices?.map(p=>p.name)||[],
-        applied:semanticPricingApplied,
+        applied:apply,
       }));
-      if (semanticPricingApplied) pricingApproval=semanticApproval;
+      if (apply) semanticPricingApproval=semanticApproval;
+      } catch (error) {
+        // Shadow diagnostics must not disrupt customer replies; Enabled also
+        // retains the original decision if semantic evaluation fails.
+        console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
+      }
     }
+    const pricingApproval = semanticPricingApproval || legacyPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
@@ -2198,7 +2203,7 @@ async function processIncomingMessage(
     // formatter/graphic selector through the former model/legacy fallbacks.
     // Ordinary Shadow and Off enquiries retain their original legacy route.
     const exceptionalPricingCandidate = Boolean(
-      semanticPricingApplied || shadowPriceException || numberedPricingSelection || scopedPackagePrice
+      shadowPriceException || numberedPricingSelection || scopedPackagePrice
     );
     const pricingAuthorityRequired = aiPricingEnabled || (
       aiPricingMode === "shadow" && exceptionalPricingCandidate
