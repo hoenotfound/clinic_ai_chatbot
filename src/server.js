@@ -2111,43 +2111,43 @@ async function processIncomingMessage(
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
         (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
       try {
-      const semanticCandidate = resolveModelLedPricingDecision({
-        modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
-        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
-        promotions:clinicConfig.promotions,
-        allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
-        complimentaryAssessmentExperienceEnabled:
-          clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
-      });
-      const semanticApproval = resolveApprovedPricingAssessment({
-        mode:"enabled",aiDecision:semanticCandidate,customerText:text,
-        conversationHistory:history,services:clinicConfig.services,
-        serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
-        promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
-        marketingStopQuestion,
-      });
-      const old=legacyPricingApproval.decision, next=semanticApproval.decision;
-      const signature=d=>d ? JSON.stringify([d.type,d.treatment,
-        (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
-      // Compare exact treatment and package amounts, not only a boolean.
-      // No raw message content, extra provider calls or new DB writes.
-      const apply = shouldApplyModelLedPricing({
-        mode:aiPricingMode,legacyCandidate:pricingDecision,
-        legacyApproval:legacyPricingApproval,semanticApproval,
-        hasSpecialDecision:Boolean(shadowPriceException),
-      });
-      console.info("[Semantic pricing] "+JSON.stringify({
-        contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
-        modelPriceQuery:modelPricingIntent.priceQuery===true,
-        modelPackageQuery:modelPricingIntent.packageQuery===true,
-        legacyApproved:Boolean(old),semanticApproved:Boolean(next),
-        agreement:signature(old)===signature(next),reason:semanticApproval.reason,
-        legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
-        legacyPackages:old?.prices?.map(p=>p.name)||[],
-        semanticPackages:next?.prices?.map(p=>p.name)||[],
-        applied:apply,
-      }));
-      if (apply) semanticPricingApproval=semanticApproval;
+        const semanticCandidate = resolveModelLedPricingDecision({
+          modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+        });
+        const semanticApproval = resolveApprovedPricingAssessment({
+          mode:"enabled",aiDecision:semanticCandidate,customerText:text,
+          conversationHistory:history,services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
+          promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
+          marketingStopQuestion,
+        });
+        const old=legacyPricingApproval.decision, next=semanticApproval.decision;
+        const signature=d=>d ? JSON.stringify([d.type,d.treatment,
+          (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
+        // Compare exact treatment and package amounts, not only a boolean.
+        // No raw message content, extra provider calls or new DB writes.
+        const apply = shouldApplyModelLedPricing({
+          mode:aiPricingMode,legacyCandidate:pricingDecision,
+          legacyApproval:legacyPricingApproval,semanticApproval,
+          hasSpecialDecision:Boolean(shadowPriceException),
+        });
+        console.info("[Semantic pricing] "+JSON.stringify({
+          contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
+          modelPriceQuery:modelPricingIntent.priceQuery===true,
+          modelPackageQuery:modelPricingIntent.packageQuery===true,
+          legacyApproved:Boolean(old),semanticApproved:Boolean(next),
+          agreement:signature(old)===signature(next),reason:semanticApproval.reason,
+          legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
+          legacyPackages:old?.prices?.map(p=>p.name)||[],
+          semanticPackages:next?.prices?.map(p=>p.name)||[],
+          applied:apply,
+        }));
+        if (apply) semanticPricingApproval=semanticApproval;
       } catch (error) {
         // Shadow diagnostics must not disrupt customer replies; Enabled also
         // retains the original decision if semantic evaluation fails.
