@@ -408,6 +408,11 @@ const CANDIDATES_SQL=`
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
+     WHERE discovery_alarm.sender_id=sa.id)
    -- The RM68 event is a different 90-minute offer from the standing RM388
    -- Pulse Wave template. Skip unapproved generic 48h/66h/Day4/Day6
    -- templates for this verified RM68 session (also on pre-send rechecks).
@@ -565,7 +570,11 @@ const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDA
 
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
-const RECHECK_SQL=CANDIDATES_SQL.replace(
+const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+`;
+const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  `   AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
@@ -582,7 +591,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
 );
 // Candidate discovery rejects every unsettled reservation. Rechecking an
 // already-claimed slot must allow only its own new reservation, never another.
-const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
+const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  "AND gate.state IN ('reserved','awaiting_pricing'))",
  `AND gate.state IN ('reserved','awaiting_pricing')
        AND NOT (gate.state='reserved' AND EXISTS (
