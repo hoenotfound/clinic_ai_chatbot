@@ -156,7 +156,14 @@ function isCampaignAvailabilityQuestion(text) {
   return !SCREENING.test(value) && (DATE_QUESTION.test(value) || OTHER_DATE.test(value));
 }
 function campaignLanguage(history,text) {
-  return detectConversationLanguage([String(text||""),...(Array.isArray(history)?history:[])
+  const value=String(text||"");
+  // A short capability question may have no general-language tokens.
+  // Only use these unmistakable terms when there is no Chinese sentence.
+  if(!/[\u3400-\u9fff]/u.test(value)) {
+    if(/\b(?:ultrabunyi|saringan)\b/iu.test(value)) return "ms";
+    if(/\b(?:ultrasound|sonogram|mammogram|mammography|screening)\b/iu.test(value)) return "en";
+  }
+  return detectConversationLanguage([value,...(Array.isArray(history)?history:[])
     .filter(t=>t?.role==="user").map(t=>t.content).reverse()],"zh");
 }
 function localized(language,zh,en,ms) {
@@ -182,7 +189,14 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
   const screening=screeningAcknowledgement({history,customerText:text});
   const previous=Array.isArray(history)?history.slice(0,-1):[];
   const priorUser=previous.filter(t=>t?.role==="user").slice(-4);
-  const alternate=OTHER_DATE.test(text) || (DATE_REFUSAL.test(text) && DATE_QUESTION.test(text));
+  const today=/(?:今天|\btoday\b|\bhari ini\b)/iu.test(text);
+  const tomorrow=/(?:明天|\btomorrow\b|\besok\b)/iu.test(text);
+  const mytDate=(offset=0)=>new Date(Number(now)+8*3600000+offset*86400000).toISOString().slice(0,10);
+  const eventDate=date=>date==="2026-12-05"||date==="2026-12-06";
+  const relativeEventDate=Number.isFinite(Number(now)) &&
+    ((today && eventDate(mytDate())) || (tomorrow && eventDate(mytDate(1))));
+  const alternate=(OTHER_DATE.test(text) && !relativeEventDate) ||
+    (DATE_REFUSAL.test(text) && DATE_QUESTION.test(text));
   const earlierAlternate=priorUser.some(t=>OTHER_DATE.test(String(t.content||"")) ||
     (DATE_REFUSAL.test(String(t.content||"")) && DATE_QUESTION.test(String(t.content||""))));
   const explicitEventPrice=/\bRM\s*68\b/iu.test(text) && askedAmount;
@@ -190,12 +204,12 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
     const priorScreening=previous.at(-1)?.role==="user" && SCREENING.test(String(previous.at(-1).content||""));
     const base=localized(language,
       "明白😊 其他日期是否可以安排胸部评估及护理，需要由门店确认。"+(askedAmount?"平日护理的收费也需要另外确认。":""),
-      "Understood 😊 The clinic will need to confirm whether the breast assessment and care can be arranged on your requested date."+(askedAmount?" The regular-care price also needs to be confirmed separately.":""),
+      "Understood 😊 The clinic will need to confirm whether the breast assessment and care can be arranged "+(today?"today.":"on your requested date.")+(askedAmount?" The regular-care price also needs to be confirmed separately.":""),
       "Faham 😊 Pusat perlu mengesahkan sama ada penilaian dan penjagaan payudara boleh diatur pada tarikh yang anda minta."+(askedAmount?" Harga penjagaan biasa juga perlu disahkan berasingan.":""));
     return base+(screening||priorScreening?" "+(screening||screeningAcknowledgement({history,customerText:previous.at(-1).content})||""):"");
   }
   if (screening) return screening;
-  if (!CAMPAIGN_QUERY.test(text) && !AMOUNT_QUESTION.test(text)) return null;
+  if (!CAMPAIGN_QUERY.test(text) && !AMOUNT_QUESTION.test(text) && !relativeEventDate) return null;
   if (day === "expired") {
     return localized(language,
       "您之前咨询的"+(askedAmount?" RM68 ":"")+"胸部护理体验活动已于12月6日结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
@@ -205,7 +219,7 @@ function campaignContextReply({ history, customerText, now = Date.now() } = {}) 
   const dates=dayLine(now);
   const enDates=day==="dec6"?"6 December":"5 and 6 December";
   const msDates=day==="dec6"?"6 Disember":"5 dan 6 Disember";
-  if (DATE_QUESTION.test(text)) {
+  if (DATE_QUESTION.test(text) || relativeEventDate) {
     // A date-only question must not disclose a price. Keep the availability
     // caveat and only offer dates still valid in Malaysia.
     return localized(language,
