@@ -31,6 +31,57 @@ function validDate(y,m,d){
     new Date(timestamp).toISOString().slice(0,10)===date?date:null;
 }
 
+// Calendar names used in Malaysian English and Malay.
+const MONTH_NAMES=[
+  ["january","jan","januari"],["february","feb","februari"],["march","mar","mac"],
+  ["april","apr"],["may","mei"],["june","jun"],["july","jul","julai"],
+  ["august","aug","ogos"],["september","sept","sep"],["october","oct","oktober","okt"],
+  ["november","nov"],["december","dec","disember","dis"],
+];
+const MONTH_PATTERN=MONTH_NAMES.flat().sort((a,b)=>b.length-a.length).join("|");
+const DAY_FIRST="\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+MONTH_PATTERN+")\\.?(?:\\s*,?\\s*(20\\d{2}))?(?!\\w)";
+const MONTH_FIRST="\\b("+MONTH_PATTERN+")\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:\\s*,?\\s*(20\\d{2}))?(?!\\w)";
+function monthNumber(name){return MONTH_NAMES.findIndex(names=>names.includes(name.toLowerCase()))+1;}
+function calendarDate(year,month,day,anchorDate){
+  const y=year?+year:+anchorDate.slice(0,4);
+  const date=validDate(y,month,day);
+  return !year&&date&&date<anchorDate?validDate(y+1,month,day):date;
+}
+const DAYPART=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|\bmorning\b|\bafternoon\b|\bevening\b|\bpagi\b|\bpetang\b|\bmalam\b|\btengah hari\b)/iu;
+const BARE_TIME=/^(?:(?:at|pukul|jam)\s+)?(?:\d{1,2}(?:[:.：]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)|\d{1,2}[:.：]\d{2}|(?:上午|早上|中午|下午|晚上|傍晚)?[零〇一二两兩三四五六七八九十\d]{1,3}\s*(?:点|點|时|時)(?:\s*[零〇一二两兩三四五六七八九十\d]{1,3}\s*分?)?|(?:morning|afternoon|evening|pagi|petang|malam|tengah hari|上午|早上|中午|下午|晚上|傍晚))[？?.!！。\s]*$/iu;
+function isBareTimePreference(text){return BARE_TIME.test(String(text||"").normalize("NFKC").trim());}
+function isBareCalendarPreference(text,anchorDate){
+  const value=String(text||"").normalize("NFKC").trim();
+  if(!detectDate(value,anchorDate))return false;
+  const rest=value.replace(new RegExp(DAY_FIRST,"giu"),"")
+    .replace(new RegExp(MONTH_FIRST,"giu"),"")
+    .replace(/\b(?:20\d{2}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]20\d{2})?)\b/gu,"")
+    .replace(/(?:20\d{2}年\s*)?\d{1,2}月\s*\d{1,2}[日号號]?/gu,"")
+    .replace(/(?:今天|今日|明天|后天|後天|(?:下|这|這|本)?(?:个|個)?(?:星期|周|週|礼拜)[一二三四五六日天1-7])/gu,"")
+    .replace(/\b(?:day after tomorrow|today|tomorrow|hari ini|esok|lusa)\b/giu,"")
+    .replace(new RegExp("\\b(?:(?:next|this|coming|hari)\\s+)?(?:"+WEEK_ALIASES.flat().join("|")+")\\b","giu"),"")
+    .replace(/^[\s,，。.!?！？-]+|[\s,，。.!?！？-]+$/gu,"").trim();
+  return !rest||isBareTimePreference(rest);
+}
+function appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now}){
+  const history=recentCustomerMessages.length?recentCustomerMessages:
+    recentCustomerTexts.map(content=>({content,createdAt:receivedAt}));
+  const latest=new Date(receivedAt).getTime(),current=new Date(now).getTime();
+  return history.map(item=>{
+    const content=typeof item==="string"?item:String(item?.content||"");
+    const at=typeof item==="string"?receivedAt:(item?.createdAt||item?.created_at||item?.pricingCreatedAtMs||null);
+    const timestamp=at==null?NaN:new Date(at).getTime();
+    return {content,timestamp,local:Number.isFinite(timestamp)?localParts(timestamp):null};
+  }).filter(item=>item.local&&item.timestamp<=latest&&item.timestamp<=current+120000&&
+    current-item.timestamp<=36*3600000).sort((a,b)=>b.timestamp-a.timestamp);
+}
+function schedulingEvidence(content,anchorDate){
+  const visit=/(?:预约|預約|安排|过来|過來|来店|來店|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|\b(?:appointment|booking|book|visit|slot|available|come|temujanji|janji temu)\b)/iu;
+  const promo=/(?:优惠|促销|价格|价钱|活动|promotion|discount|promo|price|offer|diskaun)/iu;
+  return (!promo.test(content)||/(?:预约|預約|\b(?:appointment|book|visit)\b)/iu.test(content))&&
+    (visit.test(content)||isBareCalendarPreference(content,anchorDate)||isBareTimePreference(content));
+}
+
 function detectDate(text,anchorDate){
   const source=String(text||"").normalize("NFKC");
   if(!anchorDate || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDate))return null;
@@ -45,15 +96,15 @@ function detectDate(text,anchorDate){
     if(!m[3]&&date&&date<anchorDate)date=validDate(year+1,+m[2],+m[1]);
     add(date);
   }
-  for(const m of source.matchAll(/(\d{1,2})月(\d{1,2})[日号號]?/gu)){
-    const year=+anchorDate.slice(0,4);
-    let date=validDate(year,+m[1],+m[2]);
-    if(date&&date<anchorDate)date=validDate(year+1,+m[1],+m[2]);
-    add(date);
-  }
+  for(const m of source.matchAll(/(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})[日号號]?/gu))
+    add(calendarDate(m[1],+m[2],+m[3],anchorDate));
+  for(const m of source.matchAll(new RegExp(DAY_FIRST,"giu")))
+    add(calendarDate(m[3],monthNumber(m[2]),+m[1],anchorDate));
+  for(const m of source.matchAll(new RegExp(MONTH_FIRST,"giu")))
+    add(calendarDate(m[3],monthNumber(m[1]),+m[2],anchorDate));
   for(const [pattern,offset] of [
     [/(?:今天|今日|\btoday\b|\bhari ini\b)/iu,0],
-    [/(?:明天|\btomorrow\b|\besok\b)/iu,1],
+    [/(?:明天|(?<!day after )\btomorrow\b|\besok\b)/iu,1],
     [/(?:后天|後天|\bday after tomorrow\b|\blusa\b)/iu,2],
   ])if(pattern.test(source))add(plusDays(anchorDate,offset));
   for(const m of source.matchAll(/((?:下|这|這|本)(?:个|個)?(?:星期|礼拜|禮拜|周|週)|(?:星期|礼拜|禮拜|周|週))\s*([一二三四五六日天1-7])/gu)){
@@ -70,7 +121,7 @@ function detectDate(text,anchorDate){
     const pattern=new RegExp("\\b(?:(next|this|coming)\\s+)?(?:"+WEEK_ALIASES[d].join("|")+")\\b","giu");
     for(const m of source.matchAll(pattern)){
       let distance=(d-weekday(anchorDate)+7)%7;
-      if(m[1]==="next")distance=7-(weekday(anchorDate)+6)%7+(d+6)%7;
+      if(m[1]?.toLowerCase()==="next")distance=7-(weekday(anchorDate)+6)%7+(d+6)%7;
       add(plusDays(anchorDate,distance));
     }
   }
@@ -127,7 +178,7 @@ function timesInText(text){
     const suffix=String(m[3]||"").toLowerCase().replace(/\./g,"");
     addTime(+m[1],+m[2],suffix);
   }
-  for(const m of value.matchAll(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/giu)){
+  for(const m of value.matchAll(/(?<![\d:.：])\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/giu)){
     addTime(+m[1],0,m[2].toLowerCase().replace(/\./g,""));
   }
   for(const m of value.matchAll(/\b(?:pukul\s*)?(\d{1,2})\s*(?:pagi|petang|malam|tengah hari)\b/giu)){
@@ -183,30 +234,16 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   const current=detectDate(customerText,anchor.date);
   if(current?.ambiguous)return {status:"ambiguous"};
   let selected=current?.date||null;
+  let selectedIndex=-1;
+  const history=appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now});
   if(!selected){
-    // Only inherit an earlier customer-selected day inside this conversation's
-    // recent scheduling window. Never reinterpret an older "today" as today.
-    const history=recentCustomerMessages.length?recentCustomerMessages:
-      recentCustomerTexts.map(content=>({content,createdAt:receivedAt}));
-    for(const item of history){
-      const content=typeof item==="string"?item:String(item?.content||"");
-      const at=typeof item==="string"?receivedAt:
-        (item.createdAt||item.created_at||item.pricingCreatedAtMs||null);
-      const timestamp=new Date(at).getTime();
-      if(!Number.isFinite(timestamp)||timestamp>Date.parse(now)+120000||
-         Date.parse(now)-timestamp>36*3600000)continue;
-      const visitIntent=/(?:预约|預約|安排|过来|過來|来店|來店|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|\b(?:appointment|booking|book|visit|slot|available|come|temujanji|janji temu)\b)/iu;
-      const bareDate=/^(?:今天|明天|后天|後天|(?:下(?:个|個)?)?(?:星期|周|週|礼拜)[一二三四五六日天]|today|tomorrow|(?:next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))[？?.!！。\s]*$/iu;
-      if(!visitIntent.test(content)&&!bareDate.test(content))continue;
-      if(/(?:优惠|促销|价格|价钱|活动|promotion|discount|promo|price|offer|diskaun)/iu.test(content)&&
-         !/(?:预约|預約|\b(?:appointment|book|visit)\b)/iu.test(content))continue;
-      const local=localParts(timestamp);
-      if(!local)continue;
+    for(let i=0;i<history.length;i++){
+      const {content,local}=history[i];
+      if(!schedulingEvidence(content,local.date))continue;
       const found=detectDate(content,local.date);
       if(found?.ambiguous)return {status:"ambiguous"};
-      if(found?.date&&found.date>=today.date){selected=found.date;break;}
-      // A past relative day must be clarified, not silently re-dated.
-      if(found?.date&&found.date<today.date)return {status:"unknown"};
+      if(found?.date&&found.date>=today.date){selected=found.date;selectedIndex=i;break;}
+      if(found?.date&&found.date<today.date)return {status:"unknown",hasTime:timesInText(customerText).length>0||DAYPART.test(customerText)};
     }
   }
   // Model-provided preference is untrusted unless grounded by the customer's
@@ -217,27 +254,27 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
     if(found?.ambiguous)return {status:"ambiguous"};
     selected=found?.date||null;
   }
-  if(!selected)return {status:"unknown"};
+  if(!selected)return {status:"unknown",hasTime:timesInText(customerText).length>0||DAYPART.test(customerText)};
   const day=weekday(selected),opening=intervals(hours,day);
   const info={date:selected,weekday:day};
   if(opening===null)return {status:"unconfigured",...info};
   if(!opening.length)return {status:"closed",...info};
   if(selected<today.date)return {status:"past",...info};
+  // Do not attach an unrelated or superseded time to a newly selected day.
+  const matchingHistory=history.filter(({content,local},index)=>{
+    if(!schedulingEvidence(content,local.date))return false;
+    const referenced=detectDate(content,local.date);
+    if(referenced?.ambiguous)return false;
+    if(referenced?.date)return referenced.date===selected;
+    if(selectedIndex>=0)return index<selectedIndex;
+    return index===0&&isBareCalendarPreference(customerText,anchor.date)&&
+      isBareTimePreference(content)&&!history.slice(1).some(item=>detectDate(item.content,item.local.date));
+  });
   let times=timesInText(customerText);
-  if(!times.length){
-    const history=recentCustomerMessages.length?recentCustomerMessages:
-      recentCustomerTexts.map(content=>({content,createdAt:receivedAt}));
-    for(const item of history){
-      const content=typeof item==="string"?item:String(item?.content||"");
-      const at=typeof item==="string"?receivedAt:
-        (item.createdAt||item.created_at||item.pricingCreatedAtMs||null);
-      const timestamp=new Date(at).getTime();
-      if(!Number.isFinite(timestamp)||timestamp>Date.parse(now)+120000||
-         Date.parse(now)-timestamp>36*3600000)continue;
-      const referenced=detectDate(content,localParts(timestamp)?.date);
-      if(referenced?.date&&referenced.date!==selected)continue;
+  if(!times.length&&!DAYPART.test(customerText)){
+    for(const {content} of matchingHistory){
       times=timesInText(content);
-      if(times.length)break;
+      if(times.length||DAYPART.test(content))break;
     }
   }
   // The AI's structured booking metadata is not evidence that the customer
@@ -245,13 +282,8 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   if(!times.length&&trustPreferenceWithoutCustomer)
     times=timesInText(appointmentPreference);
   if(!times.length){
-    const daypart=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|morning|afternoon|evening|pagi|petang|malam|tengah hari)/iu;
-    const currentDaypart=daypart.test(customerText);
-    const recentDaypart=recentCustomerMessages.some(item=>{
-      const at=new Date(item?.createdAt||item?.created_at||item?.pricingCreatedAtMs).getTime();
-      return Number.isFinite(at)&&at<=new Date(now).getTime()+120000&&
-        new Date(now).getTime()-at<=36*3600000&&daypart.test(String(item?.content||""));
-    });
+    const currentDaypart=DAYPART.test(customerText);
+    const recentDaypart=matchingHistory.some(item=>DAYPART.test(item.content));
     return {status:currentDaypart||recentDaypart?"valid_preference":"valid_day",...info};
   }
   const length=Math.max(0,Math.min(480,Number(durationMinutes)||0));
@@ -297,7 +329,8 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const promotionalOnly=promotional&&!explicitBooking;
   const inboundAppointment=!promotionalOnly&&(
     bookingContext.test(customerText)||timesInText(customerText).length>0||
-    (String(customerText).trim().length<=25&&shortDay.test(customerText)));
+    (String(customerText).trim().length<=25&&shortDay.test(customerText))||
+    isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
   if(promotionalOnly&&requireValidPreference)
@@ -371,14 +404,29 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   if(requireValidPreference&&["unknown","ambiguous","unconfigured","valid_day"].includes(issue.status)){
     const lang=String(language||"zh").toLowerCase().slice(0,2);
     const needsOnlyTime=issue.status==="valid_day";
+    const needsOnlyDate=issue.status==="unknown"&&issue.hasTime;
     const question=needsOnlyTime
       ? lang==="en"?"What time on that day would suit you? I can check with the clinic 😊"
         : lang==="ms"?"Pukul berapa pada hari itu yang sesuai? Kami boleh semak dengan pusat 😊"
         : "那一天大概几点方便呢？我帮您向诊所确认空档哦☺️"
-      : lang==="en"?"Which date and time would you prefer? I'll have the clinic check availability 😊":
+      : needsOnlyDate
+        ? lang==="en"?"Which date would suit you? I'll check with the clinic 😊"
+          : lang==="ms"?"Tarikh mana yang sesuai? Kami boleh semak dengan pusat 😊"
+          : "请问您哪一天方便呢？我帮您向诊所确认空档哦☺️"
+        : lang==="en"?"Which date and time would you prefer? I'll have the clinic check availability 😊":
         lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
         "请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️";
     return {reply:question,blocked:true,issue};
+  }
+  // Keep natural model replies; only replace a redundant generic clarification
+  // once both customer-authored appointment preferences have been validated.
+  if(requireValidPreference&&issue.status==="valid_preference"&&
+    /(?:which date and time would you prefer|what date and time (?:would|do)|tarikh dan masa mana yang sesuai|想预约哪一天、几点|哪一天.*几点.*方便)/iu.test(original)){
+    const lang=String(language||"zh").toLowerCase().slice(0,2);
+    const acknowledgement=lang==="en"?"Thank you 😊 I'll check your preferred date and time with the clinic and get back to you once confirmed."
+      : lang==="ms"?"Terima kasih 😊 Kami akan semak tarikh dan masa pilihan anda dengan pusat dan maklumkan selepas disahkan."
+      : "好的亲爱的 😊 我帮您向诊所确认您选择的日期和时间，确认后再回复您哦。";
+    return {reply:acknowledgement,blocked:false,issue};
   }
   return {reply:original,blocked:false,issue};
 }
