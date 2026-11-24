@@ -55,7 +55,7 @@ test("grounded direct treatment changes take precedence; model-only treatment ca
  assert.equal(resolveModelLedPricingDecision(b),null);
 });
 test("known non-price and safety cases, false model metadata, conflicting context and stale history fail closed",()=>{
- for(const current of ["Hi","How long does it take?","不要报价","How much is the deposit?","太贵了","Where is your branch?","我有乳腺结节","可以跟进我，有优惠也发我看看"]){
+ for(const current of ["Hi","Thanks","一次有效吗？","3D 小颜术","How long does it take?","不要报价","How much is the deposit?","太贵了","Where is your branch?","我有乳腺结节","可以跟进我，有优惠也发我看看"]){
   assert.equal(resolveModelLedPricingDecision(args(current)),null,current);
  }
  for(const intent of [{priceQuery:false},{structured:false},{outcome:"review_required"},{outcome:"booking_ready"},{treatment:"invented"},{pricingStage:"subsequent_session"},{promotionOption:"Package C"}]){
