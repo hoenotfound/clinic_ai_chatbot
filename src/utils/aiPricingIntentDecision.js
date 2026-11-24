@@ -666,14 +666,29 @@ function resolveModelLedPricingDecision({
     if (!selected || mentioned.length>1 ||
         (mentioned.length===1 && mentioned[0].name!==selected.name)) return null;
     // For an indirect reference, only accept a choice grounded in the same
-    // customer's explicit package selection or the immediately preceding
-    // bot menu showing the configured option and its actual current amount.
-    const previous=turns.at(-2);
+    // customer's explicit package selection or the latest bot menu showing
+    // verified current amounts. A bounded run of delivered, exact matching
+    // package artwork can follow the menu without erasing its context.
+    let menuIndex=turns.length-2;
+    const matchingImages=new Set(options.map(p=>p.imageUrl).filter(Boolean));
+    let skipped=0;
+    while(menuIndex>anchorIndex && skipped<options.length){
+      const t=turns[menuIndex];
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+         t.pricingDeliveredBotMessage!==true ||
+         !matchingImages.has(t.verifiedOutboundImageUrl) ||
+         assistantIntroducesCompetingPaidService(t,intent.treatment,candidates)) break;
+      menuIndex--;skipped++;
+    }
+    const previous=turns[menuIndex];
     const previousText=pricingMessageText(previous);
     const priorCustomer=turns.slice(anchorIndex,-1).findLast(t=>t.role==="user");
     const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
     const listed=findMentionedPromotionPackages(options,previousText);
     const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
+      (!skipped || (previous.pricingDeliveredBotMessage===true &&
+        !previous.verifiedOutboundImageUrl)) &&
+      !assistantIntroducesCompetingPaidService(previous,intent.treatment,candidates) &&
       findServicesInText(previousText,candidates).includes(intent.treatment) &&
       listed.length>1 && all.every(p=>{
         const lines=previousText.split(/\n+/u).filter(line=>
