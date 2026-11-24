@@ -305,6 +305,8 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
     }
   }
   let timeText=customerText;
+  const invalidClock=text=>/\b\\d{1,2}[:.]\\d{2}\b/u.test(text)&&!timesInText(text).length;
+  if(invalidClock(timeText))return {status:"valid_day",...info};
   if(!timesInText(timeText).length&&!DAYPART.test(timeText)){
     for(const {content} of matchingHistory){
       if(timesInText(content).length||DAYPART.test(content)){timeText=content;break;}
@@ -312,6 +314,7 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   }
   if(!timesInText(timeText).length&&!DAYPART.test(timeText)&&trustPreferenceWithoutCustomer)
     timeText=appointmentPreference;
+  if(invalidClock(timeText))return {status:"valid_day",...info};
   const times=timesInText(timeText);
   const length=Math.max(0,Math.min(480,Number(durationMinutes)||0));
   const fits=t=>opening.some(([open,close])=>t>=open&&t<close&&t+length<=close);
@@ -341,6 +344,12 @@ function daypartInText(text){
   if(/(?:中午|\btengah hari\b)/iu.test(value))return "noon";
   if(/(?:上午|早上|\bmorning\b|\bpagi\b)/iu.test(value))return "morning";
   return null;
+}
+function canRecoverBookingReady({customerText,previousAssistantText,issue}={}){
+  if(issue?.status!=="valid_preference"||rejectsPreference(customerText))return false;
+  const prompt=String(previousAssistantText||"");
+  const asks=/(?:which (?:day|date|time)|what (?:day|date|time)|weekday or weekend|when (?:would|can|are)|what.*(?:suit|convenient)|哪一天|哪天|几时|幾時|几点|幾點|什么时候|甚麼時候|星期几|星期幾|hari mana|tarikh mana|pukul berapa|bila.*sesuai)/iu;
+  return asks.test(prompt)&&(isBareCalendarPreference(customerText,issue.date)||isBareTimePreference(customerText));
 }
 function verifiedAppointmentPreference(issue){
   if(issue?.status!=="valid_preference"||!issue.date)return null;
@@ -388,7 +397,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     bookingContext.test(customerText)||timesInText(customerText).length>0||
     (String(customerText).trim().length<=25&&shortDay.test(customerText))||
     isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date)||
-    isBareTimePreference(customerText));
+    isBareTimePreference(customerText)||Boolean(parseCalendar(customerText,localParts(receivedAt||now)?.date)?.invalid));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
   if((promotionalOnly||rejectsPreference(customerText))&&requireValidPreference)
@@ -476,8 +485,8 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   // invented model suggestion. Preserve Booking Ready and acknowledge the
   // verified preference instead. Do not override genuine closure explanations.
   if(issue.status==="valid_preference"&&(requireValidPreference||inboundAppointment)&&
-    (redundant||mismatch||outboundIssue)){
-    return {reply:acknowledgement(),blocked:false,issue,repairedPreference:true};
+    (redundant||(requireValidPreference&&(mismatch||outboundIssue))||(!outboundIssue&&mismatch))){
+    return {reply:acknowledgement(),blocked:false,issue,repairedPreference:true,redundantClarification:redundant};
   }
   const invalid=["closed","past","outside_hours"];
   const conflict=invalid.includes(issue.status)?issue:
@@ -536,4 +545,4 @@ function currentClinicDate(value=new Date()){
 }
 module.exports={ZONE,localParts,detectDate,intervals,timesInText,
   durationMinutesForPackage,evaluateAppointmentHours,issueReply,
-  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference};
+  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady};
