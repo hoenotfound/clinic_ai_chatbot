@@ -1000,6 +1000,7 @@ async function runOnce({
           source:"staff_discussed_followup"}
       : effectivePolicy;
     candidate={...candidate,adFollowUpPolicy:discussionPolicy,
+      ...(resetDecision ? {recovery_topic_reset:true} : {}),
       staff_discussed_followup_topic:staffTopic?.treatment||null,
       unsafe_followup_topic:unsafeTopic};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);

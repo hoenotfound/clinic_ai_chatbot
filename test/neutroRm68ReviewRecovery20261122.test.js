@@ -141,7 +141,7 @@ async function runRealRecoveryBoundary({ pending, sender = 1 }) {
     priceQuery: true, packageQuery: true, serviceQuery: true,
     serviceQuerySource: "model", details: null,
     reply: "AI draft under review", reviewContinuationTextOnly: false,
-    channel: "whatsapp", history, mediaLanguage: "zh",
+    channel: "whatsapp", history, commercialHistory:history, mediaLanguage: "zh",
     contact: { id: 24, whatsapp_sender_id: sender },
     savedInbound: { id: 999 },
     clinicConfig: {
@@ -200,6 +200,7 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
       isActiveSafetyConcern:()=>false, hasClinicalMediaRisk:()=>false,
       isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,
       isBusinessLocationQuestion:()=>false,
+      recoveryPromptProof:null,recoveryOther:false,
     };
     const result = await vm.runInNewContext(
       "(async()=>{\n" + finalLocationSection +
@@ -271,7 +272,7 @@ test("older verified-price review path never clears pending clinical review", as
       serviceQuery: true, serviceQuerySource: "model", priceQuery: true,
       packageQuery: false, details: null, clinicalAcknowledgement: null,
       reviewContinuationTextOnly: false, channel: "whatsapp",
-      mediaLanguage: "zh", history: [],
+      mediaLanguage: "zh", history: [], commercialHistory:[],
       contact: {id: 1}, savedInbound: {id: 101},
       clinicConfig: {businessType: "tcm_clinic", businessName: "Neutro Sense TCM Centre",
         services: [], serviceAliases: [], promotions: []},
@@ -308,7 +309,7 @@ test("verified price review flows to existing pricing/media path only without cl
         priceQuery: false, packageQuery: false, details: null,
         aiReply: "review draft", mediaLanguage: "zh",
         channel: "whatsapp", contact: {id:7, whatsapp_sender_id:sender},
-        savedInbound: {id:99}, history: [],
+        savedInbound: {id:99}, history: [], commercialHistory:[],
         clinicConfig: {businessType: "tcm_clinic", businessName: "Neutro Sense TCM Centre",
           services: [{name:"骨盆调理"}], serviceAliases: [], promotions: []},
         isActiveSafetyConcern: () => false, hasClinicalMediaRisk: () => false,
