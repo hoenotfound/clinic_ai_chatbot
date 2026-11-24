@@ -2074,7 +2074,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
-          allowVerifiedAdPricing,
+          allowVerifiedAdPricing: aiPricingEnabled && allowVerifiedAdPricing,
           allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
@@ -3215,8 +3215,12 @@ async function processIncomingMessage(
       // with independently verified First Trial context, not a second media
       // selector. The same safety, pause, language, duplicate and provider
       // rules therefore apply to ordinary and repeat-session promotions.
+      const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
+        !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
+          String(reply||"").replace(/\s+/gu,"").includes(p.price));
+      if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
-        comboMediaUnavailable ? null : await resolvePricePromotionForReply({
+        comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: comboMediaPricingDecision ||
