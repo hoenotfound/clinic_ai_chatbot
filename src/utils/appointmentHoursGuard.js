@@ -384,13 +384,14 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const promotional=/(?:优惠|促销|价格|价钱|折扣|活动|promotion|discount|promo|price|offer|diskaun)/iu.test(customerText);
   const explicitBooking=/(?:预约|預約|约时间|約時間|安排|空档|空檔|有空|\b(?:appointment|booking|book|visit|slot|temujanji|janji temu)\b)/iu.test(customerText);
   const promotionalOnly=promotional&&!explicitBooking;
-  const inboundAppointment=!promotionalOnly&&(
+  const inboundAppointment=!promotionalOnly&&!rejectsPreference(customerText)&&(
     bookingContext.test(customerText)||timesInText(customerText).length>0||
     (String(customerText).trim().length<=25&&shortDay.test(customerText))||
-    isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date));
+    isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date)||
+    isBareTimePreference(customerText));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
-  if(promotionalOnly&&requireValidPreference)
+  if((promotionalOnly||rejectsPreference(customerText))&&requireValidPreference)
     return {reply:original,blocked:true,issue:{status:"not_appointment"}};
   const issue=inboundAppointment||requireValidPreference
     ? evaluateAppointmentHours({
@@ -406,50 +407,77 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const alreadyCorrects=closureWords.test(original)&&
     !/(?:今天|today|hari ini).{0,35}(?:确认|確認|check|semak|看空档|看空檔|安排)/iu.test(original);
   let outboundIssue=null;
-  // Validate each positive suggestion independently. "Monday is closed,
-  // Tuesday?" must be allowed, but "Monday or Tuesday?" is unsafe.
-  const segments=original.split(/[\n。！？?!，,；;]/u).map(s=>s.trim()).filter(Boolean);
+  const outboundDates=new Set(),outboundTimes=new Set();
+  let outboundDaypart=null;
+  const anchor=localParts(now)?.date;
+  // Keep commas and line breaks together, since date and time commonly span
+  // these boundaries. A separate genuine closure statement is not an offer.
+  const segments=original.split(/[。！？?!；;]|\.(?=\s+[A-Z])/u).map(x=>x.trim()).filter(Boolean)
+    .flatMap(segment=>closureWords.test(segment)?segment.split(/[,，\n]/u).map(x=>x.trim()):[segment]);
+  const bad=["closed","past","outside_hours"];
   for(const segment of segments){
     if(closureWords.test(segment))continue;
-    const anchor=localParts(now)?.date;
-    const date=detectDate(segment,anchor);
-    if(!replyScheduling.test(segment)&&!(inboundAppointment&&date?.date)&&
-       !(date?.date&&timesInText(segment).length>0))continue;
-    if(date?.date){
-      const inspected=evaluateAppointmentHours({
-        hours,customerText:segment,receivedAt:now,now,durationMinutes,
+    const parsed=parseCalendar(segment,anchor);
+    const segmentTimes=timesInText(segment);
+    const scheduling=replyScheduling.test(segment)||inboundAppointment||requireValidPreference;
+    // A time alone in a scheduling proposal must be checked against the
+    // selected date, not treated as a new, independently valid appointment.
+    if(!scheduling&&!(parsed?.date&&segmentTimes.length))continue;
+    if(!parsed&&!segmentTimes.length&&!replyScheduling.test(segment))continue;
+    if(parsed?.invalid){outboundIssue={status:"invalid_date"};break;}
+    const dates=parsed?.dates?.length?parsed.dates:
+      (segmentTimes.length&&issue.date?[issue.date]:[]);
+    const part=daypartInText(segment);
+    for(const date of dates){
+      outboundDates.add(date);
+      const check=evaluateAppointmentHours({
+        hours,customerText:date,receivedAt:now,now,durationMinutes,
       });
-      if(["closed","past","outside_hours"].includes(inspected.status)){
-        outboundIssue=inspected;break;
-      }
-    }else if(date?.ambiguous){
-      // Multiple date alternatives in one proposal. Evaluate each weekday
-      // separately, not as one arbitrary selected date.
-      const options=[
-        ...(segment.match(/(?:下(?:个|個)?)?(?:星期|周|週|礼拜|禮拜)[一二三四五六日天]/gu)||[]),
-        ...(segment.match(/\b(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/giu)||[]),
-      ];
-      for(const option of options){
-        const result=evaluateAppointmentHours({
-          hours,customerText:option,receivedAt:now,now,durationMinutes,
-        });
-        if(["closed","past","outside_hours"].includes(result.status)){
-          outboundIssue=result;break;
-        }
+      if(bad.includes(check.status)){outboundIssue=check;break;}
+      // Check ALL proposed start times, not merely one open option.
+      for(const t of segmentTimes){
+        const time=String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+        const inspected=evaluateAppointmentHours({hours,customerText:date+" "+time,
+          receivedAt:now,now,durationMinutes});
+        if(bad.includes(inspected.status)){outboundIssue=inspected;break;}
       }
       if(outboundIssue)break;
+      if(!segmentTimes.length&&part){
+        const inspected=evaluateAppointmentHours({hours,customerText:date+" "+part,receivedAt:now,now,durationMinutes});
+        if(bad.includes(inspected.status)){outboundIssue=inspected;break;}
+      }
     }
+    if(outboundIssue)break;
+    for(const t of segmentTimes)outboundTimes.add(t);
+    if(part)outboundDaypart=part;
   }
-  // One unsplit, natural standalone suggestion can be just "Monday 2pm".
-  if(!outboundIssue&&replyScheduling.test(original)&&segments.length===1){
-    const date=detectDate(original,localParts(now)?.date);
-    if(date?.date){
-      const inspected=evaluateAppointmentHours({
-        hours,customerText:original,receivedAt:now,now,durationMinutes,
-      });
-      if(["closed","past","outside_hours"].includes(inspected.status))
-        outboundIssue=inspected;
-    }
+  const lang=String(language||"zh").toLowerCase().slice(0,2);
+  const acknowledgement=()=>{
+    const date=issue.date;
+    const pref=verifiedAppointmentPreference(issue);
+    const clock=issue.times?.length?issue.times.map(t=>{
+      const h=Math.floor(t/60);
+      return (h%12||12)+":"+String(t%60).padStart(2,"0")+(h>=12?" PM":" AM");
+    }).join(" / "):null;
+    const parts={morning:["morning","pagi","上午"],noon:["around noon","tengah hari","中午"],
+      afternoon:["afternoon","petang","下午"],evening:["evening","malam","晚上"],overnight:["overnight","awal pagi","凌晨"]};
+    const time=clock||parts[issue.daypart]?.[lang==="en"?0:lang==="ms"?1:2]||"";
+    if(!pref)return original;
+    if(lang==="en")return "Thank you 😊 I'll check your preferred date and time ("+date+", "+time+") with the clinic and get back to you once confirmed.";
+    if(lang==="ms")return "Terima kasih 😊 Kami akan semak pilihan anda ("+date+", "+time+") dengan pusat dan maklumkan selepas disahkan.";
+    return "好的亲爱的 😊 我帮您向诊所确认您选择的日期和时间（"+date+" "+time+"），确认后再回复您哦。";
+  };
+  const redundant=/(?:which date and time would you prefer|what date and time (?:would|do)|which (?:date|day) would (?:you prefer|suit you)|what time (?:on that day )?would suit you|tarikh dan masa mana yang sesuai|想预约哪一天、几点|哪一天.*几点.*方便)/iu.test(original);
+  const mismatch=issue.status==="valid_preference"&&(
+    [...outboundDates].some(d=>d!==issue.date)||
+    (outboundTimes.size>0&&(!issue.times?.length||[...outboundTimes].some(t=>!issue.times.includes(t))))||
+    (outboundDaypart&&issue.daypart&&outboundDaypart!==issue.daypart));
+  // If the customer preference is valid, do not replace it with an invalid or
+  // invented model suggestion. Preserve Booking Ready and acknowledge the
+  // verified preference instead. Do not override genuine closure explanations.
+  if(issue.status==="valid_preference"&&(requireValidPreference||inboundAppointment)&&
+    (redundant||mismatch||outboundIssue)){
+    return {reply:acknowledgement(),blocked:false,issue,repairedPreference:true};
   }
   const invalid=["closed","past","outside_hours"];
   const conflict=invalid.includes(issue.status)?issue:
@@ -458,10 +486,13 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     return {reply:alreadyCorrects&&issue.status==="closed"&&!outboundIssue?original:
       issueReply(conflict,{hours,language}),blocked:true,issue:conflict};
   }
-  if(requireValidPreference&&["unknown","ambiguous","unconfigured","valid_day"].includes(issue.status)){
+  if(outboundIssue?.status==="invalid_date"&&!requireValidPreference){
+    return {reply:lang==="en"?"Which date would suit you?":lang==="ms"?"Tarikh mana yang sesuai?":"请问哪一天方便呢？",blocked:true,issue:outboundIssue};
+  }
+  if((requireValidPreference||(inboundAppointment&&redundant))&&["unknown","ambiguous","invalid_date","unconfigured","valid_day"].includes(issue.status)){
     const lang=String(language||"zh").toLowerCase().slice(0,2);
     const needsOnlyTime=issue.status==="valid_day";
-    const needsOnlyDate=issue.status==="unknown"&&issue.hasTime;
+    const needsOnlyDate=["unknown","ambiguous","invalid_date"].includes(issue.status)&&issue.hasTime;
     const question=needsOnlyTime
       ? lang==="en"?"What time on that day would suit you? I can check with the clinic 😊"
         : lang==="ms"?"Pukul berapa pada hari itu yang sesuai? Kami boleh semak dengan pusat 😊"
@@ -474,16 +505,6 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
         lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
         "请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️";
     return {reply:question,blocked:true,issue};
-  }
-  // Keep natural model replies; only replace a redundant generic clarification
-  // once both customer-authored appointment preferences have been validated.
-  if(requireValidPreference&&issue.status==="valid_preference"&&
-    /(?:which date and time would you prefer|what date and time (?:would|do)|tarikh dan masa mana yang sesuai|想预约哪一天、几点|哪一天.*几点.*方便)/iu.test(original)){
-    const lang=String(language||"zh").toLowerCase().slice(0,2);
-    const acknowledgement=lang==="en"?"Thank you 😊 I'll check your preferred date and time with the clinic and get back to you once confirmed."
-      : lang==="ms"?"Terima kasih 😊 Kami akan semak tarikh dan masa pilihan anda dengan pusat dan maklumkan selepas disahkan."
-      : "好的亲爱的 😊 我帮您向诊所确认您选择的日期和时间，确认后再回复您哦。";
-    return {reply:acknowledgement,blocked:false,issue};
   }
   return {reply:original,blocked:false,issue};
 }
