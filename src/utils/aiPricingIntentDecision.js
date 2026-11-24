@@ -616,11 +616,16 @@ function resolveModelLedPricingDecision({
     }
     if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
     const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
-    if (!responses.length || responses.some(t=>
-      assistantIntroducesCompetingPaidService(t,intent.treatment,candidates) ||
-      hasClinicalMediaRisk(pricingMessageText(t)))) return null;
-    if (!responses.some(t=>findServicesInText(pricingMessageText(t),candidates)
-      .includes(intent.treatment))) return null;
+    // Assistant explanations and generic safety disclaimers are not customer
+    // symptoms. An older bot introduction may name several applications;
+    // use the most recent explicitly named service context, while retaining
+    // independent customer, staff, and current clinical/safety vetoes.
+    const latestNamedResponse=responses.findLast(t=>
+      findServicesInText(pricingMessageText(t),candidates).length>0);
+    if (!latestNamedResponse ||
+        !findServicesInText(pricingMessageText(latestNamedResponse),candidates)
+          .includes(intent.treatment) ||
+        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates)) return null;
   }
   // Known readable staff assistance is conversation evidence, not a
   // takeover. Unknown/deleted echoes and unverified/conflicting staff prices
@@ -631,7 +636,8 @@ function resolveModelLedPricingDecision({
     if (!Number.isFinite(at) || at>now+60_000) return null;
     if (at<now-24*3600000) break;
     const content=pricingMessageText(t);
-    if (hasClinicalMediaRisk(content) && (t.role==="user" || i>=anchorIndex)) return null;
+    if (hasClinicalMediaRisk(content) &&
+        (t.role==="user" || (i>=anchorIndex && isVerifiedStaffTurn(t)))) return null;
     if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
         (!(t.pricingDeliveredStaffImage===true || t.pricingVerifiedStaffText===true) ||
          t.pricingBusinessAppPlaceholder===true || /\[unsupported|message deleted/iu.test(content) ||
