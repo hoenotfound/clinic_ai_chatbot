@@ -29,7 +29,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -1366,6 +1366,7 @@ async function processIncomingMessage(
     let priceQuery = false;
     let packageQuery = false;
     let modelPricingStage = null;
+    let modelPricingIntent = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1497,6 +1498,11 @@ async function processIncomingMessage(
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
         modelPricingStage = parsedReply.pricingStage || null;
+        // Capture provider intent before any legacy classifier mutates it.
+        modelPricingIntent = { structured:parsedReply.structured, outcome:parsedReply.outcome,
+          priceQuery:parsedReply.priceQuery, packageQuery:parsedReply.packageQuery,
+          treatment:parsedReply.details?.treatment || null,
+          pricingStage:parsedReply.pricingStage || null, promotionOption:parsedReply.promotionOption || null };
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -2079,7 +2085,7 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
-    const pricingApproval = resolveApprovedPricingAssessment({
+    let pricingApproval = resolveApprovedPricingAssessment({
       mode: aiPricingMode, aiDecision: pricingDecision,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
@@ -2092,6 +2098,54 @@ async function processIncomingMessage(
       allowVerifiedAdPricing, metaAdContext,
       promotions: clinicConfig.promotions,
     });
+    // Off leaves the current code path unchanged. Shadow compares the
+    // same existing provider result without altering a reply or sending media.
+    // Enabled fills only gaps; existing approved and special-case decisions
+    // keep precedence until the new path has been independently reviewed.
+    const semanticMode = clinicConfig.aiPricingSemanticMode || "off";
+    let semanticPricingApplied = false;
+    if (["shadow","enabled"].includes(semanticMode) &&
+        ["shadow","enabled"].includes(aiPricingMode) &&
+        !flagged && !bookingReady && !keywordReason && !urgentSafety &&
+        !marketingStopQuestion && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
+        !fixedAdFirstReply && !twoTreatmentQuote &&
+        !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery)) {
+      const semanticCandidate = resolveModelLedPricingDecision({
+        modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
+        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+        promotions:clinicConfig.promotions,
+        allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
+        complimentaryAssessmentExperienceEnabled:
+          clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+      });
+      const semanticApproval = resolveApprovedPricingAssessment({
+        mode:"enabled",aiDecision:semanticCandidate,customerText:text,
+        conversationHistory:history,services:clinicConfig.services,
+        serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
+        promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
+        marketingStopQuestion,
+      });
+      const old=pricingApproval.decision, next=semanticApproval.decision;
+      const signature=d=>d ? JSON.stringify([d.type,d.treatment,
+        (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
+      // Compare exact treatment and package amounts, not only a boolean.
+      // No raw message content, extra provider calls or new DB writes.
+      semanticPricingApplied = semanticMode==="enabled" && Boolean(next) &&
+        !old && !shadowPriceException &&
+        !(aiPricingMode==="enabled" && pricingDecision);
+      console.info("[Semantic pricing] "+JSON.stringify({
+        contact:contact.id,inbound:savedInbound.id,mode:semanticMode,
+        legacyApproved:Boolean(old),semanticApproved:Boolean(next),
+        agreement:signature(old)===signature(next),reason:semanticApproval.reason,
+        legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
+        legacyPackages:old?.prices?.map(p=>p.name)||[],
+        semanticPackages:next?.prices?.map(p=>p.name)||[],
+        applied:semanticPricingApplied,
+      }));
+      if (semanticPricingApplied) pricingApproval=semanticApproval;
+    }
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
@@ -2140,7 +2194,7 @@ async function processIncomingMessage(
     // formatter/graphic selector through the former model/legacy fallbacks.
     // Ordinary Shadow and Off enquiries retain their original legacy route.
     const exceptionalPricingCandidate = Boolean(
-      shadowPriceException || numberedPricingSelection || scopedPackagePrice
+      semanticPricingApplied || shadowPriceException || numberedPricingSelection || scopedPackagePrice
     );
     const pricingAuthorityRequired = aiPricingEnabled || (
       aiPricingMode === "shadow" && exceptionalPricingCandidate
