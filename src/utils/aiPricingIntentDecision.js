@@ -622,7 +622,7 @@ function resolveModelLedPricingDecision({
     if (!responses.some(t=>findServicesInText(pricingMessageText(t),candidates)
       .includes(intent.treatment))) return null;
   }
-  // Known delivered staff assistance is conversation evidence, not a
+  // Known readable staff assistance is conversation evidence, not a
   // takeover. Unknown/deleted echoes and unverified/conflicting staff prices
   // cannot supply a new price authorization. Live ownership is checked by
   // the existing send boundary; clinical context remains a hard veto.
@@ -633,7 +633,7 @@ function resolveModelLedPricingDecision({
     const content=pricingMessageText(t);
     if (hasClinicalMediaRisk(content)) return null;
     if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
-        (!(t.pricingDeliveredStaffImage===true || t.pricingDeliveredStaffText===true) ||
+        (!(t.pricingDeliveredStaffImage===true || t.pricingVerifiedStaffText===true) ||
          t.pricingBusinessAppPlaceholder===true || /\\[unsupported|message deleted/iu.test(content) ||
          /\\b(?:RM|MYR)\\s*\\d|[价價][钱錢格位]|\\b(?:price|cost|harga)\\b/iu.test(content) ||
          assistantIntroducesCompetingPaidService(t,intent.treatment,candidates))) return null;
