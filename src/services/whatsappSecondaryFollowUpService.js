@@ -1308,6 +1308,10 @@ async function runOnce({
       const safePhase=safePhases.has(phase)?phase:"unknown";
       try{onUnexpectedFailure({phase:safePhase,slot});}catch{}
       const prefix=messageId?"sender_followup_after_save_":"sender_followup_before_save_";
+      if(messageId!==null && safePhase==="message_save"){
+        const deferred=await deferProvenUnsent({database,table:"whatsapp_sender_followup_attempts",attemptId:id,messageId,contactId:candidate.contact_id,result:{success:false,preProviderCancelled:true,noReservation:true}}).catch(()=>false);
+        if(deferred)continue;
+      }
       await fail(prefix+safePhase).catch(()=>{});
     }
   }
