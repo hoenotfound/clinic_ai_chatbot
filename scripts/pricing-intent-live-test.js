@@ -6,7 +6,7 @@ const config=require("../src/config/clinicConfig");
 const {getIndustryProfile,hydrateBusinessConfig}=require("../src/config/industryProfiles");
 const {buildGeminiRequest}=require("../src/services/geminiService");
 const {parseAiReplyResult}=require("../src/utils/aiReplyResult");
-const {resolveAiPricingDecision,resolveModelLedPricingDecision}=require("../src/utils/aiPricingIntentDecision");
+const {resolveAiPricingDecision,resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing}=require("../src/utils/aiPricingIntentDecision");
 const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
 const {usageOf}=require("./neutro-ab");
 const MODEL="gemini-3.8-flash";
@@ -58,17 +58,27 @@ async function main(){
  if(live&&!key)throw new Error("Set a separate authorized NEUTRO_AB_GEMINI_API_KEY in the local shell.");
  const ai=live?new GoogleGenAI({apiKey:key}):null;
  const results=[];
- for(const [index,[id,lang,history,treatment,amounts]] of scenarios.entries()){
+ const requested=process.argv.filter(arg=>arg.startsWith("--scenario=")).map(arg=>arg.slice(11));
+ const selectedScenarios=scenarios.filter(([id])=>!requested.length||requested.includes(id));
+ if(!selectedScenarios.length || requested.some(id=>!scenarios.some(s=>s[0]===id)))throw new Error("Unknown test scenario.");
+ for(const [index,[id,lang,history,treatment,amounts]] of selectedScenarios.entries()){
   const row={id,expected:{treatment,amounts}};
   for(const mode of index%2?["enabled","shadow"]:["shadow","enabled"]){
    const request=withConfig(mode,()=>buildGeminiRequest(history,
     {surface:"conversation",channel:"whatsapp",replyLanguage:lang,isFirstMessage:false},MODEL).request);
    row[mode]={promptChars:request.config.systemInstruction.length};
    if(!live)continue;
+   let stage="provider",responseText=null,finishReason=null;
    try{
     const response=await ai.models.generateContent(request);
+    stage="usage";
     row[mode].usage=usageOf(response);
-    const result=withConfig(mode,()=>parseAiReplyResult(response.text));
+    finishReason=response.candidates?.[0]?.finishReason??null;
+    stage="response_text";
+    responseText=response.text;
+    stage="parser";
+    const result=withConfig(mode,()=>parseAiReplyResult(responseText));
+    stage="pricing_validation";
     const now=Date.now();
     const historyWithTimes=history.map((t,i)=>({...t,pricingCreatedAtMs:now-(history.length-1-i)*1000}));
     const args={customerText:history.at(-1).content,conversationHistory:historyWithTimes,
@@ -79,21 +89,43 @@ async function main(){
      promotionOption:result.promotionOption,pricingStage:result.pricingStage};
     const old=resolveAiPricingDecision({...args,...modelIntent});
     const semantic=resolveModelLedPricingDecision({...args,modelIntent});
-    const approve=d=>resolveApprovedPricingAssessment({...args,mode:"enabled",aiDecision:d,
-     flagged:result.flagged,bookingReady:result.bookingReady}).decision;
+    const approve=(d,approvalMode="enabled")=>resolveApprovedPricingAssessment({...args,mode:approvalMode,aiDecision:d,
+     flagged:result.flagged,bookingReady:result.bookingReady});
     // These are offline candidate comparisons, not a simulation of every
     // server special case or a provider delivery test.
     const oldApproved=approve(old),semanticApproved=approve(semantic);
+    const legacyApproval=approve(old,mode);
+    const applied=shouldApplyModelLedPricing({mode,legacyCandidate:old,legacyApproval,semanticApproval:semanticApproved});
+    const rejected=shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate:semantic,
+     semanticApproval:semanticApproved,legacyApproval,customerText:args.customerText,promotions});
+    const selected=rejected?null:(applied?semanticApproved.decision:legacyApproval.decision);
     const project=d=>({treatment:d?.treatment??null,amounts:d?.prices?.map(p=>p.price)||[]});
-    row[mode]={...row[mode],modelIntent,reply:result.text,legacy:project(oldApproved),
-     semantic:project(semanticApproved),semanticMatch:JSON.stringify(project(semanticApproved))===JSON.stringify({treatment,amounts})};
+    const matches=d=>JSON.stringify(project(d))===JSON.stringify({treatment,amounts});
+    row[mode]={...row[mode],modelIntent,reply:result.text,legacy:project(oldApproved.decision),
+     semantic:project(semanticApproved.decision),semanticMatch:matches(semanticApproved.decision),
+     approvalReasons:{legacy:oldApproved.reason,semantic:semanticApproved.reason},
+     ordinaryPathSelection:{applied,rejected,...project(selected),matchesExpected:matches(selected)}};
+    // This comparison does not include protected server exceptions, text
+    // formatting, language correction, sender policy, or actual delivery.
    }catch(err){
-    row[mode].error="Provider/parser failed; no application retry ("+String(err?.name||"Error")+")";
+    row[mode].error="Provider/parser failed; no application retry";
+    row[mode].errorDetails={stage,name:String(err?.name||"Error"),
+     code:err?.code==="INVALID_AI_RESPONSE"?"INVALID_AI_RESPONSE":null,
+     status:Number.isInteger(err?.status)?err.status:null,finishReason};
+    // Only the synthetic model output and known parser messages are safe
+    // diagnostics. Never dump SDK request objects, headers or API keys.
+    if(stage==="parser"){
+     row[mode].errorDetails.message=err?.code==="INVALID_AI_RESPONSE"?String(err.message).slice(0,300):null;
+     row[mode].errorDetails.syntheticResponse=typeof responseText==="string"?responseText.slice(0,4000):null;
+    }
    }
   }
   results.push(row);
  }
- console.log(JSON.stringify({live,model:MODEL,scenarios:results.length,
-  providerCallLimit:live?results.length*2:0,results},null,2));
+ const report=JSON.stringify({live,model:MODEL,scenarios:results.length,
+  providerCallLimit:live?results.length*2:0,results},null,2);
+ const output=process.argv.find(arg=>arg.startsWith("--output="))?.slice(9);
+ if(output){require("node:fs").writeFileSync(output,report+"\n","utf8");console.log("Report written to "+output);}
+ else console.log(report);
 }
 if(require.main===module)main().catch(err=>{console.error(err.message);process.exitCode=1;});
