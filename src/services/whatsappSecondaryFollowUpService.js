@@ -27,7 +27,7 @@ const {adaptNeutroAppointmentInvitation}=require("../utils/appointmentInviteCont
 const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled}=
   require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
@@ -248,30 +248,50 @@ const PREVIOUS_STEP_SQL=`
 // No accepted/ambiguous/blocked step may use this exception. A 20h step may
 // also pass a never-claimed 6h slot ONLY when its 2h antecedent was safely
 // deferred and both earlier due windows have elapsed.
-const STALE_PRE_PROVIDER_STEP_SQL=`(
+// A never-claimed or proven unsent older slot may be passed ONLY once its
+// original catch-up window has expired. A live claim or genuine failure is
+// not evidence of an unsent message. Include late accepted earlier steps
+// when computing a previous 6h slot's deadline.
+const EXPIRED_UNSENT_PREDECESSORS_SQL=`(
   previous_step.completed_at IS NULL
   AND rule.slot_hours IN (6,20)
-  AND EXISTS (
-    SELECT 1 FROM whatsapp_sender_followup_attempts earlier_deferred
-    WHERE earlier_deferred.sender_id=sa.id
-      AND earlier_deferred.contact_id=c.id
-      AND earlier_deferred.anchor_message_id=inbound.id
-      AND earlier_deferred.status='deferred'
-      AND earlier_deferred.message_id IS NULL
-      AND earlier_deferred.error_code='pre_provider_billing_deferred'
-      AND earlier_deferred.defer_count>0
-      AND earlier_deferred.claimed_at <= NOW()-INTERVAL '8 hours'
+  AND NOT EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_rules earlier_rule
+    WHERE earlier_rule.sender_id=sa.id AND earlier_rule.enabled=TRUE
+      AND earlier_rule.slot_hours IN (2,6)
+      AND earlier_rule.slot_hours<rule.slot_hours
+      AND NOT EXISTS (
+        SELECT 1 FROM whatsapp_sender_followup_attempts earlier_sent
+        WHERE earlier_sent.sender_id=sa.id AND earlier_sent.contact_id=c.id
+          AND earlier_sent.anchor_message_id=inbound.id
+          AND earlier_sent.slot_hours=earlier_rule.slot_hours
+          AND earlier_sent.status='accepted' AND earlier_sent.completed_at IS NOT NULL
+      )
       AND (
-        earlier_deferred.slot_hours=previous_step.slot_hours
-        OR (rule.slot_hours=20 AND earlier_deferred.slot_hours=2
-            AND previous_step.slot_hours=6
-            AND first_reply.at+INTERVAL '14 hours'<NOW()
-            AND NOT EXISTS (
-              SELECT 1 FROM whatsapp_sender_followup_attempts any_six
-              WHERE any_six.sender_id=sa.id AND any_six.contact_id=c.id
-                AND any_six.anchor_message_id=inbound.id
-                AND any_six.slot_hours=6
-            ))
+        GREATEST(
+          (CASE WHEN ${RECOVERY_NO_SELECTION_SQL} THEN recovery_menu.at
+            WHEN earlier_rule.slot_hours=2 AND first_reply.staff_question
+              THEN first_reply.at+INTERVAL '4 hours'
+            ELSE first_reply.at END)+earlier_rule.slot_hours*INTERVAL '1 hour',
+          COALESCE((SELECT MAX(older.completed_at+
+                    (earlier_rule.slot_hours-older.slot_hours)*INTERVAL '1 hour')
+            FROM whatsapp_sender_followup_attempts older
+            WHERE older.sender_id=sa.id AND older.contact_id=c.id
+              AND older.slot_hours<earlier_rule.slot_hours
+              AND older.status='accepted' AND older.completed_at IS NOT NULL
+              AND older.completed_at>=inbound.created_at-INTERVAL '24 hours'
+          ),'-infinity'::timestamptz)
+        ) > NOW()-INTERVAL '8 hours'
+        OR EXISTS (
+          SELECT 1 FROM whatsapp_sender_followup_attempts earlier_attempt
+          WHERE earlier_attempt.sender_id=sa.id AND earlier_attempt.contact_id=c.id
+            AND earlier_attempt.anchor_message_id=inbound.id
+            AND earlier_attempt.slot_hours=earlier_rule.slot_hours
+            AND NOT (earlier_attempt.status='deferred'
+              AND earlier_attempt.message_id IS NULL AND earlier_attempt.wamid IS NULL
+              AND earlier_attempt.error_code='pre_provider_billing_deferred'
+              AND earlier_attempt.defer_count>0)
+        )
       )
   )
 )`;
@@ -754,7 +774,7 @@ const CANDIDATES_SQL=`
    -- Follow-ups run in order. A later step needs its preceding enabled
    -- sender-specific step to have been accepted, not merely scheduled.
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
-     OR ${STALE_PRE_PROVIDER_STEP_SQL})
+     OR ${EXPIRED_UNSENT_PREDECESSORS_SQL})
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
    -- Routine staff information and forwards do not cancel AI-owned follow-ups.
    -- Staff questions, pending bookings and explicit takeover remain gated above.
@@ -769,7 +789,7 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )
    -- Discovery only: do not generate a new draft while billing cannot settle.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
@@ -785,6 +805,8 @@ const CANDIDATES_SQL=`
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_followup_rules",
   dueExpression:SEQUENCE_DUE_SQL,
+  retryAtExpression:deferredRetryAtSql("whatsapp_sender_followup_attempts","inbound.id"),
+  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
   quietWindowEndMarker:"   -- Follow-ups run in order.",
 });
 
@@ -884,7 +906,7 @@ const RECHECK_SQL=`
    AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
-     OR ${STALE_PRE_PROVIDER_STEP_SQL})
+     OR ${EXPIRED_UNSENT_PREDECESSORS_SQL})
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts prior_problem
      WHERE prior_problem.sender_id=sa.id AND prior_problem.contact_id=c.id
