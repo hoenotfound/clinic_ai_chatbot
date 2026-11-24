@@ -385,6 +385,7 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
   assert.match(calls[0].sql,/gate.owner_contact_id=job.contact_id/);
   assert.match(calls[0].sql,/job.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
+  assert.match(calls[0].sql,/job\.outbound_message_id IS NOT NULL OR job\.next_attempt_at<=NOW\(\)/);
   assert.match(calls[0].sql,/job.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002",[21]]);
   assert.equal(await worker.wakeAfterVerifiedReconciliation({
