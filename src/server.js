@@ -44,6 +44,7 @@ const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDec
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
+const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPulseDepth");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
@@ -2628,6 +2629,33 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // Final clinical safety backstop: do not let a normal sales draft, price
+    // recovery, or optional media bypass an explicitly unverified technical fact.
+    // Preserve genuine urgent/human takeover outcomes.
+    if ((!flagged || reviewRequired) && needsUnverifiedPulseDepthReview(clinicConfig, text)) {
+      flagged = true;
+      reviewRequired = true;
+      reviewType = "clinical";
+      bookingReady = false;
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      clinicalAcknowledgement = null;
+      reply = "Staff review requested";
+    }
+
+    // Intent metadata is informational, never permission to send sales media
+    // during unresolved clinical review or human takeover. Apply only after
+    // existing narrow administrative review recoveries have completed.
+    if (flagged && (!reviewRequired || reviewType === "clinical")) {
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      bookingReady = false;
+    }
+
     // AI generation can take long enough for staff to take over after the
     // earlier ownership check. Re-check immediately before any AI-owned state
     // change or outbound send.
@@ -2878,6 +2906,9 @@ async function processIncomingMessage(
       }
       if (checked.blocked) {
         bookingReady = false;
+        if (details && ["closed","past","outside_hours","invalid_date","invalid_time"].includes(checked.issue?.status)) {
+          details = {...details, appointmentPreference:null};
+        }
         console.info("[Appointment hours] corrected invalid booking preference contact=" +
           contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
       }
