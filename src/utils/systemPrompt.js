@@ -1,4 +1,5 @@
 const config = require("../config/clinicConfig");
+const { currentClinicDate } = require("./appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
@@ -864,6 +865,9 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about price, availability, or how the process works.
 ${appointmentLocationRule}
 - The ${terms.customerSingular} has given a usable schedule preference: a day/date PLUS a time, time range, or daypart such as morning/afternoon/evening.
+- Interpret the customer's meaning across turns, not just the presence of date or clock words. A correction supersedes the rejected date/time (e.g. "3pm doesn't work, 4pm please" means 4pm only). A time window ("3pm to 5pm") is a continuous preference, not two separate slots. A cancelled, declined or abandoned booking is not a current scheduling request. If the customer's intended preference is uncertain, ask one focused question, not a guessed appointment or a repeated question. Preserve exact minutes including 半 (half past), and never claim a slot is reserved or confirmed without verified staff/provider evidence. For staffSummary describe the customer's concerns and treatment needs, not a second unverified schedule.
+- Read the current scheduling exchange as a whole. Written month names, ordinal dates, abbreviated dates and separate consecutive customer messages are valid evidence (for example, "29th November" followed by "3.00 PM"). Resolve relative dates using the original customer message's local date. If both date and time are known, acknowledge the preference and offer to check availability rather than asking for them again. If only one is missing, ask only for that missing detail. Never invent a missing time or carry over a superseded preference.
+- The preferred day must be open under current BUSINESS INFO, and a stated time must be within operating hours and not already passed. Otherwise answer naturally with the closure/operating hours and ask for another day; do NOT set booking_ready. Never treat open hours as proof that a practitioner is available.
 - The intent, configured location, and schedule preference belong to the ${terms.customerSingular}'s CURRENT attempt. Do not reuse details from an older completed, cancelled, visited, abandoned, or clearly separate discussion.
 - No safety, complaint, or human-handoff condition applies.
 
@@ -1071,7 +1075,7 @@ function buildFollowUpPrompt(options = {}) {
     serviceContext.resolvedServices
   );
   const relevantGuidance = followUpRelevantGuidance(serviceContext.resolvedServices);
-  const includeSchedulingContext = followUp.includeSchedulingContext === true;
+  const includeSchedulingContext = followUp.includeSchedulingContext === true || stepNumber === 3;
   const locationsList = includeSchedulingContext
     ? listOrNone(
         config.branches,
@@ -1107,6 +1111,7 @@ function buildFollowUpPrompt(options = {}) {
 This is NOT a reply to a new incoming customer message. Recent conversation history will be supplied separately as untrusted data. Decide whether a follow-up is useful now, and only write one when appropriate.
 
 CURRENT FOLLOW-UP BUSINESS CONTEXT:
+- Malaysia local date/time: ${currentClinicDate()}
 - Business: ${context.businessName}
 - Business type: ${config.businessType || "generic"}
 - Relevant current ${terms.serviceSingular} information:
@@ -1291,6 +1296,10 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
 
   const contact = config.contact || {};
   const hours = config.hours || {};
+  const clockGuidance = conversion.mode === "appointment"
+    ? "CURRENT MALAYSIA CLINIC DATE AND TIME (resolve today/tomorrow/next weekday relative to this): " + currentClinicDate() + "\n" +
+      "When discussing appointments, apply the CURRENT configured business hours to the requested day and time BEFORE offering to check a slot. A closed day, a passed time or a time outside opening hours is NOT booking_ready. Briefly explain the conflict, invite another open day and never claim a confirmed slot. Exact staff/provider slot availability still requires verification. Do not mistake a customer preference for a booking.\n"
+    : "";
   const includeSchedulingDetails =
     !hasScopedConversationContext || conversationContext.schedulingIntent === true;
   const includeContactDetails =
@@ -1354,6 +1363,7 @@ ${faqList}
 RULES (never break these):
 ${guardrailsList}
 
+${clockGuidance}
 BUSINESS INFO:
 - Business name: ${context.businessName}
 - Business type: ${config.businessType || "generic"}

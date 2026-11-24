@@ -25,6 +25,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
+const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -805,10 +806,18 @@ async function processIncomingMessage(
       // health questions either. Do not overwrite an existing staff review,
       // or alert after staff has already answered this exact inbound turn.
       const actionable=manualOnlySecondaryAttention(incoming.text);
-      if(actionable && !contact.needs_attention &&
+      if(actionable &&
          !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
         try {
-          await contactsRepo.setAttention(contact.id,true,actionable.reason);
+          if(actionable.kind==="health" && contact.mode==="ai"){
+            // Manual-only does not imply AI eligibility. Record the original
+            // clinical question for staff without sending any AI reply.
+            await contactsRepo.setAiReviewAttention(
+              contact.id,savedInbound.id,
+              String(incoming.text||"").trim().slice(0,350),"clinical");
+          } else if(!contact.needs_attention){
+            await contactsRepo.setAttention(contact.id,true,actionable.reason);
+          }
         } catch(err){
           console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
         }
@@ -1333,6 +1342,7 @@ async function processIncomingMessage(
     let rm68ClinicalConcern = false;
     let reviewContinuationTextOnly = false;
     let bookingReady = false;
+    let verifiedBookingForHours = null;
     let serviceQuery = false;
     let serviceQuerySource = null;
     let metaAdContext = null;
@@ -1397,6 +1407,7 @@ async function processIncomingMessage(
             appointmentAt: lead.appointment_at,
             ...(acceptedStaffOffer ? { acceptedStaffOffer: acceptedStaffOffer.agreedTimeText } : {}),
           };
+          verifiedBookingForHours = bookingContext;
         }
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
@@ -2792,6 +2803,71 @@ async function processIncomingMessage(
       }
     }
 
+    let bookingDurationMinutes = 0;
+    let appointmentCustomerHistory = [];
+    const verifiedExistingBooking = Boolean(
+      verifiedBookingForHours?.acceptedStaffOffer ||
+      (verifiedBookingForHours?.appointmentAt &&
+       /^(?:set|visited|booked|confirmed|scheduled)$/iu.test(
+         String(verifiedBookingForHours.status || "")))
+    );
+    const explicitRescheduleForHours =
+      /(?:改期|改时间|改時間|换到|換到|重新预约|重新預約|reschedul|move my appointment|change my appointment)/iu
+        .test(String(text || ""));
+    // Correct an invalid day before the Meta send AND before booking_ready.
+    // Never contradict a provider/staff-verified appointment or override
+    // the staff's accepted offer unless the customer asks to reschedule.
+    if (!flagged && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        clinicConfig.hours?.weekly &&
+        (!verifiedExistingBooking || explicitRescheduleForHours)) {
+      appointmentCustomerHistory = (Array.isArray(history) ? history : [])
+        .filter(item => item?.role === "user")
+        .slice(-8)
+        .reverse()
+        .map(item => ({
+          content: typeof item.content === "string" ? item.content : "",
+          // conversationStore attaches this metadata from PostgreSQL
+          // non-enumerably; it never reaches the AI model.
+          createdAt: item.pricingCreatedAtMs ?? null,
+        }))
+        .filter(item => item.content && item.createdAt);
+      bookingDurationMinutes = durationMinutesForPackage({
+        config: clinicConfig,
+        customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
+        treatment: details?.treatment || "",
+      });
+      const checked = guardAppointmentReply({
+        hours: clinicConfig.hours, reply, customerText: text,
+        recentCustomerMessages: appointmentCustomerHistory,
+        appointmentPreference: details?.appointmentPreference || "",
+        receivedAt: savedInbound.created_at || new Date(),
+        now: new Date(), language: mediaLanguage,
+        durationMinutes: bookingDurationMinutes,
+        requireValidPreference: bookingReady,
+      });
+      // Always apply a corrected reply, even when the validated preference
+      // stays eligible for Booking Ready.
+      reply = checked.reply;
+      if (!checked.blocked && checked.repairedPreference && !bookingReady &&
+          ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType) &&
+          !contact.needs_attention && !priceQuery && !packageQuery && !serviceQuery &&
+          !isDefiniteAppointmentCancellation(text)) {
+        const previousAssistant = (Array.isArray(history) ? history : [])
+          .slice().reverse().find(item => item?.role === "assistant");
+        if (canRecoverBookingReady({customerText:text,
+          previousAssistantText:previousAssistant?.content,issue:checked.issue})) {
+          bookingReady = true;
+        }
+      }
+      if (checked.blocked) {
+        bookingReady = false;
+        console.info("[Appointment hours] corrected invalid booking preference contact=" +
+          contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
+      }
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
@@ -2858,6 +2934,10 @@ async function processIncomingMessage(
           }),
           // A genuinely new request to move an existing booking must still
           // reach staff even when the CRM records the old slot as confirmed.
+          customerText: text,
+          receivedAt: savedInbound.created_at || new Date(),
+          durationMinutes: bookingDurationMinutes,
+          recentCustomerMessages: appointmentCustomerHistory,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {

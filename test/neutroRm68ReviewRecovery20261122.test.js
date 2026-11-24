@@ -187,7 +187,7 @@ const finalLocationSection = serverSection(
 test("real final-send guard replaces Puchong on both sender paths", async () => {
   for (const sender of [1, 2]) {
     const context = {
-      flagged:false, bookingReady:false, keywordReason:null,
+      flagged:false, bookingReady:false, verifiedBookingForHours:null, keywordReason:null,
       marketingStopQuestion:null, urgentSafety:false,
       text:"你们的店是在哪？", reply:"我们的店在 Puchong。",
       channel:"whatsapp", mediaLanguage:"zh", reviewContinuationTextOnly:false,

@@ -28,6 +28,10 @@ const PRESERVE_VERIFIED_SECONDARY_TREATMENT_SQL=`
 // RM68 is an event, not a verified selection of the herbal care service or
 // the separately priced full-body Pulse Wave treatment. Prevent AI-scored
 // guesses from populating these labels without a customer's own choice.
+// RM68 event evidence never authorizes an AI-scored herbal or full-body
+// Pulse Wave label. Genuine subsequent service choices must use an
+// independently verified customer/staff selection path, not a model guess.
+// This also avoids extra Neon message-history scans on every scoring run.
 function preserveRm68CampaignScoringSql(scoredTreatmentParam){
  return `(
    ${scoredTreatmentParam}::text IN ('草药胸部疏通乳腺护理','脉冲波调理')
@@ -35,16 +39,6 @@ function preserveRm68CampaignScoringSql(scoredTreatmentParam){
      WHERE campaign.lead_id=leads.id
        AND campaign.metadata->>'outcome'='customer_campaign_interest'
        AND campaign.metadata->>'campaignKey'='neutro_breast_rm68_2026')
-   AND NOT EXISTS (SELECT 1 FROM messages explicit_choice
-     WHERE explicit_choice.contact_id=leads.contact_id
-       AND explicit_choice.role='user'
-       AND (
-         (${scoredTreatmentParam}::text='草药胸部疏通乳腺护理' AND
-           explicit_choice.content ~* '(草药|草藥|herbal).{0,16}(胸部|乳腺|breast)')
-         OR (${scoredTreatmentParam}::text='脉冲波调理' AND
-           explicit_choice.content ~*
-           '(全身脉冲|全身脈衝|脉冲波调理|脈衝波調理|黄金脉冲|黃金脈衝|full.body[[:space:]]+pulse)')
-       ))
  )`;
 }
 async function withTransaction(work) {

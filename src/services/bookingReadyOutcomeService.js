@@ -1,5 +1,6 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
+const { evaluateAppointmentHours, verifiedAppointmentPreference, appointmentCustomerContext } = require("../utils/appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
@@ -84,6 +85,11 @@ function normalizeOptions(reasonOrOptions) {
     activityDescription: safeText(options.activityDescription, 1000) || defaults.activityDescription,
     details: normalizeBookingDetails(options.details || options),
     allowReschedule: options.allowReschedule === true,
+    customerText: safeText(options.customerText, 1000) || "",
+    receivedAt: options.receivedAt || new Date(),
+    durationMinutes: Number(options.durationMinutes) || 0,
+    recentCustomerMessages: Array.isArray(options.recentCustomerMessages)
+      ? options.recentCustomerMessages.slice(0, 8) : [],
   };
 }
 
@@ -99,7 +105,49 @@ function createBookingReadyOutcomeService({
     reasonOrOptions = null
   ) {
     const capturedMessageId = safeMessageId(messageId);
-    const { reason, activityDescription, details, allowReschedule = false } = normalizeOptions(reasonOrOptions);
+    const { reason, activityDescription, details, allowReschedule = false,
+      customerText = "", receivedAt, durationMinutes = 0,
+      recentCustomerMessages = [] } = normalizeOptions(reasonOrOptions);
+    // Second independent guard: no CRM attention, activity or Telegram alert
+    // may be created for a closed/past/out-of-hours AI booking preference.
+    // This also protects callers other than the normal inbound send path.
+    if (getConversionProfile(clinicConfig).mode === "appointment" &&
+        clinicConfig.hours?.weekly) {
+      const hoursCheck = evaluateAppointmentHours({
+        hours: clinicConfig.hours, customerText,
+        appointmentPreference: details.appointmentPreference || "",
+        recentCustomerMessages,
+        receivedAt, now: new Date(), durationMinutes,
+      });
+      const verifiedPreference = verifiedAppointmentPreference(hoursCheck);
+      if (!verifiedPreference) {
+        console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
+          " reason=" + hoursCheck.status);
+        return {
+          contactUpdated: false, leadId: null, leadChanged: false,
+          details, blockedReason: hoursCheck.status,
+        };
+      }
+      // Never persist or notify staff with an unverified model-written time.
+      // The same canonical date and time is used by CRM and alert delivery.
+      details.appointmentPreference = verifiedPreference;
+      if (!details.branch && clinicConfig.branches?.length === 1)
+        details.branch = canonicalConfiguredValue(clinicConfig.branches[0]?.name, clinicConfig.branches);
+      // Keep actual customer concerns separate from the canonical appointment
+      // field. Use excerpts rather than trusting model-generated timing claims.
+      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:new Date()});
+      const formatClock = t => String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+      const feasibleWindow = hoursCheck.validWindows?.length
+        ? hoursCheck.validWindows.map(range=>range.map(formatClock).join("–")).join(" or ") : null;
+      details.staffSummary = [
+        details.treatment ? "Treatment: " + details.treatment : null,
+        details.branch ? "Location: " + details.branch : null,
+        "Customer preference: " + verifiedPreference,
+        feasibleWindow ? "Feasible start window within clinic hours (availability not checked): " + feasibleWindow : null,
+        "Staff to confirm availability.",
+        context.length ? "Customer context (quoted; not scheduling details): " + context.map(value=>JSON.stringify(value)).join("; ") : null,
+      ].filter(Boolean).join(". ").slice(0,600);
+    }
     const client = await database.connect();
     let contactUpdated = false;
     let leadId = null;
