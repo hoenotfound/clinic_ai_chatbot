@@ -3592,7 +3592,7 @@ async function processIncomingMessage(
         // rather than relying on an earlier stale/ad-name-only service hint.
         let resultMediaCreativeService = metaAdCreativeService;
         let verifiedPriorCustomerTexts = null;
-        if (sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
+        if (!recoveryTopicReset && sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
           try {
             // Query earliest persisted conversation messages, NOT the AI
             // snapshot. A fifth prior message is an ineligible sentinel,
