@@ -305,7 +305,7 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
     }
   }
   let timeText=customerText;
-  const invalidClock=text=>/\b\\d{1,2}[:.]\\d{2}\b/u.test(text)&&!timesInText(text).length;
+  const invalidClock=text=>/\b\d{1,2}[:.]\d{2}\b/u.test(text)&&!timesInText(text).length;
   if(invalidClock(timeText))return {status:"valid_day",...info};
   if(!timesInText(timeText).length&&!DAYPART.test(timeText)){
     for(const {content} of matchingHistory){
