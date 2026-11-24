@@ -545,7 +545,13 @@ function ensureVerifiedPriceReply({
         ? `If you're asking about ${treatment} in our advertisement, these are its current package prices 😊`
         : `如果你问的是我们广告里的${treatment}，目前有这些配套可以参考哦 😊`
     : "";
-  return { reply: [adScope, explanation, quote, bothQuestion, acknowledgement, offerInvitation].filter(Boolean).join("\n\n"), restored: true };
+  // For model-led pricing, answer the requested price first, then retain
+  // safe non-commercial wording from the same Gemini draft. Configured
+  // amounts, trial labels and voucher conditions never come from free text.
+  const parts = aiLed && pricingDecision.source === "model_led_customer_context"
+    ? [quote, explanation, acknowledgement]
+    : [adScope, explanation, quote, bothQuestion, acknowledgement, offerInvitation];
+  return { reply: parts.filter(Boolean).join("\n\n"), restored: true };
 }
 
 // A model draft can claim "Here are the regular prices:" yet contain no
