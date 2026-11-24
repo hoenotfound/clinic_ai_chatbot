@@ -74,7 +74,7 @@ async function deferProvenUnsent({
    RETURNING a.id
   )
   SELECT id FROM deferred`;
- const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId),result?.preProviderCancelled===true]);
+ const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId),result?.preProviderCancelled===true && result?.noReservation!==true]);
  return rows.rows?.length===1;
 }
 // The caller must retain the current contact, slot, consent and 24h
