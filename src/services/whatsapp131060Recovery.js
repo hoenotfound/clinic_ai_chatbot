@@ -70,19 +70,37 @@ const RECOVERY_TREATMENTS = Object.freeze([
   Object.freeze({id:"neutro_131060_9d",title:"9D 逆龄抗衰"}),
 ]);
 
+const RECOVERY_OPTIONS = Object.freeze([
+  ...RECOVERY_TREATMENTS,
+  Object.freeze({id:"neutro_131060_pulse",title:"脉冲波调理"}),
+  Object.freeze({id:"neutro_131060_breast",title:"胸部护理"}),
+  Object.freeze({id:"neutro_131060_other",title:"其他护理"}),
+]);
+const DEFAULT_RECOVERY_ORDER = Object.freeze([0,3,1,2,4,5].map(i=>RECOVERY_OPTIONS[i].id));
+const RECOVERY_SECOND_TEXT = "我们也有提供以下护理哦 🥰\n\n可以点下面的选项，或直接告诉我们想了解的护理～";
+
+function validRecoveryOrder(order) {
+  return Array.isArray(order) && order.length===6 && new Set(order).size===6 &&
+    order.every(id=>RECOVERY_OPTIONS.some(option=>option.id===id));
+}
+function recoveryTreatmentGroups(config = {}) {
+  const order=validRecoveryOrder(config.recoveryTreatmentOrder)
+    ? config.recoveryTreatmentOrder : DEFAULT_RECOVERY_ORDER;
+  const buttons=order.map(id=>({...RECOVERY_OPTIONS.find(option=>option.id===id)}));
+  return [buttons.slice(0,3),buttons.slice(3)];
+}
 function recoveryTreatmentButtons() {
   return RECOVERY_TREATMENTS.map(button => ({...button}));
 }
 
 function validRecoveryTreatmentButtons(buttons) {
   return Array.isArray(buttons) &&
-    buttons.length === RECOVERY_TREATMENTS.length &&
-    buttons.every((button,index) =>
-      button?.id === RECOVERY_TREATMENTS[index].id &&
-      button?.title === RECOVERY_TREATMENTS[index].title);
+    buttons.length === 3 && new Set(buttons.map(button=>button?.id)).size===3 &&
+    buttons.every(button => RECOVERY_OPTIONS.some(option =>
+      button?.id === option.id && button?.title === option.title));
 }
 
-function build131060RecoveryReply(incoming, config = {}) {
+function build131060RecoveryReply(incoming, config = {}, twoGroups = false) {
   // A natural clinic receptionist prompt. Never expose the unsupported Meta
   // message, fabricate a patient's treatment or claim an unknown ad source.
   // We cannot infer language from an unreadable first message, so use the
@@ -92,7 +110,8 @@ function build131060RecoveryReply(incoming, config = {}) {
     (treatment
       ? "想了解" + treatment + "对吗？也可以选择其他护理～"
       : "想了解哪方面的护理呢？") +
-    "\n\n可以点下面的选项，其他护理（例如脉冲波）也可以直接告诉我们～";
+    (twoGroups ? "\n\n可以点下面的选项，或直接告诉我们想了解的护理～" :
+      "\n\n可以点下面的选项，其他护理（例如脉冲波）也可以直接告诉我们～");
 }
 
 // This is a narrow, read-only proof for AI prompt cleanup, not permission to
@@ -227,12 +246,14 @@ function readableHistoryForRecoverySelection(history, proof) {
 
 async function canSend131060Recovery({
   contactId, inboundMessageId, ignoreOutboundMessageId = null,
-  database = pool, env = process.env,
+  firstRecoveryMessageId = null, database = pool, env = process.env,
 } = {}) {
   const cutoff = recoveryActivation(env);
   const cid = Number(contactId);
   const mid = Number(inboundMessageId);
   const ignore = ignoreOutboundMessageId == null ? null : Number(ignoreOutboundMessageId);
+  const first = firstRecoveryMessageId == null ? null : Number(firstRecoveryMessageId);
+  if (first != null && (!Number.isSafeInteger(first) || first<=mid || first===ignore)) return false;
   if (!cutoff || !Number.isSafeInteger(cid) || cid <= 0 ||
       !Number.isSafeInteger(mid) || mid <= 0 ||
       (ignore != null && (!Number.isSafeInteger(ignore) || ignore <= 0)) ||
@@ -271,6 +292,20 @@ async function canSend131060Recovery({
       // for an old customer; the missing content is never treated as an ad.
       // Only the newest customer turn qualifies. Prevent menu loops for a
       // patient who has already received a confirmed recovery this week.
+      // Second group requires the durable, same-inbound first acceptance.
+      ...(first == null ? [] : [
+        " AND EXISTS (SELECT 1 FROM inbound_outbound_attempts a",
+        " JOIN messages first_menu ON first_menu.id=a.assistant_message_id",
+        " JOIN whatsapp_sender_message_context first_ctx ON first_ctx.message_id=first_menu.id AND first_ctx.conversation_id=sc.id",
+        " WHERE a.processing_job_id=job.id AND a.inbound_message_id=inbound.id AND a.contact_id=c.id",
+        " AND a.assistant_message_id=$7 AND a.origin='system_fallback' AND a.outcome='accepted'",
+        " AND a.provider_message_id=first_menu.whatsapp_message_id AND first_menu.contact_id=c.id",
+        " AND first_menu.role='assistant' AND first_menu.sent_by_username IS NULL",
+        " AND first_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'",
+        " AND first_menu.content LIKE '%可以点下面的选项%'",
+        " AND first_menu.whatsapp_interactive->>'type'='button'",
+        " AND first_menu.delivery_status IS DISTINCT FROM 'failed')",
+      ]),
       " AND NOT EXISTS (",
       "  SELECT 1 FROM outbound_message_evidence prior_evidence",
       "  JOIN messages prior_menu ON prior_menu.id=prior_evidence.message_id",
@@ -281,15 +316,19 @@ async function canSend131060Recovery({
       "    AND prior_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'",
       "    AND prior_menu.content LIKE '%可以点下面的选项%'",
       "    AND prior_menu.created_at>=inbound.created_at-INTERVAL '7 days'",
+      ...(first == null ? [] : ["    AND prior_menu.id<>$7"]),
       " )",
       " AND NOT EXISTS (SELECT 1 FROM messages newer",
       "  WHERE newer.contact_id=c.id AND newer.id>inbound.id",
-      "   AND ($3::integer IS NULL OR newer.id<>$3::integer))",
+      "   AND ($3::integer IS NULL OR newer.id<>$3::integer)",
+      ...(first == null ? [] : ["   AND newer.id<>$7"]),
+      " )",
       ") AS eligible",
     ].join("\n");
     const result = await database.query(sql, [
       cid, mid, ignore, env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
       env.WHATSAPP_SECONDARY_WABA_ID, cutoff,
+      ...(first == null ? [] : [first]),
     ]);
     return result.rows?.[0]?.eligible === true;
   } catch (err) {
@@ -298,9 +337,36 @@ async function canSend131060Recovery({
   }
 }
 
+// Lock the original one-shot attempt while reserving the second group. A
+// crash leaves a visible unknown row and never authorizes an automatic replay.
+async function reserveRecoveryContinuation({contactId,inboundMessageId,firstRecoveryMessageId,buttons,database=pool,env=process.env}) {
+  if (!validRecoveryTreatmentButtons(buttons)) return null;
+  const client=database===pool ? await pool.connect() : database;
+  try {
+    await client.query("BEGIN");
+    const locked=await client.query(`SELECT a.assistant_message_id,m.whatsapp_interactive
+      FROM inbound_outbound_attempts a JOIN messages m ON m.id=a.assistant_message_id
+      WHERE a.inbound_message_id=$1 AND a.contact_id=$2 AND a.assistant_message_id=$3
+        AND a.origin='system_fallback' AND a.outcome='accepted' FOR UPDATE OF a`,
+      [inboundMessageId,contactId,firstRecoveryMessageId]);
+    const firstButtons=locked.rows[0]?.whatsapp_interactive?.buttons;
+    if (!validRecoveryTreatmentButtons(firstButtons) || buttons.some(b=>firstButtons.some(f=>f.id===b.id)) ||
+        !await canSend131060Recovery({contactId,inboundMessageId,firstRecoveryMessageId,database:client,env})) {
+      await client.query("ROLLBACK"); return null;
+    }
+    const saved=await client.query(`INSERT INTO messages(contact_id,role,content,whatsapp_interactive,delivery_status,delivery_error)
+      VALUES($1,'assistant',$2,$3::jsonb,'unknown','Recovery continuation reserved; delivery not confirmed.')
+      RETURNING id,contact_id,role,content,whatsapp_interactive,delivery_status,created_at`,
+      [contactId,RECOVERY_SECOND_TEXT,JSON.stringify({type:"button",buttons})]);
+    await client.query("COMMIT"); return saved.rows[0] || null;
+  } catch(err) { await client.query("ROLLBACK").catch(()=>{}); throw err; }
+  finally { if(database===pool) client.release(); }
+}
+
 module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
+  recoveryTreatmentGroups, validRecoveryOrder, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 };
