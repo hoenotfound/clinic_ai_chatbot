@@ -16,7 +16,7 @@ const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
   isSecondaryAutomationEligible} =
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
-const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery} = require("./whatsapp131060Recovery");
+const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery, RECOVERY_SECOND_TEXT} = require("./whatsapp131060Recovery");
 const {parseConsentButton,SENTENCES}=require("../utils/neutroGeneralFollowupConsent");
 const generalCampaign=require("./neutroSecondaryGeneralMarketingSql");
 
@@ -51,7 +51,7 @@ async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
   origin = "staff", preSendCheck = null, dispatchTransport = null,
   templateRequest = null, anchorMessageId = null,
-  interactiveButtons = null,
+  interactiveButtons = null, firstRecoveryMessageId = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -93,7 +93,7 @@ async function sendSecondaryStaffText({
        templateRequest != null || !recoveryActivation(env) ||
        !validRecoveryTreatmentButtons(interactiveButtons) ||
        typeof text !== "string" ||
-       !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") || text.length>1024)) {
+       (firstRecoveryMessageId == null ? !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") : text !== RECOVERY_SECOND_TEXT) || text.length>1024)) {
     const looksLikeRecovery=origin==="system_fallback" ||
       (Array.isArray(interactiveButtons) && interactiveButtons.length===3);
     return preBlock(looksLikeRecovery
@@ -201,6 +201,14 @@ async function sendSecondaryStaffText({
     }
   }
   // Include paid automated marketing; staff templates never inherit AI restrictions.
+  if (firstRecoveryMessageId != null) {
+    if (!recoveryMenu || !Number.isSafeInteger(Number(firstRecoveryMessageId)) ||
+        Number(firstRecoveryMessageId)>=mid) return preBlock("secondary_131060_recovery_menu_invalid");
+    const stored=await database.query(
+      "SELECT 1 FROM messages WHERE id=$1 AND contact_id=$2 AND role='assistant' AND sent_by_username IS NULL AND content=$3 AND whatsapp_interactive=$4::jsonb AND whatsapp_message_id IS NULL AND delivery_status='unknown'",
+      [mid,cid,RECOVERY_SECOND_TEXT,JSON.stringify({type:"button",buttons:interactiveButtons})]);
+    if (stored.rows?.length!==1) return preBlock("secondary_131060_recovery_menu_invalid");
+  }
   const automatedOrigin=["ai_reply","system_fallback","ai_media","followup","marketing_followup"].includes(origin);
   // Only ordinary AI text replies may use the expiring supervised test.
   // Media, templates, follow-ups and automated fallback messages must
@@ -217,9 +225,9 @@ async function sendSecondaryStaffText({
       Number.isSafeInteger(Number(anchorMessageId)) && Number(anchorMessageId)>0 &&
       await canSend131060Recovery({
         contactId:cid,inboundMessageId:Number(anchorMessageId),
-        ignoreOutboundMessageId:mid,database,env,
+        ignoreOutboundMessageId:mid,firstRecoveryMessageId,database,env,
       })) ||
-    (allContactText
+    (!recoveryMenu && (allContactText
       ? await replyAudienceEligible(cid,{
           database,env,
           ...(origin==="ai_reply" && anchorMessageId != null
@@ -231,7 +239,7 @@ async function sendSecondaryStaffText({
           })
         : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
-     await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
+     await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()})));
   if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
 
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {

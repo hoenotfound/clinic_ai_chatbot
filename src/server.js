@@ -123,7 +123,8 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentButtons, validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
+  recoveryTreatmentGroups, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation,
+  validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
 const {
@@ -529,6 +530,37 @@ async function sendTrackedText(
   return { finalMessage, sendResult };
 }
 
+// The second group is subordinate to the original tracked reply. Keep the
+// first inbound as the only recovery/follow-up anchor. Never retry a provider
+// call or send after a customer/staff reply has arrived.
+async function sendSecondRecoveryGroup(contact, inboundMessageId, firstRecoveryMessageId, buttons, canSend) {
+  if (canSend && canSend() !== true) return;
+  const saved=await reserveRecoveryContinuation({contactId:contact.id,inboundMessageId,firstRecoveryMessageId,buttons});
+  if (!saved) return;
+  const scope=scopeForPersistedContact(contact);
+  const preSendCheck=async()=> (!canSend || canSend()===true) &&
+    await canSend131060Recovery({contactId:contact.id,inboundMessageId,firstRecoveryMessageId,ignoreOutboundMessageId:saved.id});
+  let result;
+  try {
+    result=await sendSecondaryStaffText({contact,messageId:saved.id,text:RECOVERY_SECOND_TEXT,
+      origin:"system_fallback",interactiveButtons:buttons,anchorMessageId:inboundMessageId,
+      firstRecoveryMessageId,preSendCheck});
+  } catch(err) {
+    publishDeliveryStatus(saved,scope);
+    throw err;
+  }
+  if (result.cancelled && !result.ambiguous && !result.unknown) {
+    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
+    return;
+  }
+  realtimeEvents.publish("conversation_changed",{...scope,contactId:contact.id,messageId:saved.id,reason:"message"});
+  const reason=result.error || channelMessaging.rejectedError(contact.channel);
+  await persistSendOutcome(saved,result,reason,"whatsapp",scope);
+  await recordReadinessSendEvidence(saved,contact,result,"system_fallback");
+  if (!result.success) await contactsRepo.setDeliveryAttention(contact.id,
+    result.ambiguous ? `Delivery unconfirmed: ${reason}` : `Delivery failed: ${reason}`, saved.id);
+}
+
 function unwrapIncoming(item) {
   return item?.incoming || item;
 }
@@ -859,13 +891,14 @@ async function processIncomingMessage(
           });
           if (recoveryAllowed && (!canSendAutomatedReply ||
               canSendAutomatedReply() === true)) {
-            await sendTrackedText(
-              contact, build131060RecoveryReply(incoming, clinicConfig),
+            const [firstButtons,secondButtons]=recoveryTreatmentGroups(clinicConfig);
+            const firstMenu=await sendTrackedText(
+              contact, build131060RecoveryReply(incoming, clinicConfig, true),
               "system_fallback",
               {
                 canSend: canSendAutomatedReply,
                 processingJobId,
-                interactiveButtons: recoveryTreatmentButtons(),
+                interactiveButtons: firstButtons,
                 reviewReplyToInboundMessageId: savedInbound.id,
                 latePreSendCheck: (reservedMessageId) =>
                   canSend131060Recovery({
@@ -875,6 +908,9 @@ async function processIncomingMessage(
                   }),
               }
             );
+            if (firstMenu?.sendResult?.success && firstMenu.finalMessage?.id && processingJobId) {
+              await sendSecondRecoveryGroup(contact,savedInbound.id,firstMenu.finalMessage.id,secondButtons,canSendAutomatedReply);
+            }
           }
         } catch (recoveryErr) {
           // Preserve the original Meta 131060 staff review. If Meta rejects
@@ -1313,7 +1349,7 @@ async function processIncomingMessage(
     // and ordinary unambiguous enquiries as well as the exact menu titles.
     if (recoveryPromptProof && !keywordReason && !urgentSafety &&
       (bareServiceName(text,clinicConfig.services,clinicConfig.serviceAliases) ||
-       recoveryTreatmentButtons().some(button =>
+       recoveryTreatmentGroups(clinicConfig).flat().filter(button=>button.id!=="neutro_131060_other").some(button =>
         button.title.normalize("NFKC").replace(/\s+/g,"").toLowerCase() ===
         String(text||"").normalize("NFKC").replace(/\s+/g,"").toLowerCase()))) {
       try {

@@ -7,6 +7,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
+  recoveryTreatmentGroups, validRecoveryOrder, reserveRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 } = require("../src/services/whatsapp131060Recovery");
 
@@ -117,9 +118,9 @@ test("runtime reserves the reply through existing guarded secondary billing and 
   assert.match(server,/if \(secondaryAiConversation && is131060Message\(incoming\)/);
   assert.match(server,/recoveryActivation\(process\.env\)/);
   assert.match(server,/await canSend131060Recovery\(/);
-  assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig\)/);
+  assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig, true\)/);
   assert.match(server,/"system_fallback"/);
-  assert.match(server,/processingJobId,\s*interactiveButtons: recoveryTreatmentButtons\(\),\s*reviewReplyToInboundMessageId: savedInbound\.id,\s*latePreSendCheck:/);
+  assert.match(server,/processingJobId,\s*interactiveButtons: firstButtons,\s*reviewReplyToInboundMessageId: savedInbound\.id,\s*latePreSendCheck:/);
   assert.match(server,/latePreSendCheck\(saved.id\)/);
   assert.match(server,/sendSecondaryStaffText\(/);
 });
@@ -136,7 +137,8 @@ test("buttons are three fixed genuine treatments with a typed other-service esca
   assert.equal(validRecoveryTreatmentButtons(buttons.slice(0,2)),false);
   assert.equal(validRecoveryTreatmentButtons([...buttons.slice(0,2),
     {id:"neutro_131060_9d",title:"脉冲波"}]),false);
-  assert.equal(validRecoveryTreatmentButtons([...buttons].reverse()),false);
+  assert.equal(validRecoveryTreatmentButtons([...buttons].reverse()),true);
+  assert.equal(validRecoveryTreatmentButtons([buttons[0],buttons[0],buttons[1]]),false);
   buttons[0].title="tampered";
   assert.equal(validRecoveryTreatmentButtons(buttons),false);
   assert.match(build131060RecoveryReply(unavailable,services),/其他护理（例如脉冲波）也可以直接告诉我们/);
@@ -273,4 +275,46 @@ test("first-ad neutral recovery marker requires accepted provider proof after pr
   assert.match(sql,/initial\.content LIKE/);
   assert.match(sql,/prior\.content LIKE/);
   assert.throws(()=>is131060RecoveryAssistantSql("prior; DROP TABLE contacts","initial"),TypeError);
+});
+
+
+test("two native button groups reflect recent demand, preserve IDs and permit order changes",()=>{
+ const groups=recoveryTreatmentGroups();
+ assert.deepEqual(groups.map(g=>g.map(b=>b.title)),[["骨盆调理","脉冲波调理","3D 小颜术"],["9D 逆龄抗衰","胸部护理","其他护理"]]);
+ assert.ok(groups.every(validRecoveryTreatmentButtons));
+ const order=groups.flat().map(b=>b.id);
+ assert.equal(validRecoveryOrder(order),true);
+ assert.equal(validRecoveryOrder([...order.slice(0,5),order[0]]),false);
+ assert.deepEqual(recoveryTreatmentGroups({recoveryTreatmentOrder:[...order].reverse()}).flat().map(b=>b.id),[...order].reverse());
+});
+test("continuation eligibility requires accepted same-job first menu and excludes only it and the reserved second row",async()=>{
+ const database={query:async(sql,params)=>{
+  assert.match(sql,/a\.processing_job_id=job\.id/);
+  assert.match(sql,/a\.outcome='accepted'/);
+  assert.match(sql,/prior_menu\.id<>\$7/);
+  assert.match(sql,/newer\.id<>\$7/);
+  assert.deepEqual(params.slice(-1),[35]);
+  return {rows:[{eligible:true}]};
+ }};
+ assert.equal(await canSend131060Recovery({contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,ignoreOutboundMessageId:36,database,env}),true);
+ assert.equal(await canSend131060Recovery({contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,ignoreOutboundMessageId:35,database,env}),false);
+});
+test("second group reservation is locked, one-shot and rejects overlapping buttons",async()=>{
+ const [first,second]=recoveryTreatmentGroups();
+ const calls=[];
+ let eligible=true;
+ const database={query:async(sql,params)=>{
+  calls.push(sql);
+  if(sql.includes("FOR UPDATE OF a"))return {rows:[{whatsapp_interactive:{buttons:first}}]};
+  if(sql.includes("AS eligible"))return {rows:[{eligible}]};
+  if(sql.includes("INSERT INTO messages"))return {rows:[{id:36}]};
+  return {rows:[]};
+ }};
+ const args={contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,buttons:second,database,env};
+ assert.equal((await reserveRecoveryContinuation(args)).id,36);
+ assert.ok(calls.some(sql=>sql.includes("FOR UPDATE OF a")));
+ eligible=false;
+ assert.equal(await reserveRecoveryContinuation(args),null);
+ assert.equal(await reserveRecoveryContinuation({...args,buttons:first}),null);
+ assert.equal(calls.filter(sql=>sql.includes("INSERT INTO messages")).length,1);
 });

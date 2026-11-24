@@ -2880,6 +2880,11 @@ function suggestedAdReply(service, businessName) {
   };
 }
 
+const RECOVERY_BUTTON_OPTIONS = [
+  ["neutro_131060_pelvic","骨盆调理"],["neutro_131060_pulse","脉冲波调理"],["neutro_131060_3d","3D 小颜术"],
+  ["neutro_131060_9d","9D 逆龄抗衰"],["neutro_131060_breast","胸部护理"],["neutro_131060_other","其他护理"],
+];
+
 function AiBehaviorTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
@@ -2888,6 +2893,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     sop: config.sop || "",
     aiPricingIntentMode: config.aiPricingIntentMode || "off",
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
+    ...(config.services?.some(s=>s.name==="脉冲波调理") ? {recoveryTreatmentOrder: config.recoveryTreatmentOrder || RECOVERY_BUTTON_OPTIONS.map(([id])=>id)} : {}),
     adFirstReply: {
       enabled: config.adFirstReply?.enabled === true,
       rm68ImageUrl: config.adFirstReply?.rm68ImageUrl || "",
@@ -2942,6 +2948,17 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           Staff takeover, duplicate, verified offer and channel billing checks always apply.
         </p>
       </Field>
+      {form.recoveryTreatmentOrder && <Field label="Meta 131060 recovery buttons" hint="Two consecutive sets of three visible WhatsApp buttons. Reorder the six options; ordinary ad replies are unchanged.">
+        {form.recoveryTreatmentOrder.map((id,index)=><label key={index} className="mb-2 flex items-center gap-2 text-sm">
+          <span>Message {index<3?1:2}, option {index%3+1}</span>
+          <select className={inputClass} value={id} onChange={event=>{
+            const next=[...form.recoveryTreatmentOrder];
+            const oldIndex=next.indexOf(event.target.value);
+            [next[index],next[oldIndex]]=[next[oldIndex],next[index]];
+            setForm({...form,recoveryTreatmentOrder:next});
+          }}>{RECOVERY_BUTTON_OPTIONS.map(([value,title])=><option key={value} value={value}>{title}</option>)}</select>
+        </label>)}
+      </Field>}
       <Field label="Fixed first reply for Meta ad leads" hint="Save a Gemini reply-generation call when a new ad lead sends a standard prefilled enquiry.">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.adFirstReply.enabled}
