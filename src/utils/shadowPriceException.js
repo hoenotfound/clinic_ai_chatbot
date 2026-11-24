@@ -363,7 +363,7 @@ function resolveShadowPriceException({
   // Recover a service the customer explicitly chose after the bot provided
   // pricing options. This does not treat a model/advertisement as the choice.
   const recentSelection = resolveRecentPriceSelection({
-    customerText:text, session, services, serviceAliases, now,
+    customerText:text, session, services, serviceAliases, promotions, now,
   });
   if (recentSelection) {
     const decision = shadowVerifiedPrice({
