@@ -95,6 +95,14 @@ function withPricingHistoryMetadata(entry, row) {
         String(row.media_mime_type||"").startsWith("image/"),
       enumerable:false,
     },
+    pricingDeliveredStaffText: {
+      value: isVerifiedHumanStaffRow(row) &&
+        ["delivered","read"].includes(row?.delivery_status) &&
+        row.whatsapp_customer_mutation==null &&
+        row.has_media_attachment!==true && !row.media_url && !row.media_mime_type &&
+        typeof row.content==="string" && !!row.content.trim(),
+      enumerable:false,
+    },
     pricingBusinessAppPlaceholder: {
       value: isVerifiedHumanStaffRow(row) && row.sent_by_username==="WhatsApp Business App" &&
         typeof row.whatsapp_message_id==="string" && row.whatsapp_message_id.startsWith("wamid.") &&
