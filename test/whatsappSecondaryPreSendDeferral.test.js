@@ -66,3 +66,20 @@ test("unknown hold refusal defers only the new provably unsent follow-up",()=>{
  for(const change of [{unknown:true},{ambiguous:true},{wamid:"wamid.proven"},{policyBlocked:false},{success:true}])
    assert.equal(isDeferrableFollowUpBlock({...blocked,...change}),false);
 });
+
+test("only explicit pre-send proof can defer a durably rejected reservation",async()=>{
+ const marker={success:false,preProviderCancelled:true,code:"secondary_pre_provider_preflight_exception"};
+ const proof=[];
+ const db={query:async(sql,args)=>{
+  assert.match(sql,/billing.state<>'rejected'/);
+  assert.match(sql,/whatsapp_sender_status_receipts/);
+  assert.match(sql,/billing.wamid IS NOT NULL/);
+  proof.push(args[3]);return {rows:[{id:7}]};
+ }};
+ const input={database:db,table:"whatsapp_sender_followup_attempts",attemptId:7,messageId:42,contactId:9001};
+ assert.equal(await deferProvenUnsent({...input,result:marker}),true);
+ assert.equal(await deferProvenUnsent({...input,result:{...marker,noReservation:true}}),true);
+ assert.deepEqual(proof,[true,false]);
+ for(const extra of [{unknown:true},{ambiguous:true},{wamid:"wamid.actual"},{success:true}])
+   assert.equal(await deferProvenUnsent({...input,result:{...marker,...extra}}),false);
+});
