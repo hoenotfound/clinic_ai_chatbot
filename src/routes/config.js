@@ -194,7 +194,6 @@ const VALIDATORS = {
     v.every((b) => isPlainObject(b) && isNonEmptyString(b.name) && isString(b.address) && isString(b.phone)),
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
-  aiPricingSemanticMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
   adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
     (v.rm68ImageUrl === undefined ||
