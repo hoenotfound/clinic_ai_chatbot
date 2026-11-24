@@ -9,7 +9,7 @@ const { isDefiniteAppointmentCancellation } = require("../src/utils/appointmentC
 const {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches,
   campaignDay, firstReply, hasCampaignConversation, isOtherTreatmentQuery,
-  isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
+  isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement, candidateIsCampaign,
   campaignFollowUp,
 } = require("../src/utils/neutroBreastRm68Campaign");
 
@@ -265,4 +265,39 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
     "RM68 event must not receive ordinary RM388 extended marketing templates");
   assert.match(freeEntry, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
     "RM68 event must not use unrelated free-entry marketing graphics");
+});
+
+test("RM68 rejects unavailable event dates, answers the screening question and keeps English",()=>{
+  const h=[...history,
+    {role:"user",content:"How to conduct the checking"},
+    {role:"assistant",content:"A wellness assessment followed by pulse-wave care."},
+    {role:"user",content:"Any ultrasound screening"},
+    {role:"user",content:"December 5 and 6, I am not available\nIs that possible to do the treatment and checking today"},
+  ];
+  const text=h.at(-1).content;
+  const answer=campaignContextReply({history:h,customerText:text,now:early});
+  assert.match(answer,/today/);
+  assert.match(answer,/clinic will need to confirm/i);
+  assert.match(answer,/ultrasound/);
+  assert.doesNotMatch(answer,/RM\s*68|December [56]|12月|[\u3400-\u9fff]/u);
+  const screening=screeningAcknowledgement({history:h.slice(0,-1),customerText:h.at(-2).content});
+  assert.match(screening,/cannot|can’t confirm/i);
+  assert.match(screening,/staff will need to check/i);
+  assert.equal(isCampaignAvailabilityQuestion("Any ultrasound screening"),false);
+  assert.equal(screeningAcknowledgement({history:[],customerText:"Any ultrasound screening"}),null);
+  assert.equal(screeningAcknowledgement({history:h,customerText:"I have a breast lump, can ultrasound help?"}),null);
+  const price=campaignContextReply({history:[...h,{role:"user",content:"How much?"}],customerText:"How much?",now:early});
+  assert.match(price,/price also needs to be confirmed separately/i);
+  assert.doesNotMatch(price,/RM\s*68/i);
+});
+test("campaign factual continuation does not invent prices for ordinary questions",()=>{
+  assert.doesNotMatch(run("做多久？"),/RM\s*68/);
+  assert.doesNotMatch(run("还有名额吗？"),/RM\s*68/);
+  assert.equal(run("胸部护理有什么作用？"),null);
+  const mixed=campaignContextReply({history,customerText:"Can I book today?",now:early});
+  assert.match(mixed,/clinic will need to confirm/i);
+  assert.doesNotMatch(mixed,/RM\s*68/);
+  const localized=campaignContextReply({history,customerText:"Ada slot hari ini?",now:early});
+  assert.match(localized,/Pusat perlu mengesahkan/);
+  assert.doesNotMatch(localized,/RM\s*68/);
 });
