@@ -2,7 +2,7 @@
 const test=require("node:test");
 const assert=require("node:assert/strict");
 const {
- isProvenPreProviderBlock,deferProvenUnsent,reclaimClause,
+ isProvenPreProviderBlock,isDeferrableFollowUpBlock,deferProvenUnsent,reclaimClause,
 }=require("../src/services/whatsappSecondaryPreSendDeferral");
 const gate={success:false,policyBlocked:true,retryable:false,
  code:"secondary_billing_previous_send_unresolved",wamid:null};
@@ -55,4 +55,12 @@ test("marketing and service share a bounded one-shot reclaim, no unsafe table",(
   assert.match(sql,/defer_count<=8/);
  }
  assert.throws(()=>reclaimClause("messages"));
+});
+
+test("unknown hold refusal defers only the new provably unsent follow-up",()=>{
+ const blocked={...gate,code:"secondary_billing_unknown_hold_not_reviewed"};
+ assert.equal(isProvenPreProviderBlock(blocked),false);
+ assert.equal(isDeferrableFollowUpBlock(blocked),true);
+ for(const change of [{unknown:true},{ambiguous:true},{wamid:"wamid.proven"},{policyBlocked:false},{success:true}])
+   assert.equal(isDeferrableFollowUpBlock({...blocked,...change}),false);
 });
