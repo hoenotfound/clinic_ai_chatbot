@@ -625,6 +625,16 @@ function resolveModelLedPricingDecision({
   });
 }
 
+// Rollout selection is deliberately separate from semantic interpretation:
+ // compare in Shadow, fill only genuine gaps in Enabled, never override an
+ // existing legacy candidate (including one rejected by final approval).
+function shouldApplyModelLedPricing({mode,legacyMode,legacyCandidate,
+  legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
+  return mode==="enabled" && ["shadow","enabled"].includes(legacyMode) &&
+    !legacyCandidate && !legacyApproval?.decision && !hasSpecialDecision &&
+    Boolean(semanticApproval?.decision);
+}
+
 // Use the same customer-authored evidence at the outbound text boundary as
 // at the optional promotion decision. Never ask for pricing clarification just
 // because a model wrongly returned priceQuery=true on a service question.
@@ -643,4 +653,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
