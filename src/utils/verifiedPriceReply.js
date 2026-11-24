@@ -77,6 +77,28 @@ function ambiguousCopyMatchesStructuredPrice(copy, structured) {
   return amounts.length > 0 && amounts.every((amount) => amount === structured.offer);
 }
 
+// Check a staff quote against the configured option without confusing labelled
+// normal prices and vouchers with its payable price. Ambiguity fails closed.
+function staffQuoteMatchesConfiguredPrice(copy,structured,verified){
+  const source=String(copy||"").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
+  if(!verified?.price)return false;
+  const evidence=priceEvidence(source);
+  if(evidence.originalPrices.some(n=>!Number.isSafeInteger(structured?.normal) ||
+      n!==structured.normal))return false;
+  const vouchers=[...source.matchAll(VOUCHER_AFTER),...source.matchAll(VOUCHER_BEFORE)];
+  if(vouchers.some(m=>{
+    const n=Number(m[0].match(/\d+/u)?.[0]);
+    return !verified.afterVoucher || !Number.isSafeInteger(structured?.normal) ||
+      !Number.isSafeInteger(structured?.offer) || n!==structured.normal-structured.offer;
+  }))return false;
+  const payable=source.replace(ORIGINAL," ").replace(VOUCHER_AFTER," ").replace(VOUCHER_BEFORE," ");
+  const amounts=[...payable.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+  if(!amounts.length)return false;
+  if(evidence.price && evidence.price!==verified.price)return false;
+  if(evidence.ambiguous && structured && !ambiguousCopyMatchesStructuredPrice(source,structured))return false;
+  return amounts.every(m=>"RM"+m[1]===verified.price);
+}
+
 // Resolve package choices once for both the customer-facing text and any
 // optional promotional images. Multiple explicitly named packages are valid.
 // Carry a package from history only for a standalone price follow-up; a new
@@ -293,6 +315,49 @@ function safeNonPriceExplanation(customerText, original, language) {
   return "具体做几次需要中医师评估后确认，护理时间也会根据个人情况而有所不同。";
 }
 
+// Preserve a complete, simple AI-authored quote when all its commercial
+// claims can be verified locally. More elaborate wording, additional terms,
+// unsupported clinical claims or missing conditions use the existing formatter.
+// This is a text validation step, not another intent classifier.
+function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={}) {
+  const original=String(reply||"").trim();
+  if (!original || original.length>400 || !prices?.length ||
+      hasClinicalMediaRisk(original) || MEDIA_SEND_PROMISE.test(original)) return null;
+  const normalized=original.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
+  const amounts=[...normalized.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+  if(amounts.length!==prices.length ||
+     !normalized.includes(treatment.normalize("NFKC"))) return null;
+  let residual=normalized.replace(treatment.normalize("NFKC")," ");
+  // A package quotation must name each approved option next to its exact
+  // amount. Do not retain a menu just because the numeric set matches.
+  if(prices.length===1 && prices[0].name==="Main offer"){
+    if("RM"+amounts[0][1]!==prices[0].price || prices[0].afterVoucher)return null;
+    residual=residual.replace(amounts[0][0]," ");
+  }else{
+    if(prices.some(p=>p.name==="Main offer" || p.afterVoucher))return null;
+    const lines=normalized.split(/\n+/u);
+    for(const p of prices){
+      const name=p.name.normalize("NFKC");
+      const matches=lines.filter(line=>line.includes(name));
+      if(matches.length!==1)return null;
+      const line=matches[0];
+      if(prices.filter(other=>line.includes(other.name.normalize("NFKC"))).length!==1)return null;
+      const money=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+      if(money.length!==1 || "RM"+money[0][1]!==p.price)return null;
+      residual=residual.replace(name," ").replace(money[0][0]," ");
+    }
+  }
+  // Preserve natural connectors around verified facts. Unverified gifts,
+  // deadlines, session counts, efficacy claims and voucher terms fall back
+  // to the configured formatter rather than being released unchecked.
+  const trial=/(?:first\s*trial|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|percubaan pertama)/iu.test(normalized);
+  if(firstTrialQuote!==trial) return null;
+  const connectors=/(?:亲爱的|親愛的|您好|你好|是的|好的|我们|我們|目前|现在|現在|首次体验|首次體驗|初次体验|初次體驗|体验优惠价|體驗優惠價|体验价|體驗價|优惠价|優惠價|价格|價格|价钱|價錢|只需|仅需|僅需|以下|有两个|有兩個|两个|兩個|配套|套餐|优惠|優惠|的|是|为|為|哦|呀|呢|啦|哈|first\s*trial|percubaan pertama|\b(?:hi|hello|dear|yes|of course|currently|now|our|the|for|is|are|at|only|price|prices|package|packages|options|promotional|promo|harga|promosi|pakej|pilihan|untuk|ialah|adalah|semasa|hanya|ya|awak|anda|kami)\b)/giu;
+  residual=residual.replace(/[\p{P}\p{S}\s]/gu," ").replace(connectors,"").trim();
+  if(residual)return null;
+  return original;
+}
+
 // If Gemini ignores an already verified price question, reply using active
 // configured package prices. Do not depend on optional images being sent: the
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
@@ -487,7 +552,12 @@ function ensureVerifiedPriceReply({
         ? `The listed price for ${voucherNames} is after applying the voucher`
         : `${voucherNames} 的上述价格为使用优惠券后的价格`)
     : "";
-  const quote = firstTrialQuote
+  const preservedModelQuote = aiLed && pricingDecision.source === "model_led_customer_context"
+    ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
+    : null;
+  if (preservedModelQuote) return {reply:preservedModelQuote,restored:false};
+  const quote = firstTrialQuote &&
+    !(aiLed && pricingDecision.source === "model_led_customer_context" && prices[0].name !== "Main offer")
     ? (locale.startsWith("ms")
       ? `Harga promosi First Trial untuk ${treatment}: ${prices[0].price} 😊`
       : locale.startsWith("en")
@@ -545,7 +615,13 @@ function ensureVerifiedPriceReply({
         ? `If you're asking about ${treatment} in our advertisement, these are its current package prices 😊`
         : `如果你问的是我们广告里的${treatment}，目前有这些配套可以参考哦 😊`
     : "";
-  return { reply: [adScope, explanation, quote, bothQuestion, acknowledgement, offerInvitation].filter(Boolean).join("\n\n"), restored: true };
+  // For model-led pricing, answer the requested price first, then retain
+  // safe non-commercial wording from the same Gemini draft. Configured
+  // amounts, trial labels and voucher conditions never come from free text.
+  const parts = aiLed && pricingDecision.source === "model_led_customer_context"
+    ? [quote, explanation, acknowledgement]
+    : [adScope, explanation, quote, bothQuestion, acknowledgement, offerInvitation];
+  return { reply: parts.filter(Boolean).join("\n\n"), restored: true };
 }
 
 // A model draft can claim "Here are the regular prices:" yet contain no
@@ -627,4 +703,4 @@ function guardUnfulfilledPriceQuote(reply, language = "zh") {
   return { reply: safe, changed: true };
 }
 
-module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };

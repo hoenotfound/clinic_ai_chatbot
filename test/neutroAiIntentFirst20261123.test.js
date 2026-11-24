@@ -178,7 +178,7 @@ test("production paths preserve sender/price/media authority and primary deferra
  const server=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
  const secondary=fs.readFileSync(require.resolve("../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
  const primary=fs.readFileSync(require.resolve("../src/db/followUpRepo.js"),"utf8");
- assert.match(server,/modelPricingStage = parsedReply\.pricingStage/);
+ assert.match(server,/modelPricingStage = languageCheckedReply\.languageCorrectionFailed\s*\? null : languageCheckedReply\.pricingStage/);
  assert.match(server,/modelPricingStage,/);
  assert.match(server,/subsequent_session_text_only/);
  assert.match(server,/repeatVisitInfoReview = flagged && reviewRequired/);

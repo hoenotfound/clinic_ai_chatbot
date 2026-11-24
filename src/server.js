@@ -29,7 +29,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -1366,6 +1366,7 @@ async function processIncomingMessage(
     let priceQuery = false;
     let packageQuery = false;
     let modelPricingStage = null;
+    let modelPricingIntent = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1496,7 +1497,6 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
-        modelPricingStage = parsedReply.pricingStage || null;
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -1509,6 +1509,18 @@ async function processIncomingMessage(
             ),
           }
         );
+        // Only the accepted response may provide intent. A language
+        // fallback explicitly clears pricing authority, not just its text.
+        modelPricingStage = languageCheckedReply.languageCorrectionFailed
+          ? null : languageCheckedReply.pricingStage || null;
+        modelPricingIntent = languageCheckedReply.languageCorrectionFailed
+          ? null : {
+            structured:languageCheckedReply.structured, outcome:languageCheckedReply.outcome,
+            priceQuery:languageCheckedReply.priceQuery, packageQuery:languageCheckedReply.packageQuery,
+            serviceQuery:languageCheckedReply.serviceQuery,
+            treatment:languageCheckedReply.details?.treatment || null,
+            pricingStage:modelPricingStage, promotionOption:languageCheckedReply.promotionOption || null,
+          };
         ({
           text: aiReply,
           flagged,
@@ -1761,7 +1773,7 @@ async function processIncomingMessage(
     // Separate 7-day/100-turn pricing evidence read. The AI prompt remains
     // capped at 20 messages. Missing or truncated evidence fails closed.
     let returningPricingHistory = null;
-    if (aiPricingMode === "shadow" &&
+    if (["shadow","enabled"].includes(aiPricingMode) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(
           clinicConfig.businessName || clinicConfig.clinicName || ""
@@ -1775,7 +1787,7 @@ async function processIncomingMessage(
         console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
       }
     }
-    const shadowPriceException = aiPricingMode === "shadow" &&
+    const shadowPriceException = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
@@ -1919,7 +1931,7 @@ async function processIncomingMessage(
     // Keep clinical, staff, safety, consent and billing controls unchanged.
     const recoverableTwoPriceReview = flagged && reviewRequired &&
       reviewType === "information";
-    let twoTreatmentQuote = aiPricingMode === "shadow" &&
+    let twoTreatmentQuote = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       (!flagged || recoverableTwoPriceReview) &&
       !bookingReady && !keywordReason && !urgentSafety &&
@@ -2067,6 +2079,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
+          allowVerifiedAdPricing: aiPricingEnabled && allowVerifiedAdPricing,
           allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
@@ -2079,8 +2092,14 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
-    const pricingApproval = resolveApprovedPricingAssessment({
-      mode: aiPricingMode, aiDecision: pricingDecision,
+    const protectedLegacyPrice = Boolean(shadowPriceException &&
+      ["customer_returning_treatment_price","confirmed_prior_quote",
+        "customer_staff_result_price","customer_concern_both"].includes(shadowPriceException.source));
+    const legacyPricingCandidate = aiPricingEnabled
+      ? (protectedLegacyPrice ? shadowPriceException : pricingDecision || shadowPriceException)
+      : pricingDecision;
+    const legacyPricingApproval = resolveApprovedPricingAssessment({
+      mode: aiPricingMode, aiDecision: legacyPricingCandidate,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
       numberedMenuDecision: numberedPricingDecision,
@@ -2092,6 +2111,88 @@ async function processIncomingMessage(
       allowVerifiedAdPricing, metaAdContext,
       promotions: clinicConfig.promotions,
     });
+    // Off leaves the current code path unchanged. Shadow compares the
+    // same existing provider result without altering a reply or sending media.
+    // Enabled prioritizes verified model decisions; independently proven
+    // special cases and final safety rejections keep precedence.
+    let semanticPricingApproval = null;
+    let rejectedModelPricing = false;
+    if (["shadow","enabled"].includes(aiPricingMode) &&
+        !flagged && !bookingReady && !keywordReason && !urgentSafety &&
+        !marketingStopQuestion && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
+        !fixedAdFirstReply && !twoTreatmentQuote &&
+        !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
+      try {
+        const semanticCandidate = resolveModelLedPricingDecision({
+          modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+        });
+        const semanticApproval = resolveApprovedPricingAssessment({
+          mode:"enabled",aiDecision:semanticCandidate,customerText:text,
+          conversationHistory:history,services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
+          promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
+          marketingStopQuestion,
+        });
+        const old=legacyPricingApproval.decision, next=semanticApproval.decision;
+        const signature=d=>d ? JSON.stringify([d.type,d.treatment,
+          (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
+        // Compare exact treatment and package amounts, not only a boolean.
+        // No raw message content, extra provider calls or new DB writes.
+        const apply = shouldApplyModelLedPricing({
+          mode:aiPricingMode,legacyCandidate:legacyPricingCandidate,
+          legacyApproval:legacyPricingApproval,semanticApproval,
+          hasSpecialDecision:protectedLegacyPrice,
+        });
+        console.info("[Semantic pricing] "+JSON.stringify({
+          contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
+          modelPriceQuery:modelPricingIntent.priceQuery===true,
+          modelPackageQuery:modelPricingIntent.packageQuery===true,
+          legacyApproved:Boolean(old),semanticApproved:Boolean(next),
+          agreement:signature(old)===signature(next),reason:semanticApproval.reason,
+          legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
+          legacyPackages:old?.prices?.map(p=>p.name)||[],
+          semanticPackages:next?.prices?.map(p=>p.name)||[],
+          applied:apply,
+        }));
+        if (apply) semanticPricingApproval=semanticApproval;
+        rejectedModelPricing = shouldBlockRejectedModelPricing({
+          mode:aiPricingMode,modelIntent:modelPricingIntent,semanticCandidate,
+          semanticApproval,legacyApproval:legacyPricingApproval,
+          hasSpecialDecision:protectedLegacyPrice,customerText:text,
+          promotions:clinicConfig.promotions,
+        });
+      } catch (error) {
+        // Shadow diagnostics must not disrupt customer replies; Enabled also
+        // retains the original decision if semantic evaluation fails.
+        console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
+      }
+    }
+    const selectedPricingApproval = rejectedModelPricing
+      ? {decision:null,reason:"model_price_scope_unverified"}
+      : semanticPricingApproval || legacyPricingApproval;
+    // Conflicting human quotes must not be overridden by either pricing path.
+    // Shadow remains observational; the existing special cases retain scope.
+    const conflictTreatment = selectedPricingApproval.decision?.treatment ||
+      (modelPricingIntent?.priceQuery || modelPricingIntent?.packageQuery
+        ? modelPricingIntent.treatment : null);
+    const staffPriceConflict = aiPricingEnabled && !flagged && !bookingReady &&
+      !keywordReason && !marketingStopQuestion && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !fixedAdFirstReply && !twoTreatmentQuote &&
+      !isExplicitStaffRequest(text) && modelPricingStage !== "subsequent_session" &&
+      Boolean(conflictTreatment) && hasConflictingStaffPrice({
+        treatment:conflictTreatment,conversationHistory:history,
+        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+        promotions:clinicConfig.promotions,
+      });
+    const pricingApproval = staffPriceConflict
+      ? {decision:null,reason:"conflicting_staff_quote"} : selectedPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
@@ -2916,6 +3017,24 @@ async function processIncomingMessage(
       }
     }
 
+    if ((staffPriceConflict || rejectedModelPricing) && !flagged && !bookingReady &&
+        !rm68CampaignContinuationTextOnly && !repeatVisitPriceReply &&
+        !marketingStopQuestion && !reviewContinuationTextOnly) {
+      reply = staffPriceConflict
+        ? (mediaLanguage === "ms"
+          ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
+          : mediaLanguage === "en"
+            ? "Let me check the price previously shared with our team so we don't give you the wrong amount 😊"
+            : "之前同事提供的价格需要再跟门店核对一下，避免给您不准确的报价哦 😊")
+        : (mediaLanguage === "ms"
+          ? "Pakej atau rawatan yang mana satu anda maksudkan ya? Saya boleh semak harga yang betul 😊"
+          : mediaLanguage === "en"
+            ? "Which package or treatment do you mean? I can check the correct price for you 😊"
+            : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
+      // No stale package/result image may accompany this clarification.
+      reviewContinuationTextOnly = true;
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
@@ -3144,8 +3263,12 @@ async function processIncomingMessage(
       // with independently verified First Trial context, not a second media
       // selector. The same safety, pause, language, duplicate and provider
       // rules therefore apply to ordinary and repeat-session promotions.
+      const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
+        !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
+          String(reply||"").replace(/\s+/gu,"").includes(p.price));
+      if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
-        comboMediaUnavailable ? null : await resolvePricePromotionForReply({
+        comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: comboMediaPricingDecision ||
@@ -3267,7 +3390,7 @@ async function processIncomingMessage(
               // Only an independently approved customer price decision can
               // exempt this specific artwork from secondary quiet hours.
               solicitedPricing:Boolean(secondaryAiConversation &&
-                approvedPricingDecision?.type === "price" &&
+                ["price","package_options"].includes(approvedPricingDecision?.type) &&
                 Array.isArray(approvedPricingDecision.prices) &&
                 approvedPricingDecision.prices.length > 0),
               sequenceOffset:0,

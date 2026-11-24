@@ -173,3 +173,60 @@ A real WhatsApp provider send and a Render deployment smoke test are still
 required before turning on Enabled for Neutro. Leave its production
 `aiPricingIntentMode=shadow` and `assessmentFirstPricingEnabled=true`
 until the test and independent review pass.
+
+
+## Natural-language pricing rollout (AI-first)
+
+The existing Settings → AI Behavior → AI pricing graphic decisions setting
+controls this rollout. Off retains original behavior. Shadow compares the
+new resolver without changing customer-facing replies or the existing model
+prompt. Enabled prioritizes an approved model interpretation. The old
+independently verified paths remain available for explicit requests, ad
+context, returning customers, confirmed prior quotes, numbered menus,
+staff result recovery, subsequent sessions and multi-treatment comparisons.
+A final rejection or protected special case cannot be bypassed by model intent.
+Switch back to Shadow to disable the new authorization path.
+
+The accepted language-checked provider response fields are captured before legacy mutation.
+No additional model call, new worker, table or setting is added. Recent
+DB-timestamped customer-named treatment context can survive intervening
+ordinary questions and verified non-conflicting staff assistance. Unknown
+staff echoes, unrelated treatments, clinical concerns, refusals and ambiguous
+context fail closed. Configured package identity and amounts are verified;
+an indirect package choice needs a grounded prior selection or correctly
+priced preceding menu. Enabled's prompt clarifies these interpretations.
+The reply formatter keeps safe non-commercial model wording while supplying
+the verified quote first; artwork must match the same approved amounts.
+The existing delivery safeguards remain authoritative.
+
+Enabled also supplies compact verified amounts for one relevant service
+without requiring a price keyword. Knowledge does not authorize quotation.
+Non-price questions still require false price/package intent and retain
+independent quantity, benefit and consent vetoes. Rejected semantic package
+scope must not widen into a broader legacy quote; explicit independently
+verified selections and protected special cases are retained. Conflicting
+staff quotes are checked against payable amounts, original prices and voucher
+terms. A verified simple single or multi-package model reply may be preserved
+when its labelled amounts and conditions agree; otherwise the existing
+formatter supplies verified facts. Approved current price and package requests
+qualify for the existing secondary quiet-hours exception, subject to all
+billing, consent, ownership and duplicate checks.
+
+Review [Semantic pricing] logs for both approvals, treatment and package
+agreement and applied status. Logs omit raw customer content. A comparison
+is not a correctness label and Shadow does not exercise Enabled's revised
+prompt. Before enabling, review real conversations and run a synthetic
+live model A/B (local machine with npm ci, never a production key):
+
+```sh
+node scripts/pricing-intent-live-test.js
+node scripts/pricing-intent-live-test.js --live > pricing-intent-live-report.json
+```
+
+Offline mode builds prompts only. Live mode requires a separate authorized
+NEUTRO_AB_GEMINI_API_KEY in the local shell and makes up to 26 application-level
+calls (13 synthetic cases in two modes). Reported usage is from actual
+provider metadata; missing usage is not zero. The test does not simulate all
+server special cases or send messages. Review each actual model response and
+candidate comparison; keep production Shadow until both the live test and
+delivery regression/smoke test pass.

@@ -850,7 +850,7 @@ test("one refused treatment does not override an independent price request for a
   }
 });
 
-test("session quantity and benefit questions never expose compact prices to the AI prompt",()=>{
+test("compact price knowledge does not authorize quotes or media for quantity and benefit questions",async()=>{
   const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
   const {buildSystemPrompt}=require("../src/utils/systemPrompt");
   const original={
@@ -868,7 +868,25 @@ test("session quantity and benefit questions never expose compact prices to the 
       const context=buildConversationPromptContext([{role:"user",content:customerText}],
         {services,aliases,promotions:[trial]});
       const prompt=buildSystemPrompt({conversationContext:context});
-      assert.doesNotMatch(prompt,/VERIFIED PRICE REFERENCE/u,customerText);
+      assert.match(prompt,/VERIFIED PRICE REFERENCE \(internal only\): quote ONLY when the CURRENT customer requests this price or package/u,customerText);
+      const {resolveModelLedPricingDecision}=require("../src/utils/aiPricingIntentDecision");
+      const modelIntent={structured:true,outcome:"normal",priceQuery:false,packageQuery:false,treatment:trial.linkedService};
+      const history=[{role:"user",content:customerText,pricingCreatedAtMs:Date.now()}];
+      const decision=resolveModelLedPricingDecision({modelIntent,customerText,conversationHistory:history,
+        services,serviceAliases:aliases,promotions:[trial]});
+      assert.equal(decision,null,customerText);
+      assert.equal(resolveModelLedPricingDecision({
+        modelIntent:{...modelIntent,priceQuery:true},customerText,conversationHistory:history,
+        services,serviceAliases:aliases,promotions:[trial],
+      }),null,"Incorrect model intent must not quote for "+customerText);
+      const result=ensureVerifiedPriceReply({customerText,reply:"Here is the treatment price RM488.",treatment:trial.linkedService,
+        pricingDecision:decision,priceRequested:false,services,serviceAliases:aliases,promotions:[trial],language:"en"});
+      assert.doesNotMatch(result.reply,/RM\s*488/u,customerText);
+      const media=await resolvePricePromotionForReply({customerText,conversationHistory:history,
+        aiPricingEnabled:true,pricingDecision:decision,treatment:trial.linkedService,
+        textSendSucceeded:true,services,serviceAliases:aliases,promotions:[trial],
+        wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false});
+      assert.equal(media,null,customerText);
     }
     const text="请问,做一次多少";
     const context=buildConversationPromptContext([
