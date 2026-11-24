@@ -370,22 +370,19 @@ function conversationPromotionsList(conversationContext) {
     ].join("\n");
   }
 
-  // Reuse independently verified amounts without loading long commercial copy
-  // when Gemini sees a natural question absent from the legacy keyword list.
+  // Enabled receives compact factual prices for one relevant service even
+  // when a keyword classifier misses the customer's natural price question.
+  // Providing knowledge is NOT authorization to quote or send media.
   const aiPriceReference = config.aiPricingIntentMode === "enabled" && selected.length === 1
-    ? verifiedPricesForService(selected[0].name, active,
-        conversationContext?.currentCustomerText || "", [],
+    ? verifiedPricesForService(selected[0].name, active, "", [],
         { allowTextOnlyOffers: true })
     : null;
-  // Only expose even a compact verified amount to the model on a customer-
-  // authored price request; quantity, duration and benefit questions never
-  // require a hidden price reference.
   const verifiedMoneyEnquiry = hasExplicitPriceRequest(conversationContext?.currentCustomerText || "");
-  const compactVerifiedPrices = verifiedMoneyEnquiry && aiPriceReference?.length
+  const compactVerifiedPrices = aiPriceReference?.length
     ? [
-        "  VERIFIED PRICE REFERENCE (internal only): quote these amounts ONLY for a CURRENT customer price request. Do not send or promise images based on this reference.",
+        "  VERIFIED PRICE REFERENCE (internal only): quote ONLY when the CURRENT customer requests this price or package. Never quote merely because this reference exists. Never promise media delivery.",
         ...aiPriceReference.map((item) =>
-          `  - ${item.name === "Main offer" ? selected[0].name : item.name}: ${item.price}`
+          `  - ${item.name === "Main offer" ? selected[0].name : item.name}: ${item.price}${item.afterVoucher ? " (after voucher)" : ""}`
         ),
       ]
     : [];
