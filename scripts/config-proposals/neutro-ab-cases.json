@@ -56,7 +56,8 @@
     ],
     "expect": {
       "priceQuery": true,
-      "treatment": "骨盆调理"
+      "treatment": "骨盆调理",
+      "promotionOption": null
     },
     "note": "Compare verified packages; do not choose one from symptoms."
   },
@@ -72,7 +73,9 @@
       }
     ],
     "expect": {
-      "priceQuery": false
+      "priceQuery": false,
+      "packageQuery": false,
+      "promotionOption": "Package A"
     },
     "note": "Answer inclusions, not a price question."
   },
@@ -132,7 +135,8 @@
         "review_required",
         "needs_human"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "serviceQuery": false
     },
     "note": "Unverified specification requires review."
   },
@@ -156,7 +160,9 @@
       }
     ],
     "expect": {
-      "priceQuery": false
+      "priceQuery": false,
+      "treatment": "9D 逆龄抗衰",
+      "serviceQuery": true
     },
     "note": "Switch to 9D, not pulse wave."
   },
@@ -175,7 +181,9 @@
       "outcome": [
         "normal"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "bookingReady": false,
+      "appointmentPreference": null
     },
     "note": "Monday closed; do not mark booking ready."
   },
@@ -199,7 +207,9 @@
       }
     ],
     "expect": {
-      "priceQuery": false
+      "priceQuery": false,
+      "bookingReady": true,
+      "treatment": "骨盆调理"
     },
     "note": "Acknowledge time and check availability; never claim confirmed."
   },
@@ -235,7 +245,8 @@
         "review_required",
         "needs_human"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "serviceQuery": false
     },
     "note": "Clinical review; no personal suitability assurance."
   },
@@ -303,7 +314,8 @@
         "review_required",
         "needs_human"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "serviceQuery": false
     },
     "note": "Review, no invented waiting interval."
   },
@@ -388,7 +400,8 @@
     ],
     "expect": {
       "priceQuery": false,
-      "packageQuery": true
+      "packageQuery": true,
+      "mediaPromise": false
     },
     "note": "Distinguish offer intent from monetary request."
   },
@@ -407,7 +420,8 @@
       "outcome": [
         "needs_human"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "serviceQuery": false
     },
     "note": "Human request; no sales."
   },
@@ -426,7 +440,8 @@
       "outcome": [
         "needs_human"
       ],
-      "priceQuery": false
+      "priceQuery": false,
+      "serviceQuery": false
     },
     "note": "Urgent medical assessment, no sales."
   },
@@ -507,7 +522,12 @@
         "content": "可以先了解体态评估哦。"
       }
     ],
-    "expect": {},
+    "expect": {
+      "action": [
+        "send",
+        "skip"
+      ]
+    },
     "note": "Relevant gentle follow-up; no unsolicited treatment price.",
     "followUpContext": {
       "stepNumber": 1,
@@ -585,7 +605,12 @@
         "content": "其实我现在更想了解骨盆调理。"
       }
     ],
-    "expect": {},
+    "expect": {
+      "action": [
+        "send",
+        "skip"
+      ]
+    },
     "note": "Continue current interest, no unrelated treatment.",
     "followUpContext": {
       "stepNumber": 1,
@@ -607,11 +632,174 @@
         "content": "Boleh kami terangkan penjagaan wajah ini."
       }
     ],
-    "expect": {},
+    "expect": {
+      "action": [
+        "send",
+        "skip"
+      ]
+    },
     "note": "Natural BM follow-up; do not quote unsolicited price.",
     "followUpContext": {
       "stepNumber": 1,
       "treatmentInterest": "9D 逆龄抗衰"
     }
+  },
+  {
+    "id": "compare-face-services",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "3D跟9D有什么不同？我脸大又松弛"
+      }
+    ],
+    "expect": {
+      "priceQuery": false,
+      "packageQuery": false
+    },
+    "note": "Keep both services available; do not select one from symptoms alone."
+  },
+  {
+    "id": "ambiguous-treatment",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "I want to improve my appearance. Which treatment is right for me?"
+      }
+    ],
+    "expect": {
+      "priceQuery": false,
+      "packageQuery": false
+    },
+    "note": "Broad discovery, preserve all FAQs; ask focused clarification."
+  },
+  {
+    "id": "ambiguous-short-question",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Saya berminat dengan 3D dan 9D"
+      },
+      {
+        "role": "assistant",
+        "content": "Kami ada penjagaan wajah manual dan dengan alat."
+      },
+      {
+        "role": "user",
+        "content": "Berapa lama?"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Ambiguous prior topic; explain both or clarify."
+  },
+  {
+    "id": "explicit-depth-en",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "How deep can pulse wave penetrate?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "review_required",
+        "needs_human"
+      ],
+      "serviceQuery": false,
+      "priceQuery": false
+    },
+    "note": "Unverified technical fact; staff review."
+  },
+  {
+    "id": "explicit-depth-ms",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Gelombang nadi boleh sampai berapa dalam?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "review_required",
+        "needs_human"
+      ],
+      "serviceQuery": false,
+      "priceQuery": false
+    },
+    "note": "Unverified technical fact; staff review."
+  },
+  {
+    "id": "pulse-cm-result",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "脉冲波一次可以小几cm？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Do not promise a quantified result; not a depth question."
+  },
+  {
+    "id": "closed-day-mixed",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "I'd like to book pelvic care next Monday at 3pm"
+      }
+    ],
+    "expect": {
+      "bookingReady": false,
+      "appointmentPreference": null
+    },
+    "note": "Closed-day preference must not be retained."
+  },
+  {
+    "id": "price-after-clinical",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我昨天刚做了HIFU，可以做9D吗？"
+      },
+      {
+        "role": "assistant",
+        "content": "我先交给中医师确认"
+      },
+      {
+        "role": "user",
+        "content": "先告诉我9D多少钱？"
+      }
+    ],
+    "expect": {
+      "priceQuery": true,
+      "treatment": "9D 逆龄抗衰"
+    },
+    "note": "Later administrative pricing does not grant clinical clearance; pending review remains a downstream concern."
   }
 ]
