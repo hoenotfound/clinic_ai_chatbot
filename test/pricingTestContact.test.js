@@ -30,6 +30,9 @@ test("per-inbound pricing mode survives option normalization without mutating gl
    const shadow=buildSystemPrompt(normalizeOptions({...options,contactId:124,pricingIntentMode:"shadow"}));
    assert.ok(enabled.includes("Use the whole recent conversation, including authenticated staff replies"));
    assert.ok(!shadow.includes("Use the whole recent conversation, including authenticated staff replies"));
+   assert.ok(enabled.includes("CURRENT-TURN DECISION SCOPE:"));
+   assert.ok(enabled.includes("An earlier unanswered administrative or price question remains for staff"));
+   assert.ok(!shadow.includes("CURRENT-TURN DECISION SCOPE:"));
    assert.equal(config.aiPricingIntentMode,"shadow");
    assert.equal(buildSystemPrompt({surface:"conversation",channel:"whatsapp",contactId:124}),shadow);
  }finally{config.aiPricingIntentMode=previous;}

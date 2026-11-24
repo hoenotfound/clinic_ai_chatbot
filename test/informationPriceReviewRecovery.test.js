@@ -272,3 +272,42 @@ test("Off and Shadow cannot activate extended pricing or the review-gate bypass"
   assert.match(server,/allowContinuedPriceContext: aiPricingEnabled/u);
   assert.match(server,/const aiPricingEnabled = aiPricingMode === "enabled"/u);
 });
+
+
+test("natural budget question after a new treatment topic can recover an informational review",()=>{
+  const now=Date.now();
+  const turns=[
+    ["user","3D第一次体验之后，第二次收费多少？"],
+    ["user","我想了解骨盆调理"],
+    ["assistant","骨盆调理主要是徒手护理，可以先安排免费体态评估。"],
+    ["user","那我要准备多少预算呢？"],
+  ].map(([role,content],i)=>withPricingHistoryMetadata({role,content},
+    {role,created_at:new Date(now-10000+i*2000),sent_by_username:null}));
+  const modelIntent={structured:true,outcome:"review_required",reviewType:"information",
+    priceQuery:true,packageQuery:false,treatment:"骨盆调理",pricingStage:null,promotionOption:null};
+  const input={...args(turns,turns.at(-1).content),flagged:true,reviewRequired:true,
+    reviewType:"information",enabled:true,pendingClinicalReview:false,modelIntent,now};
+  const result=planInformationPriceRecovery(input);
+  assert.equal(result?.treatment,"骨盆调理");
+  assert.deepEqual(result?.decision?.prices.map(p=>p.price),["RM388","RM288"]);
+  assert.equal(result?.modelIntent?.outcome,"normal");
+  assert.doesNotMatch(result.reply,/3D/u);
+  for(const change of [
+    {reviewType:"clinical"},{pendingClinicalReview:true},{pendingClinicalReview:null},
+    {enabled:false},{urgentSafety:true},{explicitStaffRequest:true},{marketingStop:true},
+    {modelIntent:{...modelIntent,reviewType:"clinical"}},
+    {modelIntent:{...modelIntent,pricingStage:"subsequent_session"}},
+    {modelIntent:{...modelIntent,treatment:"3D 小颜术"}},
+    {modelIntent:{...modelIntent,priceQuery:false}},
+    {modelIntent:{...modelIntent,promotionOption:"Package C"}},
+    {modelIntent:{...modelIntent,structured:false}},
+  ]) assert.equal(planInformationPriceRecovery({...input,...change}),null,JSON.stringify(change));
+  // Do not ignore genuine competing treatment suggestions or staff conflict.
+  const ambiguous=[...turns.slice(0,-2),withPricingHistoryMetadata(
+    {role:"assistant",content:"骨盆调理或3D 小颜术都可以考虑"},
+    {role:"assistant",created_at:new Date(now-6000)}),turns.at(-1)];
+  assert.equal(planInformationPriceRecovery({...input,conversationHistory:ambiguous}),null);
+  const unsafe=[withPricingHistoryMetadata({role:"user",content:"我怀孕了"},
+    {role:"user",created_at:new Date(now-20000)}),...turns];
+  assert.equal(planInformationPriceRecovery({...input,conversationHistory:unsafe}),null);
+});

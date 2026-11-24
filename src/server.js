@@ -1527,6 +1527,7 @@ async function processIncomingMessage(
         modelPricingIntent = languageCheckedReply.languageCorrectionFailed
           ? null : {
             structured:languageCheckedReply.structured, outcome:languageCheckedReply.outcome,
+            reviewType:languageCheckedReply.reviewType,
             priceQuery:languageCheckedReply.priceQuery, packageQuery:languageCheckedReply.packageQuery,
             serviceQuery:languageCheckedReply.serviceQuery,
             treatment:languageCheckedReply.details?.treatment || null,
@@ -1895,15 +1896,25 @@ async function processIncomingMessage(
         explicitStaffRequest: isExplicitStaffRequest(text),
         marketingStop: Boolean(marketingStopQuestion),
         pendingClinicalReview: reviewEvidence?.pendingClinicalReview,
+        modelIntent: modelPricingIntent,
+        allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
+        complimentaryAssessmentExperienceEnabled:
+          clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
       });
       if (recovered) {
         aiReply = recovered.reply;
+        // The same verified semantic intent proceeds through the normal
+        // commercial boundary. It is not direct authorization to send.
+        if (recovered.modelIntent) {
+          modelPricingIntent = recovered.modelIntent;
+          modelPricingStage = recovered.modelIntent.pricingStage || null;
+        }
         flagged = false;
         reviewRequired = false;
         reviewType = null;
         bookingReady = false;
-        priceQuery = true;
-        packageQuery = false;
+        priceQuery = recovered.modelIntent ? recovered.modelIntent.priceQuery === true : true;
+        packageQuery = recovered.modelIntent?.packageQuery === true;
         details = { ...details, treatment: recovered.treatment };
         console.info(
           "[Pricing] Recovered verified informational review for " +
