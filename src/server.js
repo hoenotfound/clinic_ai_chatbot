@@ -93,7 +93,7 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts,
+const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign } =
@@ -2765,6 +2765,28 @@ async function processIncomingMessage(
             ? "For a breast lump or nodule, we cannot confirm whether the RM68 care is suitable through chat. Please seek a medical evaluation first. Our staff will review your enquiry. 💚"
             : "关于乳房结节或肿块，我们不能仅通过聊天判断是否适合 RM68 护理。建议先由医生检查，我们也会请工作人员跟进您的咨询。💚")
         : nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+    }
+
+    // An unverified screening capability requires a staff answer. Send a
+    // non-diagnostic acknowledgement via the existing durable review path,
+    // not a silent review or a promotional reply. Never release a handoff.
+    if ((!flagged || reviewRequired) && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const screeningAnswer = screeningAcknowledgement({history:commercialHistory,customerText:text});
+      if (screeningAnswer) {
+        if (!flagged) reviewType = "information";
+        flagged = true;
+        reviewRequired = true;
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        clinicalAcknowledgement = screeningAnswer;
+      }
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
