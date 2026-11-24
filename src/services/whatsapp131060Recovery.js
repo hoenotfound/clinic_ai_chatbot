@@ -363,10 +363,20 @@ async function reserveRecoveryContinuation({contactId,inboundMessageId,firstReco
   finally { if(database===pool) client.release(); }
 }
 
+// Only a proven pre-provider cancellation may delete the reserved continuation.
+async function cancelRecoveryContinuation(messageId,contactId,database=pool) {
+  const result=await database.query(`DELETE FROM messages m
+    WHERE m.id=$1 AND m.contact_id=$2 AND m.role='assistant'
+      AND m.content=$3 AND m.delivery_status='unknown' AND m.whatsapp_message_id IS NULL
+      AND NOT EXISTS (SELECT 1 FROM whatsapp_sender_billing_attempts b WHERE b.message_id=m.id)
+    RETURNING m.id`,[messageId,contactId,RECOVERY_SECOND_TEXT]);
+  return result.rows[0] || null;
+}
+
 module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
-  recoveryTreatmentGroups, validRecoveryOrder, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation,
+  recoveryTreatmentGroups, validRecoveryOrder, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation, cancelRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 };

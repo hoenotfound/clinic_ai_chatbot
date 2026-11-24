@@ -123,7 +123,7 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentGroups, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation,
+  recoveryTreatmentGroups, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation, cancelRecoveryContinuation,
   validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
@@ -524,7 +524,8 @@ async function sendTrackedText(
       recordReadinessSendEvidence(saved, contact, sendResult, origin);
     }
   } else {
-    recordReadinessSendEvidence(saved, contact, sendResult, origin);
+    if (recoveryAnchor != null) await recordReadinessSendEvidence(saved, contact, sendResult, origin);
+    else recordReadinessSendEvidence(saved, contact, sendResult, origin);
   }
 
   return { finalMessage, sendResult };
@@ -550,8 +551,8 @@ async function sendSecondRecoveryGroup(contact, inboundMessageId, firstRecoveryM
     throw err;
   }
   if (result.cancelled && !result.ambiguous && !result.unknown) {
-    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
-    return;
+    if (await cancelRecoveryContinuation(saved.id,contact.id)) return;
+    // If a reservation exists, retain the audit row rather than deleting it.
   }
   realtimeEvents.publish("conversation_changed",{...scope,contactId:contact.id,messageId:saved.id,reason:"message"});
   const reason=result.error || channelMessaging.rejectedError(contact.channel);
