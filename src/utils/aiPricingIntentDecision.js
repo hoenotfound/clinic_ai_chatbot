@@ -706,6 +706,45 @@ function resolveModelLedPricingDecision({
   });
 }
 
+// A recent, conflicting staff quote is a commercial veto, not a reason
+// to fall back to an older keyword-based decision. Only inspect staff
+// prices relevant to the currently established treatment.
+function hasConflictingStaffPrice({treatment,conversationHistory=[],services=[],
+  serviceAliases=[],promotions=[],now=Date.now()}={}){
+  if (!treatment || !Array.isArray(conversationHistory)) return false;
+  const candidates=serviceCandidates(services,serviceAliases);
+  const verified=verifiedPricesForService(treatment,promotions,"",[],{allowTextOnlyOffers:true});
+  for(let i=conversationHistory.length-2;i>=0;i--){
+    const turn=conversationHistory[i],at=turn?.pricingCreatedAtMs;
+    if(!Number.isFinite(at)||at<now-24*3600000||at>now+60_000) break;
+    const content=pricingMessageText(turn);
+    const names=findServicesInText(content,candidates);
+    if(turn.role==="user" && names.length && !names.includes(treatment)) break;
+    if(!isVerifiedStaffTurn(turn) || (names.length && !names.includes(treatment))) continue;
+    const amounts=[...content.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"")
+      .matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+    if(!amounts.length) continue;
+    // An explicit incompatible quote, or a quote whose package association
+    // cannot be verified, must be confirmed by the team rather than guessed.
+    if(!verified?.length || names.length>1 ||
+      amounts.some(m=>!verified.some(p=>p.price==="RM"+m[1]))) return true;
+    if(verified.length>1) {
+      const options=getActivePromotions(promotions,new Date(now))
+        .filter(p=>p.linkedService===treatment && p.sendOnPriceQuery===true);
+      if(options.length!==1) return true;
+      const packages=promotionPackages(options[0]);
+      const lines=content.split(/\n+/u).filter(line=>/\b(?:RM|MYR)\s*\d/iu.test(line));
+      if(lines.some(line=>{
+        const matches=findMentionedPromotionPackages(packages,line);
+        const prices=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?!\d)/giu)];
+        return matches.length!==1 || prices.length!==1 ||
+          !verified.some(p=>p.name===matches[0].name && p.price==="RM"+prices[0][1]);
+      })) return true;
+    }
+  }
+  return false;
+}
+
 // Enabled prioritizes a validated Gemini decision. A legacy rejection at
 // the authorization boundary, or a verified special case, is never bypassed.
 function shouldApplyModelLedPricing({mode,legacyCandidate,
@@ -733,4 +772,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
