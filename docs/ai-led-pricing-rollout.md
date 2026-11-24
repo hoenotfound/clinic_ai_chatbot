@@ -177,12 +177,13 @@ until the test and independent review pass.
 
 ## Natural-language pricing rollout (gap-only)
 
-Settings → AI Behavior → Natural-language pricing rollout is independent of
-the existing pricing mode. Default Off; requires existing pricing mode
-Shadow or Enabled. Shadow compares without changing outbound replies. Enabled
-fills only a genuine gap where neither the legacy candidate nor an existing
-approved/special-case decision is present. Revert to Off immediately if
-review reveals regressions.
+The existing Settings → AI Behavior → AI pricing graphic decisions
+setting controls this rollout. Off retains existing behavior; Shadow
+compares without changing outbound replies, including existing independently
+verified Shadow exceptions. Enabled fills only a genuine gap where neither
+the legacy candidate nor an existing approved/special-case decision is
+present. Switch to Shadow if review reveals regressions (or Off for the
+original trigger). No new configuration key or UI control is needed.
 
 The existing provider response fields are captured before legacy mutation.
 No new model request, worker or table is added. The initial scope accepts
