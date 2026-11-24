@@ -1501,6 +1501,7 @@ async function processIncomingMessage(
         // Capture provider intent before any legacy classifier mutates it.
         modelPricingIntent = { structured:parsedReply.structured, outcome:parsedReply.outcome,
           priceQuery:parsedReply.priceQuery, packageQuery:parsedReply.packageQuery,
+          serviceQuery:parsedReply.serviceQuery,
           treatment:parsedReply.details?.treatment || null,
           pricingStage:parsedReply.pricingStage || null, promotionOption:parsedReply.promotionOption || null };
         // Preserve the latest 131060 first-ad history boundary and all
@@ -1767,7 +1768,7 @@ async function processIncomingMessage(
     // Separate 7-day/100-turn pricing evidence read. The AI prompt remains
     // capped at 20 messages. Missing or truncated evidence fails closed.
     let returningPricingHistory = null;
-    if (aiPricingMode === "shadow" &&
+    if (["shadow","enabled"].includes(aiPricingMode) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(
           clinicConfig.businessName || clinicConfig.clinicName || ""
@@ -1781,7 +1782,7 @@ async function processIncomingMessage(
         console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
       }
     }
-    const shadowPriceException = aiPricingMode === "shadow" &&
+    const shadowPriceException = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
@@ -1925,7 +1926,7 @@ async function processIncomingMessage(
     // Keep clinical, staff, safety, consent and billing controls unchanged.
     const recoverableTwoPriceReview = flagged && reviewRequired &&
       reviewType === "information";
-    let twoTreatmentQuote = aiPricingMode === "shadow" &&
+    let twoTreatmentQuote = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       (!flagged || recoverableTwoPriceReview) &&
       !bookingReady && !keywordReason && !urgentSafety &&
@@ -2086,7 +2087,7 @@ async function processIncomingMessage(
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
     const legacyPricingApproval = resolveApprovedPricingAssessment({
-      mode: aiPricingMode, aiDecision: pricingDecision,
+      mode: aiPricingMode, aiDecision: pricingDecision || (aiPricingEnabled ? shadowPriceException : null),
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
       numberedMenuDecision: numberedPricingDecision,
@@ -2100,8 +2101,8 @@ async function processIncomingMessage(
     });
     // Off leaves the current code path unchanged. Shadow compares the
     // same existing provider result without altering a reply or sending media.
-    // Enabled fills only gaps; existing approved and special-case decisions
-    // keep precedence until the new path has been independently reviewed.
+    // Enabled prioritizes verified model decisions; independently proven
+    // special cases and final safety rejections keep precedence.
     let semanticPricingApproval = null;
     if (["shadow","enabled"].includes(aiPricingMode) &&
         !flagged && !bookingReady && !keywordReason && !urgentSafety &&
@@ -2132,9 +2133,12 @@ async function processIncomingMessage(
         // Compare exact treatment and package amounts, not only a boolean.
         // No raw message content, extra provider calls or new DB writes.
         const apply = shouldApplyModelLedPricing({
-          mode:aiPricingMode,legacyCandidate:pricingDecision,
+          mode:aiPricingMode,legacyCandidate:pricingDecision || shadowPriceException,
           legacyApproval:legacyPricingApproval,semanticApproval,
-          hasSpecialDecision:Boolean(shadowPriceException),
+          hasSpecialDecision:Boolean(shadowPriceException && (!pricingDecision ||
+            shadowPriceException.source==="customer_returning_treatment_price" ||
+            shadowPriceException.source==="confirmed_prior_quote" ||
+            shadowPriceException.source==="customer_staff_result_price")),
         });
         console.info("[Semantic pricing] "+JSON.stringify({
           contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
