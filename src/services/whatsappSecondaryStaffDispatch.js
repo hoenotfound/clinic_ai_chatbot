@@ -24,8 +24,12 @@ function block(code) {
   return {
     success: false, wamid: null, policyBlocked: true,
     retryable: false, code,
-    error: code === "secondary_billing_previous_send_unresolved"
+    error: code === "secondary_billing_unknown_hold_not_reviewed"
+      ? "An earlier WhatsApp send is unconfirmed. Ask an administrator to review non-delivery and billing before composing a new message."
+      : code === "secondary_billing_previous_send_unresolved"
       ? "The previous WhatsApp message is still being confirmed. Check its delivery before another send."
+      : code === "secondary_billing_sender_alarm"
+      ? "This WhatsApp sender has a billing safety hold. An administrator must investigate it."
       : "This WhatsApp number is not ready to send, or the sender-specific policy check failed.",
   };
 }
