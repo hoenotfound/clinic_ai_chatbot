@@ -17,6 +17,7 @@ const { getActivePromotions } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
+const { resolveStaffResultPriceContext } = require("./neutroStaffResultPriceContext");
 const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
@@ -377,7 +378,7 @@ function resolveAiPricingDecision({
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
-  allowVerifiedAdPricing = false, now = Date.now(),
+  allowVerifiedAdPricing = false, allowStaffResultPriceContext = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
   // A different treatment's refused quotation cannot veto a clearly
@@ -411,6 +412,22 @@ function resolveAiPricingDecision({
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
 
+  // Same independently verified customer-selection rule in Enabled and
+  // Shadow. Neither a model flag nor the human image alone grants authority.
+  if (allowStaffResultPriceContext === true && !independentRequest) {
+    const selected = resolveStaffResultPriceContext({
+      customerText: current, conversationHistory, services, serviceAliases, now,
+    });
+    if (selected) {
+      const prices = verifiedPricesForService(selected.name, promotions, selected.priceText,
+        conversationHistory, { clarifiedPriceService: selected.name });
+      if (prices?.length) return Object.freeze({
+        type:"price", treatment:selected.name, source:"customer_staff_result_price",
+        clarifiedPriceService:selected.name, prices, servicePrice:null,
+      });
+      return null;
+    }
+  }
   const concernContinuation = resolveAnsweredConcernPriceService({
     customerText: current, conversationHistory, services, serviceAliases, now,
   });

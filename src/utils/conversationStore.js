@@ -85,6 +85,24 @@ function withPricingHistoryMetadata(entry, row) {
       value: isVerifiedHumanStaffRow(row),
       enumerable: false,
     },
+    // Local-only provenance for a narrow same-service pricing continuation.
+    pricingDeliveredStaffImage: {
+      value: isVerifiedHumanStaffRow(row) &&
+        ["delivered","read"].includes(row?.delivery_status) &&
+        typeof row?.whatsapp_message_id==="string" &&
+        row.whatsapp_message_id.startsWith("wamid.") &&
+        row.has_media_attachment===true &&
+        String(row.media_mime_type||"").startsWith("image/"),
+      enumerable:false,
+    },
+    pricingBusinessAppPlaceholder: {
+      value: isVerifiedHumanStaffRow(row) && row.sent_by_username==="WhatsApp Business App" &&
+        typeof row.whatsapp_message_id==="string" && row.whatsapp_message_id.startsWith("wamid.") &&
+        row.delivery_status==null && row.whatsapp_customer_mutation==null &&
+        ["[unsupported sent from WhatsApp Business App]","🗑️ [Message deleted from WhatsApp Business App]"].includes(String(row.content||"").trim()) &&
+        row.has_media_attachment!==true && !row.media_url && !row.media_mime_type,
+      enumerable:false,
+    },
     // Trusted outbound image identity is not serialized into model prompts;
     // it is used only to cross-check one-session results against the exact
     // clinic-configured media item, avoiding caption-only assumptions.

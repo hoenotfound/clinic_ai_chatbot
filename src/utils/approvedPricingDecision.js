@@ -11,6 +11,8 @@ const {
 } = require("./relatedServicePolicy");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { verifiedMetaAdPriceAnchor } = require("./aiPricingIntentDecision");
+const { resolveStaffResultPriceContext } = require("./neutroStaffResultPriceContext");
+const { verifiedPricesForService } = require("./verifiedPriceReply");
 
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -122,6 +124,20 @@ function resolveApprovedPricingAssessment({
       turn?.role === "user" && turn?.content === customerText
         ? { ...turn, content: scoped.priceText } : turn
     );
+  }
+  // Recheck the exact staff-image evidence and the current configured
+  // price/package selection at the final text/media authorization boundary.
+  if (candidate.source === "customer_staff_result_price") {
+    const proof = resolveStaffResultPriceContext({
+      customerText, conversationHistory, services, serviceAliases, now,
+    });
+    const confirmed = proof && verifiedPricesForService(proof.name, promotions,
+      proof.priceText, conversationHistory, {clarifiedPriceService:proof.name});
+    if (!proof || proof.name!==candidate.treatment ||
+        candidate.clarifiedPriceService!==proof.name || !confirmed?.length ||
+        confirmed.length!==prices.length ||
+        confirmed.some((option,i)=>option.name!==prices[i]?.name || option.price!==prices[i]?.price))
+      return rejected("staff_result_price_context_unverified");
   }
   // A verified pelvic creative may call its offer "徒手整骨". Resolve that
   // exact generic phrase against the same current-lead ad at the final price

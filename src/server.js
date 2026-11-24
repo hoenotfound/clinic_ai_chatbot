@@ -1789,6 +1789,7 @@ async function processIncomingMessage(
           // is only a hint; customer request, treatment and price are still
           // independently verified before text or artwork is authorised.
           modelOfferQuery: packageQuery === true,
+          allowStaffResultPriceContext: allowVerifiedAdPricing,
           allowVerifiedAdPricing,
           // Only Neutro's Shadow client can carry a customer-confirmed
           // first-trial price across its own scheduled follow-ups.
@@ -2066,6 +2067,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
+          allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
     if (aiPricingMode === "shadow") {
