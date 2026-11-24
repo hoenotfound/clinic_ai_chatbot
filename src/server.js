@@ -29,7 +29,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -2167,7 +2167,23 @@ async function processIncomingMessage(
         console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
       }
     }
-    const pricingApproval = semanticPricingApproval || legacyPricingApproval;
+    const selectedPricingApproval = semanticPricingApproval || legacyPricingApproval;
+    // Conflicting human quotes must not be overridden by either pricing path.
+    // Shadow remains observational; the existing special cases retain scope.
+    const conflictTreatment = selectedPricingApproval.decision?.treatment ||
+      (modelPricingIntent?.priceQuery || modelPricingIntent?.packageQuery
+        ? modelPricingIntent.treatment : null);
+    const staffPriceConflict = aiPricingEnabled && !flagged && !bookingReady &&
+      !keywordReason && !marketingStopQuestion && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !fixedAdFirstReply && !twoTreatmentQuote &&
+      !isExplicitStaffRequest(text) && modelPricingStage !== "subsequent_session" &&
+      Boolean(conflictTreatment) && hasConflictingStaffPrice({
+        treatment:conflictTreatment,conversationHistory:history,
+        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+        promotions:clinicConfig.promotions,
+      });
+    const pricingApproval = staffPriceConflict
+      ? {decision:null,reason:"conflicting_staff_quote"} : selectedPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
@@ -2990,6 +3006,18 @@ async function processIncomingMessage(
         console.info("[Appointment hours] corrected invalid booking preference contact=" +
           contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
       }
+    }
+
+    if (staffPriceConflict && !flagged && !bookingReady &&
+        !rm68CampaignContinuationTextOnly && !repeatVisitPriceReply &&
+        !marketingStopQuestion && !reviewContinuationTextOnly) {
+      reply = mediaLanguage === "ms"
+        ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
+        : mediaLanguage === "en"
+          ? "Let me check the price previously shared with our team so we don't give you the wrong amount 😊"
+          : "之前同事提供的价格需要再跟门店核对一下，避免给您不准确的报价哦 😊";
+      // No stale package/result image may accompany this clarification.
+      reviewContinuationTextOnly = true;
     }
 
     responseAttempted = true;
