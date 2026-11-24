@@ -95,6 +95,7 @@ const NEWER_MEDIA_PLAN_SQL=`EXISTS(
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
+const PREPARATION_RETRY_MS=10*60*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
 const CANCELLED_ERROR="Image not sent. The media was superseded, sending was stopped, or its allowed window ended.";
 
@@ -548,7 +549,15 @@ async function runOnce({
        success:false,preProviderCancelled:true,retryable:false,code,
      });
      const languageChangedBeforeProvider=()=>cancelledBeforeProvider("secondary_ai_media_language_changed");
-     const preparationFailed=()=>cancelledBeforeProvider("secondary_ai_media_preparation_failed");
+     const preparationFailed=(stage,temporary)=>{
+       // No recipient, token, URL, image bytes or message content in logs.
+       console.warn("[Secondary AI media preparation]",JSON.stringify({
+         jobId:job.id,stage,temporary,
+       }));
+       return cancelledBeforeProvider(temporary
+         ?"secondary_ai_media_preparation_retryable"
+         :"secondary_ai_media_preparation_failed");
+     };
      const policyCancelled=()=>cancelledBeforeProvider("secondary_ai_media_cancelled_before_provider");
      const preSendCheck=async()=>{
        const check=await database.query(STILL_VALID_SQL,[
@@ -625,15 +634,19 @@ async function runOnce({
            // Download only a matching-purpose configured image from Neon,
            // then upload it using the SECONDARY phone's Graph transport.
            let image,uploaded;
-           try{
-             image=await loadClinicImage(media.imageUrl);
-             if(!image)return preparationFailed();
-             uploaded=await transport.uploadMedia(image.buffer,image.mimeType,image.filename);
-           }catch{return preparationFailed();}
+           try{image=await loadClinicImage(media.imageUrl);}
+           catch{return preparationFailed("load_exception",true);}
+           if(!image)return preparationFailed("missing_or_invalid_image",false);
+           try{uploaded=await transport.uploadMedia(image.buffer,image.mimeType,image.filename);}
+           catch{return preparationFailed("upload_exception",true);}
            // /media uploads cannot deliver a customer message, even if the
            // upload response is uncertain. No /messages call has occurred.
-           if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||"")))
-             return preparationFailed();
+           if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||""))){
+             const status=Number(uploaded?.providerStatus);
+             const permanent=uploaded?.definitivelyRejected===true &&
+               status>=400 && status<500 && ![408,429].includes(status);
+             return preparationFailed("upload_failed",!permanent);
+           }
            if(!imageApproved() || !await preSendCheck())
              return policyCancelled();
            // Uploading image bytes is not a WhatsApp message send. The
@@ -669,7 +682,47 @@ async function runOnce({
            err?.message);
        }
      }else if(result?.preProviderCancelled===true &&
-              result?.unknown!==true && result?.ambiguous!==true && !result?.wamid){
+              result?.code==="secondary_ai_media_preparation_retryable" &&
+              result?.success===false && result?.unknown!==true && result?.ambiguous!==true && !result?.wamid){
+       // The original reservation must be durably rejected. Retire the old
+       // draft and requeue the job atomically; a future claim uses a NEW message
+       // id and still passes all sender, language, expiry and policy checks.
+       const deferred=await database.query(`
+         WITH eligible AS MATERIALIZED (
+           SELECT j.id,m.id AS message_id FROM whatsapp_sender_ai_media_jobs j
+           JOIN messages m ON m.id=j.outbound_message_id AND m.contact_id=j.contact_id
+           WHERE j.id=$1 AND j.state='claimed' AND m.id=$2
+             AND m.role='assistant' AND m.delivery_status='unknown'
+             AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+             AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts b
+               WHERE b.message_id=m.id AND b.sender_id=j.sender_id AND b.contact_id=j.contact_id
+                 AND b.state='rejected' AND b.wamid IS NULL)
+             AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts b
+               WHERE b.message_id=m.id AND (b.state<>'rejected' OR b.wamid IS NOT NULL))
+             AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
+               JOIN whatsapp_sender_billing_attempts b ON b.reservation_id=r.reservation_id
+               WHERE b.message_id=m.id)
+             AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=m.id)
+           FOR UPDATE OF j,m
+         ), cancelled AS (
+           UPDATE messages m SET delivery_status='cancelled',delivery_error=$4
+           FROM eligible e WHERE m.id=e.message_id
+           RETURNING m.id,m.contact_id,m.delivery_status,m.delivery_error
+         ), requeued AS (
+           UPDATE whatsapp_sender_ai_media_jobs j
+           SET state='pending',outbound_message_id=NULL,
+               next_attempt_at=NOW()+($3::int*INTERVAL '1 millisecond'),updated_at=NOW()
+           FROM eligible e WHERE j.id=e.id AND EXISTS(SELECT 1 FROM cancelled)
+           RETURNING j.id
+         )
+         SELECT cancelled.* FROM cancelled WHERE EXISTS(SELECT 1 FROM requeued)`,
+         [job.id,messageId,PREPARATION_RETRY_MS,"Image preparation temporarily failed before WhatsApp send; a new attempt may be scheduled." ]);
+       if(deferred.rows?.[0]){
+         publishSecondaryMediaStatus(deferred.rows[0],env);
+         pending++;
+       }else await update("unknown");
+     }else if(result?.preProviderCancelled===true &&
+              result?.success===false && result?.unknown!==true && result?.ambiguous!==true && !result?.wamid){
        // Reservation was definitively rejected with proof that no WhatsApp
        // image send occurred. Do not leave a false unknown-send billing hold.
        await update("expired");
