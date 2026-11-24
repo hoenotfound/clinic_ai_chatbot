@@ -98,6 +98,7 @@ function createBookingReadyOutcomeService({
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
+  now = () => new Date(),
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -117,7 +118,7 @@ function createBookingReadyOutcomeService({
         hours: clinicConfig.hours, customerText,
         appointmentPreference: details.appointmentPreference || "",
         recentCustomerMessages,
-        receivedAt, now: new Date(), durationMinutes,
+        receivedAt, now: now(), durationMinutes,
       });
       if (["closed", "past", "outside_hours", "ambiguous", "unknown", "unconfigured", "valid_day"].includes(hoursCheck.status)) {
         console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
