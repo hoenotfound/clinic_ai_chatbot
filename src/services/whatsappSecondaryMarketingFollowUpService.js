@@ -738,6 +738,7 @@ async function runOnce({
   const id=claimed.rows?.[0]?.id;
   if(!id)continue;
   attempted++;
+  let savedMessageId=null;
   const fail=async code=>{
    // If a fresh customer message arrived AFTER discovery but before any
    // outbound message was saved, safely release only this unsent generic
@@ -772,7 +773,9 @@ async function runOnce({
     }catch{}
    }
    await database.query(
-    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
+    savedMessageId===null
+      ? "UPDATE whatsapp_sender_marketing_followup_attempts SET status='blocked',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'"
+      : "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
     [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   };
   const current=async()=>{
@@ -834,6 +837,7 @@ async function runOnce({
      isAutomatedFollowUp:true,initialDeliveryStatus:"unknown",
      initialDeliveryError:"Secondary marketing template attempted; provider delivery unconfirmed.",
     });
+   savedMessageId=saved.id;
    await database.query(
     "UPDATE whatsapp_sender_marketing_followup_attempts SET message_id=$2 WHERE id=$1 AND status='claimed'",
     [id,saved.id]);
@@ -873,16 +877,15 @@ async function runOnce({
     // A signed failed receipt may have moved a claimed slot to unknown
     // before Meta HTTP acceptance reached this worker.
     if(finalized.rowCount===1)accepted++;
-   }else if(await finishProvenMarketingPreProviderCancellation({
-     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
-   })){
-     // No Meta send was attempted; preserve the historical slot.
    }else if(await deferProvenUnsent({
      database,table:"whatsapp_sender_marketing_followup_attempts",
      attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
    })){
-     // Billing refused before provider dispatch. Preserve the cancelled
-     // Inbox draft and let an eligible later slot claim retry safely.
+     // Proven unsent draft. Keep the same slot and recheck current eligibility.
+   }else if(await finishProvenMarketingPreProviderCancellation({
+     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
+   })){
+     // Retain legacy terminal proof when the defer transition is unavailable.
    }else await fail(result?.code||"secondary_marketing_send_unconfirmed");
   }catch{await fail("secondary_marketing_unconfirmed");}
  }
