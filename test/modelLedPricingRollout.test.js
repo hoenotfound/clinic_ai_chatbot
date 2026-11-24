@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {resolveModelLedPricingDecision,shouldApplyModelLedPricing}=require("../src/utils/aiPricingIntentDecision");
+const {resolveModelLedPricingDecision,shouldApplyModelLedPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
 const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
 const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
 const {resolvePricePromotionForReply}=require("../src/utils/pricePromotionTrigger");
@@ -122,6 +122,9 @@ test("indirect package reference requires a grounded menu with matching configur
  a.modelIntent.promotionOption="Package B";
  a.conversationHistory[1].content="骨盆调理\nPackage A: RM388\nPackage B: RM268";
  assert.deepEqual(resolveModelLedPricingDecision(a)?.prices.map(p=>p.price),["RM268"]);
+ a.modelIntent.promotionOption="Package A";
+ assert.equal(resolveModelLedPricingDecision(a),null);
+ a.modelIntent.promotionOption="Package B";
  a.conversationHistory[1].content="骨盆调理\nPackage A: RM268\nPackage B: RM388";
  assert.equal(resolveModelLedPricingDecision(a),null);
  a.conversationHistory[1].content="骨盆调理有两种选择";
@@ -146,4 +149,35 @@ test("model-led graphic must match the configured amounts after price changes",a
   wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
   now:new Date(now)});
  assert.equal(media,null);
+});
+
+test("staff quote conflict survives fallback and ignores a separately named unrelated service",()=>{
+ const a=args();
+ const staff={...turn("assistant","[Verified STAFF message] 3D 小颜术 RM999",500),
+  pricingStaffAuthored:true,pricingVerifiedStaffText:true};
+ a.conversationHistory.splice(-1,0,staff);
+ const input={...a,treatment:"3D 小颜术"};
+ assert.equal(hasConflictingStaffPrice(input),true);
+ staff.content="[Verified STAFF message] 3D 小颜术 RM388";
+ assert.equal(hasConflictingStaffPrice(input),false);
+ staff.content="[Verified STAFF message] 9D 逆龄抗衰 RM999";
+ assert.equal(hasConflictingStaffPrice(input),false);
+});
+test("simple verified natural quote survives formatting; extra or wrong commercial claims do not",()=>{
+ const a=args(),d=resolveModelLedPricingDecision(a);
+ assert.ok(d);
+ const input={...a,treatment:d.treatment,pricingDecision:d,priceRequested:true,language:"zh"};
+ const good="亲爱的，3D 小颜术目前首次体验只需 RM388 哦 😊";
+ assert.equal(ensureVerifiedPriceReply({...input,reply:good}).reply,good);
+ for(const reply of ["3D 小颜术首次体验只需 RM999","3D 小颜术首次体验只需 RM388，保证一次见效","3D 小颜术首次体验 RM388，再送 RM100 优惠券"]){
+  const result=ensureVerifiedPriceReply({...input,reply});
+  assert.equal(result.restored,true,reply);
+  assert.ok(result.reply.includes("RM388"),result.reply);
+  assert.ok(!result.reply.includes("RM999")&&!result.reply.includes("保证一次见效")&&!result.reply.includes("RM100"),result.reply);
+ }
+});
+test("server uses accepted language result and both approved price intent types in quiet hours",()=>{
+ const source=require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/server.js"),"utf8");
+ assert.match(source,/modelPricingIntent = languageCheckedReply\.languageCorrectionFailed\s*\? null/u);
+ assert.match(source,/solicitedPricing:Boolean\(secondaryAiConversation &&\s*\["price","package_options"\]\.includes\(approvedPricingDecision\?\.type\)/u);
 });
