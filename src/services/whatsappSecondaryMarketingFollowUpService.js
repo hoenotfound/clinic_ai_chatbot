@@ -15,7 +15,7 @@ const tools=require("./whatsappTemplateService");
 const generalSql=require("./neutroSecondaryGeneralMarketingSql");
 const {pinned:pinnedGeneralTemplate}=require("./neutroSecondaryGeneralMarketingTemplates");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -403,7 +403,7 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
@@ -432,6 +432,8 @@ const CANDIDATES_SQL=`
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
  dueExpression:ORDINARY_MARKETING_DUE_SQL,
+ retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","inbound.id"),
+ deferredReadyPredicate:DEFERRED_READY_PREDICATE,
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
 // Day4/Day6 must be anchored to the first verified reply in the seven-day
@@ -564,6 +566,8 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
 const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_marketing_followup_rules",
   dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",
+  retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","qualified_session.origin_id"),
+  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
   quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",
   orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
 });
@@ -580,7 +584,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -607,7 +611,7 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_R
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=qualified_session.origin_id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
