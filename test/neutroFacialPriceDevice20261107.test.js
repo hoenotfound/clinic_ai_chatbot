@@ -91,6 +91,22 @@ test("choosing 3D after two text prices still enables the original verified sing
   });
   assert.equal(result?.treatment,"3D 小颜术");
   assert.deepEqual(result?.prices.map(p => p.price),["RM488"]);
+  // A quote that was not the verified current facial menu, or a general
+  // introduction rather than an exact menu choice, must not inherit pricing.
+  for (const [reply, current, offered] of [
+    [quote.reply.replace("RM488","RM999"),"3D",promotions],
+    ["3D 小颜术 First Trial RM488","3D",promotions],
+    [quote.reply,"I'm interested in 3D facial treatment.",promotions],
+    [quote.reply,"3D",promotions.map(p=>p.linkedService==="3D 小颜术"?
+      {...p,pricing:{currency:"MYR",offer:388,normal:888},caption:"3D 小颜术 First Trial 原价 RM888 优惠价 RM388"}:p)],
+  ]) {
+    const selected=resolveShadowPriceException({
+      customerText:current,conversationHistory:[...thread,turn("assistant",reply,25),turn("user",current,10)],
+      services,serviceAliases:aliases,promotions:offered,now,
+      complimentaryAssessmentExperienceEnabled:true,
+    });
+    assert.equal(selected,null,current+" / "+reply);
+  }
 });
 
 test("facial category pricing fails closed for stale, unrelated, or unsafe context", () => {
