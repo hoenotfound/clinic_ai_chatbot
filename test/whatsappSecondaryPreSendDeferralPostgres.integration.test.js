@@ -74,6 +74,26 @@ test("Postgres: only provider-free, unbilled blocked follow-ups may be reclaimed
     "can reclaim only once after backoff");
    assert.equal((await admin.query(claim,[sender,contact,inbound,slot])).rowCount,0,
     "concurrent or duplicate claim is never allowed");
+   // A prolonged hold must not turn a conclusively unsent new draft into
+   // a permanent unknown delivery, even after the capped counter is reached.
+   const next=(await admin.query(
+    "INSERT INTO messages(contact_id,role,content,delivery_status) "+
+    "VALUES($1,'assistant','Another unsent draft','unknown') RETURNING id",[contact]
+   )).rows[0].id;
+   await admin.query("UPDATE "+table+" SET message_id=$2,defer_count=8 WHERE id=$1",[attempt,next]);
+   assert.equal(await deferProvenUnsent({
+    database:admin,table,attemptId:attempt,messageId:next,contactId:contact,
+    result:{...gate,code:"secondary_billing_unknown_hold_not_reviewed"},
+   }),true);
+   const exhausted=(await admin.query(
+    "SELECT a.status,a.defer_count,a.message_id,m.delivery_status "+
+    "FROM "+table+" a JOIN messages m ON m.id=$2 WHERE a.id=$1",[attempt,next]
+   )).rows[0];
+   assert.equal(exhausted.status,"deferred");
+   assert.equal(Number(exhausted.defer_count),8);
+   assert.equal(exhausted.message_id,null);
+   assert.equal(exhausted.delivery_status,"cancelled");
+
   }
   const outgoing=(await admin.query(
    "INSERT INTO messages(contact_id,role,content,delivery_status,whatsapp_message_id) "+

@@ -98,6 +98,7 @@ function createBookingReadyOutcomeService({
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
+  now = () => new Date(),
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -113,11 +114,12 @@ function createBookingReadyOutcomeService({
     // This also protects callers other than the normal inbound send path.
     if (getConversionProfile(clinicConfig).mode === "appointment" &&
         clinicConfig.hours?.weekly) {
+      const evaluationTime = now();
       const hoursCheck = evaluateAppointmentHours({
         hours: clinicConfig.hours, customerText,
         appointmentPreference: details.appointmentPreference || "",
         recentCustomerMessages,
-        receivedAt, now: new Date(), durationMinutes,
+        receivedAt, now: evaluationTime, durationMinutes,
       });
       const verifiedPreference = verifiedAppointmentPreference(hoursCheck);
       if (!verifiedPreference) {
@@ -135,7 +137,7 @@ function createBookingReadyOutcomeService({
         details.branch = canonicalConfiguredValue(clinicConfig.branches[0]?.name, clinicConfig.branches);
       // Keep actual customer concerns separate from the canonical appointment
       // field. Use excerpts rather than trusting model-generated timing claims.
-      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:new Date()});
+      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:evaluationTime});
       const formatClock = t => String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
       const feasibleWindow = hoursCheck.validWindows?.length
         ? hoursCheck.validWindows.map(range=>range.map(formatClock).join("–")).join(" or ") : null;

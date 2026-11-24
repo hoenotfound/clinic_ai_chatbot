@@ -26,6 +26,7 @@ const HOUR_MS = 60 * 60 * 1000;
 // eligibility refactor from silently desynchronizing scheduled sends.
 function deriveSecondaryPotentialDueSql(candidateSql, {
   fromTable, dueExpression, quietWindowEndMarker, orderMarker,
+  retryAtExpression, deferredReadyPredicate,
 } = {}) {
   const prefix = " SELECT c.id AS contact_id";
   const fromMarker = "\n FROM " + fromTable + " rule";
@@ -39,12 +40,18 @@ function deriveSecondaryPotentialDueSql(candidateSql, {
       orderIndex <= endIndex || !candidateSql.slice(orderIndex).includes("LIMIT $5")) {
     throw new Error("Secondary due-time hint does not match the approved candidate query.");
   }
-  const head = " SELECT " + dueExpression + " AS due_at";
+  const readyExpression = retryAtExpression
+    ? `GREATEST(${dueExpression},${retryAtExpression})` : dueExpression;
+  const head = " SELECT " + readyExpression + " AS due_at";
   let sql = head + candidateSql.slice(fromIndex, startIndex);
   // Overdue work is considered only during its existing eight-hour window.
   // The original send query still applies quiet hours and expiration guards.
   sql += "   AND " + dueExpression + " > $4::timestamptz - INTERVAL '8 hours'\n";
   sql += candidateSql.slice(endIndex, orderIndex);
+  if (retryAtExpression && deferredReadyPredicate) {
+    if (!sql.includes(deferredReadyPredicate)) throw Error("Deferred due hint predicate mismatch");
+    sql = sql.replaceAll(deferredReadyPredicate,"attempted.status<>'deferred' OR attempted.retry_after IS NULL");
+  }
   // Only five binding values are needed by the hint. Original candidate
   // selectors bind activation cutoff as $6 after a discarded LIMIT $5.
   sql = sql.replaceAll("$6", "$5").replaceAll("$7", "$6").replaceAll("$8", "$7").replaceAll("$9", "$8");

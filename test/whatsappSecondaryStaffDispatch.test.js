@@ -815,6 +815,19 @@ test("AI media language change may cancel only with provider-free proof and reje
  assert.equal(safe.calls.send.length,0);
  assert.deepEqual(safe.calls.mark,[{reservationId,definitivelyRejected:true}]);
 
+ // Image loading and /media upload failures cannot deliver a customer message.
+ for (const code of ["secondary_ai_media_preparation_failed","secondary_ai_media_preparation_retryable","secondary_ai_media_cancelled_before_provider"]) {
+   const prep=context({recordResult:{recorded:true,state:"rejected"},code});
+   const outcome=await sendSecondaryStaffText(prep.input,prep.opts);
+   assert.equal(outcome.preProviderCancelled,true);
+   assert.notEqual(outcome.unknown,true);
+   assert.equal(prep.calls.send.length,0);
+   assert.deepEqual(prep.calls.mark,[{reservationId,definitivelyRejected:true}]);
+   const actualUnknown=context({recordResult:{recorded:true,state:"unknown"},code,unknown:true});
+   const uncertain=await sendSecondaryStaffText(actualUnknown.input,actualUnknown.opts);
+   assert.equal(uncertain.unknown,true);
+   assert.notEqual(uncertain.preProviderCancelled,true);
+ }
  const forged=context({recordResult:{recorded:true,state:"unknown"},
    code:"secondary_ai_media_other_cancellation"});
  const blocked=await sendSecondaryStaffText(forged.input,forged.opts);

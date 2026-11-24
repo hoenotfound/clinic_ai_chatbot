@@ -231,7 +231,7 @@ test("missing private image never falls back to private HTTP URL or sends a Grap
  const result=await worker.runOnce({...args,env:approved});
  assert.equal(result.accepted,0);
  assert.equal(args.calls.filter(c=>c.upload || c.sendMediaById).length,0);
- assert.ok(args.calls.some(c=>c.sql?.includes("state=$2")&&c.args?.[1]==="unknown"));
+ assert.ok(args.calls.some(c=>c.sql?.includes("state=$2")&&c.args?.[1]==="expired"));
 });
 test("removed promotion is cancelled without reserving a billable message",async()=>{
   const args=mocks();
@@ -270,7 +270,7 @@ test("uncertain Ariel media never automatically resends",async()=>{
 });
 test("unresolved prior billing defers safely without provider transmission",async()=>{
   const args=mocks();
-  args.send=async()=>({success:false,unknown:false,code:"secondary_billing_previous_send_unresolved"});
+  args.send=async()=>({success:false,unknown:false,policyBlocked:true,code:"secondary_billing_previous_send_unresolved"});
   const r=await worker.runOnce({...args,env:approved});
   assert.equal(r.pending,1);
   assert.ok(args.calls.some(x=>x.sql?.includes("state='pending'")));
@@ -385,6 +385,8 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
   assert.match(calls[0].sql,/gate.owner_contact_id=job.contact_id/);
   assert.match(calls[0].sql,/job.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
+  assert.match(calls[0].sql,/job\.preparation_retry_not_before IS NULL OR job\.preparation_retry_not_before<=NOW\(\)/);
+  assert.match(worker.READY_SQL,/job\.preparation_retry_not_before IS NULL OR job\.preparation_retry_not_before<=NOW\(\)/);
   assert.match(calls[0].sql,/job.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002",[21]]);
   assert.equal(await worker.wakeAfterVerifiedReconciliation({
@@ -400,7 +402,7 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
 
 test("media placeholder starts queued, becomes uncertain when claimed, then queues on known pre-send billing hold",async()=>{
   const args=mocks();
-  args.send=async()=>({success:false,unknown:false,code:"secondary_billing_previous_send_unresolved"});
+  args.send=async()=>({success:false,unknown:false,policyBlocked:true,code:"secondary_billing_previous_send_unresolved"});
   const result=await worker.runOnce({...args,env:approved});
   assert.equal(result.pending,1);
   const placeholder=args.calls.find(x=>x.appended).appended;
@@ -698,4 +700,24 @@ test("Neutro absolute promo image uses secondary Meta upload, not Render link fe
  assert.equal(args.calls.filter(x=>x.upload).length,1);
  assert.equal(args.calls.filter(x=>x.sendMediaById).length,1);
  assert.equal(args.calls.find(x=>x.sendMediaById)?.sendMediaById.type,"image");
+});
+
+test("temporary private image preparation failure requeues only a proven rejected draft",async()=>{
+ const args=mocks({jobImageUrl:"/api/config/result-media/image/78"});
+ args.loadClinicImage=async()=>{throw Error("temporary DB failure")};
+ const query=args.database.query;
+ args.database.query=async(sql,params)=>{
+   if(sql.includes("requeued AS") && sql.includes("whatsapp_sender_status_receipts")){
+     assert.match(sql,/b.state='rejected'/);
+     assert.match(sql,/outbound_message_id=NULL/);
+     assert.match(sql,/preparation_retry_not_before=NOW\(\)/);
+     assert.equal(params[2],600000);
+     return{rows:[{id:89,contact_id:21,delivery_status:"cancelled"}]};
+   }
+   return query(sql,params);
+ };
+ const result=await worker.runOnce({...args,env:approved});
+ assert.equal(result.pending,1);
+ assert.equal(result.accepted,0);
+ assert.equal(args.calls.filter(c=>c.upload||c.sendMediaById).length,0);
 });

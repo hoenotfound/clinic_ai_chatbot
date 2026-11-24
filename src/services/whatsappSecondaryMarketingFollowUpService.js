@@ -15,7 +15,7 @@ const tools=require("./whatsappTemplateService");
 const generalSql=require("./neutroSecondaryGeneralMarketingSql");
 const {pinned:pinnedGeneralTemplate}=require("./neutroSecondaryGeneralMarketingTemplates");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -404,11 +404,16 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
+     WHERE discovery_alarm.sender_id=sa.id)
    -- The RM68 event is a different 90-minute offer from the standing RM388
    -- Pulse Wave template. Skip unapproved generic 48h/66h/Day4/Day6
    -- templates for this verified RM68 session (also on pre-send rechecks).
@@ -428,6 +433,8 @@ const CANDIDATES_SQL=`
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
  dueExpression:ORDINARY_MARKETING_DUE_SQL,
+ retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","inbound.id"),
+ deferredReadyPredicate:DEFERRED_READY_PREDICATE,
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
 // Day4/Day6 must be anchored to the first verified reply in the seven-day
@@ -577,19 +584,25 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
 const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_marketing_followup_rules",
   dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",
+  retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","qualified_session.origin_id"),
+  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
   quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",
   orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
 });
 
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
-const RECHECK_SQL=CANDIDATES_SQL.replace(
+const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+`;
+const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  `   AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -600,7 +613,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
 );
 // Candidate discovery rejects every unsettled reservation. Rechecking an
 // already-claimed slot must allow only its own new reservation, never another.
-const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
+const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  "AND gate.state IN ('reserved','awaiting_pricing'))",
  `AND gate.state IN ('reserved','awaiting_pricing')
        AND NOT (gate.state='reserved' AND EXISTS (
@@ -616,7 +629,7 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=qualified_session.origin_id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -743,6 +756,7 @@ async function runOnce({
   const id=claimed.rows?.[0]?.id;
   if(!id)continue;
   attempted++;
+  let savedMessageId=null;
   const fail=async code=>{
    // If a fresh customer message arrived AFTER discovery but before any
    // outbound message was saved, safely release only this unsent generic
@@ -777,7 +791,9 @@ async function runOnce({
     }catch{}
    }
    await database.query(
-    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
+    savedMessageId===null
+      ? "UPDATE whatsapp_sender_marketing_followup_attempts SET status='blocked',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'"
+      : "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
     [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   };
   const current=async()=>{
@@ -839,6 +855,7 @@ async function runOnce({
      isAutomatedFollowUp:true,initialDeliveryStatus:"unknown",
      initialDeliveryError:"Secondary marketing template attempted; provider delivery unconfirmed.",
     });
+   savedMessageId=saved.id;
    await database.query(
     "UPDATE whatsapp_sender_marketing_followup_attempts SET message_id=$2 WHERE id=$1 AND status='claimed'",
     [id,saved.id]);
@@ -878,16 +895,15 @@ async function runOnce({
     // A signed failed receipt may have moved a claimed slot to unknown
     // before Meta HTTP acceptance reached this worker.
     if(finalized.rowCount===1)accepted++;
-   }else if(await finishProvenMarketingPreProviderCancellation({
-     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
-   })){
-     // No Meta send was attempted; preserve the historical slot.
    }else if(await deferProvenUnsent({
      database,table:"whatsapp_sender_marketing_followup_attempts",
      attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
    })){
-     // Billing refused before provider dispatch. Preserve the cancelled
-     // Inbox draft and let an eligible later slot claim retry safely.
+     // Proven unsent draft. Keep the same slot and recheck current eligibility.
+   }else if(await finishProvenMarketingPreProviderCancellation({
+     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
+   })){
+     // Retain legacy terminal proof when the defer transition is unavailable.
    }else await fail(result?.code||"secondary_marketing_send_unconfirmed");
   }catch{await fail("secondary_marketing_unconfirmed");}
  }

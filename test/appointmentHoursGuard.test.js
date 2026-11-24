@@ -303,20 +303,19 @@ test("booking-ready backstop rejects the closed day BEFORE any database mutation
   try {
     const mark=createBookingReadyOutcomeService({
       database:{async connect(){connects++;throw Error("must not connect");}},
+      now:()=>new Date(laterMonday),
       publish(){throw Error("must not publish");},
       sendBookingReadyAlert(){alerts++;throw Error("must not alert");},
     });
-    // The service uses its real current time. Use a future Monday so this
-    // regression continues to exercise the closed-day path on any run date.
-    const now=new Date();
-    let nextMonday=new Date(now.getTime()+86400000);
-    while(localParts(nextMonday).weekday!==1)nextMonday=new Date(nextMonday.getTime()+86400000);
-    const date=localParts(nextMonday).date;
+    // Keep receipt, customer evidence and service clock on the SAME
+    // simulated Monday. Mixing real wall time with a frozen service clock
+    // makes trusted history appear to come from the future.
+    const date=localParts(monday).date;
     const result=await mark(9283,23208,{
       details:{appointmentPreference:date+" 下午1点或2点"},
       customerText:"下午1点或2点都可以",
-      recentCustomerMessages:[{content:date,createdAt:now}],
-      receivedAt:now,
+      recentCustomerMessages:[{content:date,createdAt:monday}],
+      receivedAt:laterMonday,
     });
     assert.equal(result.contactUpdated,false);
     assert.equal(result.blockedReason,"closed");

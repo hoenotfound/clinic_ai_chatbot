@@ -59,6 +59,12 @@ async function sendSecondaryStaffText({
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
+  const queuedOrigin=["followup","marketing_followup","ai_media"].includes(origin);
+  const preBlock=code=>queuedOrigin
+    ? {...block(code),preProviderCancelled:true,noReservation:true}
+    : block(code);
+  let reservationStarted=false;
+  try {
   // Only two verified interactive flows are permitted: 131060 treatment
   // recovery and a single affirmative marketing button in an existing 6h/20h
   // service follow-up. The latter must be bound to THIS saved message ID,
@@ -86,7 +92,7 @@ async function sendSecondaryStaffText({
        !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") || text.length>1024)) {
     const looksLikeRecovery=origin==="system_fallback" ||
       (Array.isArray(interactiveButtons) && interactiveButtons.length===3);
-    return block(looksLikeRecovery
+    return preBlock(looksLikeRecovery
       ?"secondary_131060_recovery_menu_invalid":"secondary_interactive_followup_invalid");
   }
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
@@ -164,7 +170,7 @@ async function sendSecondaryStaffText({
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true") {
-    return block("secondary_staff_send_disabled");
+    return preBlock("secondary_staff_send_disabled");
   }
   const cid = Number(contact?.id);
   const mid = Number(messageId);
@@ -175,7 +181,7 @@ async function sendSecondaryStaffText({
       text.trim().length > 4096 ||
       (replyToProviderMessageId != null &&
        !/^wamid\.[A-Za-z0-9._:+/=-]{1,450}$/.test(replyToProviderMessageId))) {
-    return block("secondary_staff_send_invalid_input");
+    return preBlock("secondary_staff_send_invalid_input");
   }
   // A forwarded staff row is not general staff sending authority. Verify its
   // persisted marker before any policy preview, billing reservation or Meta call.
@@ -185,9 +191,9 @@ async function sendSecondaryStaffText({
         "SELECT 1 FROM messages WHERE id=$1 AND contact_id=$2 AND is_forwarded=TRUE LIMIT 1",
         [mid, cid]
       );
-      if (evidence.rows?.length !== 1) return block("secondary_forward_message_not_verified");
+      if (evidence.rows?.length !== 1) return preBlock("secondary_forward_message_not_verified");
     } catch {
-      return block("secondary_forward_message_not_verified");
+      return preBlock("secondary_forward_message_not_verified");
     }
   }
   // Include paid automated marketing; staff templates never inherit AI restrictions.
@@ -222,10 +228,10 @@ async function sendSecondaryStaffText({
         : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
      await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
-  if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");
+  if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
 
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-    return { ...block("secondary_send_cancelled"), cancelled: true };
+    return { ...preBlock("secondary_send_cancelled"), cancelled: true };
   }
   const preview = async () => {
     const result = templateRequest
@@ -249,7 +255,7 @@ async function sendSecondaryStaffText({
     return result;
   };
   const before = await preview();
-  if (before.policyAllowed !== true) return block(before.code || "secondary_staff_policy_blocked");
+  if (before.policyAllowed !== true) return preBlock(before.code || "secondary_staff_policy_blocked");
 
   let conversation, transport;
   try {
@@ -263,7 +269,7 @@ async function sendSecondaryStaffText({
       if (!snapshot.row ||
           String(conversation?.conversation_id) !==
             String(snapshot.row.sender_conversation_id)) {
-        return block("secondary_staff_sender_mismatch");
+        return preBlock("secondary_staff_sender_mismatch");
       }
     }
     if (conversation?.sender_key !== env.WHATSAPP_SECONDARY_SENDER_KEY ||
@@ -271,23 +277,24 @@ async function sendSecondaryStaffText({
         conversation?.meta_phone_number_id !== env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
         conversation?.meta_account_id !== env.WHATSAPP_SECONDARY_WABA_ID ||
         conversation?.customer_wa_id !== contact.whatsapp_number) {
-      return block("secondary_staff_sender_mismatch");
+      return preBlock("secondary_staff_sender_mismatch");
     }
     const attached = await conversationRepo.attachMessageContext({
       messageId: mid, contactId: cid, conversationId: conversation.conversation_id,
     }, database);
     if (!attached || String(attached.conversation_id) !== String(conversation.conversation_id)) {
-      return block("secondary_staff_message_not_owned");
+      return preBlock("secondary_staff_message_not_owned");
     }
     transport = await createTransport(contact, { database, env, fetchImpl });
   } catch {
-    return block("secondary_staff_sender_verification_failed");
+    return preBlock("secondary_staff_sender_verification_failed");
   }
 
   const justBefore = await preview();
-  if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");
-  if (justBefore.policyAllowed !== true) return block(justBefore.code || "secondary_staff_policy_blocked");
+  if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
+  if (justBefore.policyAllowed !== true) return preBlock(justBefore.code || "secondary_staff_policy_blocked");
 
+  reservationStarted=true;
   let reserved = await billingRepo.reserveSecondaryBillingAttempt({
     contactId: cid, messageId: mid,
     // Freeform service messages may be charged after Meta's monthly free
@@ -318,12 +325,12 @@ async function sendSecondaryStaffText({
     for (let i = 0; i < maxWaitChecks; i++) {
       await waitForPriorSettlement(750);
       if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-        return { ...block("secondary_send_cancelled"), cancelled: true };
+        return { ...preBlock("secondary_send_cancelled"), cancelled: true };
       }
-      if (!await stillEligible()) return block("secondary_ads_only_contact_ineligible");
+      if (!await stillEligible()) return preBlock("secondary_ads_only_contact_ineligible");
       const currentPolicy = await preview();
       if (currentPolicy.policyAllowed !== true) {
-        return block(currentPolicy.code || "secondary_staff_policy_changed");
+        return preBlock(currentPolicy.code || "secondary_staff_policy_changed");
       }
       reserved = await billingRepo.reserveSecondaryBillingAttempt({
         contactId: cid, messageId: mid,
@@ -354,8 +361,8 @@ async function sendSecondaryStaffText({
       reservationId: reserved.reservationId,
     }, { database, env }).catch(() => {});
   };
-  // Only automated marketing uses this narrow proof of NO Meta request.
-  // AI/staff/other ambiguous outcomes retain their existing protective holds.
+  // Only proven pre-message cancellations may settle a reservation as rejected.
+  // Actual ambiguous provider sends retain their existing protective holds.
   const cancelProvenMarketingBeforeProvider = async (code) => {
     const outcome = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId, definitivelyRejected: true,
@@ -366,10 +373,11 @@ async function sendSecondaryStaffText({
     await markUnknown();
     return { ...block(code), unknown: true, ambiguous: true };
   };
+  let providerBoundaryReached=false;
   try {
     const fresh = await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (origin === "marketing_followup") {
+      if (queuedOrigin) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
       }
       await markUnknown();
@@ -377,7 +385,7 @@ async function sendSecondaryStaffText({
         unknown: true, ambiguous: true };
     }
     if (fresh.policyAllowed !== true) {
-      if (origin === "marketing_followup") {
+      if (queuedOrigin) {
         return cancelProvenMarketingBeforeProvider(fresh.code || "secondary_staff_policy_changed");
       }
       await markUnknown();
@@ -390,11 +398,12 @@ async function sendSecondaryStaffText({
       reserved.reservationId, cid, mid,
     ]);
     if (state.rows?.length !== 1) {
+      if (queuedOrigin) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
     if (!await stillEligible()) {
-      if (origin === "marketing_followup") {
+      if (queuedOrigin) {
         return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
       }
       await markUnknown();
@@ -405,7 +414,7 @@ async function sendSecondaryStaffText({
     // possible point before calling Meta. The consumed billing hold stays
     // unknown even when cancellation prevents the provider call.
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (origin === "marketing_followup") {
+      if (queuedOrigin) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_before_provider");
       }
       await markUnknown();
@@ -414,32 +423,31 @@ async function sendSecondaryStaffText({
 
     }
 
+    providerBoundaryReached=true;
     const send = (recoveryMenu || generalConsentMenu)
       ? await transport.sendInteractiveButtons(text.trim(), interactiveButtons)
       : typeof dispatchTransport === "function"
         ? await dispatchTransport(transport)
         : await transport.sendText(text.trim(), { replyToProviderMessageId });
-    // This signal is produced only by our marketing follow-up callback
-    // before it invokes sendTemplatePayload. It is NOT a Meta HTTP result.
-    // The callback is the only code able to prove no WhatsApp SEND
-    // occurred. A queued AI image whose caption became stale may cancel
-    // only with this exact marker before the provider send. All other AI,
-    // staff and uncertain Meta outcomes still keep their billing holds.
+    // A trusted callback may prove no /messages call occurred. Media
+    // preparation and /media upload failures are not customer sends.
+    // Only the listed markers and a durably rejected reservation authorize
+    // cancellation; actual ambiguous provider outcomes remain held.
     if (origin === "ai_media" && typeof dispatchTransport === "function" &&
-        send?.code === "secondary_ai_media_language_changed" &&
+        ["secondary_ai_media_language_changed","secondary_ai_media_preparation_failed",
+         "secondary_ai_media_preparation_retryable","secondary_ai_media_cancelled_before_provider"].includes(send?.code) &&
         send?.preProviderCancelled === true && send?.success === false &&
         !send?.wamid && send?.unknown !== true && send?.ambiguous !== true) {
-      return cancelProvenMarketingBeforeProvider(
-        "secondary_ai_media_language_changed");
+      return cancelProvenMarketingBeforeProvider(send.code);
     }
-    // Marketing's existing narrow no-provider proof remains unchanged.
-    if (origin === "marketing_followup" &&
+    // The video/marketing callback may explicitly prove no customer send.
+    if ((origin === "marketing_followup" || origin === "followup") &&
         typeof dispatchTransport === "function" &&
         send?.preProviderCancelled === true &&
         send?.success === false && !send?.wamid &&
         send?.unknown !== true && send?.ambiguous !== true) {
       return cancelProvenMarketingBeforeProvider(
-        "secondary_marketing_cancelled_before_meta");
+        origin === "marketing_followup" ? "secondary_marketing_cancelled_before_meta" : "secondary_followup_cancelled_before_meta");
     }
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
     if (!accepted) {
@@ -494,12 +502,18 @@ async function sendSecondaryStaffText({
       code: "secondary_staff_provider_outcome_unverified",
       error: "Delivery needs staff review; do not resend." };
   } catch {
+    if (queuedOrigin && !providerBoundaryReached) return cancelProvenMarketingBeforeProvider("secondary_pre_provider_preflight_exception");
     await markUnknown();
     return {
       success: false, wamid: null, unknown: true, ambiguous: true,
       retryable: false, code: "secondary_staff_unconfirmed",
       error: "Delivery outcome is unknown; do not resend without review.",
     };
+  }
+  } catch (err) {
+    if (queuedOrigin && !reservationStarted)
+      return preBlock("secondary_pre_provider_preflight_exception");
+    throw err;
   }
 }
 

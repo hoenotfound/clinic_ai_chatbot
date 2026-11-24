@@ -1306,6 +1306,21 @@ async function processIncomingMessage(
     const readableRecoveryHistory = readableHistoryForRecoverySelection(
       history, recoveryPromptProof
     );
+    // Resolve only the recovered informational review, never a clinical,
+    // booking, opt-out, or delivery review. Accept configured bare service names
+    // and ordinary unambiguous enquiries as well as the exact menu titles.
+    if (recoveryPromptProof && !keywordReason && !urgentSafety &&
+      (bareServiceName(text,clinicConfig.services,clinicConfig.serviceAliases) ||
+       recoveryTreatmentButtons().some(button =>
+        button.title.normalize("NFKC").replace(/\s+/g,"").toLowerCase() ===
+        String(text||"").normalize("NFKC").replace(/\s+/g,"").toLowerCase()))) {
+      try {
+        await contactsRepo.resolveRecovered131060Review(
+          contact.id,recoveryPromptProof.unavailable_message_id);
+      } catch (err) {
+        console.warn("[Meta 131060 recovery] Review resolution unavailable:",err?.message);
+      }
+    }
     const mediaLanguage = detectReplyConversationLanguage(
       readableRecoveryHistory
         .slice()
