@@ -118,7 +118,7 @@ function recentTurns(session, now) {
 // clarification/menu turns. Unlike the old immediate 3-turn rule, this allows
 // the customer to ask for options before selecting ONE verified treatment.
 function resolveRecentPriceSelection({
-  customerText, session = [], services = [], serviceAliases = [], now = Date.now(),
+  customerText, session = [], services = [], serviceAliases = [], promotions = [], now = Date.now(),
 } = {}) {
   const turns = recentTurns(session, now);
   const current = String(customerText || "").trim();
@@ -131,9 +131,57 @@ function resolveRecentPriceSelection({
   const selected = shortChoice(current, services, serviceAliases, before.slice(-12));
   if (!selected) return null;
   const customers = before.filter(turn => turn.role === "user").slice(-5);
-  if (!customers.some(turn => hasExplicitPriceRequest(pricingMessageText(turn)) &&
-      !ADMIN_FEE.test(pricingMessageText(turn)) &&
-      !BROAD.test(pricingMessageText(turn)))) return null;
+  // Only an unresolved price question can authorize a later selection.
+  // A delivered quote/menu of amounts closes the earlier request; a new
+  // treatment introduction is not a request to repeat or switch the quote.
+  const priceIndex=before.findLastIndex(turn => turn.role==="user" &&
+    hasExplicitPriceRequest(pricingMessageText(turn)) &&
+    !ADMIN_FEE.test(pricingMessageText(turn)) &&
+    !BROAD.test(pricingMessageText(turn)));
+  if(priceIndex<0 || !customers.includes(before[priceIndex])) return null;
+  const afterPrice=before.slice(priceIndex+1);
+  const quotedAmount=/(?:RM|MYR)\s*(?:[1-9]\d|[0-9]\uFE0F?\u20E3)/iu;
+  const candidates=serviceCandidates(services,serviceAliases);
+  const bareKey=value=>String(value||"").normalize("NFKC")
+    .replace(/[\s?？.!！。]+/gu,"").toLowerCase();
+  const exactChoice=[selected.name,...(candidates.find(c=>c.name===selected.name)?.terms||[])
+    .map(term=>term.value)].some(name=>bareKey(name)===bareKey(current));
+  // A generated two-treatment price menu explicitly invites a selection.
+  // Reconstruct the known deterministic response against current offers,
+  // rather than treating arbitrary old priced messages as open requests.
+  if(afterPrice.some(t=>t.role==="assistant" && quotedAmount.test(pricingMessageText(t)))) {
+    if(!exactChoice || afterPrice.length!==1 ||
+       afterPrice[0].role!=="assistant") return null;
+    const originalSession=before.slice(0,priceIndex+1);
+    const menuMatches=["en","zh","ms"].some(language=>{
+      const quote=resolveFacialCategoryPriceReply({
+        customerText:pricingMessageText(before[priceIndex]),
+        session:originalSession,services,serviceAliases,promotions,language,now,
+      });
+      return quote?.reply===pricingMessageText(afterPrice[0]) &&
+        quote.prices.some(price=>price.treatment===selected.name);
+    });
+    return menuMatches ? selected : null;
+  }
+  // If the original question belongs to a single established service, a
+  // new named service must actually be offered by the clarification/menu.
+  // A generic "which package?" cannot authorize an unrelated service.
+  const lastNamed=before.slice(0,priceIndex+1).findLast(t=>t.role==="user" &&
+    findServicesInText(pricingMessageText(t),candidates).length>0);
+  const priorNames=lastNamed ? [...new Set(findServicesInText(pricingMessageText(lastNamed),candidates))] : [];
+  if(priorNames.length===1 && priorNames[0]!==selected.name &&
+     !afterPrice.some(t=>t.role==="assistant" &&
+       findServicesInText(pricingMessageText(t),candidates).includes(selected.name))) return null;
+  if(afterPrice.some(t=>t.role==="user" &&
+     findServicesInText(pricingMessageText(t),candidates).length>0)) {
+    // A bare new treatment choice can answer a renewed, actual treatment
+    // price clarification. Do not treat a package question or an ordinary
+    // introduction as an invitation to quote another treatment.
+    const prompt=pricingMessageText(before.at(-1));
+    if(!exactChoice || !CLARIFICATION.test(prompt) ||
+       !MENU_PRICE_QUESTION.test(prompt) || MULTIPLE_PACKAGES.test(prompt) ||
+       /(?:配套|套餐|\b(?:packages?|pakej)\b)/iu.test(prompt)) return null;
+  }
   if (!before.slice(-10).some(turn => turn.role === "assistant" &&
       !isVerifiedStaffTurn(turn) &&
       (CLARIFICATION.test(pricingMessageText(turn)) ||

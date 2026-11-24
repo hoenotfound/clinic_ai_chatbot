@@ -280,3 +280,72 @@ test("live A/B: approved narrower package beats broad legacy quote and selects o
   wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
  assert.deepEqual(media?.packages?.map(p=>p.name),["Package B"]);
 });
+
+
+test("live WhatsApp: delivered configured package graphics do not hide the actual priced menu",async()=>{
+ const a=args("比较便宜的那个多少钱？","骨盆调理");
+ a.services=[...a.services,{name:"子宫调理"}];
+ a.serviceAliases=[...a.serviceAliases,{alias:"骨盆",officialService:"骨盆调理"},{alias:"子宫",officialService:"子宫调理"}];
+ a.modelIntent.promotionOption="Package B";
+ const menu={...turn("assistant","骨盆调理目前的配套价格是：\n• Package A（尊享护理配套｜2小时30分钟）：RM388\n• Package B（60分钟女性护理配套）：RM268\n\nPackage A 的上述价格为使用优惠券后的价格 😊",3000),pricingDeliveredBotMessage:true};
+ const imageA={...turn("assistant","优惠后仅需 RM3️⃣8️⃣8️⃣\n✅骨盆调整与体态矫正疗程\n✅子宫草药护理",2000),pricingDeliveredBotMessage:true,verifiedOutboundImageUrl:"https://example.test/a"};
+ const imageB={...turn("assistant","现在只需 RM2️⃣6️⃣8️⃣\n✅骨盆调整与体态矫正疗程",1000),pricingDeliveredBotMessage:true,verifiedOutboundImageUrl:"https://example.test/b"};
+ a.conversationHistory=[turn("user","你好，我想了解骨盆调理",6000),turn("assistant","骨盆调理是徒手护理",5000),turn("user","那我要准备多少预算呢？",4000),menu,imageA,imageB,turn("user",a.customerText,0)];
+ const d=resolveModelLedPricingDecision(a);
+ assert.deepEqual(d?.prices.map(p=>p.price),["RM268"]);
+ const approved=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:d});
+ assert.equal(approved.reason,"approved");
+ const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:approved.decision,
+  treatment:d.treatment,verifiedServiceFromText:d.treatment,textSendSucceeded:true,contactId:1,
+  wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.deepEqual(media?.packages?.map(p=>p.name),["Package B"]);
+ for(const invalid of [
+   {...imageB,pricingDeliveredBotMessage:false},
+   {...imageB,verifiedOutboundImageUrl:"https://example.test/other"},
+   {...imageB,pricingStaffAuthored:true},
+   {...imageB,verifiedOutboundImageUrl:null,content:"骨盆调理可以预约星期三"},
+ ]){
+   const b={...a,conversationHistory:a.conversationHistory.map(t=>t===imageB?invalid:t)};
+   assert.equal(resolveModelLedPricingDecision(b),null,JSON.stringify(invalid));
+ }
+ const wrongMenu={...a,conversationHistory:a.conversationHistory.map(t=>t===menu?{...menu,content:menu.content.replace("RM268","RM288")}:t)};
+ assert.equal(resolveModelLedPricingDecision(wrongMenu),null);
+ assert.equal(resolveModelLedPricingDecision({...a,modelIntent:{...a.modelIntent,promotionOption:"Package A"}}),null);
+ const missingChoice={...a.modelIntent,promotionOption:null};
+ assert.equal(resolveModelLedPricingDecision({...a,modelIntent:missingChoice}),null);
+ assert.equal(shouldBlockRejectedModelPricing({mode:"enabled",modelIntent:missingChoice,
+   semanticApproval:{decision:null},legacyApproval:{decision:{...d,prices:[
+     {name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]}},
+   customerText:a.customerText,promotions:a.promotions}),true);
+});
+
+test("live WhatsApp: old or resolved price enquiries do not authorize new treatment introductions",()=>{
+ const {resolveRecentPriceSelection}=require("../src/utils/priceConversationRecovery");
+ const {resolveShadowPriceException}=require("../src/utils/shadowPriceException");
+ const check=(current,prior)=>{
+  const a=args(current,"3D 小颜术");
+  a.modelIntent.priceQuery=false;
+  a.conversationHistory=[...prior,turn("user",current,0)];
+  assert.equal(resolveRecentPriceSelection({...a,session:a.conversationHistory}),null,current);
+  assert.equal(resolveShadowPriceException(a),null,current);
+  assert.equal(resolveModelLedPricingDecision(a),null,current);
+ };
+ check("我也想了解3D小颜术",[
+  turn("user","你好，我想了解骨盆调理",7000),
+  turn("assistant","骨盆调理是徒手护理",6000),
+  turn("user","那我要准备多少预算呢？",5000),
+  turn("assistant","骨盆调理\nPackage A: RM388\nPackage B: RM268",4000),
+  turn("user","比较便宜的那个多少钱？",3000),
+  turn("assistant","请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊",2000),
+ ]);
+ check("I'm interested in the 3D facial treatment.",[
+  turn("user","我也想了解3D小颜术",6000),
+  turn("assistant","3D 小颜术 First Trial RM388",5000),
+  turn("user","不是3D，我想了解9D的价钱",4000),
+  turn("assistant","9D 逆龄抗衰 First Trial RM488",3000),
+ ]);
+ // Preserve genuine unanswered price selection after the bot's menu.
+ const a=args("3D","3D 小颜术");
+ a.conversationHistory=[turn("user","多少钱？",4000),turn("assistant","请问想了解哪项疗程的价格？3D 小颜术 或 9D 逆龄抗衰",3000),turn("user","3D",0)];
+ assert.equal(resolveRecentPriceSelection({...a,session:a.conversationHistory})?.name,"3D 小颜术");
+});

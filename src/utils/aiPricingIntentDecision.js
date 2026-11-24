@@ -543,6 +543,14 @@ function resolveAiPricingDecision({
 
 // Gemini classifies the current intent. Verify factual service/package evidence,
 // rather than requiring another affirmative price-keyword match.
+// Existing price-relative phrases are negative validation evidence only;
+// they cannot independently authorize a quote or override a model selection.
+function relativePackageReference(current) {
+  const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
+  const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+  return {cheaper,dearer};
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -666,17 +674,35 @@ function resolveModelLedPricingDecision({
     if (!selected || mentioned.length>1 ||
         (mentioned.length===1 && mentioned[0].name!==selected.name)) return null;
     // For an indirect reference, only accept a choice grounded in the same
-    // customer's explicit package selection or the immediately preceding
-    // bot menu showing the configured option and its actual current amount.
-    const previous=turns.at(-2);
+    // customer's explicit package selection or the latest bot menu showing
+    // verified current amounts. A bounded run of delivered, exact matching
+    // package artwork can follow the menu without erasing its context.
+    let menuIndex=turns.length-2;
+    const matchingImages=new Set(options.map(p=>p.imageUrl).filter(Boolean));
+    let skipped=0;
+    while(menuIndex>anchorIndex && skipped<options.length){
+      const t=turns[menuIndex];
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+         t.pricingDeliveredBotMessage!==true ||
+         !matchingImages.has(t.verifiedOutboundImageUrl)) break;
+      menuIndex--;skipped++;
+    }
+    const previous=turns[menuIndex];
     const previousText=pricingMessageText(previous);
     const priorCustomer=turns.slice(anchorIndex,-1).findLast(t=>t.role==="user");
     const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
     const listed=findMentionedPromotionPackages(options,previousText);
     const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
+      (!skipped || (previous.pricingDeliveredBotMessage===true &&
+        !previous.verifiedOutboundImageUrl)) &&
+      !assistantIntroducesCompetingPaidService(previous,intent.treatment,candidates) &&
       findServicesInText(previousText,candidates).includes(intent.treatment) &&
       listed.length>1 && all.every(p=>{
+        // Non-monetary voucher explanations may repeat the package label.
+        // Only price-bearing rows supply amounts, and conflicting amounts
+        // on any additional labelled monetary row still invalidate the menu.
         const lines=previousText.split(/\n+/u).filter(line=>
+          /\b(?:RM|MYR)\s*[0-9]/iu.test(line) &&
           findMentionedPromotionPackages(options,line).some(o=>o.name===p.name));
         return lines.length===1 && lines.every(line=>{
           const named=findMentionedPromotionPackages(options,line);
@@ -691,8 +717,7 @@ function resolveModelLedPricingDecision({
     // or highest-priced option. Other semantic references rely on a grounded
     // menu and the model; do not treat ambiguous price ties as a selection.
     if (!mentioned.length && options.length>1) {
-      const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
-      const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+      const {cheaper,dearer}=relativePackageReference(current);
       if (cheaper || dearer) {
         if (!menuSupports || (cheaper && dearer)) return null;
         const amount=p=>Number(p.price.slice(2));
@@ -702,6 +727,10 @@ function resolveModelLedPricingDecision({
       }
     }
     prices=[selected];
+  } else if (mentioned.length===0 && options.length>1 &&
+      Object.values(relativePackageReference(current)).some(Boolean)) {
+    // A missing model selection is not authorization to quote every package.
+    return null;
   } else if (mentioned.length===1) {
     // A specific customer choice cannot be silently widened to all packages.
     return null;
@@ -784,6 +813,11 @@ function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
     return !(named.length===1 && named[0].name===modelIntent.promotionOption &&
       legacy?.treatment===modelIntent.treatment && legacy.prices?.length===1 &&
       legacy.prices[0].name===named[0].name);
+  }
+  if (Object.values(relativePackageReference(String(customerText||""))).some(Boolean)) {
+    const active=getActivePromotions(promotions)
+      .filter(p=>p.linkedService===modelIntent.treatment && p.sendOnPriceQuery===true);
+    if(active.length===1 && promotionPackages(active[0]).length>1) return true;
   }
   return Boolean(legacy && modelIntent.treatment && legacy.treatment!==modelIntent.treatment);
 }
