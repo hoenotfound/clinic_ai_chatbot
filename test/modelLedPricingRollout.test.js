@@ -55,7 +55,7 @@ test("grounded direct treatment changes take precedence; model-only treatment ca
  assert.equal(resolveModelLedPricingDecision(b),null);
 });
 test("known non-price and safety cases, false model metadata, conflicting context and stale history fail closed",()=>{
- for(const current of ["How long does it take?","不要报价","How much is the deposit?","太贵了","Where is your branch?","我有乳腺结节","可以跟进我，有优惠也发我看看"]){
+ for(const current of ["Hi","How long does it take?","不要报价","How much is the deposit?","太贵了","Where is your branch?","我有乳腺结节","可以跟进我，有优惠也发我看看"]){
   assert.equal(resolveModelLedPricingDecision(args(current)),null,current);
  }
  for(const intent of [{priceQuery:false},{structured:false},{outcome:"review_required"},{outcome:"booking_ready"},{treatment:"invented"},{pricingStage:"subsequent_session"},{promotionOption:"Package C"}]){
@@ -85,9 +85,9 @@ test("specific configured package remains independently checked; package enquiry
 });
 test("shadow and off never apply semantic decision; enabled fills gaps only",()=>{
  const d=resolveModelLedPricingDecision(args());assert.ok(d);
- const base={mode:"enabled",legacyMode:"shadow",legacyApproval:{decision:null},semanticApproval:{decision:d}};
+ const base={mode:"enabled",legacyApproval:{decision:null},semanticApproval:{decision:d}};
  assert.equal(shouldApplyModelLedPricing(base),true);
- for(const override of [{mode:"off"},{mode:"shadow"},{legacyMode:"off"},{legacyCandidate:d},{legacyApproval:{decision:d}},{hasSpecialDecision:true},{semanticApproval:{decision:null}}]){
+ for(const override of [{mode:"off"},{mode:"shadow"},{legacyCandidate:d},{legacyApproval:{decision:d}},{hasSpecialDecision:true},{semanticApproval:{decision:null}}]){
   assert.equal(shouldApplyModelLedPricing({...base,...override}),false,JSON.stringify(override));
  }
  for(const override of [{flagged:true},{bookingReady:true},{marketingStopQuestion:true},{keywordReason:"review"}]){
