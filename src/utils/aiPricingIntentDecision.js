@@ -11,9 +11,11 @@ const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService,
   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
+  isRecentPricingThread, isVerifiedStaffTurn, pricingMessageText,
+  assistantIntroducesCompetingPaidService,
 } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
-const { getActivePromotions } = require("./activePromotion");
+const { getActivePromotions, promotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
@@ -534,6 +536,95 @@ function resolveAiPricingDecision({
   });
 }
 
+// First rollout: use the existing model intent fields without a second
+// positive pricing-keyword gate. A customer-authored configured service
+// still supplies the identity. Limit new authority to direct or immediately
+// established single-service conversations; complex legacy cases stay intact.
+function resolveModelLedPricingDecision({
+  modelIntent, customerText, conversationHistory = [], services = [],
+  serviceAliases = [], promotions = [], allowOfferEnquiries = false,
+  complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  const intent = modelIntent;
+  if (!intent || intent.structured !== true || intent.outcome !== "normal" ||
+      intent.pricingStage === "subsequent_session" ||
+      (intent.priceQuery !== true &&
+        !(allowOfferEnquiries && intent.packageQuery === true)) ||
+      !current || current.length > 600 || !Number.isFinite(now) ||
+      !services.some(s => s?.name === intent.treatment)) return null;
+  // Preserve existing negative safeguards. These are vetoes, not a second
+  // dictionary of affirmative price requests.
+  if (hasClinicalMediaRisk(current) || SPECIFIC_ADMIN_FEE.test(current) ||
+      RESET.test(current) || REFUSAL.test(current) || AD_NEGATED_TOPIC.test(current) ||
+      AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
+      isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
+      (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
+      isComplimentaryAssessmentFeeQuestion(current,
+        complimentaryAssessmentExperienceEnabled, conversationHistory)) return null;
+
+  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const last = turns.at(-1);
+  if (last?.role !== "user" || typeof last.content !== "string" ||
+      last.content.trim() !== current ||
+      !isRecentPricingThread(turns, turns.length - 1, now)) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  const direct = safeServiceFromCustomer(current, services, serviceAliases);
+  const names = [...new Set(findServicesInText(current, candidates))];
+  if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
+      (direct && direct.name !== intent.treatment)) return null;
+
+  // A direct current selection wins. Otherwise require the immediately
+  // preceding customer turn to name the same treatment, and a bot response
+  // acknowledging it. Never use a model suggestion, CRM label or ad alone.
+  if (!direct) {
+    const previous = turns.slice(0, -1).findLastIndex(t => t?.role === "user");
+    if (previous < 0 || !isRecentPricingThread(turns, previous, now)) return null;
+    const anchor = pricingMessageText(turns[previous]).trim();
+    const priorNames = [...new Set(findServicesInText(anchor, candidates))];
+    if (typeof turns[previous].content !== "string" ||
+        priorNames.length !== 1 || priorNames[0] !== intent.treatment ||
+        safeServiceFromCustomer(anchor, services, serviceAliases)?.name !== intent.treatment ||
+        RESET.test(anchor) || REFUSAL.test(anchor) || AD_NEGATED_TOPIC.test(anchor) ||
+        AD_BROAD_TOPIC.test(anchor) || hasClinicalMediaRisk(anchor)) return null;
+    const responses = turns.slice(previous + 1, -1);
+    if (!responses.length || responses.some(t =>
+      t.role !== "assistant" || isVerifiedStaffTurn(t) ||
+      assistantIntroducesCompetingPaidService(t, intent.treatment, candidates) ||
+      hasClinicalMediaRisk(pricingMessageText(t)))) return null;
+    if (!responses.some(t => findServicesInText(pricingMessageText(t), candidates)
+      .includes(intent.treatment))) return null;
+  }
+  // Do not let the fallback overlook recent clinical context or staff
+  // intervention, including an unknown app echo. Existing narrowly proven
+  // legacy staff-result recovery remains available separately.
+  for (let i=turns.length-2;i>=0;i--) {
+    const t=turns[i], at=t?.pricingCreatedAtMs;
+    if (!Number.isFinite(at) || at>now+60_000) return null;
+    if (at<now-24*3600000) break;
+    if (isVerifiedStaffTurn(t) || (t.role==="user" &&
+      hasClinicalMediaRisk(pricingMessageText(t)))) return null;
+  }
+
+  const active=getActivePromotions(promotions,new Date(now))
+    .filter(p=>p.linkedService===intent.treatment && p.sendOnPriceQuery===true);
+  if (active.length!==1) return null;
+  const options=promotionPackages(active[0]);
+  // Reuse configured-price verification. The model may describe a package,
+  // but cannot choose an unverified package or manufacture a sale amount.
+  const prices=verifiedPricesForService(intent.treatment,promotions,current,turns,
+    {clarifiedPriceService:intent.treatment,allowTextOnlyOffers:true});
+  if (!prices?.length || !options.length) return null;
+  if (intent.promotionOption != null) {
+    if (prices.length!==1 || prices[0].name!==intent.promotionOption) return null;
+  } else if (prices.length!==options.length) return null;
+  return Object.freeze({
+    type:intent.priceQuery===true ? "price" : "package_options",
+    treatment:intent.treatment,source:"model_led_customer_context",
+    clarifiedPriceService:intent.treatment,prices,servicePrice:null,
+  });
+}
+
 // Use the same customer-authored evidence at the outbound text boundary as
 // at the optional promotion decision. Never ask for pricing clarification just
 // because a model wrongly returned priceQuery=true on a service question.
@@ -552,4 +643,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
