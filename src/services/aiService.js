@@ -37,8 +37,8 @@ const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 12 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
-const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 12 * 1000;
-const DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS = 8 * 1000;
+const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 10 * 1000;
+const DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS = 10 * 1000;
 const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
@@ -273,6 +273,11 @@ async function runGeminiModelAttempt(
         // provider completes but the structured reply is unusable. Keep the
         // existing outer validation for injected/test providers.
         validateResponse: (response) => {
+          if (response?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+            const err = new Error("Gemini reached its output token limit.");
+            err.code = "AI_OUTPUT_TRUNCATED";
+            throw err;
+          }
           const text = response?.text?.trim();
           if (!text) {
             const err = new Error("Gemini returned an empty response.");
@@ -496,6 +501,7 @@ async function runGeminiReply(
     clock = () => Date.now(),
     sleepFn = sleep,
     randomFn = Math.random,
+    hasLaterProvider = false,
   } = {}
 ) {
   const policy = getGeminiReplyPolicy(env);
@@ -525,6 +531,8 @@ async function runGeminiReply(
     if (remainingBudgetMs <= 0) break;
 
     const hasLaterModel = modelIndex < models.length - 1;
+    const hasNextRoute = hasLaterModel || hasLaterProvider;
+    const isFlashLite = model.trim().toLowerCase() === "gemini-3.5-flash-lite";
     const modelBudgetMs = computeGeminiModelBudgetMs(
       remainingBudgetMs,
       hasLaterModel,
@@ -539,7 +547,7 @@ async function runGeminiReply(
           // A provider-level 503 says the model is unavailable, not the key.
           // When another model is ready, switch immediately rather than spend
           // a second quota-counting request on the same overloaded model.
-          overloadRetryCount: hasLaterModel ? 0 : policy.retryCount,
+          overloadRetryCount: hasNextRoute ? 0 : policy.retryCount,
           sleepFn,
           randomFn,
           signal: requestControl.signal || null,
@@ -556,8 +564,10 @@ async function runGeminiReply(
           // A 503/high-demand response is already model-scoped. If another
           // reply model is available, switch models immediately instead of
           // spending its reserved time confirming the same outage on key 2.
-          confirmModelUnavailableAcrossKeys: !hasLaterModel,
-          stopKeyRotationOnTimeout: hasLaterModel,
+          confirmModelUnavailableAcrossKeys: !hasNextRoute,
+          stopKeyRotationOnTimeout: hasNextRoute,
+          stopKeyRotationOnInvalidResponse: isFlashLite,
+          minAttemptWindowMs: hasNextRoute ? effectiveMinKeyWindowMs : 0,
           smartRetryDelayMinMs: 500,
           smartRetryDelayMaxMs: 1000,
           clock,
@@ -737,7 +747,7 @@ async function getReplyWithEnv(
           messages,
           options,
           geminiEnvForProviderBudget(env, providerBudgetMs),
-          { clock }
+          { clock, hasLaterProvider }
         );
       }
 
