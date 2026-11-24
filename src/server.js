@@ -2645,6 +2645,17 @@ async function processIncomingMessage(
       reply = "Staff review requested";
     }
 
+    // Intent metadata is informational, never permission to send sales media
+    // during unresolved clinical review or human takeover. Apply only after
+    // existing narrow administrative review recoveries have completed.
+    if (flagged && (!reviewRequired || reviewType === "clinical")) {
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      bookingReady = false;
+    }
+
     // AI generation can take long enough for staff to take over after the
     // earlier ownership check. Re-check immediately before any AI-owned state
     // change or outbound send.
