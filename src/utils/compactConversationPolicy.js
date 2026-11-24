@@ -36,4 +36,17 @@ function selectCompactFAQs(faqs, context, policy) {
     return !scope || scope === service;
   });
 }
-module.exports = { resolveCompactConversationPolicy, selectCompactFAQs };
+// Runtime opt-in is clinic-specific and fails closed when an administrator
+// edits any reviewed source section. Never write back to the stored config.
+function resolveProductionCompactPolicy(config) {
+  if (config.promptOptimization?.neutroCompactV2 !== true) return null;
+  const plan = require("../../scripts/config-proposals/neutro-prompt-consolidation-stage2.json");
+  const stage1 = require("../../scripts/config-proposals/neutro-prompt-consolidation-20261124.json");
+  if (!resolveCompactConversationPolicy(config, plan)) return null;
+  for (const key of ["sop", "messagingStyle", "closingPlaybook"]) {
+    if (typeof config[key] !== "string" ||
+        fingerprint(config[key]) !== stage1.expectedMd5[key]) return null;
+  }
+  return {...plan, replacement: stage1.replacement};
+}
+module.exports = { resolveCompactConversationPolicy, selectCompactFAQs, resolveProductionCompactPolicy };
