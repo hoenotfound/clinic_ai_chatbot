@@ -240,6 +240,7 @@ const READY_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
+   AND (job.preparation_retry_not_before IS NULL OR job.preparation_retry_not_before<=NOW())
    AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
    AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
@@ -439,8 +440,9 @@ async function wakeAfterVerifiedReconciliation({
        AND sa.state='active' AND sa.sender_key=$1
        AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
        AND job.contact_id=ANY($4::int[])
-       -- Preparation retry has detached the old message; preserve its deadline.
-       AND (job.outbound_message_id IS NOT NULL OR job.next_attempt_at<=NOW())
+       -- Ordinary queued images may wake immediately, but a preparation
+       -- retry has its own durable minimum delay, independent of receipts.
+       AND (job.preparation_retry_not_before IS NULL OR job.preparation_retry_not_before<=NOW())
        AND EXISTS(
          SELECT 1 FROM whatsapp_sender_billing_gates gate
          WHERE gate.sender_id=sa.id AND gate.owner_contact_id=job.contact_id
@@ -479,7 +481,7 @@ async function runOnce({
  for(const job of list.rows||[]){
    // Atomic one-shot claim; a crash after claim is UNKNOWN, never replayed.
    const claimed=await database.query(
-     "UPDATE whatsapp_sender_ai_media_jobs SET state='claimed',updated_at=NOW() WHERE id=$1 AND state='pending' RETURNING id",
+     "UPDATE whatsapp_sender_ai_media_jobs SET state='claimed',preparation_retry_not_before=NULL,updated_at=NOW() WHERE id=$1 AND state='pending' AND next_attempt_at<=NOW() AND (preparation_retry_not_before IS NULL OR preparation_retry_not_before<=NOW()) RETURNING id",
      [job.id]
    );
    if(claimed.rowCount!==1)continue;
@@ -721,7 +723,8 @@ async function runOnce({
          ), requeued AS (
            UPDATE whatsapp_sender_ai_media_jobs j
            SET state='pending',outbound_message_id=NULL,
-               next_attempt_at=NOW()+($3::int*INTERVAL '1 millisecond'),updated_at=NOW()
+               next_attempt_at=NOW()+($3::int*INTERVAL '1 millisecond'),
+               preparation_retry_not_before=NOW()+($3::int*INTERVAL '1 millisecond'),updated_at=NOW()
            FROM eligible e WHERE j.id=e.id AND EXISTS(SELECT 1 FROM cancelled)
            RETURNING j.id
          )
@@ -747,6 +750,7 @@ async function runOnce({
             UPDATE whatsapp_sender_ai_media_jobs
                SET state='pending',
                    next_attempt_at=NOW()+($2::int * INTERVAL '1 millisecond'),
+                   preparation_retry_not_before=CASE WHEN $4::boolean THEN NOW()+($2::int*INTERVAL '1 millisecond') ELSE NULL END,
                    updated_at=NOW()
              WHERE id=$1 AND state='claimed'
              RETURNING outbound_message_id
@@ -760,7 +764,7 @@ async function runOnce({
               SELECT 1 FROM whatsapp_sender_billing_attempts a
               WHERE a.message_id=m.id AND a.state<>'rejected'
             )`,
-         [job.id,RETRY_MS,QUEUED_ERROR]
+         [job.id,result.code==="secondary_pre_provider_preflight_exception"?PREPARATION_RETRY_MS:RETRY_MS,QUEUED_ERROR,result.code==="secondary_pre_provider_preflight_exception"]
        );
        pending++;
      }else await update("unknown");
