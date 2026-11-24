@@ -2887,7 +2887,6 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     closingPlaybook: config.closingPlaybook || "",
     sop: config.sop || "",
     aiPricingIntentMode: config.aiPricingIntentMode || "off",
-    aiPricingSemanticMode: config.aiPricingSemanticMode || "off",
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
     adFirstReply: {
       enabled: config.adFirstReply?.enabled === true,
@@ -2933,19 +2932,6 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           <option value="shadow">Shadow: record AI decisions only</option>
           <option value="enabled">Enabled: verified AI pricing decisions</option>
         </select>
-        <label className="mt-3 block text-sm">
-          <span>Natural-language pricing rollout</span>
-          <select className={inputClass} value={form.aiPricingSemanticMode}
-            onChange={(event) => setForm({ ...form, aiPricingSemanticMode: event.target.value })}>
-            <option value="off">Off: existing behavior</option>
-            <option value="shadow">Shadow: compare only</option>
-            <option value="enabled">Enabled: fill verified pricing gaps</option>
-          </select>
-        </label>
-        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
-          Requires AI pricing graphic decisions in Shadow or Enabled. Start with Shadow.
-          Uses the existing AI reply without an additional model request.
-        </p>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.aiPricingOfferEnquiriesEnabled}
             onChange={(event) => setForm({ ...form, aiPricingOfferEnquiriesEnabled: event.target.checked })} />
