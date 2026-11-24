@@ -566,8 +566,6 @@ function resolveModelLedPricingDecision({
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
       isContextualAdServiceEnquiry(current) ||
       (UNRELATED.test(current) && !hasExplicitPriceRequest(current)) ||
-      (intent.serviceQuery === true && !hasExplicitPriceRequest(current) &&
-        !(allowOfferEnquiries && intent.packageQuery === true)) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(current,
         complimentaryAssessmentExperienceEnabled, conversationHistory)) return null;
