@@ -36,7 +36,7 @@ async function deferProvenUnsent({
    SELECT a.id FROM ${table} a
    JOIN messages m ON m.id=a.message_id
    WHERE a.id=$1 AND a.message_id=$2 AND a.contact_id=$3
-     AND a.status='claimed' AND a.defer_count<8
+     AND a.status='claimed'
      AND m.contact_id=$3 AND m.role='assistant'
      AND m.delivery_status='unknown'
      AND m.whatsapp_message_id IS NULL
@@ -59,8 +59,8 @@ async function deferProvenUnsent({
    SET status='deferred',message_id=NULL,wamid=NULL,
        error_code='pre_provider_billing_deferred',
        retry_after=NOW()+
-          LEAST(180,30*POWER(2,a.defer_count))*INTERVAL '1 second',
-       defer_count=a.defer_count+1,completed_at=NULL
+          LEAST(900,30*POWER(2,LEAST(a.defer_count,5)))*INTERVAL '1 second',
+       defer_count=LEAST(8,a.defer_count+1),completed_at=NULL
    WHERE a.id=$1 AND a.status='claimed'
      AND EXISTS(SELECT 1 FROM cancelled)
    RETURNING a.id
