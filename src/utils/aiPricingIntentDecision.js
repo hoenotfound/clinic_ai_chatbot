@@ -690,7 +690,11 @@ function resolveModelLedPricingDecision({
       !assistantIntroducesCompetingPaidService(previous,intent.treatment,candidates) &&
       findServicesInText(previousText,candidates).includes(intent.treatment) &&
       listed.length>1 && all.every(p=>{
+        // Non-monetary voucher explanations may repeat the package label.
+        // Only price-bearing rows supply amounts, and conflicting amounts
+        // on any additional labelled monetary row still invalidate the menu.
         const lines=previousText.split(/\n+/u).filter(line=>
+          /\b(?:RM|MYR)\s*[0-9]/iu.test(line) &&
           findMentionedPromotionPackages(options,line).some(o=>o.name===p.name));
         return lines.length===1 && lines.every(line=>{
           const named=findMentionedPromotionPackages(options,line);
