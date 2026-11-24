@@ -14,13 +14,20 @@ function isProvenPreProviderBlock(result){
    result?.ambiguous!==true &&
    !result?.wamid;
 }
+// The unknown-gate refusal is also conclusively pre-reservation for THIS
+// draft. Keep the stricter AI text retry predicate unchanged.
+function isDeferrableFollowUpBlock(result){
+ return isProvenPreProviderBlock(result) ||
+   (result?.code==="secondary_billing_unknown_hold_not_reviewed" &&
+    isProvenPreProviderBlock({...result,code:PRE_PROVIDER_CODE}));
+}
 // This single SQL statement atomically marks an unsent Inbox draft cancelled
 // and retains the unique attempt row as deferred. No delete or blind replay.
 // Reject if any provider/billing evidence exists, including a saved WAMID.
 async function deferProvenUnsent({
  database,table,attemptId,messageId,contactId,result,
 }){
- if(!TABLES.has(table) || !isProvenPreProviderBlock(result) ||
+ if(!TABLES.has(table) || !isDeferrableFollowUpBlock(result) ||
     !Number.isSafeInteger(Number(attemptId)) ||
     !Number.isSafeInteger(Number(messageId)) ||
     !Number.isSafeInteger(Number(contactId)))return false;
@@ -75,4 +82,4 @@ function reclaimClause(table){
  if(!TABLES.has(table))throw Error("Invalid secondary follow-up ledger");
  return RECLAIM_SQL.replaceAll("TABLE",table);
 }
-module.exports={isProvenPreProviderBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE};
+module.exports={isProvenPreProviderBlock,isDeferrableFollowUpBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE};
