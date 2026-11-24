@@ -173,3 +173,31 @@ A real WhatsApp provider send and a Render deployment smoke test are still
 required before turning on Enabled for Neutro. Leave its production
 `aiPricingIntentMode=shadow` and `assessmentFirstPricingEnabled=true`
 until the test and independent review pass.
+
+
+## Natural-language pricing rollout (gap-only)
+
+Settings → AI Behavior → Natural-language pricing rollout is independent of
+the existing pricing mode. Default Off; requires existing pricing mode
+Shadow or Enabled. Shadow compares without changing outbound replies. Enabled
+fills only a genuine gap where neither the legacy candidate nor an existing
+approved/special-case decision is present. Revert to Off immediately if
+review reveals regressions.
+
+The existing provider response fields are captured before legacy mutation.
+No new model request, worker or table is added. The initial scope accepts
+direct customer-named services and the immediately preceding verified
+customer-selected service acknowledged by the assistant. It trusts the model
+on conversational price intent rather than requiring another positive price
+phrase. It still requires recent DB-timestamped context, rejects clinical,
+staff, ambiguous or competing treatment evidence, and verifies active package
+amounts and customer-specific package selection. Ad-only and complex returning
+or staff cases continue through existing paths.
+
+Review [Semantic pricing] logs for model intent, legacy/semantic approval,
+treatment and package agreement and applied status; the logs omit raw customer
+content. These comparisons are not accuracy labels. Review real conversations
+with human-labelled positive and negative cases, including model false
+positives and false negatives, before enabling. The existing price approval,
+text and graphic delivery checks remain authoritative. No older inbound should
+be replayed against live delivery to test this feature.
