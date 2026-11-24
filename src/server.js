@@ -2066,6 +2066,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
+          allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
     if (aiPricingMode === "shadow") {
