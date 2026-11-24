@@ -3375,7 +3375,7 @@ async function processIncomingMessage(
               // Only an independently approved customer price decision can
               // exempt this specific artwork from secondary quiet hours.
               solicitedPricing:Boolean(secondaryAiConversation &&
-                approvedPricingDecision?.type === "price" &&
+                ["price","package_options"].includes(approvedPricingDecision?.type) &&
                 Array.isArray(approvedPricingDecision.prices) &&
                 approvedPricingDecision.prices.length > 0),
               sequenceOffset:0,
