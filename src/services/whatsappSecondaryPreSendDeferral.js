@@ -82,4 +82,15 @@ function reclaimClause(table){
  if(!TABLES.has(table))throw Error("Invalid secondary follow-up ledger");
  return RECLAIM_SQL.replaceAll("TABLE",table);
 }
-module.exports={isProvenPreProviderBlock,isDeferrableFollowUpBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE};
+// Candidate scans skip slots before their durable deadline. The read-only
+// scheduling hint looks ahead to that same deadline, without changing expiry.
+const DEFERRED_READY_PREDICATE="attempted.status<>'deferred' OR attempted.retry_after IS NULL OR attempted.retry_after>$4::timestamptz";
+function deferredRetryAtSql(table,anchor){
+ if(!TABLES.has(table) || !["inbound.id","qualified_session.origin_id"].includes(anchor))
+   throw Error("Invalid secondary follow-up deadline scope");
+ return `(SELECT pending.retry_after FROM ${table} pending
+   WHERE pending.sender_id=sa.id AND pending.contact_id=c.id
+     AND pending.anchor_message_id=${anchor} AND pending.slot_hours=rule.slot_hours
+     AND pending.status='deferred')`;
+}
+module.exports={isProvenPreProviderBlock,isDeferrableFollowUpBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE,DEFERRED_READY_PREDICATE,deferredRetryAtSql};
