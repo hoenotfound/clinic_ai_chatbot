@@ -8,6 +8,7 @@ const { serviceCandidates, findServicesInText } = require("./conversationPromptC
 const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService,
   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
@@ -555,7 +556,7 @@ function resolveModelLedPricingDecision({
       !services.some(s => s?.name === intent.treatment)) return null;
   // Preserve existing negative safeguards. These are vetoes, not a second
   // dictionary of affirmative price requests.
-  if (hasClinicalMediaRisk(current) || SPECIFIC_ADMIN_FEE.test(current) ||
+  if (isGreetingOrLanguageOnly(current) || hasClinicalMediaRisk(current) || SPECIFIC_ADMIN_FEE.test(current) ||
       RESET.test(current) || REFUSAL.test(current) || AD_NEGATED_TOPIC.test(current) ||
       AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
@@ -625,12 +626,11 @@ function resolveModelLedPricingDecision({
   });
 }
 
-// Rollout selection is deliberately separate from semantic interpretation:
- // compare in Shadow, fill only genuine gaps in Enabled, never override an
- // existing legacy candidate (including one rejected by final approval).
-function shouldApplyModelLedPricing({mode,legacyMode,legacyCandidate,
+// Compare in Shadow, fill only genuine gaps in Enabled, never override an
+// existing legacy candidate (including one rejected by final approval).
+function shouldApplyModelLedPricing({mode,legacyCandidate,
   legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
-  return mode==="enabled" && ["shadow","enabled"].includes(legacyMode) &&
+  return mode==="enabled" &&
     !legacyCandidate && !legacyApproval?.decision && !hasSpecialDecision &&
     Boolean(semanticApproval?.decision);
 }
