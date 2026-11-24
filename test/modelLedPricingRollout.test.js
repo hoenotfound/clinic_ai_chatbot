@@ -311,6 +311,12 @@ test("live WhatsApp: delivered configured package graphics do not hide the actua
  const wrongMenu={...a,conversationHistory:a.conversationHistory.map(t=>t===menu?{...menu,content:menu.content.replace("RM268","RM288")}:t)};
  assert.equal(resolveModelLedPricingDecision(wrongMenu),null);
  assert.equal(resolveModelLedPricingDecision({...a,modelIntent:{...a.modelIntent,promotionOption:"Package A"}}),null);
+ const missingChoice={...a.modelIntent,promotionOption:null};
+ assert.equal(resolveModelLedPricingDecision({...a,modelIntent:missingChoice}),null);
+ assert.equal(shouldBlockRejectedModelPricing({mode:"enabled",modelIntent:missingChoice,
+   semanticApproval:{decision:null},legacyApproval:{decision:{...d,prices:[
+     {name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]}},
+   customerText:a.customerText,promotions:a.promotions}),true);
 });
 
 test("live WhatsApp: old or resolved price enquiries do not authorize new treatment introductions",()=>{
