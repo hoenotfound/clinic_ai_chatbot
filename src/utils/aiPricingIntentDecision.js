@@ -563,7 +563,7 @@ function resolveModelLedPricingDecision({
   if (isGreetingOrLanguageOnly(current) || hasClinicalMediaRisk(original) ||
       SPECIFIC_ADMIN_FEE.test(original) || REFUSAL.test(current) ||
       AD_NEGATED_TOPIC.test(current) || AD_BROAD_TOPIC.test(current) ||
-      /\\b(?:stop|unsubscribe)\\b|退订|退訂/iu.test(original) ||
+      /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(original) ||
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
       isContextualAdServiceEnquiry(current) ||
       /^(?:谢谢(?:你|您)?|多谢|thanks?|thank you|terima kasih|tq|ok(?:ay)?|好的|好啊|明白了|了解了)[\s。.!！😊🙏]*$/iu.test(current) ||
@@ -634,8 +634,8 @@ function resolveModelLedPricingDecision({
     if (hasClinicalMediaRisk(content)) return null;
     if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
         (!(t.pricingDeliveredStaffImage===true || t.pricingVerifiedStaffText===true) ||
-         t.pricingBusinessAppPlaceholder===true || /\\[unsupported|message deleted/iu.test(content) ||
-         /\\b(?:RM|MYR)\\s*\\d|[价價][钱錢格位]|\\b(?:price|cost|harga)\\b/iu.test(content) ||
+         t.pricingBusinessAppPlaceholder===true || /\[unsupported|message deleted/iu.test(content) ||
+         /\b(?:RM|MYR)\s*\d|[价價][钱錢格位]|\b(?:price|cost|harga)\b/iu.test(content) ||
          assistantIntroducesCompetingPaidService(t,intent.treatment,candidates))) return null;
   }
 
@@ -663,8 +663,16 @@ function resolveModelLedPricingDecision({
     const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
     const listed=findMentionedPromotionPackages(options,previousText);
     const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
-      listed.length>1 && all.every(p=>listed.some(o=>o.name===p.name) &&
-        previousText.replace(/\\s+/gu,"").includes(p.price));
+      listed.length>1 && all.every(p=>{
+        const lines=previousText.split(/\n+/u).filter(line=>
+          findMentionedPromotionPackages(options,line).some(o=>o.name===p.name));
+        return lines.length===1 && lines.every(line=>{
+          const named=findMentionedPromotionPackages(options,line);
+          const amounts=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?!\d)/giu)];
+          return named.length===1 && amounts.length===1 &&
+            "RM"+amounts[0][1]===p.price;
+        });
+      });
     if (!mentioned.length && !(priorChoice.length===1 && priorChoice[0].name===selected.name) &&
         !menuSupports && options.length!==1) return null;
     prices=[selected];
