@@ -439,6 +439,8 @@ async function wakeAfterVerifiedReconciliation({
        AND sa.state='active' AND sa.sender_key=$1
        AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
        AND job.contact_id=ANY($4::int[])
+       -- Preparation retry has detached the old message; preserve its deadline.
+       AND (job.outbound_message_id IS NOT NULL OR job.next_attempt_at<=NOW())
        AND EXISTS(
          SELECT 1 FROM whatsapp_sender_billing_gates gate
          WHERE gate.sender_id=sa.id AND gate.owner_contact_id=job.contact_id
@@ -623,6 +625,8 @@ async function runOnce({
        contact,messageId,text:media.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,anchorMessageId:job.inbound_message_id,
        dispatchTransport:async(transport)=>{
+         let customerSendStarted=false;
+         try {
          if(!imageApproved() || !await preSendCheck())
            return policyCancelled();
          // This callback runs after the sender's final billing reservation
@@ -653,13 +657,19 @@ async function runOnce({
            // customer may switch languages while those bytes upload.
            if(!await currentLanguageSelection())
              return languageChangedBeforeProvider();
-           return transport.sendMediaById("image",uploaded.mediaId,{caption:media.caption});
+           customerSendStarted=true;
+           return await transport.sendMediaById("image",uploaded.mediaId,{caption:media.caption});
          }
          if(!imageApproved() || !await preSendCheck())
            return policyCancelled();
          if(!await currentLanguageSelection())
            return languageChangedBeforeProvider();
-         return transport.sendImageByUrl(media.imageUrl,media.caption);
+         customerSendStarted=true;
+         return await transport.sendImageByUrl(media.imageUrl,media.caption);
+         } catch (err) {
+           if(!customerSendStarted)return preparationFailed("pre_send_check_exception",true);
+           throw err;
+         }
        },
      },{env,database});
      if(result?.success===true && result?.unknown!==true &&
@@ -722,12 +732,13 @@ async function runOnce({
          pending++;
        }else await update("unknown");
      }else if(result?.preProviderCancelled===true &&
+              !(result.noReservation===true && result.code==="secondary_pre_provider_preflight_exception") &&
               result?.success===false && result?.unknown!==true && result?.ambiguous!==true && !result?.wamid){
        // Reservation was definitively rejected with proof that no WhatsApp
        // image send occurred. Do not leave a false unknown-send billing hold.
        await update("expired");
      }else if(["secondary_staff_billing_blocked","secondary_billing_previous_send_unresolved",
-       "secondary_billing_sender_alarm","secondary_billing_unknown_hold_not_reviewed"].includes(result?.code) && !result?.unknown && !result?.ambiguous && !result?.wamid && result?.policyBlocked===true){
+       "secondary_billing_sender_alarm","secondary_billing_unknown_hold_not_reviewed","secondary_pre_provider_preflight_exception"].includes(result?.code) && !result?.unknown && !result?.ambiguous && !result?.wamid && result?.policyBlocked===true && (result.code!=="secondary_pre_provider_preflight_exception" || result.noReservation===true)){
        // No provider call or billable reservation occurred. Safe to defer.
        // This documented billing block happened before any provider attempt.
        // Keep an accurate queued badge, rather than an ambiguous send warning.
