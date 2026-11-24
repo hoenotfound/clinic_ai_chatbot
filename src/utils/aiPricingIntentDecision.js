@@ -3,7 +3,7 @@
 // Existing AI intent flags classify the customer's request. Treatment identity
 // must come from customer evidence or an unambiguous verified Meta acquisition
 // context; all quoted prices must come from active configured offers.
-const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { safeServiceFromCustomer, hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
@@ -624,9 +624,16 @@ function resolveModelLedPricingDecision({
   // A bare service name is interest, not a price request, unless a preceding
   // verified pricing clarification actually asked the customer to select it.
   const namedCandidate=direct && candidates.find(c=>c.name===direct.name);
-  if (namedCandidate && (namedCandidate.terms.some(t=>bareKey(t.value)===bareKey(current)) ||
-      isPlainNamedTreatmentInterest(current,namedCandidate)) &&
-      !resolveClarifiedPriceService({customerText:current,conversationHistory:turns,services,serviceAliases})) return null;
+  if (namedCandidate) {
+    const bare=namedCandidate.terms.some(t=>bareKey(t.value)===bareKey(current));
+    const introduction=isPlainNamedTreatmentInterest(current,namedCandidate);
+    if (bare || introduction) {
+      const clarified=resolveClarifiedPriceService({customerText:current,conversationHistory:turns,services,serviceAliases});
+      // A plain interest statement can inherit only an unanswered price
+      // clarification, not a price menu that already answered the question.
+      if (!clarified || (introduction && hasTreatmentPriceContent(pricingMessageText(turns.at(-2))))) return null;
+    }
+  }
   if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
       (direct && direct.name !== intent.treatment) ||
       (RESET.test(current) && !direct)) return null;
