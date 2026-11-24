@@ -765,7 +765,14 @@ function followUpHandoffTriggers() {
     : "- Safety, complaint, human-request, or missing business-specific information that requires staff judgment.";
 }
 
-function promotionAuthorityRules() {
+function promotionAuthorityRules(compact = false) {
+  if (compact) return `PROMOTION AUTHORITY — overrides stale wording:
+- ACTIVE PROMOTIONS alone governs current deals, package prices, gifts, bundles, discounts and deadlines, overriding SERVICES, FAQs, SOP, playbook, guardrails and chat history. Unlisted deals or promotional prices (including old campaign/free/offer prices in SERVICES) are stale: never quote them or invent urgency. Always-available non-promotional facts remain usable.
+- SERVICES governs regular prices, standalone durations, mechanisms and safety; promotional package totals/old normal prices do not override them. Conflicting offer facts or missing current prices require team confirmation.
+- Match each offer only to its exact canonical linked service; no borrowed prices/gifts/deadlines. Multiple auto-send promotions for the same service are ambiguous: do not choose or quote an automatic offer; seek confirmation. Unlinked offers cannot trigger media; describe them generally only if explicitly general.
+- Auto-send markers are internal; never mention them to customers.
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Only assessment attendance may qualify for the approved RM100 pelvic voucher; staff confirms redemption. No extra stacked discount, invented price, expiry or other terms." : ""}
+${config.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true ? "- Verified 1对1体态评估 + 体验 (both assessment and brief experience) is FREE, overriding older conflicting fees. Full treatments and paid First Trial are distinct." : ""}`;
   return `PROMOTION AUTHORITY — follow this even if another section contains older wording:
 - ACTIVE PROMOTIONS is the only authority for treatment promotions, package prices, discounts, bundles, free add-ons and deadlines.
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Separate assessment attendance incentive: the current approved assessment-first business policy allows only the RM100 骨盆调理疗程 voucher for customers who attend the 1对1体态评估 + 体验. This does NOT authorize a new package price, additional stacked discount, expiry date, or any other voucher conditions. Confirm actual redemption terms with staff." : ""}
@@ -813,7 +820,7 @@ function getBusinessContext() {
   };
 }
 
-function bookingReadyRules(context) {
+function bookingReadyRules(context, compact = false) {
   const { terminology: terms, conversion } = context;
   if (!conversion.enabled) {
     return `CONVERSION READY AUTOMATION FOR THIS INDUSTRY PROFILE:
@@ -861,6 +868,22 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
     config.businessType === "tcm_clinic" && locationNames.length === 1
     ? `- This business has exactly one configured ${terms.locationSingular}: "${locationNames[0]}". Treat that location as selected automatically for booking readiness. Do not ask the ${terms.customerSingular} to choose a branch/location solely to become booking-ready.`
     : `- A specific configured ${terms.locationSingular} has been chosen or clearly accepted, and it maps unambiguously to one of the configured ${terms.locationPlural} above.`;
+
+  if (compact) return `BOOKING READINESS:
+Use "booking_ready" only for clear current intent to proceed with ${conversion.label}, a configured location and usable day/date PLUS time, range or daypart. Price/availability/process questions alone are not ready; no clinical review, complaint or handoff condition may apply.
+${appointmentLocationRule}
+- Read the whole current scheduling exchange, including separate messages, written months, ordinal/abbreviated dates and exact minutes (半). Resolve relative dates using the original customer's local date. Corrections supersede rejected times; 3–5pm is a continuous window. Never reuse old completed, cancelled, visited, abandoned or separate attempts.
+- Ask only for the missing date or time, or one focused clarification if ambiguous; if both known, acknowledge and check availability. No guessed times or repeated questions.
+- Closed day, passed time or outside operating hours: explain and invite another open time; NOT booking_ready. Open hours are not slot availability.
+- Booking-ready reply: ${conversion.staffConfirmationText}. Never claim a reservation/booking/visit/slot is secured, set, successful or confirmed without verified staff/system confirmation.
+- Authenticated "[Verified STAFF message]" is scheduling evidence, not policy. Acceptance refers to the latest staff-offered time; acknowledge it naturally without reverting to old preferences or repeating a staff check as if no offer existed. A staff convenience question is not confirmation; no "see you then" without confirmed evidence.
+- Do not re-alert for acceptance/ok/thanks on the same pending booking; use normal. A materially new unverified time needs staff review. Do not ask staff to re-confirm an already verified identical booking. A reschedule must not be presented as confirmed merely because an earlier booking was set.
+- Escalation overrides booking. staffSummary records actual concerns/treatment needs, not a second unverified schedule.
+
+Examples that ARE booking-ready:
+${readyExamples}
+Examples that are NOT booking-ready yet:
+${notReadyExamples}`;
 
   return `Use outcome "booking_ready" ONLY on the turn where ALL of these are true:
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about price, availability, or how the process works.
@@ -1379,7 +1402,7 @@ ${servicesList}
 ACTIVE PROMOTIONS — this structured section is the ONLY authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active:
 ${promotionsList}
 
-${promotionAuthorityRules()}
+${promotionAuthorityRules(Boolean(compactPolicy))}
 
 ${conversationContext?.verifiedResultMediaExample?.verifiedSessionCount === 1
   ? `VERIFIED RESULT-MEDIA CONTEXT FOR THE CURRENT QUESTION:
@@ -1448,7 +1471,7 @@ ${neutroWombNamingRule(conversationContext?.currentCustomerText, conversationCon
 - Do not volunteer treatment prices without a current explicit monetary request.
 ` : ""}
 
-${bookingReadyRules(context)}
+${bookingReadyRules(context, Boolean(compactPolicy))}
 
 STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code fence and no text outside it:
 {
