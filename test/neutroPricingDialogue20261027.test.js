@@ -467,7 +467,7 @@ test("information-review recovery requires a verified dual quote and fresh no-cl
 test("outbound two-treatment quote is guarded before the model information handoff and stays text-only", () => {
   const fs=require("node:fs"),path=require("node:path");
   const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  const quotePosition=source.indexOf("let twoTreatmentQuote = aiPricingMode");
+  const quotePosition=source.indexOf('let twoTreatmentQuote = ["shadow","enabled"].includes(aiPricingMode)');
   const approvalPosition=source.indexOf("const legacyPricingApproval = resolveApprovedPricingAssessment");
   const recoverPosition=source.indexOf("canRecoverTwoPriceInformationReview({");
   const sendPosition=source.indexOf("const sendOutcome = await sendTrackedText(");
