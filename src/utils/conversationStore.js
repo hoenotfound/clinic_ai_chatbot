@@ -118,6 +118,15 @@ function withPricingHistoryMetadata(entry, row) {
         row.has_media_attachment!==true && !row.media_url && !row.media_mime_type,
       enumerable:false,
     },
+    // A provider-confirmed bot send can bridge its own priced menu and
+    // matching configured promotion artwork. Never infer delivery from captions.
+    pricingDeliveredBotMessage: {
+      value: row?.role === "assistant" && !isVerifiedHumanStaffRow(row) &&
+        row.is_automated_follow_up !== true &&
+        row.whatsapp_customer_mutation == null &&
+        ["delivered","read"].includes(row.delivery_status),
+      enumerable:false,
+    },
     // Trusted outbound image identity is not serialized into model prompts;
     // it is used only to cross-check one-session results against the exact
     // clinic-configured media item, avoiding caption-only assumptions.
