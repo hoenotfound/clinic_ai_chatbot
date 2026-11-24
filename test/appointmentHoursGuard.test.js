@@ -395,3 +395,57 @@ test("written dates still enforce Monday closures and configured treatment durat
   assert.equal(promo.issue.status,"not_appointment");
   assert.equal(promo.reply,"Here are the current prices");
 });
+
+test("written dates respect explicit weekdays, invalid dates, and past dates",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now};
+  assert.equal(evaluateAppointmentHours({...args,customerText:"Sunday 6 December at 3pm"}).date,"2026-12-06");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"Monday 7 December at 3pm"}).status,"closed");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"23 November 3pm"}).status,"past");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"31 November 3pm",recentCustomerMessages:[
+    {content:"29 November 2pm",createdAt:"2026-11-24T01:14:00Z"}]}).status,"invalid_date");
+  assert.equal(detectDate("1 January","2026-12-31").date,"2027-01-01");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 6pm"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November evening"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 3:75 PM"}).status,"valid_day");
+});
+test("cancellation, superseded dates, and polite split replies are handled conservatively",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now};
+  const history=(...messages)=>messages.map((content,i)=>({content,createdAt:new Date(Date.parse(now)-(i+1)*10000).toISOString()}));
+  assert.equal(evaluateAppointmentHours({...args,customerText:"3pm",recentCustomerMessages:history("Actually cancel the appointment","29 November")}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November 3pm cannot"}).status,"not_appointment");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"29 November",recentCustomerMessages:history("28 November 2pm","29 November 3pm")}).status,"valid_day");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"3pm",recentCustomerMessages:history("29 November please")}).status,"valid_preference");
+  assert.equal(evaluateAppointmentHours({...args,customerText:"yes please",recentCustomerMessages:history("3pm please","29 November")}).status,"valid_preference");
+});
+test("normal and booking-ready replies cannot repeat or invent a verified preference",()=>{
+  const now="2026-11-24T01:15:00Z";
+  const args={hours,receivedAt:now,now,customerText:"29 November 3pm",language:"en",durationMinutes:90};
+  for(const reply of ["Which date and time would you prefer? I'll have the clinic check availability 😊",
+    "I will check November 29 at 4pm for your appointment","I will check November 28 at 3pm for your appointment",
+    "Would 7pm work for your appointment?","29 November\n7pm","Would 29 November at 3pm or 7pm work for your appointment?"]){
+    const checked=guardAppointmentReply({...args,reply,requireValidPreference:true});
+    assert.equal(checked.blocked,false,reply);
+    assert.match(checked.reply,/2026-11-29, 3:00 PM/);
+  }
+  const normal=guardAppointmentReply({...args,reply:"Which date and time would you prefer?",requireValidPreference:false});
+  assert.equal(normal.repairedPreference,true);
+  assert.equal(normal.redundantClarification,true);
+  assert.match(normal.reply,/2026-11-29, 3:00 PM/);
+  const mixed=guardAppointmentReply({...args,customerText:"Can I visit?",reply:"Would 29 November or 30 November work for your appointment?",requireValidPreference:false});
+  assert.equal(mixed.blocked,true);
+  assert.equal(mixed.issue.status,"closed");
+  const morning=guardAppointmentReply({...args,customerText:"Can I visit?",reply:"Would Sunday 7am work for your appointment?",requireValidPreference:false});
+  assert.equal(morning.issue.status,"outside_hours");
+});
+test("booking-ready recovery requires a prior scheduling question and verified customer input",()=>{
+  const {canRecoverBookingReady,verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-24T01:15:00Z";
+  const issue=evaluateAppointmentHours({hours,customerText:"29 November 3pm",receivedAt:now,now});
+  assert.equal(verifiedAppointmentPreference(issue),"2026-11-29 15:00");
+  assert.equal(canRecoverBookingReady({customerText:"29 November 3pm",previousAssistantText:"Which day would be convenient for you, weekday or weekend?",issue}),true);
+  assert.equal(canRecoverBookingReady({customerText:"29 November 3pm",previousAssistantText:"Here is our promotion",issue}),false);
+  assert.equal(canRecoverBookingReady({customerText:"thanks",previousAssistantText:"Which day would be convenient?",issue}),false);
+  assert.equal(verifiedAppointmentPreference({status:"invalid_date"}),null);
+});
