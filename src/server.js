@@ -1497,13 +1497,6 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
-        modelPricingStage = parsedReply.pricingStage || null;
-        // Capture provider intent before any legacy classifier mutates it.
-        modelPricingIntent = { structured:parsedReply.structured, outcome:parsedReply.outcome,
-          priceQuery:parsedReply.priceQuery, packageQuery:parsedReply.packageQuery,
-          serviceQuery:parsedReply.serviceQuery,
-          treatment:parsedReply.details?.treatment || null,
-          pricingStage:parsedReply.pricingStage || null, promotionOption:parsedReply.promotionOption || null };
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -1516,6 +1509,18 @@ async function processIncomingMessage(
             ),
           }
         );
+        // Only the accepted response may provide intent. A language
+        // fallback explicitly clears pricing authority, not just its text.
+        modelPricingStage = languageCheckedReply.languageCorrectionFailed
+          ? null : languageCheckedReply.pricingStage || null;
+        modelPricingIntent = languageCheckedReply.languageCorrectionFailed
+          ? null : {
+            structured:languageCheckedReply.structured, outcome:languageCheckedReply.outcome,
+            priceQuery:languageCheckedReply.priceQuery, packageQuery:languageCheckedReply.packageQuery,
+            serviceQuery:languageCheckedReply.serviceQuery,
+            treatment:languageCheckedReply.details?.treatment || null,
+            pricingStage:modelPricingStage, promotionOption:languageCheckedReply.promotionOption || null,
+          };
         ({
           text: aiReply,
           flagged,
