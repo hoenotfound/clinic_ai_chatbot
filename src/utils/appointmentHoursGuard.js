@@ -45,13 +45,21 @@ function monthNumber(name){return MONTH_NAMES.findIndex(names=>names.includes(na
 function calendarDate(year,month,day,anchorDate){
   const y=year?+year:+anchorDate.slice(0,4);
   const date=validDate(y,month,day);
-  return !year&&date&&date<anchorDate?validDate(y+1,month,day):date;
+  return !year&&date&&date<anchorDate&&+anchorDate.slice(5,7)>=11&&month<=2?validDate(y+1,month,day):date;
 }
 const DAYPART=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|\bmorning\b|\bafternoon\b|\bevening\b|\bpagi\b|\bpetang\b|\bmalam\b|\btengah hari\b)/iu;
 const BARE_TIME=/^(?:(?:at|pukul|jam)\s+)?(?:\d{1,2}(?:[:.：]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)|\d{1,2}[:.：]\d{2}|(?:上午|早上|中午|下午|晚上|傍晚)?[零〇一二两兩三四五六七八九十\d]{1,3}\s*(?:点|點|时|時)(?:\s*[零〇一二两兩三四五六七八九十\d]{1,3}\s*分?)?|(?:morning|afternoon|evening|pagi|petang|malam|tengah hari|上午|早上|中午|下午|晚上|傍晚))[？?.!！。\s]*$/iu;
-function isBareTimePreference(text){return BARE_TIME.test(String(text||"").normalize("NFKC").trim());}
+function preferenceText(text){
+  return String(text||"").normalize("NFKC").trim()
+    .replace(/^(?:yes|please|ok(?:ay)?|baik|boleh)[,\s]+/iu,"")
+    .replace(/(?:[,\s]+(?:please|pls|thanks|thank you|ya|terima kasih|boleh)|[，,\s]*(?:谢谢|謝謝|可以吗|可以嗎|可以的))[。.!?！？\s]*$/iu,"").trim();
+}
+function isBareTimePreference(text){return BARE_TIME.test(preferenceText(text));}
+function rejectsPreference(text){
+  return /(?:取消(?:预约|預約)?|不(?:要|想|能|可以)(?:来|來|过来|過來|预约|預約)|不能(?:了|来|來)|\b(?:cancel(?:led|ling)?|cannot (?:come|make it|attend)|can't (?:come|make it|attend)|not available|no longer interested|tak jadi|batal(?:kan)?|tak boleh datang)\b|\b(?:cannot|can't|not possible|doesn['’]t work|won['’]t work)\s*[.!?]*$|不(?:行|方便|可以)[。！？\s]*$)/iu.test(text);
+}
 function isBareCalendarPreference(text,anchorDate){
-  const value=String(text||"").normalize("NFKC").trim();
+  const value=preferenceText(text);
   if(!detectDate(value,anchorDate))return false;
   const rest=value.replace(new RegExp(DAY_FIRST,"giu"),"")
     .replace(new RegExp(MONTH_FIRST,"giu"),"")
@@ -82,19 +90,17 @@ function schedulingEvidence(content,anchorDate){
     (visit.test(content)||isBareCalendarPreference(content,anchorDate)||isBareTimePreference(content));
 }
 
-function detectDate(text,anchorDate){
+function parseCalendar(text,anchorDate){
   const source=String(text||"").normalize("NFKC");
   if(!anchorDate || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDate))return null;
   const found=new Set();
-  const add=(v)=>{if(v)found.add(v);};
+  let invalid=false;
+  const add=(v)=>{if(v)found.add(v);else invalid=true;};
   for(const m of source.matchAll(/\b(20\d{2})[/-](\d{1,2})[/-](\d{1,2})\b/gu))
     add(validDate(+m[1],+m[2],+m[3]));
   for(const m of source.matchAll(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b/gu)){
     if(m.index>0&&/[\d/-]/u.test(source[m.index-1]))continue;
-    const year=m[3]?+m[3]:+anchorDate.slice(0,4);
-    let date=validDate(year,+m[2],+m[1]);
-    if(!m[3]&&date&&date<anchorDate)date=validDate(year+1,+m[2],+m[1]);
-    add(date);
+    add(calendarDate(m[3],+m[2],+m[1],anchorDate));
   }
   for(const m of source.matchAll(/(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})[日号號]?/gu))
     add(calendarDate(m[1],+m[2],+m[3],anchorDate));
@@ -109,6 +115,12 @@ function detectDate(text,anchorDate){
     if(/^(?:[:.]\d|\s*(?:am|pm)\b)/iu.test(remaining.slice(m.index+m[0].length)))continue;
     add(calendarDate(m[3],monthNumber(m[1]),+m[2],anchorDate));
   }
+  const explicitDates=[...found];
+  const weekdayDate=(day,prefix,date)=>{
+    if(!prefix&&explicitDates.length===1&&weekday(explicitDates[0])===day&&
+      !/(?:\bor\b|\band\b|或者|还是|還是|或|\batau\b)/iu.test(source))return;
+    add(date);
+  };
   for(const [pattern,offset] of [
     [/(?:今天|今日|\btoday\b|\bhari ini\b)/iu,0],
     [/(?:明天|(?<!day after )\btomorrow\b|\besok\b)/iu,1],
@@ -122,17 +134,22 @@ function detectDate(text,anchorDate){
       const daysSinceMonday=(weekday(anchorDate)+6)%7;
       distance=7-daysSinceMonday+((target+6)%7);
     }
-    add(plusDays(anchorDate,distance));
+    weekdayDate(target,m[1].startsWith("下")?"next":"",plusDays(anchorDate,distance));
   }
   for(let d=0;d<WEEK_ALIASES.length;d++){
     const pattern=new RegExp("\\b(?:(next|this|coming)\\s+)?(?:"+WEEK_ALIASES[d].join("|")+")\\b","giu");
     for(const m of source.matchAll(pattern)){
       let distance=(d-weekday(anchorDate)+7)%7;
       if(m[1]?.toLowerCase()==="next")distance=7-(weekday(anchorDate)+6)%7+(d+6)%7;
-      add(plusDays(anchorDate,distance));
+      weekdayDate(d,m[1],plusDays(anchorDate,distance));
     }
   }
-  return found.size===1?{date:[...found][0]}:found.size>1?{ambiguous:true}:null;
+  const dates=[...found];
+  return invalid?{invalid:true,dates}:dates.length===1?{date:dates[0],dates}:dates.length>1?{ambiguous:true,dates}:null;
+}
+function detectDate(text,anchorDate){
+  const parsed=parseCalendar(text,anchorDate);
+  return parsed?.invalid?null:parsed?.date?{date:parsed.date}:parsed?.ambiguous?{ambiguous:true}:null;
 }
 function toMinute(hhmm){
   if(!/^\d{1,2}:\d{2}$/u.test(String(hhmm||"")))return null;
@@ -188,7 +205,7 @@ function timesInText(text){
   for(const m of value.matchAll(/(?<![\d:.：])\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/giu)){
     addTime(+m[1],0,m[2].toLowerCase().replace(/\./g,""));
   }
-  for(const m of value.matchAll(/\b(?:pukul\s*)?(\d{1,2})\s*(?:pagi|petang|malam|tengah hari)\b/giu)){
+  for(const m of value.matchAll(/(?<![\d:.：])\b(?:pukul\s*)?(\d{1,2})\s*(?:pagi|petang|malam|tengah hari)\b/giu)){
     const suffix=/petang|malam|tengah hari/iu.test(m[0])?"pm":"am";
     addTime(+m[1],0,suffix);
   }
@@ -238,67 +255,100 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   if(!hours?.weekly)return {status:"unconfigured"};
   const anchor=localParts(receivedAt),today=localParts(now);
   if(!anchor||!today)return {status:"unknown"};
-  const current=detectDate(customerText,anchor.date);
-  if(current?.ambiguous)return {status:"ambiguous"};
+  const current=parseCalendar(customerText,anchor.date);
+  const hasTime=timesInText(customerText).length>0||DAYPART.test(customerText);
+  if(rejectsPreference(customerText))return {status:"not_appointment"};
+  if(current?.invalid)return {status:"invalid_date",hasTime};
+  if(current?.ambiguous)return {status:"ambiguous",dates:current.dates,hasTime};
   let selected=current?.date||null;
   let selectedIndex=-1;
   const history=appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now});
+  const boundary=history.findIndex(item=>rejectsPreference(item.content));
+  const activeHistory=boundary<0?history:history.slice(0,boundary);
   if(!selected){
-    for(let i=0;i<history.length;i++){
-      const {content,local}=history[i];
+    for(let i=0;i<activeHistory.length;i++){
+      const {content,local}=activeHistory[i];
+      const found=parseCalendar(content,local.date);
+      if(found?.invalid&&!/promotion|promo|优惠|促销/iu.test(content))return {status:"invalid_date",hasTime};
       if(!schedulingEvidence(content,local.date))continue;
-      const found=detectDate(content,local.date);
-      if(found?.ambiguous)return {status:"ambiguous"};
+      if(found?.ambiguous)return {status:"ambiguous",dates:found.dates,hasTime};
       if(found?.date&&found.date>=today.date){selected=found.date;selectedIndex=i;break;}
-      if(found?.date&&found.date<today.date)return {status:"unknown",hasTime:timesInText(customerText).length>0||DAYPART.test(customerText)};
+      if(found?.date&&found.date<today.date)return {status:"unknown",hasTime};
     }
   }
-  // Model-provided preference is untrusted unless grounded by the customer's
-  // own dated message. Only callers with independently verified preferences
-  // can opt into interpreting preference alone.
   if(!selected&&trustPreferenceWithoutCustomer){
-    const found=detectDate(appointmentPreference,anchor.date);
-    if(found?.ambiguous)return {status:"ambiguous"};
+    const found=parseCalendar(appointmentPreference,anchor.date);
+    if(found?.invalid)return {status:"invalid_date",hasTime};
+    if(found?.ambiguous)return {status:"ambiguous",dates:found.dates,hasTime};
     selected=found?.date||null;
   }
-  if(!selected)return {status:"unknown",hasTime:timesInText(customerText).length>0||DAYPART.test(customerText)};
+  if(!selected)return {status:"unknown",hasTime};
   const day=weekday(selected),opening=intervals(hours,day);
   const info={date:selected,weekday:day};
   if(opening===null)return {status:"unconfigured",...info};
-  if(!opening.length)return {status:"closed",...info};
   if(selected<today.date)return {status:"past",...info};
-  // Do not attach an unrelated or superseded time to a newly selected day.
-  const matchingHistory=history.filter(({content,local},index)=>{
-    if(!schedulingEvidence(content,local.date))return false;
-    const referenced=detectDate(content,local.date);
-    if(referenced?.ambiguous)return false;
-    if(referenced?.date)return referenced.date===selected;
-    if(selectedIndex>=0)return index<selectedIndex;
-    return index===0&&isBareCalendarPreference(customerText,anchor.date)&&
-      isBareTimePreference(content)&&!history.slice(1).some(item=>detectDate(item.content,item.local.date));
-  });
-  let times=timesInText(customerText);
-  if(!times.length&&!DAYPART.test(customerText)){
-    for(const {content} of matchingHistory){
-      times=timesInText(content);
-      if(times.length||DAYPART.test(content))break;
+  if(!opening.length)return {status:"closed",...info};
+  // Never cross a superseding date or cancellation to recover an old time.
+  const matchingHistory=[];
+  for(let i=0;i<activeHistory.length;i++){
+    const item=activeHistory[i];
+    const referenced=parseCalendar(item.content,item.local.date);
+    if(referenced?.invalid||referenced?.ambiguous||(referenced?.date&&referenced.date!==selected))break;
+    if(referenced?.date===selected&&schedulingEvidence(item.content,item.local.date)){
+      matchingHistory.push(item);continue;
+    }
+    if(!referenced&&isBareTimePreference(item.content)){
+      if(selectedIndex>=0&&i<selectedIndex){matchingHistory.push(item);continue;}
+      if(selectedIndex<0&&i===0&&isBareCalendarPreference(customerText,anchor.date)&&
+        new Date(receivedAt).getTime()-item.timestamp<=5*60000&&
+        !activeHistory.slice(1).some(x=>parseCalendar(x.content,x.local.date)))matchingHistory.push(item);
     }
   }
-  // The AI's structured booking metadata is not evidence that the customer
-  // selected that time. It cannot turn "Tuesday" into "Tuesday 2 PM".
-  if(!times.length&&trustPreferenceWithoutCustomer)
-    times=timesInText(appointmentPreference);
-  if(!times.length){
-    const currentDaypart=DAYPART.test(customerText);
-    const recentDaypart=matchingHistory.some(item=>DAYPART.test(item.content));
-    return {status:currentDaypart||recentDaypart?"valid_preference":"valid_day",...info};
+  let timeText=customerText;
+  if(!timesInText(timeText).length&&!DAYPART.test(timeText)){
+    for(const {content} of matchingHistory){
+      if(timesInText(content).length||DAYPART.test(content)){timeText=content;break;}
+    }
   }
+  if(!timesInText(timeText).length&&!DAYPART.test(timeText)&&trustPreferenceWithoutCustomer)
+    timeText=appointmentPreference;
+  const times=timesInText(timeText);
   const length=Math.max(0,Math.min(480,Number(durationMinutes)||0));
-  const inHours=times.some(t=>opening.some(([open,close])=>t>=open&&t+length<=close));
-  const possible=times.some(t=>opening.some(([open,close])=>
-    t>=open&&t+length<=close&&(selected!==today.date||t>today.minute)));
-  return {status:possible?"valid_preference":inHours?"past":"outside_hours",...info};
+  const fits=t=>opening.some(([open,close])=>t>=open&&t<close&&t+length<=close);
+  const future=t=>selected!==today.date||t>today.minute;
+  if(!times.length){
+    const part=daypartInText(timeText);
+    if(!part)return {status:"valid_day",...info};
+    const [from,to]=DAYPART_RANGES[part];
+    const canFit=opening.some(([open,close])=>Math.max(open,from)<Math.min(close,to)&&
+      Math.max(open,from)+length<=Math.min(close,to));
+    const canFitFuture=opening.some(([open,close])=>{
+      const start=Math.max(open,from,selected===today.date?today.minute+1:0);
+      return start<Math.min(close,to)&&start+length<=Math.min(close,to);
+    });
+    return {status:canFitFuture?"valid_preference":canFit?"past":"outside_hours",...info,daypart:part};
+  }
+  const validTimes=times.filter(t=>fits(t)&&future(t));
+  return {status:validTimes.length?"valid_preference":times.some(fits)?"past":"outside_hours",...info,
+    times:validTimes,requestedTimes:times};
 }
+const DAYPART_RANGES={morning:[360,720],noon:[660,840],afternoon:[720,1080],evening:[1080,1440],overnight:[0,360]};
+function daypartInText(text){
+  const value=String(text||"");
+  if(/凌晨/u.test(value))return "overnight";
+  if(/(?:傍晚|晚上|\bevening\b|\bmalam\b)/iu.test(value))return "evening";
+  if(/(?:下午|\bafternoon\b|\bpetang\b)/iu.test(value))return "afternoon";
+  if(/(?:中午|\btengah hari\b)/iu.test(value))return "noon";
+  if(/(?:上午|早上|\bmorning\b|\bpagi\b)/iu.test(value))return "morning";
+  return null;
+}
+function verifiedAppointmentPreference(issue){
+  if(issue?.status!=="valid_preference"||!issue.date)return null;
+  const clock=t=>String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+  const time=issue.times?.length?issue.times.map(clock).join(" or "):issue.daypart;
+  return time?issue.date+" "+time:null;
+}
+
 function issueReply(issue,{hours,language="zh"}={}){
   let alternative=null;
   for(let i=1;i<=7;i++){
@@ -465,4 +515,4 @@ function currentClinicDate(value=new Date()){
 }
 module.exports={ZONE,localParts,detectDate,intervals,timesInText,
   durationMinutesForPackage,evaluateAppointmentHours,issueReply,
-  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText};
+  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference};
