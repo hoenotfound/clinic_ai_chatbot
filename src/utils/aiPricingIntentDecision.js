@@ -631,7 +631,7 @@ function resolveModelLedPricingDecision({
     if (!Number.isFinite(at) || at>now+60_000) return null;
     if (at<now-24*3600000) break;
     const content=pricingMessageText(t);
-    if (hasClinicalMediaRisk(content)) return null;
+    if (hasClinicalMediaRisk(content) && (t.role==="user" || i>=anchorIndex)) return null;
     if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
         (!(t.pricingDeliveredStaffImage===true || t.pricingVerifiedStaffText===true) ||
          t.pricingBusinessAppPlaceholder===true || /\[unsupported|message deleted/iu.test(content) ||
@@ -663,6 +663,7 @@ function resolveModelLedPricingDecision({
     const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
     const listed=findMentionedPromotionPackages(options,previousText);
     const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
+      findServicesInText(previousText,candidates).includes(intent.treatment) &&
       listed.length>1 && all.every(p=>{
         const lines=previousText.split(/\n+/u).filter(line=>
           findMentionedPromotionPackages(options,line).some(o=>o.name===p.name));
@@ -675,6 +676,20 @@ function resolveModelLedPricingDecision({
       });
     if (!mentioned.length && !(priorChoice.length===1 && priorChoice[0].name===selected.name) &&
         !menuSupports && options.length!==1) return null;
+    // Price-relative references must agree with the actual uniquely cheapest
+    // or highest-priced option. Other semantic references rely on a grounded
+    // menu and the model; do not treat ambiguous price ties as a selection.
+    if (!mentioned.length && options.length>1) {
+      const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
+      const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+      if (cheaper || dearer) {
+        if (!menuSupports || (cheaper && dearer)) return null;
+        const amount=p=>Number(p.price.slice(2));
+        const target=(cheaper?Math.min:Math.max)(...all.map(amount));
+        const matching=all.filter(p=>amount(p)===target);
+        if (matching.length!==1 || matching[0].name!==selected.name) return null;
+      }
+    }
     prices=[selected];
   } else if (mentioned.length===1) {
     // A specific customer choice cannot be silently widened to all packages.
