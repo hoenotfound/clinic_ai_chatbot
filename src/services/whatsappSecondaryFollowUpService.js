@@ -28,6 +28,7 @@ const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFe
   require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
@@ -770,6 +771,13 @@ const CANDIDATES_SQL=`
        AND attempted.slot_hours=rule.slot_hours
        AND attempted.status<>'deferred'
    )
+   -- Discovery only: do not generate a new draft while billing cannot settle.
+   AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
+     WHERE preflight.sender_id=sa.id AND preflight.owner_contact_id=c.id
+       AND preflight.state IN ('reserved','awaiting_pricing'))
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
+     WHERE alarm.sender_id=sa.id)
  ORDER BY inbound.created_at,c.id,rule.slot_hours
  LIMIT $5
 `;
