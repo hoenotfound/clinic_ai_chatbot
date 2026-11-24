@@ -230,6 +230,9 @@ test("live A/B: exact negated treatment correction approves only the newly reque
  }
  const wrong={...a,modelIntent:{...a.modelIntent,treatment:"3D 小颜术"}};
  assert.equal(resolveModelLedPricingDecision(wrong),null);
+ const contradictory=args("不要3D，3D多少钱？","3D 小颜术");
+ assert.equal(resolveModelLedPricingDecision(contradictory),null);
+ assert.equal(resolveAiPricingDecision({...contradictory,priceQuery:true,treatment:"3D 小颜术"}),null);
 });
 test("live A/B: future notification alone cannot become a quote in either resolver or send boundary",async()=>{
  const {hasFuturePromotionPermissionWithoutPrice}=require("../src/utils/customerEnquiryEvidence");
