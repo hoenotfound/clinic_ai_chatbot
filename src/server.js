@@ -29,7 +29,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -2116,6 +2116,7 @@ async function processIncomingMessage(
     // Enabled prioritizes verified model decisions; independently proven
     // special cases and final safety rejections keep precedence.
     let semanticPricingApproval = null;
+    let rejectedModelPricing = false;
     if (["shadow","enabled"].includes(aiPricingMode) &&
         !flagged && !bookingReady && !keywordReason && !urgentSafety &&
         !marketingStopQuestion && !isActiveSafetyConcern(text) &&
@@ -2161,13 +2162,21 @@ async function processIncomingMessage(
           applied:apply,
         }));
         if (apply) semanticPricingApproval=semanticApproval;
+        rejectedModelPricing = shouldBlockRejectedModelPricing({
+          mode:aiPricingMode,modelIntent:modelPricingIntent,semanticCandidate,
+          semanticApproval,legacyApproval:legacyPricingApproval,
+          hasSpecialDecision:protectedLegacyPrice,customerText:text,
+          promotions:clinicConfig.promotions,
+        });
       } catch (error) {
         // Shadow diagnostics must not disrupt customer replies; Enabled also
         // retains the original decision if semantic evaluation fails.
         console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
       }
     }
-    const selectedPricingApproval = semanticPricingApproval || legacyPricingApproval;
+    const selectedPricingApproval = rejectedModelPricing
+      ? {decision:null,reason:"model_price_scope_unverified"}
+      : semanticPricingApproval || legacyPricingApproval;
     // Conflicting human quotes must not be overridden by either pricing path.
     // Shadow remains observational; the existing special cases retain scope.
     const conflictTreatment = selectedPricingApproval.decision?.treatment ||
@@ -3008,14 +3017,20 @@ async function processIncomingMessage(
       }
     }
 
-    if (staffPriceConflict && !flagged && !bookingReady &&
+    if ((staffPriceConflict || rejectedModelPricing) && !flagged && !bookingReady &&
         !rm68CampaignContinuationTextOnly && !repeatVisitPriceReply &&
         !marketingStopQuestion && !reviewContinuationTextOnly) {
-      reply = mediaLanguage === "ms"
-        ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
-        : mediaLanguage === "en"
-          ? "Let me check the price previously shared with our team so we don't give you the wrong amount 😊"
-          : "之前同事提供的价格需要再跟门店核对一下，避免给您不准确的报价哦 😊";
+      reply = staffPriceConflict
+        ? (mediaLanguage === "ms"
+          ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
+          : mediaLanguage === "en"
+            ? "Let me check the price previously shared with our team so we don't give you the wrong amount 😊"
+            : "之前同事提供的价格需要再跟门店核对一下，避免给您不准确的报价哦 😊")
+        : (mediaLanguage === "ms"
+          ? "Pakej atau rawatan yang mana satu anda maksudkan ya? Saya boleh semak harga yang betul 😊"
+          : mediaLanguage === "en"
+            ? "Which package or treatment do you mean? I can check the correct price for you 😊"
+            : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
       // No stale package/result image may accompany this clarification.
       reviewContinuationTextOnly = true;
     }
