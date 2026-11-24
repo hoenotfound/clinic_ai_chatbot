@@ -468,7 +468,7 @@ test("outbound two-treatment quote is guarded before the model information hando
   const fs=require("node:fs"),path=require("node:path");
   const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   const quotePosition=source.indexOf("let twoTreatmentQuote = aiPricingMode");
-  const approvalPosition=source.indexOf("const pricingApproval = resolveApprovedPricingAssessment");
+  const approvalPosition=source.indexOf("const legacyPricingApproval = resolveApprovedPricingAssessment");
   const recoverPosition=source.indexOf("canRecoverTwoPriceInformationReview({");
   const sendPosition=source.indexOf("const sendOutcome = await sendTrackedText(");
   assert.ok(quotePosition>0 && quotePosition<approvalPosition);
