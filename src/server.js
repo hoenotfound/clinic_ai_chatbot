@@ -25,7 +25,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
-const { guardAppointmentReply, durationMinutesForPackage } = require("./utils/appointmentHoursGuard");
+const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -2847,9 +2847,22 @@ async function processIncomingMessage(
         durationMinutes: bookingDurationMinutes,
         requireValidPreference: bookingReady,
       });
+      // Always apply a corrected reply, even when the validated preference
+      // stays eligible for Booking Ready.
+      reply = checked.reply;
+      if (!checked.blocked && checked.redundantClarification && !bookingReady &&
+          ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType) &&
+          !contact.needs_attention && !priceQuery && !packageQuery && !serviceQuery &&
+          !isDefiniteAppointmentCancellation(text)) {
+        const previousAssistant = (Array.isArray(history) ? history : [])
+          .slice().reverse().find(item => item?.role === "assistant");
+        if (canRecoverBookingReady({customerText:text,
+          previousAssistantText:previousAssistant?.content,issue:checked.issue})) {
+          bookingReady = true;
+        }
+      }
       if (checked.blocked) {
         bookingReady = false;
-        reply = checked.reply;
         console.info("[Appointment hours] corrected invalid booking preference contact=" +
           contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
       }
