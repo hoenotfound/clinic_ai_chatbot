@@ -95,12 +95,19 @@ function withPricingHistoryMetadata(entry, row) {
         String(row.media_mime_type||"").startsWith("image/"),
       enumerable:false,
     },
-    pricingDeliveredStaffText: {
+    // A readable, authenticated native-app echo establishes what staff
+    // wrote, not proof that the recipient read it. It may preserve an
+    // existing customer-named topic but never independently authorize a
+    // quote or prove a package menu was delivered.
+    pricingVerifiedStaffText: {
       value: isVerifiedHumanStaffRow(row) &&
-        ["delivered","read"].includes(row?.delivery_status) &&
+        (["delivered","read"].includes(row?.delivery_status) ||
+          (row.sent_by_username==="WhatsApp Business App" && row.delivery_status==null &&
+            typeof row.whatsapp_message_id==="string" && row.whatsapp_message_id.startsWith("wamid."))) &&
         row.whatsapp_customer_mutation==null &&
         row.has_media_attachment!==true && !row.media_url && !row.media_mime_type &&
-        typeof row.content==="string" && !!row.content.trim(),
+        typeof row.content==="string" && !!row.content.trim() &&
+        !/\[unsupported|message deleted/iu.test(row.content),
       enumerable:false,
     },
     pricingBusinessAppPlaceholder: {
