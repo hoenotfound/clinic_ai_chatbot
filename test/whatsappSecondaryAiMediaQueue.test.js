@@ -385,7 +385,8 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
   assert.match(calls[0].sql,/gate.owner_contact_id=job.contact_id/);
   assert.match(calls[0].sql,/job.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
-  assert.match(calls[0].sql,/job\.outbound_message_id IS NOT NULL OR job\.next_attempt_at<=NOW\(\)/);
+  assert.match(calls[0].sql,/job\.preparation_retry_not_before IS NULL OR job\.preparation_retry_not_before<=NOW\(\)/);
+  assert.match(worker.READY_SQL,/job\.preparation_retry_not_before IS NULL OR job\.preparation_retry_not_before<=NOW\(\)/);
   assert.match(calls[0].sql,/job.expires_at>NOW\(\)/);
   assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002",[21]]);
   assert.equal(await worker.wakeAfterVerifiedReconciliation({
@@ -709,6 +710,7 @@ test("temporary private image preparation failure requeues only a proven rejecte
    if(sql.includes("requeued AS") && sql.includes("whatsapp_sender_status_receipts")){
      assert.match(sql,/b.state='rejected'/);
      assert.match(sql,/outbound_message_id=NULL/);
+     assert.match(sql,/preparation_retry_not_before=NOW\(\)/);
      assert.equal(params[2],600000);
      return{rows:[{id:89,contact_id:21,delivery_status:"cancelled"}]};
    }
