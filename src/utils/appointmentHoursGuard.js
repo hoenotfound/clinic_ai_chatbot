@@ -400,7 +400,8 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     isBareTimePreference(customerText)||Boolean(parseCalendar(customerText,localParts(receivedAt||now)?.date)?.invalid));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
-  if((promotionalOnly||rejectsPreference(customerText))&&requireValidPreference)
+  if(rejectsPreference(customerText))return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+  if(promotionalOnly&&requireValidPreference)
     return {reply:original,blocked:true,issue:{status:"not_appointment"}};
   const issue=inboundAppointment||requireValidPreference
     ? evaluateAppointmentHours({
@@ -429,6 +430,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     const parsed=parseCalendar(segment,anchor);
     const segmentTimes=timesInText(segment);
     const scheduling=replyScheduling.test(segment)||inboundAppointment||requireValidPreference;
+    if(!replyScheduling.test(segment)&&/(?:promotion|promo|discount|price|offer|优惠|促销|价格|折扣|活动|diskaun)/iu.test(segment))continue;
     // A time alone in a scheduling proposal must be checked against the
     // selected date, not treated as a new, independently valid appointment.
     if(!scheduling&&!(parsed?.date&&segmentTimes.length))continue;
@@ -445,7 +447,8 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
       if(bad.includes(check.status)){outboundIssue=check;break;}
       // Check ALL proposed start times, not merely one open option.
       for(const t of segmentTimes){
-        const time=String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+        const h=Math.floor(t/60);
+        const time=(h%12||12)+":"+String(t%60).padStart(2,"0")+(h>=12?" PM":" AM");
         const inspected=evaluateAppointmentHours({hours,customerText:date+" "+time,
           receivedAt:now,now,durationMinutes});
         if(bad.includes(inspected.status)){outboundIssue=inspected;break;}
