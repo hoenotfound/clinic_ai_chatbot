@@ -1,6 +1,6 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
-const { evaluateAppointmentHours, verifiedAppointmentPreference } = require("../utils/appointmentHoursGuard");
+const { evaluateAppointmentHours, verifiedAppointmentPreference, appointmentCustomerContext } = require("../utils/appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
@@ -133,14 +133,20 @@ function createBookingReadyOutcomeService({
       details.appointmentPreference = verifiedPreference;
       if (!details.branch && clinicConfig.branches?.length === 1)
         details.branch = canonicalConfiguredValue(clinicConfig.branches[0]?.name, clinicConfig.branches);
-      // Free-form model summaries can contradict the verified date. Use a
-      // short verified recap; the complete conversation remains in Inbox.
+      // Keep actual customer concerns separate from the canonical appointment
+      // field. Use excerpts rather than trusting model-generated timing claims.
+      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:new Date()});
+      const formatClock = t => String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+      const feasibleWindow = hoursCheck.validWindows?.length
+        ? hoursCheck.validWindows.map(range=>range.map(formatClock).join("–")).join(" or ") : null;
       details.staffSummary = [
         details.treatment ? "Treatment: " + details.treatment : null,
         details.branch ? "Location: " + details.branch : null,
         "Customer preference: " + verifiedPreference,
+        feasibleWindow ? "Feasible start window within clinic hours (availability not checked): " + feasibleWindow : null,
         "Staff to confirm availability.",
-      ].filter(Boolean).join(". ");
+        context.length ? "Customer context (quoted; not scheduling details): " + context.map(value=>JSON.stringify(value)).join("; ") : null,
+      ].filter(Boolean).join(". ").slice(0,600);
     }
     const client = await database.connect();
     let contactUpdated = false;
