@@ -187,7 +187,7 @@ staff result recovery, subsequent sessions and multi-treatment comparisons.
 A final rejection or protected special case cannot be bypassed by model intent.
 Switch back to Shadow to disable the new authorization path.
 
-The existing provider response fields are captured before legacy mutation.
+The accepted language-checked provider response fields are captured before legacy mutation.
 No additional model call, new worker, table or setting is added. Recent
 DB-timestamped customer-named treatment context can survive intervening
 ordinary questions and verified non-conflicting staff assistance. Unknown
@@ -198,6 +198,19 @@ priced preceding menu. Enabled's prompt clarifies these interpretations.
 The reply formatter keeps safe non-commercial model wording while supplying
 the verified quote first; artwork must match the same approved amounts.
 The existing delivery safeguards remain authoritative.
+
+Enabled also supplies compact verified amounts for one relevant service
+without requiring a price keyword. Knowledge does not authorize quotation.
+Non-price questions still require false price/package intent and retain
+independent quantity, benefit and consent vetoes. Rejected semantic package
+scope must not widen into a broader legacy quote; explicit independently
+verified selections and protected special cases are retained. Conflicting
+staff quotes are checked against payable amounts, original prices and voucher
+terms. A verified simple single or multi-package model reply may be preserved
+when its labelled amounts and conditions agree; otherwise the existing
+formatter supplies verified facts. Approved current price and package requests
+qualify for the existing secondary quiet-hours exception, subject to all
+billing, consent, ownership and duplicate checks.
 
 Review [Semantic pricing] logs for both approvals, treatment and package
 agreement and applied status. Logs omit raw customer content. A comparison
