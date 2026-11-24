@@ -18,7 +18,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
 const { verifiedPricesForService, staffQuoteMatchesConfiguredPrice } = require("./verifiedPriceReply");
 const { getActivePromotions, promotionPackages, findMentionedPromotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
-const { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote } = require("./independentRefusalPriceRequest");
+const { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote, hasScopedServiceCorrection } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
 const { resolveStaffResultPriceContext } = require("./neutroStaffResultPriceContext");
 const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
@@ -389,6 +389,9 @@ function resolveAiPricingDecision({
   const independentRequest = resolveIndependentRefusalPriceRequest({
     customerText: original, services, serviceAliases,
   });
+  if (!independentRequest && hasScopedServiceCorrection({
+    customerText: original, services, serviceAliases,
+  })) return null;
   const current = independentRequest?.priceText || original;
   if (independentRequest && hasClinicalMediaRisk(original)) return null;
   const explicitAmount = hasCurrentPriceAmountRequest(current);
@@ -557,7 +560,8 @@ function resolveModelLedPricingDecision({
     customerText:original,services,serviceAliases,
   });
   if (independent && independent.treatment!==intent.treatment) return null;
-  if (!independent && hasCustomerRefusedPriceQuote(original)) return null;
+  if (!independent && (hasCustomerRefusedPriceQuote(original) ||
+      hasScopedServiceCorrection({customerText:original,services,serviceAliases}))) return null;
   const current=independent?.priceText || original;
   // Negative safety/permission gates remain independent of model output.
   // The existing refusal resolver permits a distinctly requested NEW service.
