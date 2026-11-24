@@ -5,7 +5,7 @@
 // context; all quoted prices must come from active configured offers.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
+const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { isGreetingOrLanguageOnly } = require("./chatLanguage");
@@ -564,6 +564,10 @@ function resolveModelLedPricingDecision({
       AD_NEGATED_TOPIC.test(current) || AD_BROAD_TOPIC.test(current) ||
       /\\b(?:stop|unsubscribe)\\b|退订|退訂/iu.test(original) ||
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
+      isContextualAdServiceEnquiry(current) ||
+      (UNRELATED.test(current) && !hasExplicitPriceRequest(current)) ||
+      (intent.serviceQuery === true && !hasExplicitPriceRequest(current) &&
+        !(allowOfferEnquiries && intent.packageQuery === true)) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(current,
         complimentaryAssessmentExperienceEnabled, conversationHistory)) return null;
