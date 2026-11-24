@@ -10,6 +10,8 @@ const { parseFollowUpAiResult } = require("../src/utils/followUpAiResult");
 const { estimateAiUsage } = require("../src/services/aiCostEstimator");
 const { previewConsolidation } = require("./preview-neutro-prompt-consolidation");
 const cases = require("./config-proposals/neutro-ab-cases.json");
+const stage2Plan = require("./config-proposals/neutro-prompt-consolidation-stage2.json");
+const { resolveCompactConversationPolicy } = require("../src/utils/compactConversationPolicy");
 const MODEL = "gemini-3.8-flash";
 
 function withConfig(data, fn) {
@@ -23,11 +25,11 @@ function withConfig(data, fn) {
     Object.assign(config, previous);
   }
 }
-function requestFor(data, scenario) {
+function requestFor(data, scenario, compactPromptPlan = null) {
   return withConfig(data, () => buildGeminiRequest(scenario.history, {
     surface: scenario.surface, channel: scenario.channel,
     replyLanguage: scenario.lang, isFirstMessage: scenario.history.length === 1,
-    followUpContext: scenario.followUpContext || null,
+    followUpContext: scenario.followUpContext || null, compactPromptPlan,
   }, MODEL).request);
 }
 function checksFor(data, scenario, raw) {
@@ -58,8 +60,8 @@ function usageOf(response) {
     uncachedCostUsd: promptTokens === null || outputTokens === null
       ? null : estimateAiUsage({ ...event, cachedTokens: 0 }).costUsd };
 }
-async function evaluate(data, scenario, generate) {
-  const request = requestFor(data, scenario);
+async function evaluate(data, scenario, generate, plan) {
+  const request = requestFor(data, scenario, plan);
   const row = { promptChars: request.config.systemInstruction.length, mode: generate ? "live" : "offline" };
   if (!generate) return row;
   const started = Date.now();
@@ -75,14 +77,14 @@ async function evaluate(data, scenario, generate) {
   }
   return row;
 }
-async function runBenchmark(original, candidate, selected, generate = null) {
+async function runBenchmark(original, candidate, selected, generate = null, plan = null) {
   const rows = [];
   for (const [i, scenario] of selected.entries()) {
     const pair = { id: scenario.id, note: scenario.note, surface: scenario.surface,
       history: scenario.history };
     // Alternate order to reduce systematic warm-cache bias. One attempt per arm.
     const order = i % 2 ? ["B", "A"] : ["A", "B"];
-    for (const arm of order) pair[arm] = await evaluate(arm === "A" ? original : candidate, scenario, generate);
+    for (const arm of order) pair[arm] = await evaluate(arm === "A" ? original : candidate, scenario, generate, arm === "B" ? plan : null);
     rows.push(pair);
   }
   return rows;
@@ -113,7 +115,7 @@ function renderReport(rows, live) {
     ["Failed explicit checks",live?a.failedChecks:null,live?b.failedChecks:null,""]
   ];
   const cell = r => '<div><strong>'+esc(r.promptChars)+' prompt characters</strong><p>'+esc(r.error || r.reply || (live?"No customer-facing text":"Offline: no AI reply"))+'</p><pre>'+esc(JSON.stringify({actual:r.actual,checks:r.checks,usage:r.usage,latencyMs:r.latencyMs},null,2))+'</pre></div>';
-  return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Neutro Sense A/B test</title><style>body{font:15px/1.5 system-ui;max-width:1200px;margin:32px auto;padding:0 18px;color:#213547}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8e0e5;padding:10px;text-align:left;vertical-align:top}th{background:#edf3f5}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}p{white-space:pre-wrap}section{margin:24px 0;border-top:1px solid #d8e0e5} .pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}.pair>div{min-width:0;background:#f5f7f8;padding:12px}@media(max-width:650px){.pair{grid-template-columns:1fr}}</style><h1>Neutro Sense prompt A/B test</h1><p>'+esc(live?"Live test: synthetic cases, direct Gemini requests, one application-level attempt per arm.":"Offline test: no provider calls, no actual tokens, cost or reply quality measured.")+'</p><p>Model: '+MODEL+' | '+rows.length+' scenarios. A = original; B = consolidated. Cost uses repository estimates, not an invoice. Missing usage makes the total unknown. This tests prompt generation and parser decisions, not message sending, media selection, sender routing or booking execution. Human review of both replies is required; automatic checks alone cannot establish quality.</p><table><thead><tr><th>Metric</th><th>A</th><th>B</th><th>Reduction</th></tr></thead><tbody>'+metrics.map(m=>'<tr>'+m.map(v=>'<td>'+esc(v)+'</td>').join("")+'</tr>').join("")+'</tbody></table>'+rows.map(r=>'<section><h2>'+esc(r.id)+'</h2><p>'+esc(r.note)+'</p><p>'+esc(r.history.map(m=>m.role+": "+m.content).join("\n"))+'</p><div class="pair"><div><h3>A: original</h3>'+cell(r.A)+'</div><div><h3>B: consolidated</h3>'+cell(r.B)+'</div></div></section>').join("")+'</html>';
+  return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Neutro Sense A/B test</title><style>body{font:15px/1.5 system-ui;max-width:1200px;margin:32px auto;padding:0 18px;color:#213547}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8e0e5;padding:10px;text-align:left;vertical-align:top}th{background:#edf3f5}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}p{white-space:pre-wrap}section{margin:24px 0;border-top:1px solid #d8e0e5} .pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}.pair>div{min-width:0;background:#f5f7f8;padding:12px}@media(max-width:650px){.pair{grid-template-columns:1fr}}</style><h1>Neutro Sense prompt A/B test</h1><p>'+esc(live?"Live test: synthetic cases, direct Gemini requests, one application-level attempt per arm.":"Offline test: no provider calls, no actual tokens, cost or reply quality measured.")+'</p><p>Model: '+MODEL+' | '+rows.length+' scenarios. A = original; B = consolidated (stage 1 configuration and stage 2 compact conversation policy; follow-ups use original safety lists). Cost uses repository estimates, not an invoice. Missing usage makes the total unknown. This tests prompt generation and parser decisions, not message sending, media selection, sender routing or booking execution. Human review of both replies is required; automatic checks alone cannot establish quality.</p><table><thead><tr><th>Metric</th><th>A</th><th>B</th><th>Reduction</th></tr></thead><tbody>'+metrics.map(m=>'<tr>'+m.map(v=>'<td>'+esc(v)+'</td>').join("")+'</tr>').join("")+'</tbody></table>'+rows.map(r=>'<section><h2>'+esc(r.id)+'</h2><p>'+esc(r.note)+'</p><p>'+esc(r.history.map(m=>m.role+": "+m.content).join("\n"))+'</p><div class="pair"><div><h3>A: original</h3>'+cell(r.A)+'</div><div><h3>B: consolidated</h3>'+cell(r.B)+'</div></div></section>').join("")+'</html>';
 }
 async function main() {
   const args = process.argv.slice(2);
@@ -127,6 +129,7 @@ async function main() {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > cases.length) throw Error("Invalid case limit");
   const original = JSON.parse(fs.readFileSync(0,"utf8"));
   const candidate = previewConsolidation(original);
+  if (!resolveCompactConversationPolicy(hydrateBusinessConfig(candidate), stage2Plan)) throw Error("Stage 2 guardrails or escalation source changed; re-review before testing");
   let generate = null;
   if (live) {
     const key = process.env.NEUTRO_AB_GEMINI_API_KEY;
@@ -136,7 +139,7 @@ async function main() {
     process.stderr.write("Live test: up to "+(limit*2)+" billable Gemini calls; no messages or database writes.\n");
     generate = request => ai.models.generateContent(request);
   }
-  const rows = await runBenchmark(original,candidate,cases.slice(0,limit),generate);
+  const rows = await runBenchmark(original,candidate,cases.slice(0,limit),generate,stage2Plan);
   process.stdout.write(renderReport(rows,live));
 }
 if (require.main === module) main().catch(err=>{process.stderr.write("A/B test stopped: "+(err instanceof SyntaxError ? "invalid config JSON" : err.message)+"\n");process.exitCode=1;});
