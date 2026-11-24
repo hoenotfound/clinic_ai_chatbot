@@ -2074,6 +2074,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
+          allowVerifiedAdPricing,
           allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
@@ -2086,8 +2087,14 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
+    const protectedLegacyPrice = Boolean(shadowPriceException &&
+      ["customer_returning_treatment_price","confirmed_prior_quote",
+        "customer_staff_result_price","customer_concern_both"].includes(shadowPriceException.source));
+    const legacyPricingCandidate = aiPricingEnabled
+      ? (protectedLegacyPrice ? shadowPriceException : pricingDecision || shadowPriceException)
+      : pricingDecision;
     const legacyPricingApproval = resolveApprovedPricingAssessment({
-      mode: aiPricingMode, aiDecision: pricingDecision || (aiPricingEnabled ? shadowPriceException : null),
+      mode: aiPricingMode, aiDecision: legacyPricingCandidate,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
       numberedMenuDecision: numberedPricingDecision,
@@ -2133,12 +2140,9 @@ async function processIncomingMessage(
         // Compare exact treatment and package amounts, not only a boolean.
         // No raw message content, extra provider calls or new DB writes.
         const apply = shouldApplyModelLedPricing({
-          mode:aiPricingMode,legacyCandidate:pricingDecision || shadowPriceException,
+          mode:aiPricingMode,legacyCandidate:legacyPricingCandidate,
           legacyApproval:legacyPricingApproval,semanticApproval,
-          hasSpecialDecision:Boolean(shadowPriceException && (!pricingDecision ||
-            shadowPriceException.source==="customer_returning_treatment_price" ||
-            shadowPriceException.source==="confirmed_prior_quote" ||
-            shadowPriceException.source==="customer_staff_result_price")),
+          hasSpecialDecision:protectedLegacyPrice,
         });
         console.info("[Semantic pricing] "+JSON.stringify({
           contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
