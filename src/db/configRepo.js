@@ -37,6 +37,7 @@ const CONFIG_KEYS = [
   "trustAdminConfiguredContent",
   "aiPricingIntentMode",
   "aiPricingOfferEnquiriesEnabled",
+  "recoveryTreatmentOrder",
   "adFirstReply",
   "resultMedia",
   "services",

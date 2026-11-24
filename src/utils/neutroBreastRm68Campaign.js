@@ -112,7 +112,8 @@ function isCampaignOpening(text) {
 }
 function hasCampaignConversation(history) {
   const messages = Array.isArray(history) ? history : [];
-  const first = messages.findIndex(row => row?.role === "user" && isSimpleRm68Enquiry(row.content));
+  const first = messages.findIndex((row,index) => row?.role === "user" &&
+    (isSimpleRm68Enquiry(row.content) || isRecoveryOfferChoice(messages.slice(0,index+1),row.content)));
   return first >= 0 && messages.slice(first + 1).some(
     row => row?.role === "assistant" && isCampaignOpening(row.content)
   );
@@ -121,7 +122,8 @@ function hasCampaignConversation(history) {
 const OTHER_TREATMENT = /(?:\b(?:3\s*d|9\s*d|hifu|facial|pelvic|postpartum)\b|骨盆|小颜|小顏|逆龄|逆齡|产后|產後|子宫|子宮|艾灸(?:疗程|療程|单做|單做|单独|單獨)|体态|體態|全身脉冲|全身脈衝)/iu;
 const EXIT_CAMPAIGN = /(?:不想了解|不想要|换个|換個|另外想|改聊|停止|退订|退訂|取消活动|取消活動|\b(?:stop|unsubscribe|not interested|switch treatment|another service|cancel promotion)\b)/iu;
 function isOtherTreatmentQuery(text) {
-  return OTHER_TREATMENT.test(String(text || "")) || EXIT_CAMPAIGN.test(String(text || ""));
+  return OTHER_TREATMENT.test(String(text || "")) || EXIT_CAMPAIGN.test(String(text || "")) ||
+    /^(?:其他护理|脉冲波调理)$/u.test(normalize(text));
 }
 const CAMPAIGN_QUERY =
   /(?:只有这两天|只有這兩天|只有两天|只有兩天|就这两天|就這兩天|只有这两日|只有這兩日|胸部|乳腺|乳房|艾灸|赠送|贈送|脉冲|脈衝|专业检查|專業檢查|评估|評估|RM\s*68|RM\s*388|多少[钱錢]|[价價][钱錢格]|收费|收費|費用|费用|便宜|包括|包含|做什么|做什麼|什么项目|什麼項目|多久|多长|多長|时间|時間|小时|小時|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:price|cost|fee|duration|how long|hours?|breast|pulse|rm ?68|rm ?388|appointment|availability|slot|december [56]|5th|6th)\b)/iu;
@@ -248,11 +250,37 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   return { expired: false, message };
 }
 
+// A generic breast-care selection is not explicit event interest. Invite a
+// choice, and only use the dated event intro after a readable explicit enquiry.
+const RECOVERY_BREAST_INVITE_PREFIX = "您好 😊 我们有提供胸部健康评估和舒缓护理，目前12月活动也有 RM68 首次体验优惠";
+function recoveryBreastOfferInvitation({customerText,config,now=Date.now()}={}) {
+  if (!isNeutro(config?.businessName||config?.clinicName) || config?.adFirstReply?.enabled!==true ||
+      campaignDay(now)==="expired" || normalize(customerText)!=="胸部护理") return null;
+  return RECOVERY_BREAST_INVITE_PREFIX+"（"+dayLine(now)+"）。请问您想了解这个限时活动，还是平日的胸部护理呢？";
+}
+function isRecoveryOfferChoice(history,customerText) {
+  const prior=(Array.isArray(history)?history:[]).slice(0,-1);
+  const previousUser=prior.findLast(row=>row?.role==="user");
+  const previousAssistant=prior.at(-1);
+  return normalize(previousUser?.content)==="胸部护理" &&
+    previousAssistant?.role==="assistant" &&
+    String(previousAssistant.content||"").startsWith(RECOVERY_BREAST_INVITE_PREFIX) &&
+    /^(?:RM\s*68|(?:我)?(?:想|要|想要)(?:了解)?(?:这个|这项|限时)?活动|这个活动|限时活动|活动优惠|RM\s*68\s*(?:活动|优惠|体验))(?:[。！!😊\s]*)$/iu.test(normalize(customerText));
+}
+function recoveryBreastCampaignOpening({history,customerText,config,now=Date.now()}={}) {
+  if (!isNeutro(config?.businessName||config?.clinicName) || config?.adFirstReply?.enabled!==true ||
+      campaignDay(now)==="expired" || (!isSimpleRm68Enquiry(customerText) && !isRecoveryOfferChoice(history,customerText)) ||
+      hasCampaignConversation(history)) return null;
+  const latestPrior=(Array.isArray(history)?history:[]).slice(0,-1).reverse().find(row=>row?.role==="user");
+  if (normalize(latestPrior?.content)!=="胸部护理") return null;
+  return {reply:firstReply(now),treatment:null,serviceQuery:false,serviceQuerySource:null,campaignKey:CAMPAIGN_KEY};
+}
+
 module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
   campaignContextReply, guardCampaignPriceConflicts,
-  candidateIsCampaign, campaignFollowUp,
+  candidateIsCampaign, campaignFollowUp, recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
 };

@@ -562,7 +562,7 @@ test("unresolved previous secondary picture never bypasses billing gate or reach
 });
 
 test("gated 131060 treatment menu reaches secondary interactive transport, not primary or generic AI",async()=>{
- const {recoveryTreatmentButtons,build131060RecoveryReply}=
+ const {recoveryTreatmentButtons,build131060RecoveryReply,recoveryTreatmentGroups,RECOVERY_SECOND_TEXT}=
    require("../src/services/whatsapp131060Recovery");
  const menu=recoveryTreatmentButtons();
  const text=build131060RecoveryReply({unsupportedType:"unsupported"});
@@ -574,11 +574,15 @@ test("gated 131060 treatment menu reaches secondary interactive transport, not p
    WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"true",
    WHATSAPP_SECONDARY_131060_RECOVERY_ACTIVATED_AT:"2026-11-10T09:00:00Z",
  };
- function context(extra={}){
+ function context(extra={},verified=true){
    const {opts,calls}=setup();
    const buttonCalls=[];
    const deps={
      ...opts,env:{...withRecovery,...extra},
+     database:{query:async(sql,args)=>{
+       if(sql.includes("AS eligible"))return {rows:[{eligible:verified}]};
+       return opts.database.query(sql,args);
+     }},
      replyAudienceEligible:async()=>true,
      conversationRepo:{
        ...opts.conversationRepo,
@@ -601,7 +605,7 @@ test("gated 131060 treatment menu reaches secondary interactive transport, not p
  }
  const user={...contact,whatsapp_sender_key:"neutro_secondary"};
  const input={contact:user,messageId:120,text,origin:"system_fallback",
-   interactiveButtons:menu,preSendCheck:()=>true};
+   anchorMessageId:110,interactiveButtons:menu,preSendCheck:()=>true};
  const ok=context();
  const accepted=await sendSecondaryStaffText(input,ok.deps);
  assert.equal(accepted.success,true);
@@ -622,6 +626,20 @@ test("gated 131060 treatment menu reaches secondary interactive transport, not p
    assert.equal(c.calls.reserved,0);
    assert.equal(c.buttonCalls.length,0);
  }
+ const second={...input,text:RECOVERY_SECOND_TEXT,interactiveButtons:recoveryTreatmentGroups()[1],firstRecoveryMessageId:119};
+ const continuation=context();
+ const sent=await sendSecondaryStaffText(second,continuation.deps);
+ assert.equal(sent.success,true);
+ assert.equal(continuation.buttonCalls.length,1);
+ const unverified=context({},false);
+ const blocked=await sendSecondaryStaffText(second,unverified.deps);
+ assert.equal(blocked.success,false);
+ assert.equal(unverified.buttonCalls.length,0);
+ assert.equal(unverified.calls.reserved,0);
+ const withoutFirst=context();
+ const missing=await sendSecondaryStaffText({...second,firstRecoveryMessageId:null},withoutFirst.deps);
+ assert.equal(missing.success,false);
+ assert.equal(withoutFirst.buttonCalls.length,0);
  const off=context({WHATSAPP_SECONDARY_131060_RECOVERY_ENABLED:"false"});
  const noSend=await sendSecondaryStaffText(input,off.deps);
  assert.equal(noSend.code,"secondary_131060_recovery_menu_invalid");

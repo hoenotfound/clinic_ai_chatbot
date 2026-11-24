@@ -592,6 +592,10 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const history = options.history || [{ role: "user", content: text }];
     const incoming = options.incoming || { attribution: null };
     const replyHistory = history;
+    const commercialHistory = history;
+    const recoveryPromptProof = null;
+    const recoveryOther = false;
+    const priorClinicalContext = [];
     const isFirstMessage = history.length === 1;
     const generateFirstIntro = false;
     const mediaLanguage = options.language || "zh";

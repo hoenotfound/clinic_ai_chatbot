@@ -149,6 +149,7 @@ test("verified RM68 availability review can recover without silencing clinical r
   const runReview = vm.runInNewContext(`(async function(input) {
     const text = input.text;
     const history = input.history;
+    const commercialHistory = input.commercialHistory || history;
     const channel = "whatsapp";
     const mediaLanguage = "zh";
     const clinicConfig = { businessType: "tcm_clinic", businessName: "Neutro Sense TCM" };

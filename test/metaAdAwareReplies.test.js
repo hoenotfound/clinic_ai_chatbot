@@ -237,7 +237,7 @@ test("server verifies creative Meta context before it can drive result media", (
     "utf8"
   );
 
-  const loadAt = serverSource.indexOf("metaAdContext = await loadMetaAdReplyContext(contact.id, {");
+  const loadAt = serverSource.indexOf("metaAdContext = recoveryTopicReset ? null : await loadMetaAdReplyContext(contact.id, {");
   const verifyAt = serverSource.indexOf(
     "metaAdCreativeService = resolveMetaAdCreativeService(",
     loadAt

@@ -16,7 +16,7 @@ const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
   isSecondaryAutomationEligible} =
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
-const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery} = require("./whatsapp131060Recovery");
+const {validRecoveryTreatmentButtons, recoveryActivation, canSend131060Recovery, RECOVERY_SECOND_TEXT} = require("./whatsapp131060Recovery");
 const {parseConsentButton,SENTENCES}=require("../utils/neutroGeneralFollowupConsent");
 const generalCampaign=require("./neutroSecondaryGeneralMarketingSql");
 
@@ -51,7 +51,7 @@ async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
   origin = "staff", preSendCheck = null, dispatchTransport = null,
   templateRequest = null, anchorMessageId = null,
-  interactiveButtons = null,
+  interactiveButtons = null, firstRecoveryMessageId = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -63,7 +63,8 @@ async function sendSecondaryStaffText({
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
-  const queuedOrigin=["followup","marketing_followup","ai_media"].includes(origin);
+  const queuedOrigin=["followup","marketing_followup","ai_media"].includes(origin) ||
+    (origin==="system_fallback" && firstRecoveryMessageId!=null);
   const preBlock=code=>queuedOrigin
     ? {...block(code),preProviderCancelled:true,noReservation:true}
     : block(code);
@@ -93,7 +94,7 @@ async function sendSecondaryStaffText({
        templateRequest != null || !recoveryActivation(env) ||
        !validRecoveryTreatmentButtons(interactiveButtons) ||
        typeof text !== "string" ||
-       !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") || text.length>1024)) {
+       (firstRecoveryMessageId == null ? !text.startsWith("Hi～欢迎来到 Neutro Sense 😊") : text !== RECOVERY_SECOND_TEXT) || text.length>1024)) {
     const looksLikeRecovery=origin==="system_fallback" ||
       (Array.isArray(interactiveButtons) && interactiveButtons.length===3);
     return preBlock(looksLikeRecovery
@@ -201,6 +202,19 @@ async function sendSecondaryStaffText({
     }
   }
   // Include paid automated marketing; staff templates never inherit AI restrictions.
+  if (firstRecoveryMessageId != null) {
+    if (!recoveryMenu || !Number.isSafeInteger(Number(firstRecoveryMessageId)) ||
+        Number(firstRecoveryMessageId)>=mid) return preBlock("secondary_131060_recovery_menu_invalid");
+    const stored=await database.query(
+      `SELECT 1 FROM messages m JOIN whatsapp_131060_continuations q
+        ON q.second_message_id=m.id AND q.contact_id=m.contact_id
+        WHERE m.id=$1 AND m.contact_id=$2 AND m.role='assistant' AND m.sent_by_username IS NULL
+          AND m.content=$3 AND m.whatsapp_interactive=$4::jsonb AND m.whatsapp_message_id IS NULL AND m.delivery_status='unknown'
+          AND q.state='claimed' AND q.expires_at>NOW() AND q.first_message_id=$5
+          AND q.inbound_message_id=$6 AND q.buttons=m.whatsapp_interactive->'buttons'`,
+      [mid,cid,RECOVERY_SECOND_TEXT,JSON.stringify({type:"button",buttons:interactiveButtons}),Number(firstRecoveryMessageId),Number(anchorMessageId)]);
+    if (stored.rows?.length!==1) return preBlock("secondary_131060_recovery_menu_invalid");
+  }
   const automatedOrigin=["ai_reply","system_fallback","ai_media","followup","marketing_followup"].includes(origin);
   // Only ordinary AI text replies may use the expiring supervised test.
   // Media, templates, follow-ups and automated fallback messages must
@@ -217,9 +231,9 @@ async function sendSecondaryStaffText({
       Number.isSafeInteger(Number(anchorMessageId)) && Number(anchorMessageId)>0 &&
       await canSend131060Recovery({
         contactId:cid,inboundMessageId:Number(anchorMessageId),
-        ignoreOutboundMessageId:mid,database,env,
+        ignoreOutboundMessageId:mid,firstRecoveryMessageId,database,env,
       })) ||
-    (allContactText
+    (!recoveryMenu && (allContactText
       ? await replyAudienceEligible(cid,{
           database,env,
           ...(origin==="ai_reply" && anchorMessageId != null
@@ -231,7 +245,7 @@ async function sendSecondaryStaffText({
           })
         : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
-     await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
+     await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()})));
   if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
 
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
@@ -346,7 +360,9 @@ async function sendSecondaryStaffText({
     }
   }
   if (!reserved.reserved || !reserved.reservationId) {
-    return block(reserved.code || "secondary_staff_billing_blocked");
+    return firstRecoveryMessageId!=null
+      ? preBlock(reserved.code || "secondary_staff_billing_blocked")
+      : block(reserved.code || "secondary_staff_billing_blocked");
   }
   // Freeze the exact destination used for both provider dispatch and later
   // billing receipts. An intervening customer webhook can change the contact's

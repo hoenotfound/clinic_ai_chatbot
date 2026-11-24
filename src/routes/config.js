@@ -195,6 +195,7 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
+  recoveryTreatmentOrder: (v) => require("../services/whatsapp131060Recovery").validRecoveryOrder(v),
   adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
     (v.rm68ImageUrl === undefined ||
       (typeof v.rm68ImageUrl === "string" &&
