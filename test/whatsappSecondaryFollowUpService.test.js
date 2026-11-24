@@ -586,7 +586,7 @@ test("20h fallback respects one-shot claim and never retries ambiguous sends",as
  assert.equal(second.attempted,1);
  assert.equal(second.accepted,0);
  assert.equal(unknown.sends,1);
- assert.equal(unknown.calls.filter(x=>x.sql?.includes("status='unknown'")).length,1);
+ assert.equal(unknown.calls.filter(x=>x.sql?.includes("UPDATE whatsapp_sender_followup_attempts SET status='unknown'")).length,1);
 });
 
 test("20h pre-save AI exception records fixed phase and never sends or retries",async()=>{
@@ -1004,20 +1004,20 @@ test("definitive video upload HTTP rejection is separately recorded as blocked",
    x.args?.[1]==="sender_followup_video_upload_rejected"));
 });
 
-test("stale proven pre-provider slot alone can permit later 6h/20h service reminders",()=>{
+test("expired never-claimed or proven-unsent predecessors permit later eligible slots, but unsafe attempts do not",()=>{
  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
-  assert.match(sql,/earlier_deferred\.status='deferred'/);
-  assert.match(sql,/earlier_deferred\.message_id IS NULL/);
-  assert.match(sql,/earlier_deferred\.error_code='pre_provider_billing_deferred'/);
-  assert.match(sql,/earlier_deferred\.defer_count>0/);
-  assert.match(sql,/earlier_deferred\.claimed_at <= NOW\(\)-INTERVAL '8 hours'/);
-  assert.match(sql,/rule\.slot_hours IN \(6,20\)/);
+  assert.match(sql,/earlier_attempt\.status='deferred'/);
+  assert.match(sql,/earlier_attempt\.message_id IS NULL/);
+  assert.match(sql,/earlier_attempt\.wamid IS NULL/);
+  assert.match(sql,/earlier_attempt\.error_code='pre_provider_billing_deferred'/);
+  assert.match(sql,/earlier_attempt\.defer_count>0/);
+  assert.match(sql,/earlier_rule\.slot_hours<rule\.slot_hours/);
+  assert.match(sql,/> NOW\(\)-INTERVAL '8 hours'/);
   assert.match(sql,/previous_step\.completed_at IS NULL/);
-  assert.match(sql,/any_six\.slot_hours=6/);
-  assert.match(sql,/first_reply\.at\+INTERVAL '14 hours'<NOW\(\)/);
-  assert.match(sql,/previous_step\.completed_at IS NOT NULL[\s\S]*STALE|OR \(/);
   assert.match(sql,/previous\.status IN\('unknown','blocked'\)|prior_problem\.status IN\('unknown','blocked'\)/);
  }
+ assert.match(worker.CANDIDATES_SQL,/attempted\.retry_after>\$4::timestamptz/);
+ assert.match(worker.POTENTIAL_DUE_SQL,/SELECT pending\.retry_after/);
 });
 
 
