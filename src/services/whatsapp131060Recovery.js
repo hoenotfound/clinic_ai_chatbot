@@ -61,9 +61,8 @@ function verifiedAdTreatment(incoming, config = {}) {
   return typeof treatment === "string" && treatment.length <= 80 ? treatment : null;
 }
 
-// Three WhatsApp reply buttons is the provider maximum. Another treatment,
-// including 脉冲波, remains selectable by typing its name. Button IDs are
-// fixed, independent of ad metadata, and each title is a configured treatment.
+// Three WhatsApp reply buttons is the provider maximum. The second group
+// has its own durable reservation. Keep the original button IDs compatible.
 // A button tap is first-party CUSTOMER interest, never proof of ad attribution.
 const RECOVERY_TREATMENTS = Object.freeze([
   Object.freeze({id:"neutro_131060_pelvic",title:"骨盆调理"}),
@@ -82,7 +81,7 @@ const RECOVERY_SECOND_TEXT = "我们也有提供以下护理哦 🥰\n\n可以�
 
 function validRecoveryOrder(order) {
   return Array.isArray(order) && order.length===6 && new Set(order).size===6 &&
-    order.every(id=>RECOVERY_OPTIONS.some(option=>option.id===id));
+    [...order].every(id=>RECOVERY_OPTIONS.some(option=>option.id===id));
 }
 function recoveryTreatmentGroups(config = {}) {
   const order=validRecoveryOrder(config.recoveryTreatmentOrder)
@@ -97,7 +96,7 @@ function recoveryTreatmentButtons() {
 function validRecoveryTreatmentButtons(buttons) {
   return Array.isArray(buttons) &&
     buttons.length === 3 && new Set(buttons.map(button=>button?.id)).size===3 &&
-    buttons.every(button => RECOVERY_OPTIONS.some(option =>
+    [...buttons].every(button => RECOVERY_OPTIONS.some(option =>
       button?.id === option.id && button?.title === option.title));
 }
 

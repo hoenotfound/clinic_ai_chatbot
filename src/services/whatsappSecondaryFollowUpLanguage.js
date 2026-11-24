@@ -39,6 +39,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const declined=/(?:\b(?:don't want|do not want|not interested|no longer interested|rather not|not for me|stop (?:the )?treatment|cancel (?:the )?treatment)\b|不想(?:做|要|考虑|考慮)|不要(?:做|安排|这个|這個|骨盆|3D|9D)|没兴趣|沒興趣|不考虑|不考慮|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
+   if(msg.normalize("NFKC")==="其他护理")return null;
    if(isBarePostpartumConcernAnswer(msg))continue;
    const named=services.filter(service=>{
      const terms=[service,...aliases.filter(a=>normalize(a?.officialService)===normalize(service))

@@ -206,8 +206,13 @@ async function sendSecondaryStaffText({
     if (!recoveryMenu || !Number.isSafeInteger(Number(firstRecoveryMessageId)) ||
         Number(firstRecoveryMessageId)>=mid) return preBlock("secondary_131060_recovery_menu_invalid");
     const stored=await database.query(
-      "SELECT 1 FROM messages WHERE id=$1 AND contact_id=$2 AND role='assistant' AND sent_by_username IS NULL AND content=$3 AND whatsapp_interactive=$4::jsonb AND whatsapp_message_id IS NULL AND delivery_status='unknown'",
-      [mid,cid,RECOVERY_SECOND_TEXT,JSON.stringify({type:"button",buttons:interactiveButtons})]);
+      `SELECT 1 FROM messages m JOIN whatsapp_131060_continuations q
+        ON q.second_message_id=m.id AND q.contact_id=m.contact_id
+        WHERE m.id=$1 AND m.contact_id=$2 AND m.role='assistant' AND m.sent_by_username IS NULL
+          AND m.content=$3 AND m.whatsapp_interactive=$4::jsonb AND m.whatsapp_message_id IS NULL AND m.delivery_status='unknown'
+          AND q.state='claimed' AND q.expires_at>NOW() AND q.first_message_id=$5
+          AND q.inbound_message_id=$6 AND q.buttons=m.whatsapp_interactive->'buttons'`,
+      [mid,cid,RECOVERY_SECOND_TEXT,JSON.stringify({type:"button",buttons:interactiveButtons}),Number(firstRecoveryMessageId),Number(anchorMessageId)]);
     if (stored.rows?.length!==1) return preBlock("secondary_131060_recovery_menu_invalid");
   }
   const automatedOrigin=["ai_reply","system_fallback","ai_media","followup","marketing_followup"].includes(origin);

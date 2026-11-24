@@ -38,9 +38,13 @@ function is131060RecoveryAssistantSql(messageAlias, initialAlias) {
         AND (
           ${messageAlias}.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
           OR (${messageAlias}.content LIKE '我们也有提供以下护理哦 🥰%'
-            AND EXISTS (SELECT 1 FROM messages first_menu
+            AND EXISTS (SELECT 1 FROM whatsapp_131060_continuations continuation
+              JOIN messages first_menu ON first_menu.id=continuation.first_message_id
               JOIN outbound_message_evidence first_evidence ON first_evidence.message_id=first_menu.id
-              WHERE first_menu.contact_id=${initialAlias}.contact_id
+              WHERE continuation.inbound_message_id=${initialAlias}.id
+                AND continuation.second_message_id=${messageAlias}.id
+                AND continuation.contact_id=${initialAlias}.contact_id
+                AND first_menu.contact_id=${initialAlias}.contact_id
                 AND first_menu.id>${initialAlias}.id AND first_menu.id<${messageAlias}.id
                 AND first_menu.content LIKE 'Hi～欢迎来到 Neutro Sense 😊%'
                 AND first_menu.content LIKE '%可以点下面的选项%'

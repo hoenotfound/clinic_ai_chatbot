@@ -73,12 +73,17 @@ async function runOnce({database=pool,env=process.env,contacts=contactsRepo,mess
    if(result?.cancelled && !result.ambiguous && !result.unknown && await cancel(saved.id,contactId,database)){
     await finish(database,id,"cancelled");continue;
    }
+   if(result?.noReservation===true && result.preProviderCancelled===true &&
+      !result.wamid && !result.ambiguous && !result.unknown &&
+      await cancel(saved.id,contactId,database)){
+    await finish(database,id,"failed");continue;
+   }
    const accepted=result?.success===true && Boolean(result.wamid);
    const uncertain=result?.unknown===true||result?.ambiguous===true;
    if(result?.wamid)await messages.setWhatsappMessageId(saved.id,result.wamid,{preserveVerifiedSecondaryReceipt:true});
    else if(!accepted)await messages.setDeliveryStatusById(saved.id,uncertain?"unknown":"failed",
      result?.error||"Optional recovery message not delivered.");
-   await evidence.recordOutcome({messageId:saved.id,contactId,channel:"whatsapp",origin:"system_fallback",accepted,providerMessageId:accepted?result.wamid:null});
+   await evidence.recordOutcome({messageId:saved.id,contactId,channel:"whatsapp",origin:"system_fallback",accepted,providerMessageId:accepted?result.wamid:null},database);
    realtimeEvents.publish("conversation_changed",{...scopeForPersistedContact(contact,env),contactId,messageId:saved.id,reason:"message"});
    await finish(database,id,accepted?"sent":uncertain?"unknown":result?.cancelled?"cancelled":"failed");
    // A definite optional failure is visible on its row; do not switch the
@@ -91,8 +96,11 @@ async function runOnce({database=pool,env=process.env,contacts=contactsRepo,mess
    console.warn("[131060 continuation] delivery not confirmed:",err?.message);
   }
  }
- const pending=await database.query("SELECT 1 FROM whatsapp_131060_continuations WHERE state='pending' AND expires_at>NOW() LIMIT 1");
- return pending.rows.length?5000:null;
+ const pending=await database.query(`SELECT MIN(CASE WHEN state='pending' THEN NOW()+INTERVAL '5 seconds'
+    ELSE expires_at+INTERVAL '2 minutes' END) AS due FROM whatsapp_131060_continuations
+    WHERE state IN ('pending','claimed')`);
+ const due=pending.rows[0]?.due;
+ return due?Math.max(1000,Math.min(240000,new Date(due).getTime()-Date.now())):null;
 }
 let worker;
 function wake(){return worker?.wake(0)===true;}

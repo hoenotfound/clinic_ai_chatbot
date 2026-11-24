@@ -318,3 +318,46 @@ test("second group reservation is locked, one-shot and rejects overlapping butto
  assert.equal(await reserveRecoveryContinuation({...args,buttons:first}),null);
  assert.equal(calls.filter(sql=>sql.includes("INSERT INTO messages")).length,1);
 });
+
+
+test("all six signed reply labels map to configured services or a neutral selection",()=>{
+ const {parseIncomingMessages}=require("../src/services/whatsappService");
+ const {classifyVerifiedTreatmentTurn,chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches}=require("../src/services/whatsappSecondaryFollowUpDecision");
+ const {scopeRecoveryCommercialHistory}=require("../src/services/whatsapp131060Recovery");
+ const config={services:[...services.services,{name:"脉冲波调理"},{name:"草药胸部疏通乳腺护理"}],
+   serviceAliases:[{alias:"胸部护理",officialService:"草药胸部疏通乳腺护理"}]};
+ for(const button of recoveryTreatmentGroups().flat()){
+  const [incoming]=parseIncomingMessages({entry:[{id:"1852014482431209",changes:[{
+    field:"messages",value:{metadata:{phone_number_id:"1318355951360575"},
+      messages:[{id:"wamid.button",from:"60123123456",timestamp:"1794217329",type:"interactive",interactive:{type:"button_reply",button_reply:button}}]}
+  }]}]});
+  assert.equal(incoming.text,button.title);
+  const expected=button.title==="其他护理"?{status:"ambiguous",treatment:null}:
+    {status:"selected",treatment:button.title==="胸部护理"?"草药胸部疏通乳腺护理":button.title};
+  assert.deepEqual(classifyVerifiedTreatmentTurn({text:incoming.text,clinicConfig:config}),expected);
+ }
+ const candidate={customer_texts:["多少钱","其他护理","骨盆调理"],verified_treatment_status:"selected",verified_treatment_name:"骨盆调理",treatment_interest:"骨盆调理"};
+ assert.equal(chooseSecondaryFollowUpTreatment({candidate,clinicConfig:config,adFollowUpPolicy:{treatment:"骨盆调理"}}).generalOnly,true);
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"骨盆调理",clinicConfig:config}),false);
+ const history=[{role:"user",content:"骨盆调理"},{role:"assistant",content:"RM388"},{role:"user",content:"其他护理"},{role:"user",content:"多少钱"}];
+ assert.deepEqual(scopeRecoveryCommercialHistory(history),history.slice(2));
+});
+test("breast care selection invites a separate RM68 choice and never assumes consent or an expired promotion",()=>{
+ const {recoveryBreastOfferInvitation,recoveryBreastCampaignOpening,hasCampaignConversation}=require("../src/utils/neutroBreastRm68Campaign");
+ const config={businessName:"Neutro Sense TCM Centre",adFirstReply:{enabled:true}};
+ const now=Date.parse("2026-11-24T10:00:00Z");
+ const invitation=recoveryBreastOfferInvitation({customerText:"胸部护理",config,now});
+ assert.match(invitation,/RM68/);
+ assert.match(invitation,/还是平日/);
+ const history=[{role:"user",content:"胸部护理"},{role:"assistant",content:invitation}];
+ for(const choice of ["RM68","想了解活动","你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？"]){
+  const selected=[...history,{role:"user",content:choice}];
+  const reply=recoveryBreastCampaignOpening({history:selected,customerText:choice,config,now});
+  assert.equal(reply.campaignKey,"neutro_breast_rm68_2026");
+  assert.equal(hasCampaignConversation([...selected,{role:"assistant",content:reply.reply}]),true);
+ }
+ for(const choice of ["好的","平日护理","骨盆调理"]){
+  assert.equal(recoveryBreastCampaignOpening({history:[...history,{role:"user",content:choice}],customerText:choice,config,now}),null);
+ }
+ assert.equal(recoveryBreastOfferInvitation({customerText:"胸部护理",config,now:Date.parse("2026-12-07T00:00:00Z")}),null);
+});

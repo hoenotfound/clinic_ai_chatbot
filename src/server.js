@@ -1642,7 +1642,7 @@ async function processIncomingMessage(
             language: mediaLanguage,
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
-            conversationHistory: commercialHistory,
+            conversationHistory: history,
             ...verifiedEvidence,
           });
           if (plan?.preserveReview) {
@@ -3349,7 +3349,7 @@ async function processIncomingMessage(
               ? approvedPricingDecision.treatment : null)
           : shadowPriceException?.treatment || null,
         customerText: text,
-        conversationHistory: history,
+        conversationHistory: commercialHistory,
         flagged,
         bookingReady,
         keywordReason,

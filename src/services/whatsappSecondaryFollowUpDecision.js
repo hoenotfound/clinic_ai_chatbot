@@ -113,6 +113,12 @@ function chooseSecondaryFollowUpTreatment({
     !(candidate.verified_treatment_status==="selected" &&
       candidate.verified_treatment_name==="骨盆调理"))
    return {treatment:null,generalOnly:true,customerSelected:false};
+ // If the newest explicit topic change is Other, do not inherit older
+ // CRM/ad context even when the state write is delayed or unavailable.
+ const latestTopicReset=(candidate.customer_texts||[]).findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理");
+ if(latestTopicReset>=0 && !candidate.customer_texts.slice(0,latestTopicReset)
+    .some(value=>classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.status==="selected"))
+   return {treatment:null,generalOnly:true,customerSelected:false};
  const selectedLatest=latestDecision?.status==="selected" ? latestDecision.treatment : null;
  const selectedStored=candidate.verified_treatment_status==="selected"
    ? candidate.verified_treatment_name : null;
@@ -145,6 +151,8 @@ function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinic
  const latestText=Array.isArray(customerMessages)?customerMessages[0]:null;
  if(isBarePostpartumConcernAnswer(latestText) &&
     treatmentInterest!=="骨盆调理") return false;
+ const reset=(customerMessages||[]).findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理");
+ if(reset>=0 && !customerMessages.slice(0,reset).some(value=>classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.status==="selected"))return false;
  const latest=classifyVerifiedTreatmentTurn({
    text:latestText,
    clinicConfig,
