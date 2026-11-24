@@ -96,7 +96,7 @@ const recoveryContinuationQueue = require("./services/whatsapp131060Continuation
 const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
-  hasCampaignConversation,stillDiscussingCampaign } =
+  hasCampaignConversation,stillDiscussingCampaign,isOtherTreatmentQuery } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -2959,7 +2959,15 @@ async function processIncomingMessage(
         });
         // If any old Pulse Wave terms were corrected, do not attach media
         // derived from the conflicting generic service offer.
-        rm68CampaignContinuationTextOnly = reply !== replyBeforeCampaignGuard;
+        rm68CampaignContinuationTextOnly = reply !== replyBeforeCampaignGuard ||
+          (hasCampaignConversation(commercialHistory) &&
+           stillDiscussingCampaign(commercialHistory) && !isOtherTreatmentQuery(text));
+        if (rm68CampaignContinuationTextOnly) {
+          priceQuery = false;
+          packageQuery = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+        }
       }
     }
 
