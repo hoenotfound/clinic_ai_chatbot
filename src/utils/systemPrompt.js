@@ -5,6 +5,7 @@ const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { relatedMediaTargets } = require("./relatedServicePolicy");
+const { resolveCompactConversationPolicy, selectCompactFAQs } = require("./compactConversationPolicy");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
@@ -1218,6 +1219,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const context = getBusinessContext();
   const { terminology: terms, conversion } = context;
   const conversationContext = normalizedOptions.conversationContext;
+  const compactPolicy = resolveCompactConversationPolicy(config, optionsOrFirstMessage?.compactPromptPlan);
   const bookingContext = normalizedOptions.bookingContext;
   const appointmentState = conversion.mode === "appointment" && bookingContext && typeof bookingContext === "object"
     ? (() => {
@@ -1255,7 +1257,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
       ));
 
   const faqList = listOrNone(
-    config.faqs,
+    selectCompactFAQs(config.faqs, conversationContext, compactPolicy),
     (faq) => `Q: ${faq.q}\nA: ${faq.a}`,
     "No FAQs configured."
   );
@@ -1269,7 +1271,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
       );
 
   const guardrailsList = listOrNone(
-    config.guardrails,
+    compactPolicy?.guardrails || config.guardrails,
     (guardrail) => `- ${guardrail}`,
     "Do not invent business facts or confirmations."
   );
@@ -1289,7 +1291,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   );
 
   const handoffTriggers = listOrNone(
-    config.escalation?.outOfScopeTriggers,
+    compactPolicy?.triggers || config.escalation?.outOfScopeTriggers,
     (trigger) => `- ${trigger}`,
     "The answer depends on missing business-specific information that must not be guessed."
   );
@@ -1474,7 +1476,7 @@ Rules for structured fields:
 - Write natural, concise customer-service replies in the customer's language for verified questions. Do not proactively call yourself an AI, bot, or automation; do not claim to be a human employee or invent personal experiences. If explicitly asked whether you're automated, answer truthfully.
 - Set "serviceQuery" to true ONLY when the customer's CURRENT message genuinely asks for information about, expresses interest in, or states a relevant concern that clearly maps to exactly ONE configured service. The service can be established directly by the current message, by a short follow-up to an already clear one-service conversation, or by unambiguous META AD ACQUISITION CONTEXT. A greeting alone, thanks, location/hours/payment/admin question, pure booking/scheduling message, complaint, safety question, or human request is NOT a serviceQuery.
 - When "serviceQuery" is true, "treatment" MUST be the one canonical configured service and "serviceQuerySource" MUST be exactly one of "customer_message", "conversation", or "meta_ad". Use "customer_message" when the CURRENT message itself identifies the service; use "conversation" when a short service-information follow-up relies on the immediately established one-service conversation; use "meta_ad" only when the current message shows genuine interest but is vague and the Meta creative headline/body uniquely identifies the service. If the service is ambiguous, multiple services are being compared, or the source is unclear, set "serviceQuery" to false and "serviceQuerySource" to null.
-- A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".
+${compactPolicy ? '- A current price/package enquiry about one verified service also sets serviceQuery true and uses the same source rules above.' : '- A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".'}
 - A customer-sent Click-to-WhatsApp introduction granting FUTURE follow-ups or offer notifications (for example "可以跟进我，有优惠也发我看看") is NOT an immediate request for pricing, offers, or package lists. Interpret its separate current treatment interest normally. Greet naturally, explain the named treatment briefly and ask one useful question. Do not quote or list packages/prices unless the customer also asks about them NOW.
 - Before & After images are selected independently of pricing for a genuine enquiry about one verified treatment, including a first message with FUTURE follow-up permission. An explicit price question is NOT required. Do NOT suppress service interest merely because the customer permits future promotions. The application applies treatment relevance, clinical safety, duplicate, staff-handoff and channel-delivery checks; never promise image delivery.
 - Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, including natural conversational questions like "做一次多少", "一次几多", "how much per session", "berapa satu sesi", or when the customer immediately answers our which-treatment price clarification after their explicit price request. A previous price request does not carry over to a new non-pricing question. Duration, number-of-sessions, treatment effectiveness, and permission for FUTURE promotions are not price queries. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
@@ -1482,17 +1484,17 @@ Rules for structured fields:
 - When either "priceQuery" or "packageQuery" is true and exactly one configured service is clearly being discussed, set "treatment" to that canonical configured service even if the customer used an alias. If the request covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
 - Set "pricingStage" to "subsequent_session" only when the CUSTOMER is asking about pricing AFTER their introductory or First Trial session, including natural follow-ups such as "第一次体验后又是什么价格？" or "接下来的价格又是多少？" when an actual earlier First Trial quotation establishes the context. Set "first_trial" when clearly asking about an introductory/First Trial price. Otherwise use null. This is a semantic intent signal only, not permission to quote a later-session price or send a promotional graphic. Never mistake an already quoted First Trial rate for a subsequent-session rate.
 - "promotionOption" is descriptive internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set "promotionOption" to that package's exact configured name (for example "Package B"). If the customer asks the service price/packages generally, set it to null. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. Outbound media routing does NOT trust this field; the backend independently matches configured package wording from the customer's own current/recent message.
-- "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", and "promotionOption" are internal metadata. Never mention these field names to the customer.
+${compactPolicy ? '- All structured metadata is internal, never customer-facing.' : '- "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", and "promotionOption" are internal metadata. Never mention these field names to the customer.'}
 - If the customer's CURRENT request, or the immediately previous customer turn that a short follow-up clearly refers to, explicitly names two or more configured package options, set "promotionOption" to null and answer the requested prices/comparison directly in "reply" from ACTIVE PROMOTIONS. Do not rely on automatic media for a multi-package explicit comparison, because the backend intentionally fails closed rather than choosing or blasting several specifically named options.
 - Otherwise, if "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION says "auto-send on price/package enquiry: yes", keep the reply short and do not repeat the full promotion caption or package details. Media is handled separately and may be blocked by channel, duplicate or takeover checks. When "promotionOption" is null, do not select a package or promise image delivery.
 - If the matching promotion says "auto-send on price/package enquiry: no", answer the price/package question normally from ACTIVE PROMOTIONS in text.
-- The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
+${compactPolicy && conversion.mode === "appointment" ? `- Use canonical configured treatment and branch names. appointmentPreference is the current scheduling preference. Set projectLocation, projectSummary and nextStep to null for clinic appointments.\n${appointmentLocationOutputRule}` : `- The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
 - The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
 ${appointmentLocationOutputRule}
 - For project-mode booking_ready, "treatment" MUST resolve to one canonical configured ${terms.serviceSingular}; "projectLocation", "projectSummary", and "nextStep" MUST also be non-null and reflect the current project.
 - For project-mode "quotation_discussion", the required fields are "treatment", "projectLocation", and "projectSummary". "appointmentPreference" may be null.
-- For project-mode "site_visit", the required fields are "treatment", "projectLocation", "projectSummary", and "appointmentPreference".
+- For project-mode "site_visit", the required fields are "treatment", "projectLocation", "projectSummary", and "appointmentPreference".`}
 - For booking_ready, "staffSummary" should be 1-3 concise sentences for staff only. Summarize the customer's main need, relevant service/project context, stated location/timing preference, and any important unresolved point. Use only facts from the conversation and configured business context. Do not include internal reasoning.
 - "staffSummary" is internal metadata and MUST NOT be copied into "reply". For normal or needs_human, set it to null.
 - For normal or needs_human, other fields may be null when unknown; never guess a service to populate "treatment".
