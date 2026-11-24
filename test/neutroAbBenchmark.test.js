@@ -11,11 +11,11 @@ const candidate = {...original,messagingStyle:"Use concise replies."};
 
 test("offline benchmark renders real request builder without provider calls or global config mutation",async()=>{
   const previous = structuredClone(config);
-  assert.equal(cases.length,30);
-  assert.equal(new Set(cases.map(c=>c.id)).size,30);
+  assert.equal(cases.length,38);
+  assert.equal(new Set(cases.map(c=>c.id)).size,cases.length);
   assert.ok(cases.some(c=>c.surface==="follow_up"));
   const rows=await runBenchmark(original,candidate,cases);
-  assert.equal(rows.length,30);
+  assert.equal(rows.length,cases.length);
   assert.ok(summarize(rows,"B").promptChars < summarize(rows,"A").promptChars);
   assert.equal(summarize(rows,"A").promptTokens,null);
   assert.deepEqual(config,previous);
@@ -53,4 +53,30 @@ test("report escapes HTML in replies and test history",()=>{
   assert.ok(!html.includes("<script>"));
   assert.ok(!html.includes("<img src=x>"));
   assert.match(html,/&lt;script&gt;/);
+});
+
+test("follow-up cases use a synthetic final user request rather than assistant-ending Gemini contents",()=>{
+  for(const scenario of cases.filter(c=>c.surface==="follow_up")){
+    const req=requestFor(original,scenario);
+    assert.equal(req.contents.length,1);
+    assert.equal(req.contents[0].role,"user");
+    assert.match(req.contents[0].parts[0].text,/CONVERSATION HISTORY:/);
+    assert.match(req.contents[0].parts[0].text,/CUSTOMER:/);
+  }
+});
+test("provider failure records sanitized status and never raw error body",async()=>{
+  const rows=await runBenchmark(original,candidate,[cases[0]],async()=>{
+    const err=Object.assign(Error("private secret or prompt"),{status:400});throw err;
+  });
+  assert.match(rows[0].A.error,/HTTP 400/);
+  assert.doesNotMatch(renderReport(rows,true),/private secret/);
+});
+test("matched-pair totals visible even if a different pair failed",async()=>{
+  let calls=0;
+  const rows=await runBenchmark(original,candidate,cases.slice(0,2),async()=>{
+    if(++calls===3) throw Object.assign(Error("secret"),{status:429});
+    return {text:JSON.stringify({reply:"你好",outcome:"normal",priceQuery:false}),usageMetadata:{promptTokenCount:500,candidatesTokenCount:20}};
+  });
+  assert.equal(summarize(rows,"B").promptTokens,null);
+  assert.match(renderReport(rows,true),/Matched pair input tokens/);
 });
