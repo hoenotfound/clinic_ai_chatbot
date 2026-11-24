@@ -248,3 +248,27 @@ node scripts/pricing-intent-live-test.js --live --scenario=zh-service-change --s
 Eight application-level calls maximum for these four cases. Do not relax parser
 validation or production retry policy based on an unknown error. If a parser
 error recurs, inspect its diagnostic and synthetic response before fixing it.
+
+
+### Single-contact WhatsApp smoke test
+
+Keep the clinic setting in Shadow. An operator can temporarily set two
+deployment-local environment variables: `AI_PRICING_TEST_CONTACT_ID`
+(the exact database contact ID on the intended WhatsApp sender, not a phone
+number) and `AI_PRICING_TEST_EXPIRES_AT` (UTC ISO timestamp ending in Z, no
+more than 24 hours in the future). Both must be valid; expired or absent
+configuration has no effect. Only WhatsApp conversation replies for that
+contact can use Enabled while the clinic is in Shadow. The server snapshots
+the effective mode for the inbound and passes it to the provider prompt,
+including language correction, and the existing price/text/media approval.
+The global config is never mutated. Other contacts, channels and follow-up
+generation keep their existing behavior. This does not bypass staff mode,
+billing, duplicate detection, clinical review, marketing opt-out or the
+24-hour service window. Use one isolated test contact and review actual
+receipts. Follow-ups retain their usual timing; perform the smoke test
+without waiting for a follow-up to become due.
+
+After testing, remove the two variables from the service environment;
+expiry also disables the override for subsequent inbound messages. Do not
+leave a persistent production test override. Keep global Shadow until
+controlled delivery has been reviewed.
