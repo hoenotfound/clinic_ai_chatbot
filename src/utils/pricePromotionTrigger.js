@@ -1,4 +1,4 @@
-const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion, hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 const {
   hasCustomerRefusedPriceQuote, resolveIndependentRefusalPriceRequest,
 } = require("./independentRefusalPriceRequest");
@@ -90,6 +90,7 @@ async function resolvePricePromotionForReply({
     if (typeof onSkip === "function") onSkip(reason);
     return null;
   };
+  if (hasFuturePromotionPermissionWithoutPrice(customerText)) return skip("future_offer_permission_only");
   // The caller has already verified a CURRENT, explicit repeat-session
   // question and its single treatment. Normal price/First Trial requests
   // never set this field and retain every existing promotion rule.

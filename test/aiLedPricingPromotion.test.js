@@ -550,12 +550,31 @@ test("topic reset still never resurrects an old treatment, a refusal, or an ad-o
       treatment:"9D 逆龄抗衰",promotions:promos,
     }),null,customerText);
   }
+  // A precisely negated old service and an independent price request for
+  // a different configured service are now independently resolved.
   const both="不要3D，换个9D多少钱？";
-  assert.equal(decide({
+  const corrected=decide({
     customerText:both, treatment:"9D 逆龄抗衰",
     conversationHistory:[{role:"user",content:both}],
     promotions:promos,
-  }),null,"two named service mentions fail closed unless their context is independently resolved");
+  });
+  assert.equal(corrected?.treatment,"9D 逆龄抗衰");
+  assert.equal(corrected?.scopedRefusedTreatment,"3D 小颜术");
+  assert.deepEqual(corrected?.prices.map(p=>p.price),["RM488"]);
+  // Two affirmative service mentions, an unspecified replacement, or
+  // contradictory refusal cannot be treated as this exact correction.
+  for(const customerText of [
+    "3D和9D多少钱？",
+    "不要3D，换个疗程多少钱？",
+    "不要3D，3D多少钱？",
+    "不要3D，换个9D多少钱？停止联系我",
+  ]) {
+    assert.equal(decide({
+      customerText,treatment:"9D 逆龄抗衰",
+      conversationHistory:[{role:"user",content:customerText}],
+      promotions:promos,
+    }),null,customerText);
+  }
 });
 
 test("opted-in package questions work but package details alone never trigger graphics", () => {

@@ -230,3 +230,21 @@ provider metadata; missing usage is not zero. The test does not simulate all
 server special cases or send messages. Review each actual model response and
 candidate comparison; keep production Shadow until both the live test and
 delivery regression/smoke test pass.
+
+### Live A/B follow-up
+
+The live synthetic A/B exposed a negated service correction, conditional Malay
+future-offer permission, and two response/parser errors. Keep Shadow until
+those cases are retested and controlled WhatsApp delivery passes. The report now
+includes the failure stage, finish reason, safe synthetic parser diagnostics,
+approval reasons and the ordinary-path candidate selection (not the full server
+or actual delivery). Direct UTF-8 file output avoids PowerShell's native pipe
+encoding issue. To repeat just the affected cases:
+
+```sh
+node scripts/pricing-intent-live-test.js --live --scenario=zh-service-change --scenario=ms-future-consent --scenario=en-price-objection --scenario=zh-cheaper-package --output=pricing-intent-retest.json
+```
+
+Eight application-level calls maximum for these four cases. Do not relax parser
+validation or production retry policy based on an unknown error. If a parser
+error recurs, inspect its diagnostic and synthetic response before fixing it.

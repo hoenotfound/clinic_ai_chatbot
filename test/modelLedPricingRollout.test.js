@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
+const {resolveAiPricingDecision,resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
 const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
 const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
 const {resolvePricePromotionForReply}=require("../src/utils/pricePromotionTrigger");
@@ -210,4 +210,73 @@ test("simple correct package menu preserves model wording but swapped amounts ar
  assert.equal(preserveVerifiedModelQuote({reply:good,treatment:"骨盆调理",prices,firstTrialQuote:false}),good);
  assert.equal(preserveVerifiedModelQuote({reply:good.replace("RM388","RM268").replace(/RM268$/,"RM388"),treatment:"骨盆调理",prices,firstTrialQuote:false}),null);
  assert.equal(preserveVerifiedModelQuote({reply:good,treatment:"骨盆调理",prices:[{...prices[0],afterVoucher:true},prices[1]],firstTrialQuote:false}),null);
+});
+
+test("live A/B: exact negated treatment correction approves only the newly requested service",async()=>{
+ const a=args("不是3D，我想了解9D的价钱","9D 逆龄抗衰");
+ a.conversationHistory=[turn("user","3D 小颜术",2000),turn("assistant","3D 小颜术 is available",1000),turn("user",a.customerText,0)];
+ const d=resolveModelLedPricingDecision(a);
+ assert.equal(d?.treatment,"9D 逆龄抗衰");
+ assert.deepEqual(d.prices.map(p=>p.price),["RM488"]);
+ const approved=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:d});
+ assert.equal(approved.reason,"approved");
+ const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:approved.decision,
+  treatment:d.treatment,verifiedServiceFromText:d.treatment,textSendSucceeded:true,contactId:1,
+  wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.equal(media?.packages?.length,1);
+ for(const current of ["不是3D，我想了解3D的价钱","3D和9D的价钱","不是3D，我想了解9D的价钱，停止联系我"]){
+  const b=args(current,"9D 逆龄抗衰");
+  assert.equal(resolveModelLedPricingDecision(b),null,current);
+ }
+ const wrong={...a,modelIntent:{...a.modelIntent,treatment:"3D 小颜术"}};
+ assert.equal(resolveModelLedPricingDecision(wrong),null);
+ const contradictory=args("不要3D，3D多少钱？","3D 小颜术");
+ assert.equal(resolveModelLedPricingDecision(contradictory),null);
+ assert.equal(resolveAiPricingDecision({...contradictory,priceQuery:true,treatment:"3D 小颜术"}),null);
+});
+test("live A/B: future notification alone cannot become a quote in either resolver or send boundary",async()=>{
+ const {hasFuturePromotionPermissionWithoutPrice}=require("../src/utils/customerEnquiryEvidence");
+ const current="Kalau ada promosi nanti, beritahu saya ya";
+ const a=args(current,"骨盆调理",{allowOfferEnquiries:true});
+ assert.equal(hasFuturePromotionPermissionWithoutPrice(current),true);
+ assert.equal(hasFuturePromotionPermissionWithoutPrice(current+". Berapa harga Pelvic Care?"),false);
+ for(const flags of [{priceQuery:false,packageQuery:false},{priceQuery:true,packageQuery:true}]){
+  assert.equal(resolveAiPricingDecision({...a,...flags,treatment:"骨盆调理"}),null);
+  assert.equal(resolveModelLedPricingDecision({...a,modelIntent:{...a.modelIntent,...flags}}),null);
+ }
+ const forged=resolveModelLedPricingDecision(args("What would I be paying?","骨盆调理"));
+ assert.ok(forged);
+ assert.equal(resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:forged}).reason,"future_offer_permission_only");
+ assert.equal(resolveApprovedPricingAssessment({...a,mode:"shadow",shadowException:forged}).reason,"future_offer_permission_only");
+ for(const enabled of [true,false]){
+  let reason;
+  const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:enabled,pricingDecision:forged,
+   treatment:forged.treatment,priceQuery:true,packageQuery:true,verifiedServiceFromText:forged.treatment,
+   textSendSucceeded:true,contactId:1,wasPromoRecentlySent:async()=>false,
+   hasUnconfirmedMediaDelivery:async()=>false,onSkip:r=>reason=r,now:new Date(now)});
+  assert.equal(media,null);
+  assert.equal(reason,"future_offer_permission_only");
+ }
+});
+test("live A/B: approved narrower package beats broad legacy quote and selects only matching artwork",async()=>{
+ const a=args("比较便宜的那个多少钱？","骨盆调理");
+ a.modelIntent.promotionOption="Package B";
+ a.conversationHistory[1].content="骨盆调理\nPackage A: RM388\nPackage B: RM268";
+ const semantic=resolveModelLedPricingDecision(a);
+ const legacy={...semantic,prices:[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]};
+ const legacyApproval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:legacy});
+ const semanticApproval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:semantic});
+ assert.ok(legacyApproval.decision);
+ assert.ok(semanticApproval.decision);
+ assert.equal(shouldApplyModelLedPricing({mode:"enabled",legacyCandidate:legacy,legacyApproval,semanticApproval}),true);
+ assert.equal(shouldApplyModelLedPricing({mode:"enabled",legacyCandidate:legacy,legacyApproval,semanticApproval,hasSpecialDecision:true}),false);
+ const decision=semanticApproval.decision;
+ const formatted=ensureVerifiedPriceReply({...a,reply:"比较优惠的是 Package B，First Trial RM268 😊",
+  treatment:decision.treatment,pricingDecision:decision,priceRequested:true,priceOnlyResponse:true,language:"zh"});
+ assert.ok(formatted.reply.includes("RM268"));
+ assert.ok(!formatted.reply.includes("RM388"));
+ const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:decision,
+  treatment:decision.treatment,verifiedServiceFromText:decision.treatment,textSendSucceeded:true,contactId:1,
+  wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.deepEqual(media?.packages?.map(p=>p.name),["Package B"]);
 });
