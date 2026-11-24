@@ -175,30 +175,45 @@ required before turning on Enabled for Neutro. Leave its production
 until the test and independent review pass.
 
 
-## Natural-language pricing rollout (gap-only)
+## Natural-language pricing rollout (AI-first)
 
-The existing Settings → AI Behavior → AI pricing graphic decisions
-setting controls this rollout. Off retains existing behavior; Shadow
-compares without changing outbound replies, including existing independently
-verified Shadow exceptions. Enabled fills only a genuine gap where neither
-the legacy candidate nor an existing approved/special-case decision is
-present. Switch to Shadow if review reveals regressions (or Off for the
-original trigger). No new configuration key or UI control is needed.
+The existing Settings → AI Behavior → AI pricing graphic decisions setting
+controls this rollout. Off retains original behavior. Shadow compares the
+new resolver without changing customer-facing replies or the existing model
+prompt. Enabled prioritizes an approved model interpretation. The old
+independently verified paths remain available for explicit requests, ad
+context, returning customers, confirmed prior quotes, numbered menus,
+staff result recovery, subsequent sessions and multi-treatment comparisons.
+A final rejection or protected special case cannot be bypassed by model intent.
+Switch back to Shadow to disable the new authorization path.
 
 The existing provider response fields are captured before legacy mutation.
-No new model request, worker or table is added. The initial scope accepts
-direct customer-named services and the immediately preceding verified
-customer-selected service acknowledged by the assistant. It trusts the model
-on conversational price intent rather than requiring another positive price
-phrase. It still requires recent DB-timestamped context, rejects clinical,
-staff, ambiguous or competing treatment evidence, and verifies active package
-amounts and customer-specific package selection. Ad-only and complex returning
-or staff cases continue through existing paths.
+No additional model call, new worker, table or setting is added. Recent
+DB-timestamped customer-named treatment context can survive intervening
+ordinary questions and verified non-conflicting staff assistance. Unknown
+staff echoes, unrelated treatments, clinical concerns, refusals and ambiguous
+context fail closed. Configured package identity and amounts are verified;
+an indirect package choice needs a grounded prior selection or correctly
+priced preceding menu. Enabled's prompt clarifies these interpretations.
+The reply formatter keeps safe non-commercial model wording while supplying
+the verified quote first; artwork must match the same approved amounts.
+The existing delivery safeguards remain authoritative.
 
-Review [Semantic pricing] logs for model intent, legacy/semantic approval,
-treatment and package agreement and applied status; the logs omit raw customer
-content. These comparisons are not accuracy labels. Review real conversations
-with human-labelled positive and negative cases, including model false
-positives and false negatives, before enabling. The existing price approval,
-text and graphic delivery checks remain authoritative. No older inbound should
-be replayed against live delivery to test this feature.
+Review [Semantic pricing] logs for both approvals, treatment and package
+agreement and applied status. Logs omit raw customer content. A comparison
+is not a correctness label and Shadow does not exercise Enabled's revised
+prompt. Before enabling, review real conversations and run a synthetic
+live model A/B (local machine with npm ci, never a production key):
+
+```sh
+node scripts/pricing-intent-live-test.js
+node scripts/pricing-intent-live-test.js --live > pricing-intent-live-report.json
+```
+
+Offline mode builds prompts only. Live mode requires a separate authorized
+NEUTRO_AB_GEMINI_API_KEY in the local shell and makes up to 26 application-level
+calls (13 synthetic cases in two modes). Reported usage is from actual
+provider metadata; missing usage is not zero. The test does not simulate all
+server special cases or send messages. Review each actual model response and
+candidate comparison; keep production Shadow until both the live test and
+delivery regression/smoke test pass.
