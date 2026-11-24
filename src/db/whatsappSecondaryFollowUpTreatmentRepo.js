@@ -62,8 +62,8 @@ const RECONCILE_CRM_SQL=`
    JOIN whatsapp_sender_message_context ctx ON ctx.message_id=msg.id
      AND ctx.conversation_id=sc.id
    WHERE state.contact_id=$1 AND state.source_message_id=$2
-     AND state.status='selected'
-     AND NULLIF(BTRIM(state.treatment_name),'') IS NOT NULL
+     AND ((state.status='selected' AND NULLIF(BTRIM(state.treatment_name),'') IS NOT NULL)
+       OR (state.status='ambiguous' AND BTRIM(msg.content)='其他护理'))
      AND NOT EXISTS (
        SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
        WHERE imported.sender_id=sa.id AND imported.message_id=msg.id
@@ -101,7 +101,8 @@ async function recordFromInbound({contactId,messageId,senderKey,text,clinicConfi
    [contactId,messageId,senderKey,decision.status,decision.treatment]);
  const recorded=result.rowCount===1;
  let crmReconciled=false;
- if(recorded && decision.status==="selected"){
+ if(recorded && (decision.status==="selected" ||
+    (decision.status==="ambiguous" && String(text||"").normalize("NFKC").trim()==="其他护理"))){
    try{
      const synced=await database.query(RECONCILE_CRM_SQL,
        [contactId,messageId,senderKey]);

@@ -224,6 +224,7 @@ async function startApplication({
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
     secondaryAiMediaQueue.start();
+    require("./whatsapp131060ContinuationQueue").start();
     const businessAppEchoMediaStarted = coexistenceMediaQueue.start();
     coexistenceMutations.start();
     staffReminderRecovery.start();

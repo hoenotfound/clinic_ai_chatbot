@@ -251,6 +251,7 @@ async function reserveOutboundAttempt({
   content,
   origin,
   interactiveButtons = null,
+  recoveryContinuationButtons = null,
 }, database = pool) {
   const safeJobId = Number(processingJobId);
   const safeContactId = Number(contactId);
@@ -270,6 +271,12 @@ async function reserveOutboundAttempt({
       (safeOrigin !== "system_fallback" ||
         !validRecoveryTreatmentButtons(interactiveButtons))) {
     throw new TypeError("Only the approved 131060 recovery menu can be persisted.");
+  }
+  if (recoveryContinuationButtons !== null &&
+      (safeOrigin !== "system_fallback" || !validRecoveryTreatmentButtons(interactiveButtons) ||
+       !validRecoveryTreatmentButtons(recoveryContinuationButtons) ||
+       recoveryContinuationButtons.some(b=>interactiveButtons.some(first=>first.id===b.id)))) {
+    throw new TypeError("Invalid recovery continuation buttons.");
   }
   const whatsappInteractive = interactiveButtons === null ? null
     : JSON.stringify({
@@ -356,6 +363,12 @@ async function reserveOutboundAttempt({
       [safeJobId, job.message_id, message.id, safeContactId, safeOrigin]
     );
 
+    if (recoveryContinuationButtons !== null) {
+      await client.query(`INSERT INTO whatsapp_131060_continuations
+        (first_message_id,inbound_message_id,contact_id,buttons,expires_at)
+        VALUES($1,$2,$3,$4::jsonb, NOW()+INTERVAL '2 minutes')`,
+        [message.id,job.message_id,safeContactId,JSON.stringify(recoveryContinuationButtons)]);
+    }
     await client.query("COMMIT");
     return {
       alreadyStarted: false,

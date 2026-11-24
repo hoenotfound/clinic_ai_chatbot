@@ -63,7 +63,8 @@ async function sendSecondaryStaffText({
   replyAudienceEligible=isSecondaryAiReplyEligible,
   automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
-  const queuedOrigin=["followup","marketing_followup","ai_media"].includes(origin);
+  const queuedOrigin=["followup","marketing_followup","ai_media"].includes(origin) ||
+    (origin==="system_fallback" && firstRecoveryMessageId!=null);
   const preBlock=code=>queuedOrigin
     ? {...block(code),preProviderCancelled:true,noReservation:true}
     : block(code);
@@ -354,7 +355,7 @@ async function sendSecondaryStaffText({
     }
   }
   if (!reserved.reserved || !reserved.reservationId) {
-    return block(reserved.code || "secondary_staff_billing_blocked");
+    return preBlock(reserved.code || "secondary_staff_billing_blocked");
   }
   // Freeze the exact destination used for both provider dispatch and later
   // billing receipts. An intervening customer webhook can change the contact's

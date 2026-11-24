@@ -50,6 +50,8 @@ function explicitSwitchChoice(value,clinicConfig){
 function classifyVerifiedTreatmentTurn({text,clinicConfig}={}){
  const value=String(text||"").normalize("NFKC").trim();
  if(!value || value.length>1500)return null;
+ // A customer selecting Other is explicitly reopening treatment choice.
+ if(value==="其他护理")return {status:"ambiguous",treatment:null};
  if(WITHDRAWN.some(pattern=>pattern.test(value))){
    const replacement=explicitSwitchChoice(value,clinicConfig);
    if(replacement)return {status:"selected",treatment:replacement};

@@ -4,6 +4,7 @@
 // A one-time service reply may ask the customer to resend, but must never
 // fabricate an ad attribution, consent, price request or clinical intent.
 const { pool } = require("../db/db");
+const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
   secondaryAllContactReplyActivation,
   secondaryReplyAttentionAllowedSql,
@@ -254,7 +255,7 @@ async function canSend131060Recovery({
   const ignore = ignoreOutboundMessageId == null ? null : Number(ignoreOutboundMessageId);
   const first = firstRecoveryMessageId == null ? null : Number(firstRecoveryMessageId);
   if (first != null && (!Number.isSafeInteger(first) || first<=mid || first===ignore)) return false;
-  if (!cutoff || !Number.isSafeInteger(cid) || cid <= 0 ||
+  if (!automatedRepliesEnabled(env) || !cutoff || !Number.isSafeInteger(cid) || cid <= 0 ||
       !Number.isSafeInteger(mid) || mid <= 0 ||
       (ignore != null && (!Number.isSafeInteger(ignore) || ignore <= 0)) ||
       !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID)
@@ -373,10 +374,20 @@ async function cancelRecoveryContinuation(messageId,contactId,database=pool) {
   return result.rows[0] || null;
 }
 
+function isOtherRecoverySelection(text) {
+  return String(text||"").normalize("NFKC").trim()==="其他护理";
+}
+function scopeRecoveryCommercialHistory(history) {
+  if (!Array.isArray(history)) return history;
+  const index=history.findLastIndex(row=>row?.role==="user" && isOtherRecoverySelection(row.content));
+  return index<0 ? history : history.slice(index);
+}
+
 module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
   recoveryTreatmentGroups, validRecoveryOrder, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation, cancelRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
+  isOtherRecoverySelection, scopeRecoveryCommercialHistory,
 };

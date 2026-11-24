@@ -92,7 +92,9 @@ const {
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
+const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
 const { campaignContextReply, guardCampaignPriceConflicts,
+  recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign } =
   require("./utils/neutroBreastRm68Campaign");
@@ -123,7 +125,7 @@ const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview")
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentGroups, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation, cancelRecoveryContinuation,
+  recoveryTreatmentGroups, isOtherRecoverySelection, scopeRecoveryCommercialHistory,
   validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
@@ -238,7 +240,7 @@ async function sendTrackedText(
   text,
   origin = "ai_reply",
   { canSend = null, processingJobId = null, latePreSendCheck = null,
-    interactiveButtons = null, reviewReplyToInboundMessageId = null } = {}
+    interactiveButtons = null, recoveryContinuationButtons = null, reviewReplyToInboundMessageId = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -308,7 +310,7 @@ async function sendTrackedText(
       contactId: contact.id,
       content: text,
       origin,
-      interactiveButtons,
+      interactiveButtons, recoveryContinuationButtons,
     });
     if (reservation.alreadyStarted) {
       const err = new Error(
@@ -342,6 +344,7 @@ async function sendTrackedText(
     );
   }
 
+  if (recoveryContinuationButtons && processingJobId) recoveryContinuationQueue.wake();
   const socialProviderRecorder = messagesRepo.socialProviderAliasRecorder(
     saved.id,
     contact.channel
@@ -524,42 +527,14 @@ async function sendTrackedText(
       recordReadinessSendEvidence(saved, contact, sendResult, origin);
     }
   } else {
-    if (recoveryAnchor != null) await recordReadinessSendEvidence(saved, contact, sendResult, origin);
+    if (recoveryAnchor != null) {
+      await recordReadinessSendEvidence(saved, contact, sendResult, origin);
+      if (recoveryContinuationButtons) recoveryContinuationQueue.wake();
+    }
     else recordReadinessSendEvidence(saved, contact, sendResult, origin);
   }
 
   return { finalMessage, sendResult };
-}
-
-// The second group is subordinate to the original tracked reply. Keep the
-// first inbound as the only recovery/follow-up anchor. Never retry a provider
-// call or send after a customer/staff reply has arrived.
-async function sendSecondRecoveryGroup(contact, inboundMessageId, firstRecoveryMessageId, buttons, canSend) {
-  if (canSend && canSend() !== true) return;
-  const saved=await reserveRecoveryContinuation({contactId:contact.id,inboundMessageId,firstRecoveryMessageId,buttons});
-  if (!saved) return;
-  const scope=scopeForPersistedContact(contact);
-  const preSendCheck=async()=> (!canSend || canSend()===true) &&
-    await canSend131060Recovery({contactId:contact.id,inboundMessageId,firstRecoveryMessageId,ignoreOutboundMessageId:saved.id});
-  let result;
-  try {
-    result=await sendSecondaryStaffText({contact,messageId:saved.id,text:RECOVERY_SECOND_TEXT,
-      origin:"system_fallback",interactiveButtons:buttons,anchorMessageId:inboundMessageId,
-      firstRecoveryMessageId,preSendCheck});
-  } catch(err) {
-    publishDeliveryStatus(saved,scope);
-    throw err;
-  }
-  if (result.cancelled && !result.ambiguous && !result.unknown) {
-    if (await cancelRecoveryContinuation(saved.id,contact.id)) return;
-    // If a reservation exists, retain the audit row rather than deleting it.
-  }
-  realtimeEvents.publish("conversation_changed",{...scope,contactId:contact.id,messageId:saved.id,reason:"message"});
-  const reason=result.error || channelMessaging.rejectedError(contact.channel);
-  await persistSendOutcome(saved,result,reason,"whatsapp",scope);
-  await recordReadinessSendEvidence(saved,contact,result,"system_fallback");
-  if (!result.success) await contactsRepo.setDeliveryAttention(contact.id,
-    result.ambiguous ? `Delivery unconfirmed: ${reason}` : `Delivery failed: ${reason}`, saved.id);
 }
 
 function unwrapIncoming(item) {
@@ -893,13 +868,14 @@ async function processIncomingMessage(
           if (recoveryAllowed && (!canSendAutomatedReply ||
               canSendAutomatedReply() === true)) {
             const [firstButtons,secondButtons]=recoveryTreatmentGroups(clinicConfig);
-            const firstMenu=await sendTrackedText(
+            await sendTrackedText(
               contact, build131060RecoveryReply(incoming, clinicConfig, true),
               "system_fallback",
               {
                 canSend: canSendAutomatedReply,
                 processingJobId,
                 interactiveButtons: firstButtons,
+                recoveryContinuationButtons: secondButtons,
                 reviewReplyToInboundMessageId: savedInbound.id,
                 latePreSendCheck: (reservedMessageId) =>
                   canSend131060Recovery({
@@ -909,9 +885,6 @@ async function processIncomingMessage(
                   }),
               }
             );
-            if (firstMenu?.sendResult?.success && firstMenu.finalMessage?.id && processingJobId) {
-              await sendSecondRecoveryGroup(contact,savedInbound.id,firstMenu.finalMessage.id,secondButtons,canSendAutomatedReply);
-            }
           }
         } catch (recoveryErr) {
           // Preserve the original Meta 131060 staff review. If Meta rejects
@@ -1349,7 +1322,7 @@ async function processIncomingMessage(
     // booking, opt-out, or delivery review. Accept configured bare service names
     // and ordinary unambiguous enquiries as well as the exact menu titles.
     if (recoveryPromptProof && !keywordReason && !urgentSafety &&
-      (bareServiceName(text,clinicConfig.services,clinicConfig.serviceAliases) ||
+      (isOtherRecoverySelection(text) || bareServiceName(text,clinicConfig.services,clinicConfig.serviceAliases) ||
        recoveryTreatmentGroups(clinicConfig).flat().filter(button=>button.id!=="neutro_131060_other").some(button =>
         button.title.normalize("NFKC").replace(/\s+/g,"").toLowerCase() ===
         String(text||"").normalize("NFKC").replace(/\s+/g,"").toLowerCase()))) {
@@ -1368,14 +1341,18 @@ async function processIncomingMessage(
         .map((message) => message.content)
     );
     const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
+    const commercialHistory = secondaryAiConversation ? scopeRecoveryCommercialHistory(history) : history;
+    const recoveryOther = Boolean(recoveryPromptProof && isOtherRecoverySelection(text));
+    const recoveryTopicReset = commercialHistory !== history;
     // Keep the actual customer message intact in Neon. Only the model's
     // current-turn context is narrowed to the separately asked service question
     // so it cannot interpret the marketing refusal as a request for a deal.
+    const modelContextHistory = recoveryTopicReset ? scopeRecoveryCommercialHistory(readableRecoveryHistory) : readableRecoveryHistory;
     const replyHistory = marketingStopQuestion
-      ? readableRecoveryHistory.map((entry, index) =>
-          index === readableRecoveryHistory.length - 1 && entry?.role === "user"
+      ? modelContextHistory.map((entry, index) =>
+          index === modelContextHistory.length - 1 && entry?.role === "user"
             ? { ...entry, content: marketingStopQuestion } : entry)
-      : readableRecoveryHistory;
+      : modelContextHistory;
     const isFirstMessage = forceFirstMessage || history.length === 1 ||
       verifiedFirstReadableAd;
     const customerMessages = readableRecoveryHistory.filter((message) => message?.role === "user");
@@ -1422,7 +1399,7 @@ async function processIncomingMessage(
     const numberedPricingSelection = !keywordReason && !marketingStopQuestion &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNumberedPricingMenuSelection({
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         }) : null;
 
@@ -1442,7 +1419,7 @@ async function processIncomingMessage(
         // fire-and-forget, so a Graph API delay/failure can never block the
         // customer reply. Creative copy takes priority. Internal ad names may
         // contribute only a canonical configured service, not raw metadata.
-        metaAdContext = await loadMetaAdReplyContext(contact.id, {
+        metaAdContext = recoveryTopicReset ? null : await loadMetaAdReplyContext(contact.id, {
           services: clinicConfig.services,
           aliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1506,7 +1483,14 @@ async function processIncomingMessage(
               );
             },
           }) : null;
-      if (numberedPricingSelection) {
+      if (!fixedAdFirstReply && recoveryPromptProof && !keywordReason && !marketingStopQuestion &&
+          !acceptedStaffOffer && !bookingContext?.appointmentAt &&
+          !/^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))) {
+        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig});
+      }
+      if (recoveryOther && !keywordReason && !marketingStopQuestion) {
+        aiReply = "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。";
+      } else if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
         aiReply = priceCheckingReply("latest_package", mediaLanguage);
@@ -1658,7 +1642,7 @@ async function processIncomingMessage(
             language: mediaLanguage,
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
-            conversationHistory: history,
+            conversationHistory: commercialHistory,
             ...verifiedEvidence,
           });
           if (plan?.preserveReview) {
@@ -1760,7 +1744,7 @@ async function processIncomingMessage(
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const deviceReview = resolveNeutroFacialDeviceReview({
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, language: mediaLanguage,
       });
       const deviceEvidence = deviceReview
@@ -1832,6 +1816,8 @@ async function processIncomingMessage(
         returningPricingHistory = await conversationStore.getPricingHistoryForContact(
           contact.id, { throughMessageId: savedInbound.id }
         );
+        if (secondaryAiConversation && Array.isArray(returningPricingHistory)) returningPricingHistory = scopeRecoveryCommercialHistory(returningPricingHistory);
+        else if (recoveryTopicReset) returningPricingHistory = null;
       } catch (err) {
         console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
       }
@@ -1841,7 +1827,7 @@ async function processIncomingMessage(
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveShadowPriceException({
-          customerText: text, conversationHistory: history, metaAdContext,
+          customerText: text, conversationHistory: commercialHistory, metaAdContext,
           returningPricingHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1874,16 +1860,16 @@ async function processIncomingMessage(
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
         isStandaloneNeutroPriceQuestion(text) && hasExplicitPriceRequest(text) &&
         categorizeAiReview(text, reviewType) === "information" &&
-        !campaignContextReply({ history, customerText: text })) {
+        !campaignContextReply({ history:commercialHistory, customerText: text })) {
       const selectedFromPricingContext = resolveVerifiedPriceFollowUpService({
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
         allowContinuedPriceContext: aiPricingEnabled,
       });
       const continuity = selectedFromPricingContext ? null
         : planNeutroReviewContinuation({
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             language: mediaLanguage, services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
@@ -1893,7 +1879,7 @@ async function processIncomingMessage(
           ? (clinicConfig.services || []).find(item =>
               item.name === continuity.treatment) : null);
       const prices = chosen?.name
-        ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, history)
+        ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, commercialHistory)
         : null;
       if (prices?.length && prices.every(item =>
           /^RM[1-9]\d{1,4}$/u.test(String(item.price || "")))) {
@@ -1925,7 +1911,7 @@ async function processIncomingMessage(
       );
       const recovered = planInformationPriceRecovery({
         enabled: true, flagged, reviewRequired, reviewType,
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions, resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage, hasKeywordAlert: Boolean(keywordReason),
@@ -1998,7 +1984,7 @@ async function processIncomingMessage(
       !marketingStopQuestion
       ? (resolveTwoTreatmentPriceReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -2014,21 +2000,21 @@ async function processIncomingMessage(
               clinicConfig.serviceAliases)?.name === shadowPriceException.treatment)
           ? resolveNeutroPostpartumBudgetQuote({
               customerText: text,
-              session: recentVerifiedPricingSession(history, text),
+              session: recentVerifiedPricingSession(commercialHistory, text),
               services: clinicConfig.services,
               serviceAliases: clinicConfig.serviceAliases,
               promotions: clinicConfig.promotions,
               language: mediaLanguage,
             }) : null) || resolveFacialCategoryPriceReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
         }) || resolveVerifiedStaffFacialPriceReply({
           customerText: text,
-          conversationHistory: history,
+          conversationHistory: commercialHistory,
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -2067,7 +2053,7 @@ async function processIncomingMessage(
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveScopedPackagePriceContinuation({
-          customerText: text, conversationHistory: history, metaAdContext,
+          customerText: text, conversationHistory: commercialHistory, metaAdContext,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
         }) : null;
@@ -2080,7 +2066,7 @@ async function processIncomingMessage(
         !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion) {
       scopedPackagePrice = resolveCurrentThreadPackageRequest({
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
       });
@@ -2119,7 +2105,7 @@ async function processIncomingMessage(
     const numberedPrices = numberedPricingSelection
       ? verifiedPricesForService(
           numberedPricingSelection.treatment, clinicConfig.promotions,
-          text, history, { clarifiedPriceService: numberedPricingSelection.treatment }
+          text, commercialHistory, { clarifiedPriceService: numberedPricingSelection.treatment }
         ) : null;
     const numberedPricingDecision = numberedPrices?.length
       ? {
@@ -2131,7 +2117,7 @@ async function processIncomingMessage(
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
       ? (numberedPricingSelection ? numberedPricingDecision : scopedPackagePrice || resolveAiPricingDecision({
           priceQuery, packageQuery, treatment: details?.treatment || null,
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
@@ -2162,7 +2148,7 @@ async function processIncomingMessage(
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
       numberedMenuDecision: numberedPricingDecision,
-      customerText: text, conversationHistory: history,
+      customerText: text, conversationHistory: commercialHistory,
       services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
@@ -2185,7 +2171,7 @@ async function processIncomingMessage(
         (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
       try {
         const semanticCandidate = resolveModelLedPricingDecision({
-          modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
+          modelIntent:modelPricingIntent,customerText:text,conversationHistory: commercialHistory,
           services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
           promotions:clinicConfig.promotions,
           allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
@@ -2194,7 +2180,7 @@ async function processIncomingMessage(
         });
         const semanticApproval = resolveApprovedPricingAssessment({
           mode:"enabled",aiDecision:semanticCandidate,customerText:text,
-          conversationHistory:history,services:clinicConfig.services,
+          conversationHistory: commercialHistory,services:clinicConfig.services,
           serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
           promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
           marketingStopQuestion,
@@ -2246,7 +2232,7 @@ async function processIncomingMessage(
       !isActiveSafetyConcern(text) && !fixedAdFirstReply && !twoTreatmentQuote &&
       !isExplicitStaffRequest(text) && modelPricingStage !== "subsequent_session" &&
       Boolean(conflictTreatment) && hasConflictingStaffPrice({
-        treatment:conflictTreatment,conversationHistory:history,
+        treatment:conflictTreatment,conversationHistory: commercialHistory,
         services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
         promotions:clinicConfig.promotions,
       });
@@ -2264,7 +2250,7 @@ async function processIncomingMessage(
       !bookingReady && !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveNeutroPelvicPackageComparison({
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions, language: mediaLanguage,
         }) : null;
@@ -2318,7 +2304,7 @@ async function processIncomingMessage(
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
           resolveVerifiedPriceFollowUpService({
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
             allowContinuedPriceContext: false,
@@ -2330,7 +2316,7 @@ async function processIncomingMessage(
         numberedPricingSelection?.treatment ||
         (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
           ? resolveClarifiedPriceService({
-              customerText: text, conversationHistory: history,
+              customerText: text, conversationHistory: commercialHistory,
               services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             }) : null);
 
@@ -2375,7 +2361,7 @@ async function processIncomingMessage(
             clarifiedPriceService,
             verifiedPricingIntent: Boolean(approvedPricingDecision),
             requireVerifiedTreatment: true,
-            resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+            resultMedia: clinicConfig.resultMedia, conversationHistory: commercialHistory,
             promotions: clinicConfig.promotions,
             allowContinuedPriceContext: aiPricingEnabled,
             isFirstMessage,
@@ -2417,7 +2403,7 @@ async function processIncomingMessage(
           }),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
-        resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+        resultMedia: clinicConfig.resultMedia, conversationHistory: commercialHistory,
         language: mediaLanguage,
         allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
       });
@@ -2428,7 +2414,7 @@ async function processIncomingMessage(
       if (priced.restored && approvedPricingDecision?.source ===
           "customer_returning_treatment_price") {
         reply = clarifyFreeAssessmentAndPaidTrial({
-          customerText: text, conversationHistory: returningPricingHistory || history,
+          customerText: text, conversationHistory: returningPricingHistory || commercialHistory,
           treatment: approvedPricingDecision.treatment, reply,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
@@ -2482,7 +2468,7 @@ async function processIncomingMessage(
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNeutroComboOfferReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -2491,7 +2477,7 @@ async function processIncomingMessage(
             Boolean(approvedPricingDecision?.prices?.some(item =>
               item.price && reply.includes(item.price))),
         }) || resolveContextualNeutroComboQuestion({
-          customerText:text,history,
+          customerText:text,history:commercialHistory,
           services:clinicConfig.services,
           serviceAliases:clinicConfig.serviceAliases,
           promotions:clinicConfig.promotions,
@@ -2550,7 +2536,7 @@ async function processIncomingMessage(
     // authorization for a price or optional graphic.
     if (!flagged && !marketingStopQuestion && !twoTreatmentQuote) {
       const repeated = improveRepeatedPriceClarification({
-        customerText: text, reply, conversationHistory: history,
+        customerText: text, reply, conversationHistory: commercialHistory,
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
         language: mediaLanguage,
@@ -2590,13 +2576,13 @@ async function processIncomingMessage(
       ? channel === "whatsapp" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
         ? await resolveNeutroSubsequentPricing({
             contactId: contact.id, inboundMessageId: savedInbound.id,
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions, language: mediaLanguage,
             modelPricingStage,
           })
         : resolveRepeatVisitPriceReply({
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             language: mediaLanguage, modelPricingStage,
           })
@@ -2655,7 +2641,7 @@ async function processIncomingMessage(
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const continuity = planNeutroReviewContinuation({
-        customerText: text, conversationHistory: history, language: mediaLanguage,
+        customerText: text, conversationHistory: commercialHistory, language: mediaLanguage,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
       });
@@ -2692,8 +2678,7 @@ async function processIncomingMessage(
         isCampaignAvailabilityQuestion(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      const rm68AvailabilityAnswer = campaignContextReply({
-        history, customerText: text,
+      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
@@ -2930,8 +2915,7 @@ async function processIncomingMessage(
     let rm68CampaignContinuationTextOnly = false;
     if (!flagged && !bookingReady && !marketingStopQuestion &&
         !keywordReason && !urgentSafety && !isActiveSafetyConcern(text)) {
-      const campaignAnswer = campaignContextReply({
-        history, customerText: text,
+      const campaignAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
       });
       if (campaignAnswer) {
         reply = campaignAnswer;
@@ -2942,8 +2926,7 @@ async function processIncomingMessage(
         serviceQuerySource = null;
       } else {
         const replyBeforeCampaignGuard = reply;
-        reply = guardCampaignPriceConflicts({
-          history, customerText: text, reply,
+        reply = guardCampaignPriceConflicts({ history:commercialHistory, customerText: text, reply,
         });
         // If any old Pulse Wave terms were corrected, do not attach media
         // derived from the conflicting generic service offer.
@@ -3094,6 +3077,20 @@ async function processIncomingMessage(
       reviewContinuationTextOnly = true;
     }
 
+    // A generic recovery choice is not a price request, campaign opt-in or
+    // consent. Keep the current turn neutral and do not attach old media.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text)) {
+      const breastInvitation = recoveryPromptProof && !fixedAdFirstReply
+        ? recoveryBreastOfferInvitation({customerText:text,config:clinicConfig}) : null;
+      if (recoveryOther || breastInvitation) {
+        reply = recoveryOther
+          ? "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。"
+          : breastInvitation;
+        reviewContinuationTextOnly=true;
+        priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
+      }
+    }
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,

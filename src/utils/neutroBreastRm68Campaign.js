@@ -248,11 +248,27 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   return { expired: false, message };
 }
 
+// A generic breast-care selection is not explicit event interest. Invite a
+// choice, and only use the dated event intro after a readable explicit enquiry.
+function recoveryBreastOfferInvitation({customerText,config,now=Date.now()}={}) {
+  if (!isNeutro(config?.businessName||config?.clinicName) || config?.adFirstReply?.enabled!==true ||
+      campaignDay(now)==="expired" || normalize(customerText)!=="胸部护理") return null;
+  return "您好 😊 我们有提供胸部健康评估和舒缓护理，目前12月活动也有 RM68 首次体验优惠（"+dayLine(now)+"）。请问您想了解这个限时活动，还是平日的胸部护理呢？";
+}
+function recoveryBreastCampaignOpening({history,customerText,config,now=Date.now()}={}) {
+  if (!isNeutro(config?.businessName||config?.clinicName) || config?.adFirstReply?.enabled!==true ||
+      campaignDay(now)==="expired" || !isSimpleRm68Enquiry(customerText) ||
+      hasCampaignConversation(history)) return null;
+  const latestPrior=(Array.isArray(history)?history:[]).slice(0,-1).reverse().find(row=>row?.role==="user");
+  if (normalize(latestPrior?.content)!=="胸部护理") return null;
+  return {reply:firstReply(now),treatment:null,serviceQuery:false,serviceQuerySource:null,campaignKey:CAMPAIGN_KEY};
+}
+
 module.exports = {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, INTRO_MARKER, MYT_CAMPAIGN_END,
   isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
   campaignContextReply, guardCampaignPriceConflicts,
-  candidateIsCampaign, campaignFollowUp,
+  candidateIsCampaign, campaignFollowUp, recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
 };
