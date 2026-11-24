@@ -18,8 +18,8 @@ function rejectedPreparation(code,kind="media_preflight_rejected"){
     definitivelyRejected:true,retryable:false,
     providerFailureKind:kind,code};
 }
-const uncertain = (code) => ({
-  success: false, unknown: true, ambiguous: true, retryable: false, code,
+const cancelledPreparation = (code) => ({
+  success:false,wamid:null,preProviderCancelled:true,retryable:false,code,
 });
 
 function secondaryVideoCacheEligible({ env = process.env, storage, mediaKey }) {
@@ -47,7 +47,7 @@ async function dispatchSecondaryFollowUpVideo({
       return false;
     }
   };
-  if (!await allowed()) return uncertain("sender_followup_policy_changed_before_video");
+  if (!await allowed()) return cancelledPreparation("sender_followup_policy_changed_before_video");
 
   const checkMp4 = env.WHATSAPP_SECONDARY_VIDEO_MP4_PREFLIGHT_ENABLED==="true";
   const checkCodec = env.WHATSAPP_SECONDARY_VIDEO_CODEC_PREFLIGHT_ENABLED==="true";
@@ -108,7 +108,7 @@ async function dispatchSecondaryFollowUpVideo({
       cached = { kind: "bypass" };
     }
     if (cached?.kind === "cancelled") {
-      return uncertain("sender_followup_policy_changed_during_video");
+      return cancelledPreparation("sender_followup_policy_changed_during_video");
     }
     if (cached?.kind === "download_failed" &&
         (cached.error?.code==="SECONDARY_MP4_INVALID" ||
@@ -131,7 +131,7 @@ async function dispatchSecondaryFollowUpVideo({
     }
     if(cached?.kind==="upload_failed") {
       // A shared/ambiguous upload must never be repeated for this old slot.
-      return uncertain("sender_followup_cached_video_preparation_unconfirmed");
+      return cancelledPreparation("sender_followup_cached_video_preparation_unconfirmed");
     }
     if(cached?.kind==="ready" && checkCodec){
       if(checkedThisUpload && cached.fingerprint)
@@ -171,20 +171,22 @@ async function dispatchSecondaryFollowUpVideo({
       const checked=await verifyVideoBytes(bytes,{phoneId});
       if(!checked.ok)return rejectedPreparation(checked.code);
     }
-    if (!await allowed()) return uncertain("sender_followup_policy_changed_before_upload");
-    const uploaded = await transport.uploadMedia(bytes, mimeType, filename);
+    if (!await allowed()) return cancelledPreparation("sender_followup_policy_changed_before_upload");
+    let uploaded;
+    try { uploaded = await transport.uploadMedia(bytes, mimeType, filename); }
+    catch { return cancelledPreparation("sender_followup_video_upload_exception"); }
     if (uploaded?.success !== true || !uploaded.mediaId) {
       if(uploaded?.definitivelyRejected===true)
         return {...uploaded,success:false,mediaId:null,
           code:"sender_followup_video_upload_rejected"};
-      return uncertain("sender_followup_video_upload_unconfirmed");
+      return cancelledPreparation("sender_followup_video_upload_unconfirmed");
     }
     mediaId = uploaded.mediaId;
   }
 
   // A customer can opt out, book or be taken over while the shared upload
   // finishes. Recheck immediately before the ONE provider message attempt.
-  if (!await allowed()) return uncertain("sender_followup_policy_changed_after_upload");
+  if (!await allowed()) return cancelledPreparation("sender_followup_policy_changed_after_upload");
   const result = await transport.sendMediaById("video", mediaId, {
     caption, filename, voice: false,
   });
