@@ -831,7 +831,9 @@ function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
   // Returning-treatment recovery proves the treatment, not permission to
   // widen a verified or requested package. Other protected paths stay intact.
   const returning=legacyApproval?.decision?.source==="customer_returning_treatment_price";
-  if(mode!=="enabled" || (hasSpecialDecision && !returning) || semanticApproval?.decision ||
+  const requestedPackageScope=modelIntent?.promotionOption!=null ||
+    Object.values(relativePackageReference(String(customerText||""))).some(Boolean);
+  if(mode!=="enabled" || (hasSpecialDecision && !(returning && requestedPackageScope)) || semanticApproval?.decision ||
     !modelIntent?.structured || modelIntent.outcome!=="normal" ||
     !(modelIntent.priceQuery===true || modelIntent.packageQuery===true))return false;
   const legacy=legacyApproval?.decision;
@@ -853,8 +855,9 @@ function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
   return Boolean(legacy && modelIntent.treatment && legacy.treatment!==modelIntent.treatment);
 }
 
-// Enabled prioritizes a validated Gemini decision. A legacy rejection at
-// the authorization boundary, or a verified special case, is never bypassed.
+// Enabled prioritizes a validated Gemini decision. Final legacy rejection
+// and distinct special-case authorities remain protected. A broader verified
+// returning-treatment quote can yield only to an exact approved subset.
 function shouldApplyModelLedPricing({mode,legacyCandidate,
   legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
   const legacy=legacyApproval?.decision, semantic=semanticApproval?.decision;
