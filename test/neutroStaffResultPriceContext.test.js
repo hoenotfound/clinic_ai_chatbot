@@ -115,6 +115,7 @@ test("natural customer selections and Malay/English price questions retain the s
   ["想做骨盆调整","骨盆调理","这个多少钱？",null,null,["RM388","RM268"],"zh"],
   ["Saya berminat dengan Pelvic Care","骨盆调理","Berapa harga?","Harga rawatan mana yang anda ingin tahu?","Yang ini",["RM388","RM268"],"ms"],
   ["I am interested in 9D","9D 逆龄抗衰","How much?",null,null,["RM488"],"en"],
+  ["I am interested in Firm & Lift","9D 逆龄抗衰","How much?",null,null,["RM488"],"en"],
   ["我想了解9D紧致","9D 逆龄抗衰","价钱？",null,null,["RM488"],"zh"],
  ];
  for(const [selection,name,price,question,reference,expected,language] of cases){
@@ -176,6 +177,7 @@ test("an ambiguous clarification or unknown Business App activity cannot authori
   history().map((t,i)=>i===3?{...t,content:"[Verified STAFF message] [unsupported sent from WhatsApp Business App]"}:t),
   history().map((t,i)=>i===2?{...t,pricingBusinessAppPlaceholder:false}:t),
   history().map((t,i)=>i===5?{...t,content:"请问你想了解 Package A 或 Package B？"}:t),
+  history().map((t,i)=>i===5?{...t,content:"我们还有两种配套可选。"}:t),
   history().map((t,i)=>i===0?{...t,content:"3D 小颜术和9D 逆龄抗衰"}:t),
  ]){
   const a=args(rows);
