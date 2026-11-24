@@ -26,10 +26,20 @@ function resolveIndependentRefusalPriceRequest({
   if (!raw || raw.length > 180 || HIGH_RISK.test(raw) || !DELIMITER.test(raw)) return null;
   const clauses = raw.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
     .map(x => x.trim()).filter(Boolean);
-  // Only support one explicit refusal followed by one independent request.
+  // Only support one explicit refusal/correction followed by one independent request.
   // More clauses require normal clarification, not automatic sending.
-  if (clauses.length !== 2 || !REFUSED_QUOTE.test(clauses[0]) ||
-      REFUSED_QUOTE.test(clauses[1])) return null;
+  if (clauses.length !== 2 || REFUSED_QUOTE.test(clauses[1])) return null;
+  // A correction can reject a service rather than its quotation ("不是3D").
+  // Accept only an exact configured service/alias after a negation, not
+  // arbitrary prose or a second affirmative treatment.
+  const correction = clauses[0].match(/^(?:不是|不要|不想(?:做|了解)?|not|no|bukan)\s*(.+)$/iu);
+  const key = value => String(value || "").normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+  const corrected = correction && safeServiceFromCustomer(correction[1], services, serviceAliases);
+  const exactCorrection = corrected && [
+    corrected.name,
+    ...serviceAliases.filter(a => a.officialService === corrected.name).map(a => a.alias),
+  ].some(name => key(name) === key(correction[1]));
+  if (!REFUSED_QUOTE.test(clauses[0]) && !exactCorrection) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const mentioned = (part) => [...new Set(findServicesInText(part, candidates))];
   const refused = mentioned(clauses[0]);
