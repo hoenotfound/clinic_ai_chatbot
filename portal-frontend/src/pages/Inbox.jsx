@@ -4205,8 +4205,11 @@ function ThreadView({
             />
           </button>
         )}
-        {canReviewSecondaryBilling && contact.whatsapp_is_secondary===true && contact.needs_attention &&
-          <SecondaryBillingReview key={contact.contact_id} contactId={contact.contact_id} onToast={onToast}/>}
+        {canReviewSecondaryBilling && contact.whatsapp_is_secondary===true && contact.needs_attention && (
+          <div hidden={!attentionExpanded}>
+            <SecondaryBillingReview key={contact.contact_id} contactId={contact.contact_id} onToast={onToast}/>
+          </div>
+        )}
         {contact.needs_attention && attentionExpanded &&
           Array.isArray(contact.pending_review_items) && contact.pending_review_items.length > 0 && (
           <div className="max-h-64 space-y-2 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-5"
