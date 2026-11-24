@@ -5,7 +5,7 @@ const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { relatedMediaTargets } = require("./relatedServicePolicy");
-const { resolveCompactConversationPolicy, selectCompactFAQs } = require("./compactConversationPolicy");
+const { resolveCompactConversationPolicy, selectCompactFAQs, resolveProductionCompactPolicy } = require("./compactConversationPolicy");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
@@ -1242,7 +1242,12 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const context = getBusinessContext();
   const { terminology: terms, conversion } = context;
   const conversationContext = normalizedOptions.conversationContext;
-  const compactPolicy = resolveCompactConversationPolicy(config, optionsOrFirstMessage?.compactPromptPlan);
+  const compactPolicy = Object.prototype.hasOwnProperty.call(optionsOrFirstMessage || {}, "compactPromptPlan")
+    ? resolveCompactConversationPolicy(config, optionsOrFirstMessage.compactPromptPlan)
+    : resolveProductionCompactPolicy(config);
+  const effectiveSop = compactPolicy?.replacement?.sop ?? config.sop;
+  const effectiveClosing = compactPolicy?.replacement?.closingPlaybook ?? config.closingPlaybook;
+  const effectiveStyle = compactPolicy?.replacement?.messagingStyle ?? config.messagingStyle;
   const bookingContext = normalizedOptions.bookingContext;
   const appointmentState = conversion.mode === "appointment" && bookingContext && typeof bookingContext === "object"
     ? (() => {
@@ -1333,11 +1338,11 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     ? conversationPromotionsList(conversationContext)
     : (config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList());
   const sopText = hasScopedConversationContext
-    ? filterServiceScopedGuidance(config.sop, conversationContext)
-    : String(config.sop || "");
+    ? filterServiceScopedGuidance(effectiveSop, conversationContext)
+    : String(effectiveSop || "");
   const closingPlaybookText = hasScopedConversationContext
-    ? filterServiceScopedGuidance(config.closingPlaybook, conversationContext)
-    : String(config.closingPlaybook || "");
+    ? filterServiceScopedGuidance(effectiveClosing, conversationContext)
+    : String(effectiveClosing || "");
   const hoursText = includeSchedulingDetails
     ? `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`
     : "Detailed hours omitted because the current conversation is not about scheduling or opening times.";
@@ -1380,7 +1385,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
 TONE: ${config.tone || "Warm, helpful, concise, and natural."}
 
 TEXTING STYLE — follow these literally, this is how you should actually write every ${terms.customerSingular}-facing reply:
-${config.messagingStyle || ""}
+${effectiveStyle || ""}
 
 FREQUENTLY ASKED QUESTIONS:
 ${faqList}
@@ -1472,6 +1477,13 @@ ${neutroWombNamingRule(conversationContext?.currentCustomerText, conversationCon
 ` : ""}
 
 ${bookingReadyRules(context, Boolean(compactPolicy))}
+
+${compactPolicy ? `FINAL DECISION CONSISTENCY:
+- If the CURRENT question asks for an unverified technical specification (e.g. 脉冲波作用深度/几公分, frequency or energy), return review_required with reviewType clinical and internal placeholder, not a normal sales reply promising verification. If the specification is explicitly verified by the configured service facts, answer only that verified fact.
+- For review_required or needs_human, preserve known treatment for staff context but set serviceQuery false, serviceQuerySource null; no sales prompts, pricing/media promises or booking. For clinical review, priceQuery/packageQuery false.
+- When the requested day/time is closed, past, outside opening hours or rejected, set appointmentPreference null; do not retain the rejected choice as the current preference. Keep outcome normal unless escalation is needed.
+- Never tell the customer that photos, pricing artwork or videos have been sent, will be sent or are attached. The delivery pipeline operates separately. Answer directly using verified facts where needed.
+` : ""}
 
 STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code fence and no text outside it:
 {
