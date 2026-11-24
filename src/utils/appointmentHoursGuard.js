@@ -98,10 +98,17 @@ function detectDate(text,anchorDate){
   }
   for(const m of source.matchAll(/(?:(20\d{2})年\s*)?(\d{1,2})月\s*(\d{1,2})[日号號]?/gu))
     add(calendarDate(m[1],+m[2],+m[3],anchorDate));
-  for(const m of source.matchAll(new RegExp(DAY_FIRST,"giu")))
-    add(calendarDate(m[3],monthNumber(m[2]),+m[1],anchorDate));
-  for(const m of source.matchAll(new RegExp(MONTH_FIRST,"giu")))
+  // Match day-first expressions once, then mask their spans so "29 November
+  // 3.00 PM" cannot also be misread as November 3.
+  const dayFirstMatches=[...source.matchAll(new RegExp(DAY_FIRST,"giu"))];
+  for(const m of dayFirstMatches)add(calendarDate(m[3],monthNumber(m[2]),+m[1],anchorDate));
+  let remaining=source;
+  for(const m of dayFirstMatches.slice().reverse())
+    remaining=remaining.slice(0,m.index)+" ".repeat(m[0].length)+remaining.slice(m.index+m[0].length);
+  for(const m of remaining.matchAll(new RegExp(MONTH_FIRST,"giu"))){
+    if(/^(?:[:.]\d|\s*(?:am|pm)\b)/iu.test(remaining.slice(m.index+m[0].length)))continue;
     add(calendarDate(m[3],monthNumber(m[1]),+m[2],anchorDate));
+  }
   for(const [pattern,offset] of [
     [/(?:今天|今日|\btoday\b|\bhari ini\b)/iu,0],
     [/(?:明天|(?<!day after )\btomorrow\b|\besok\b)/iu,1],
