@@ -3,6 +3,7 @@ require("dotenv").config();
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
 const channelMessaging = require("./services/channelMessagingService");
+const {resolveContactPricingMode}=require("./utils/pricingTestContact");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
@@ -1350,6 +1351,15 @@ async function processIncomingMessage(
     // High-confidence urgent safety phrases must not depend on an AI provider.
     // Bypass model generation completely so outages/capacity failures cannot
     // replace immediate-care guidance with the generic processing-error reply.
+    // Snapshot the operator-approved pricing mode once for this inbound.
+    // Use exactly the same mode in prompt construction, language correction
+    // and the final text/media authorization; never mutate clinicConfig.
+    const aiPricingMode=resolveContactPricingMode({
+      baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,
+    });
+    if(aiPricingMode==="enabled" && clinicConfig.aiPricingIntentMode==="shadow"){
+      console.info("[Pricing test contact] contact="+contact.id+" inbound="+savedInbound.id+" mode=enabled");
+    }
     let aiReply;
     let flagged = false;
     let reviewRequired = false;
@@ -1489,6 +1499,7 @@ async function processIncomingMessage(
         const replyOptions = {
           bookingContext,
           contactId: contact.id,
+          pricingIntentMode: aiPricingMode,
           isFirstMessage,
           generateFirstIntro,
           channel,
@@ -1761,7 +1772,7 @@ async function processIncomingMessage(
     // Full multi-turn information-review recovery remains Enabled-only.
     // In Shadow, only a separate independently verified early-treatment or
     // current-Meta-ad pricing exception may use the legacy reply path.
-    const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
+
     const aiPricingEnabled = aiPricingMode === "enabled";
     // This explicit clinic opt-in lets a verified current Meta creative
     // anchor an asked-for treatment price. It never inherits unrelated ads,

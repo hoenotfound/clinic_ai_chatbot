@@ -603,6 +603,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const channel = "whatsapp";
     const contact = { id: 7 };
     const savedInbound = { id: 100 };
+    const aiPricingMode = resolveContactPricingMode({baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,env:{}});
     const keywordReason = null;
     const marketingStopQuestion = null;
     const numberedPricingSelection = null;
@@ -615,6 +616,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ${source}
     return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
   })`, {
+    resolveContactPricingMode: require("../src/utils/pricingTestContact").resolveContactPricingMode,
     // Pin the synthetic attribution clock so this test does not expire after 7 real days.
     resolveFixedAdFirstReply: options => resolveFixedAdFirstReply({ ...options, now }),
     clinicConfig: { adFirstReply: config, services, serviceAliases: aliases,
