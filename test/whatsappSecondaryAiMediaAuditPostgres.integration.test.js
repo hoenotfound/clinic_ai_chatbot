@@ -71,6 +71,29 @@ test("secondary media audit and contact wake operate on isolated PostgreSQL evid
    )).rows;
    assert.deepEqual(wakeRows.map(x=>x.due),[true,false],
      "Customer B's idle billing gate must not wake Customer A's unrelated image");
+   // A receipt for this same contact must not shorten a separate image
+   // preparation backoff. No outbound message ID is needed to distinguish it.
+   const deadline=(await db.query(
+     "UPDATE whatsapp_sender_ai_media_jobs SET "+
+     "next_attempt_at=NOW()+INTERVAL '10 minutes',"+
+     "preparation_retry_not_before=NOW()+INTERVAL '10 minutes' "+
+     "WHERE id=$1 RETURNING preparation_retry_not_before",[one.job]
+   )).rows[0].preparation_retry_not_before;
+   assert.equal(await queue.wakeAfterVerifiedReconciliation({
+     contactIds:[one.contact],database,env
+   }),false);
+   const protectedJob=(await db.query(
+     "SELECT next_attempt_at,preparation_retry_not_before FROM whatsapp_sender_ai_media_jobs WHERE id=$1",
+     [one.job]
+   )).rows[0];
+   assert.equal(protectedJob.next_attempt_at.getTime(),deadline.getTime());
+   assert.equal(protectedJob.preparation_retry_not_before.getTime(),deadline.getTime());
+   // After the preparation deadline expires, the ordinary same-contact
+   // wake becomes available again.
+   await db.query("UPDATE whatsapp_sender_ai_media_jobs SET preparation_retry_not_before=NOW()-INTERVAL '1 second' WHERE id=$1",[one.job]);
+   assert.equal(await queue.wakeAfterVerifiedReconciliation({contactIds:[one.contact],database,env}),true);
+   assert.equal((await db.query("SELECT next_attempt_at<=NOW() AS due FROM whatsapp_sender_ai_media_jobs WHERE id=$1",[one.job])).rows[0].due,true);
+
 
    assert.equal(await audit.reconcileSecondaryMediaAudit({
      inboundMessageIds:[one.inbound,two.inbound],database,env,
