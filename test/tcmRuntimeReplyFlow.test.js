@@ -21,6 +21,7 @@ const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require(
 const { isSimpleVisitTimingQuestion, safeVisitTimingReply } = require("../src/utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("../src/utils/appointmentCancellationSafety");
 const { scopeForPersistedContact } = require("../src/utils/verifiedWhatsAppEventScope");
+const { needsUnverifiedPulseDepthReview } = require("../src/utils/neutroUnverifiedPulseDepth");
 
 // Execute the actual production handler and tracked text-sending functions,
 // not a reimplementation of the handler's control flow. Only external
@@ -81,6 +82,7 @@ function harness({ failDelivery = false } = {}) {
     console: { error: (...args) => state.errors.push(args.join(" ")), log: () => {}, warn: () => {}, info: () => {} },
     process, setTimeout, clearTimeout, Buffer,
     scopeForPersistedContact,
+    needsUnverifiedPulseDepthReview,
     aiReplyCancellation: {
       keyForWhatsAppNumber: () => "whatsapp:test", snapshot: () => 0,
       safeToSend: () => state.allowSend,
