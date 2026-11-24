@@ -20,7 +20,9 @@ test("secondary follow-up shortlist preserves the current main branch safety win
   }
   assert.match(marketing.EXTENDED_CANDIDATES_SQL, /recent_contact/);
   assert.match(marketing.EXTENDED_CANDIDATES_SQL,
-    /recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/);
+    /recent\.created_at > \$4::timestamptz - INTERVAL '8 days'/);
+  assert.match(marketing.EXTENDED_CANDIDATES_SQL,
+    /FROM whatsapp_free_entry_referrals seed_referral/);
   assert.match(marketing.RECHECK_SQL, /recent_contact/);
   assert.match(marketing.EXTENDED_RECHECK_SQL, /recent_contact/);
   assert.match(service.CANDIDATES_SQL, /whatsapp_opt_out_at IS NULL/);
