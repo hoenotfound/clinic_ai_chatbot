@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {resolveModelLedPricingDecision,shouldApplyModelLedPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
+const {resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
 const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
 const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
 const {resolvePricePromotionForReply}=require("../src/utils/pricePromotionTrigger");
@@ -180,4 +180,34 @@ test("server uses accepted language result and both approved price intent types 
  const source=require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/server.js"),"utf8");
  assert.match(source,/modelPricingIntent = languageCheckedReply\.languageCorrectionFailed\s*\? null/u);
  assert.match(source,/solicitedPricing:Boolean\(secondaryAiConversation &&\s*\["price","package_options"\]\.includes\(approvedPricingDecision\?\.type\)/u);
+});
+
+test("rejected model package scope cannot widen a legacy quote",()=>{
+ const a=args("比较便宜的那个多少钱？","骨盆调理");
+ a.modelIntent.promotionOption="Package B";
+ const legacy={decision:{treatment:"骨盆调理",prices:[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]}};
+ const base={mode:"enabled",modelIntent:a.modelIntent,semanticCandidate:null,semanticApproval:{decision:null},
+  legacyApproval:legacy,customerText:a.customerText,promotions};
+ assert.equal(shouldBlockRejectedModelPricing(base),true);
+ assert.equal(shouldBlockRejectedModelPricing({...base,mode:"shadow"}),false);
+ assert.equal(shouldBlockRejectedModelPricing({...base,hasSpecialDecision:true}),false);
+ assert.equal(shouldBlockRejectedModelPricing({...base,customerText:"Package B 多少钱？",
+  legacyApproval:{decision:{treatment:"骨盆调理",prices:[{name:"Package B",price:"RM268"}]}}}),false);
+ assert.equal(shouldBlockRejectedModelPricing({...base,semanticCandidate:{treatment:"骨盆调理"}}),true);
+});
+test("verified staff price accepts correctly associated original and voucher but rejects wrong payable price",()=>{
+ const {staffQuoteMatchesConfiguredPrice}=require("../src/utils/verifiedPriceReply");
+ const structured={currency:"MYR",normal:488,offer:388},verified={name:"Package A",price:"RM388",afterVoucher:true};
+ const good="Package A\n原价 RM488\nRM100 优惠券\n优惠后仅需 RM388";
+ assert.equal(staffQuoteMatchesConfiguredPrice(good,structured,verified),true);
+ for(const bad of [good.replace("仅需 RM388","仅需 RM399"),good.replace("原价 RM488","原价 RM588"),good.replace("RM100 优惠券","RM200 优惠券")])
+   assert.equal(staffQuoteMatchesConfiguredPrice(bad,structured,verified),false,bad);
+});
+test("simple correct package menu preserves model wording but swapped amounts are rejected",()=>{
+ const {preserveVerifiedModelQuote}=require("../src/utils/verifiedPriceReply");
+ const good="亲爱的，骨盆调理目前有两个配套哦 😊\nPackage A：RM388\nPackage B：RM268";
+ const prices=[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}];
+ assert.equal(preserveVerifiedModelQuote({reply:good,treatment:"骨盆调理",prices,firstTrialQuote:false}),good);
+ assert.equal(preserveVerifiedModelQuote({reply:good.replace("RM388","RM268").replace(/RM268$/,"RM388"),treatment:"骨盆调理",prices,firstTrialQuote:false}),null);
+ assert.equal(preserveVerifiedModelQuote({reply:good,treatment:"骨盆调理",prices:[{...prices[0],afterVoucher:true},prices[1]],firstTrialQuote:false}),null);
 });
