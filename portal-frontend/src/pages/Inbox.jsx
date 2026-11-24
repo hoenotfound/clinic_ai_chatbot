@@ -1949,6 +1949,7 @@ export default function Inbox() {
         canReplyToLeads={canReplyToLeads}
         canManageLeads={canManageLeads}
         canManageAutomation={canManageAutomation}
+        canReviewSecondaryBilling={user?.role==="admin" && permissions.manage_settings===true && canManageAutomation && canViewAllLeads && canReplyToLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
         mutationNotices={customerEditNotices}
@@ -2911,6 +2912,49 @@ function DateSeparator({ value }) {
   );
 }
 
+function SecondaryBillingReview({contactId,onToast}) {
+  const [review,setReview]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [nonDelivery,setNonDelivery]=useState(false);
+  const [noCharge,setNoCharge]=useState(false);
+  const [reason,setReason]=useState("");
+  async function inspect(){
+    setBusy(true);
+    try {
+      const result=await api.getSecondaryInboxReview(contactId);
+      setReview(result);
+      if(!result.eligible)onToast("No eligible unconfirmed billing hold for this contact.","warning");
+    }catch(error){onToast(error.message||"Could not inspect billing hold.","error");}
+    finally{setBusy(false);}
+  }
+  async function approve(event){
+    event.preventDefault();
+    setBusy(true);
+    try{
+      const result=await api.approveSecondaryInboxReview(contactId,{reservationId:review.reservationId,
+        reason,nonDeliveryChecked:nonDelivery,billingNoChargeChecked:noCharge});
+      if(result.reviewed!==true)throw Error("Review was not recorded.");
+      setReview({...review,reviewed:true});
+      onToast("Review recorded. Compose a new message; the original message cannot be retried.","success");
+    }catch(error){onToast(error.message||"Could not record review.","error");}
+    finally{setBusy(false);}
+  }
+  return <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs">
+    {!review?.eligible ? <button type="button" disabled={busy} onClick={inspect}
+      className="font-semibold underline">Review secondary WhatsApp billing hold</button>
+      : review.reviewed ? <p>Review recorded for message #{review.messageId}. Compose a new message from the reviewing administrator account. Do not retry the original.</p>
+      : <form onSubmit={approve} className="space-y-2" aria-label="Review secondary WhatsApp billing hold">
+        <p className="font-semibold">Review original message #{review.messageId}</p>
+        <label className="flex gap-2"><input type="checkbox" checked={nonDelivery} onChange={e=>setNonDelivery(e.target.checked)} required/>I checked the actual WhatsApp conversation: the original message was not received.</label>
+        <label className="flex gap-2"><input type="checkbox" checked={noCharge} onChange={e=>setNoCharge(e.target.checked)} required/>I checked Meta Billing Hub: no charge for this original attempt.</label>
+        <textarea aria-label="Review evidence" placeholder="Record what you checked (12–500 characters)" className="w-full rounded border p-2" value={reason} onChange={e=>setReason(e.target.value)} required minLength={12} maxLength={500}/>
+        <p>Only a distinct, newly composed message is eligible. Normal WhatsApp policy and billing checks still apply.</p>
+        <button type="submit" disabled={busy||!nonDelivery||!noCharge||reason.trim().length<12} className="rounded border px-2 py-1 font-semibold disabled:opacity-50">Authorise one new send</button>
+        <button type="button" disabled={busy} onClick={()=>{setReview(null);setNonDelivery(false);setNoCharge(false);setReason("");}} className="ml-2 underline">Cancel</button>
+      </form>}
+  </div>;
+}
+
 function ThreadView({
   contact,
   initialDraft,
@@ -2920,6 +2964,7 @@ function ThreadView({
   canReplyToLeads,
   canManageLeads,
   canManageAutomation,
+  canReviewSecondaryBilling,
   showUnassignedAssignment,
   messages,
   mutationNotices = [],
@@ -4160,6 +4205,8 @@ function ThreadView({
             />
           </button>
         )}
+        {canReviewSecondaryBilling && contact.whatsapp_is_secondary===true && contact.needs_attention &&
+          <SecondaryBillingReview key={contact.contact_id} contactId={contact.contact_id} onToast={onToast}/>}
         {contact.needs_attention && attentionExpanded &&
           Array.isArray(contact.pending_review_items) && contact.pending_review_items.length > 0 && (
           <div className="max-h-64 space-y-2 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-5"

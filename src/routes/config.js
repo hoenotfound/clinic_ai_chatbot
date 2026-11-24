@@ -1370,6 +1370,23 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
+// Administrator review records evidence, never sends or resets a gate.
+router.get("/automated-follow-up/secondary-inbox-review/:contactId", async (req,res)=>{
+  try {
+    res.json(await require("../services/whatsappSecondaryInboxReviewService").inspect({contactId:req.params.contactId}));
+  } catch(error){res.status(error.status||503).json({error:error.status?error.message:"Billing review unavailable."});}
+});
+router.post("/automated-follow-up/secondary-inbox-review/:contactId", async (req,res)=>{
+  try {
+    res.json(await require("../services/whatsappSecondaryInboxReviewService").approve({
+      contactId:req.params.contactId,actor:req.user?.username,
+      reservationId:req.body?.reservationId,reason:req.body?.reason,
+      nonDeliveryChecked:req.body?.nonDeliveryChecked===true,
+      billingNoChargeChecked:req.body?.billingNoChargeChecked===true,
+    }));
+  } catch(error){res.status(error.status||503).json({error:error.status?error.message:"Billing review unavailable."});}
+});
+
 // Operational override; it does not change Meta pricing evidence or waive billing.
 router.post("/automated-follow-up/free-only-reconcile", async (req, res) => {
   try {

@@ -376,3 +376,41 @@ test("verified customer return can resume AI only for exactly reviewed old deliv
       "no-WAMID outcomes never inherit automatic signed-failure recovery");
   });
 });
+
+test("Inbox review authorises only one newly composed message by the reviewing administrator", {skip:!connectionString},async()=>{
+  const review=require("../src/services/whatsappSecondaryInboxReviewService");
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    await billing.recordSecondaryProviderOutcome({reservationId:s.original.reservationId},{database,env});
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",[s.messages[0]]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",[s.sender]);
+    const input={contactId:s.contact,reservationId:s.original.reservationId,actor:"admin",
+      reason:"Business App and Billing Hub checked: no delivery or charge.",
+      nonDeliveryChecked:true,billingNoChargeChecked:true};
+    assert.equal((await review.inspect({contactId:s.contact},{database,env})).eligible,true);
+    await assert.rejects(review.approve({...input,billingNoChargeChecked:false},{database,env}),/Confirm non-delivery/);
+    await assert.rejects(review.approve({...input,contactId:999999},{database,env}),/hold changed/);
+    const approved=await review.approve(input,{database,env});
+    assert.deepEqual(approved,{reviewed:true,sendAuthorized:false,originalRetryAllowed:false});
+    assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",[s.sender])).rows[0].state,"unknown");
+    await assert.rejects(review.approve(input,{database,env}),/already reviewed/);
+    const conversation=(await db.query("SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    async function newMessage(actor){
+      const mid=(await db.query("INSERT INTO messages(contact_id,role,content,sent_by_username) VALUES($1,'assistant','new message',$2) RETURNING id",[s.contact,actor])).rows[0].id;
+      await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[mid,conversation]);
+      return mid;
+    }
+    const request=messageId=>billing.reserveSecondaryBillingAttempt({contactId:s.contact,messageId},{database,env});
+    assert.equal((await request(s.messages[0])).reserved,false,"never replay original");
+    assert.equal((await request(s.messages[1])).reserved,false,"pre-review draft cannot use approval");
+    assert.equal((await request(await newMessage(null))).reserved,false,"automation cannot consume manual approval");
+    assert.equal((await request(await newMessage("other-admin"))).reserved,false,"different actor cannot use approval");
+    const mid=await newMessage("admin");
+    const next=await request(mid);
+    assert.equal(next.reserved,true);
+    assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",[s.original.reservationId])).rows[0].state,"unknown");
+    assert.equal((await db.query("SELECT new_message_id FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,mid);
+    assert.equal((await review.inspect({contactId:s.contact},{database,env})).eligible,false);
+    assert.equal((await request(await newMessage("admin"))).reserved,false,"another message cannot bypass an active reservation");
+  });
+});
