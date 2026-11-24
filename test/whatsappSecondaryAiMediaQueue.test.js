@@ -684,8 +684,24 @@ test("server can mark a solicited image only from approved pricing authority",()
   const fs=require("node:fs");
   const path=require("node:path");
   const s=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(s,/solicitedPricing:Boolean\(secondaryAiConversation &&[\s\S]{0,130}approvedPricingDecision\?\.type === "price"/);
-  assert.match(s,/kind:"promotion",[\s\S]{0,370}solicitedPricing:Boolean/);
+  // Exercise the actual server expression rather than pinning its former
+  // price-only spelling. Only approved, nonempty price/package decisions
+  // on the secondary sender qualify for the quiet-hours exemption.
+  const match=s.match(/kind:"promotion",[\s\S]{0,370}solicitedPricing:(Boolean\([\s\S]*?\)),\s*sequenceOffset:0/);
+  assert.ok(match,"Missing approved promotion queue eligibility expression");
+  const vm=require("node:vm");
+  const qualifies=(secondaryAiConversation,approvedPricingDecision)=>
+    vm.runInNewContext(match[1],{secondaryAiConversation,approvedPricingDecision});
+  const prices=[{name:"Package B",price:"RM268"}];
+  for(const type of ["price","package_options"]){
+    assert.equal(qualifies(true,{type,prices}),true,type);
+    assert.equal(qualifies(false,{type,prices}),false,type);
+    assert.equal(qualifies(true,{type,prices:[]}),false,type);
+    assert.equal(qualifies(true,{type}),false,type);
+  }
+  for(const decision of [undefined,null,{type:"result",prices},{type:"service_query",prices}]){
+    assert.equal(qualifies(true,decision),false);
+  }
 });
 
 test("Neutro absolute promo image uses secondary Meta upload, not Render link fetch",async()=>{
