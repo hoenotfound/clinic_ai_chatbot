@@ -16,7 +16,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
   assistantIntroducesCompetingPaidService,
 } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
-const { getActivePromotions, promotionPackages } = require("./activePromotion");
+const { getActivePromotions, promotionPackages, findMentionedPromotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
@@ -537,28 +537,32 @@ function resolveAiPricingDecision({
   });
 }
 
-// First rollout: use the existing model intent fields without a second
-// positive pricing-keyword gate. A customer-authored configured service
-// still supplies the identity. Limit new authority to direct or immediately
-// established single-service conversations; complex legacy cases stay intact.
+// Gemini classifies the current intent. Verify factual service/package evidence,
+// rather than requiring another affirmative price-keyword match.
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
 } = {}) {
-  const current = String(customerText || "").trim();
+  const original = String(customerText || "").trim();
   const intent = modelIntent;
   if (!intent || intent.structured !== true || intent.outcome !== "normal" ||
       intent.pricingStage === "subsequent_session" ||
       (intent.priceQuery !== true &&
         !(allowOfferEnquiries && intent.packageQuery === true)) ||
-      !current || current.length > 600 || !Number.isFinite(now) ||
+      !original || original.length > 600 || !Number.isFinite(now) ||
       !services.some(s => s?.name === intent.treatment)) return null;
-  // Preserve existing negative safeguards. These are vetoes, not a second
-  // dictionary of affirmative price requests.
-  if (isGreetingOrLanguageOnly(current) || hasClinicalMediaRisk(current) || SPECIFIC_ADMIN_FEE.test(current) ||
-      RESET.test(current) || REFUSAL.test(current) || AD_NEGATED_TOPIC.test(current) ||
-      AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
+  const independent = resolveIndependentRefusalPriceRequest({
+    customerText:original,services,serviceAliases,
+  });
+  if (independent && independent.treatment!==intent.treatment) return null;
+  const current=independent?.priceText || original;
+  // Negative safety/permission gates remain independent of model output.
+  // The existing refusal resolver permits a distinctly requested NEW service.
+  if (isGreetingOrLanguageOnly(current) || hasClinicalMediaRisk(original) ||
+      SPECIFIC_ADMIN_FEE.test(original) || REFUSAL.test(current) ||
+      AD_NEGATED_TOPIC.test(current) || AD_BROAD_TOPIC.test(current) ||
+      /\\b(?:stop|unsubscribe)\\b|退订|退訂/iu.test(original) ||
       isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(current,
@@ -567,71 +571,114 @@ function resolveModelLedPricingDecision({
   const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
   const last = turns.at(-1);
   if (last?.role !== "user" || typeof last.content !== "string" ||
-      last.content.trim() !== current ||
+      last.content.trim() !== original ||
       !isRecentPricingThread(turns, turns.length - 1, now)) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
   if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
-      (direct && direct.name !== intent.treatment)) return null;
-
-  // A direct current selection wins. Otherwise require the immediately
-  // preceding customer turn to name the same treatment, and a bot response
-  // acknowledging it. Never use a model suggestion, CRM label or ad alone.
+      (direct && direct.name !== intent.treatment) ||
+      (RESET.test(current) && !direct)) return null;
+  let anchorIndex=turns.length-1;
   if (!direct) {
-    const previous = turns.slice(0, -1).findLastIndex(t => t?.role === "user");
-    if (previous < 0 || !isRecentPricingThread(turns, previous, now)) return null;
-    const anchor = pricingMessageText(turns[previous]).trim();
-    const priorNames = [...new Set(findServicesInText(anchor, candidates))];
-    if (typeof turns[previous].content !== "string" ||
-        priorNames.length !== 1 || priorNames[0] !== intent.treatment ||
-        safeServiceFromCustomer(anchor, services, serviceAliases)?.name !== intent.treatment ||
-        RESET.test(anchor) || REFUSAL.test(anchor) || AD_NEGATED_TOPIC.test(anchor) ||
-        AD_BROAD_TOPIC.test(anchor) || hasClinicalMediaRisk(anchor)) return null;
-    const responses = turns.slice(previous + 1, -1);
-    if (!responses.length || responses.some(t =>
-      t.role !== "assistant" || isVerifiedStaffTurn(t) ||
-      assistantIntroducesCompetingPaidService(t, intent.treatment, candidates) ||
+    // Search the bounded recent conversation for the latest genuine
+    // customer-named service, allowing ordinary intermediate questions.
+    // An intervening contradictory selection or an unknown topic reset
+    // invalidates the older anchor. Never infer treatment solely from an ad,
+    // CRM label, assistant recommendation or model guess.
+    anchorIndex=-1;
+    for (let i=turns.length-2;i>=0;i--) {
+      const turn=turns[i], at=turn?.pricingCreatedAtMs;
+      if (!Number.isFinite(at) || at>now+60_000) return null;
+      if (at<now-24*3600000) break;
+      if (turn.role!=="user") continue;
+      if (typeof turn.content!=="string") return null;
+      const prior=pricingMessageText(turn).trim();
+      if (!prior || RESET.test(prior) || REFUSAL.test(prior) ||
+          AD_NEGATED_TOPIC.test(prior) || AD_BROAD_TOPIC.test(prior) ||
+          hasClinicalMediaRisk(prior)) return null;
+      const mentioned=[...new Set(findServicesInText(prior,candidates))];
+      if (!mentioned.length) continue;
+      if (mentioned.length!==1 || mentioned[0]!==intent.treatment ||
+          safeServiceFromCustomer(prior,services,serviceAliases)?.name!==intent.treatment) return null;
+      anchorIndex=i;
+      break;
+    }
+    if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
+    const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
+    if (!responses.length || responses.some(t=>
+      assistantIntroducesCompetingPaidService(t,intent.treatment,candidates) ||
       hasClinicalMediaRisk(pricingMessageText(t)))) return null;
-    if (!responses.some(t => findServicesInText(pricingMessageText(t), candidates)
+    if (!responses.some(t=>findServicesInText(pricingMessageText(t),candidates)
       .includes(intent.treatment))) return null;
   }
-  // Do not let the fallback overlook recent clinical context or staff
-  // intervention, including an unknown app echo. Existing narrowly proven
-  // legacy staff-result recovery remains available separately.
+  // Known delivered staff assistance is conversation evidence, not a
+  // takeover. Unknown/deleted echoes and unverified/conflicting staff prices
+  // cannot supply a new price authorization. Live ownership is checked by
+  // the existing send boundary; clinical context remains a hard veto.
   for (let i=turns.length-2;i>=0;i--) {
     const t=turns[i], at=t?.pricingCreatedAtMs;
     if (!Number.isFinite(at) || at>now+60_000) return null;
     if (at<now-24*3600000) break;
-    if (isVerifiedStaffTurn(t) || (t.role==="user" &&
-      hasClinicalMediaRisk(pricingMessageText(t)))) return null;
+    const content=pricingMessageText(t);
+    if (hasClinicalMediaRisk(content)) return null;
+    if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
+        (!(t.pricingDeliveredStaffImage===true || t.pricingDeliveredStaffText===true) ||
+         t.pricingBusinessAppPlaceholder===true || /\\[unsupported|message deleted/iu.test(content) ||
+         /\\b(?:RM|MYR)\\s*\\d|[价價][钱錢格位]|\\b(?:price|cost|harga)\\b/iu.test(content) ||
+         assistantIntroducesCompetingPaidService(t,intent.treatment,candidates))) return null;
   }
 
+  // Verify all configured options first, then honor Gemini's single package
+  // only when supported by a customer mention or a verified preceding menu.
   const active=getActivePromotions(promotions,new Date(now))
     .filter(p=>p.linkedService===intent.treatment && p.sendOnPriceQuery===true);
   if (active.length!==1) return null;
   const options=promotionPackages(active[0]);
-  // Reuse configured-price verification. The model may describe a package,
-  // but cannot choose an unverified package or manufacture a sale amount.
-  const prices=verifiedPricesForService(intent.treatment,promotions,current,turns,
-    {clarifiedPriceService:intent.treatment,allowTextOnlyOffers:true});
-  if (!prices?.length || !options.length) return null;
+  const all=verifiedPricesForService(intent.treatment,promotions,"",[],
+    {allowTextOnlyOffers:true});
+  if (!all?.length || all.length!==options.length) return null;
+  const mentioned=findMentionedPromotionPackages(options,current);
+  let prices=all;
   if (intent.promotionOption != null) {
-    if (prices.length!==1 || prices[0].name!==intent.promotionOption) return null;
-  } else if (prices.length!==options.length) return null;
+    const selected=all.find(p=>p.name===intent.promotionOption);
+    if (!selected || mentioned.length>1 ||
+        (mentioned.length===1 && mentioned[0].name!==selected.name)) return null;
+    // For an indirect reference, only accept a choice grounded in the same
+    // customer's explicit package selection or the immediately preceding
+    // bot menu showing the configured option and its actual current amount.
+    const previous=turns.at(-2);
+    const previousText=pricingMessageText(previous);
+    const priorCustomer=turns.slice(anchorIndex,-1).findLast(t=>t.role==="user");
+    const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
+    const listed=findMentionedPromotionPackages(options,previousText);
+    const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
+      listed.length>1 && all.every(p=>listed.some(o=>o.name===p.name) &&
+        previousText.replace(/\\s+/gu,"").includes(p.price));
+    if (!mentioned.length && !(priorChoice.length===1 && priorChoice[0].name===selected.name) &&
+        !menuSupports && options.length!==1) return null;
+    prices=[selected];
+  } else if (mentioned.length===1) {
+    // A specific customer choice cannot be silently widened to all packages.
+    return null;
+  } else if (mentioned.length>1) {
+    // Explicit comparisons retain the existing text-only graphic policy.
+    prices=all.filter(p=>mentioned.some(o=>o.name===p.name));
+  }
   return Object.freeze({
     type:intent.priceQuery===true ? "price" : "package_options",
-    treatment:intent.treatment,source:"model_led_customer_context",
+    treatment:intent.treatment,source:independent?"current_customer":"model_led_customer_context",
     clarifiedPriceService:intent.treatment,prices,servicePrice:null,
+    ...(independent?{scopedPriceText:independent.priceText,scopedRefusedTreatment:independent.refusedTreatment}:{}),
   });
 }
 
-// Compare in Shadow, fill only genuine gaps in Enabled, never override an
-// existing legacy candidate (including one rejected by final approval).
+// Enabled prioritizes a validated Gemini decision. A legacy rejection at
+// the authorization boundary, or a verified special case, is never bypassed.
 function shouldApplyModelLedPricing({mode,legacyCandidate,
   legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
-  return mode==="enabled" &&
-    !legacyCandidate && !legacyApproval?.decision && !hasSpecialDecision &&
+  return mode==="enabled" && !hasSpecialDecision &&
+    (!legacyCandidate || Boolean(legacyApproval?.decision)) &&
     Boolean(semanticApproval?.decision);
 }
 
