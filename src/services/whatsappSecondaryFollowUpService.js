@@ -1206,7 +1206,8 @@ async function runOnce({
       }
       if(slot===20){
         outboundText=adaptNeutroAppointmentInvitation({
-          message:outboundText,customerTexts:[...(commercialCustomerTexts||[])].reverse(),
+          // Appointment continuity uses the full recent timing history, not the pricing topic.
+          message:outboundText,customerTexts:[...(candidate.customer_texts||[])].reverse(),
           language:replyLanguage,businessConfig:clinicConfig,
         });
       }
