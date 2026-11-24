@@ -2,7 +2,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
-const { resolveCompactConversationPolicy, selectCompactFAQs } = require("../src/utils/compactConversationPolicy");
+const { resolveCompactConversationPolicy, selectCompactFAQs, resolveProductionCompactPolicy } = require("../src/utils/compactConversationPolicy");
 const { requestFor } = require("../scripts/neutro-ab");
 const { getIndustryProfile } = require("../src/config/industryProfiles");
 const proposal = require("../scripts/config-proposals/neutro-prompt-consolidation-stage2.json");
@@ -59,4 +59,36 @@ test("reviewed production compact policy retains specific safety and business ex
   const g=proposal.guardrails.join("\n"), e=proposal.triggers.join("\n");
   for(const regex of [/6 weeks/,/KKM/,/pacemaker/,/Before & After/,/Package C/,/7合1/,/AI|keys/,/子宫调理/,/草药胸部/,/pregnancy/,/HIFU/,/no rebound/,/courtesy/i]) assert.match(g,regex);
   for(const regex of [/facial droop/,/diastasis recti/,/lochia/,/C-section/,/fourth month/,/incontinence/,/pacemaker/,/HIFU/,/medication/,/general postpartum/]) assert.match(e,regex);
+});
+
+test("rollout requires explicit boolean and every reviewed source fingerprint; no stored config mutation",()=>{
+  const cfg={...original,sop:"old SOP",messagingStyle:"old style",closingPlaybook:"old closing"};
+  const stage1={clinic:plan.clinic,expectedMd5:Object.fromEntries(["sop","messagingStyle","closingPlaybook"].map(k=>[k,hash(cfg[k])])),
+    replacement:{sop:"S",messagingStyle:"M",closingPlaybook:"C"}};
+  assert.equal(resolveProductionCompactPolicy(cfg,plan,stage1),null);
+  assert.equal(resolveProductionCompactPolicy({...cfg,promptOptimization:{neutroCompactV2:"true"}},plan,stage1),null);
+  const enabled={...cfg,promptOptimization:{neutroCompactV2:true}};
+  const before=structuredClone(enabled);
+  assert.deepEqual(resolveProductionCompactPolicy(enabled,plan,stage1).replacement,stage1.replacement);
+  assert.equal(resolveProductionCompactPolicy({...enabled,sop:"changed"},plan,stage1),null);
+  assert.equal(resolveProductionCompactPolicy({...enabled,promptOptimization:{neutroCompactV2:false}},plan,stage1),null);
+  assert.deepEqual(enabled,before);
+});
+test("compact candidate explicitly prioritizes technical review, rejected appointment and media safety",()=>{
+  const scenario={surface:"conversation",channel:"whatsapp",lang:"zh",history:[{role:"user",content:"3D 小颜术"}]};
+  const prompt=requestFor(original,scenario,plan).config.systemInstruction;
+  assert.match(prompt,/FINAL DECISION CONSISTENCY/);
+  assert.match(prompt,/unverified technical specification/);
+  assert.match(prompt,/appointmentPreference null/);
+  assert.match(prompt,/serviceQuery false/);
+  assert.match(prompt,/Never tell the customer that photos/);
+});
+test("ambiguous and multi-treatment context keeps all FAQs",()=>{
+  for (const c of [
+    {...context,serviceDiscoveryIntent:true},
+    {...context,relevantServiceNames:["3D 小颜术","9D 逆龄抗衰"]},
+    {...context,serviceSource:"conversation"},
+    {...context,serviceSource:"meta_ad"},
+    {...context,serviceSource:"current_promotion"}
+  ]) assert.deepEqual(selectCompactFAQs(faqs,c,plan),faqs);
 });
