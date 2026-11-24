@@ -300,6 +300,12 @@ function enforceConfigPolicy(req, res, user) {
   }
 
   if (parts[0] === "automated-follow-up") {
+    if (parts[1] === "secondary-inbox-review") {
+      return ["GET","POST"].includes(req.method) && user.role === "admin" &&
+        canTools && canSettings && hasCapability(user,"view_all_leads") &&
+        hasCapability(user,"reply_to_assigned_leads")
+        ? true : forbidden(res,"Secondary billing review requires an administrator with Settings, Tools, View all leads and Reply permissions.");
+    }
     if (parts[1] === "free-only-reconcile") {
       return req.method === "POST" && user.role === "admin" && canTools && canSettings
         ? true : forbidden(res, "Billing reconciliation requires an administrator with Manage settings and Manage tools.");
