@@ -449,3 +449,41 @@ test("booking-ready recovery requires a prior scheduling question and verified c
   assert.equal(canRecoverBookingReady({customerText:"thanks",previousAssistantText:"Which day would be convenient?",issue}),false);
   assert.equal(verifiedAppointmentPreference({status:"invalid_date"}),null);
 });
+
+test("booking-ready backstop persists only independently verified customer schedule",async()=>{
+  const originalHours=config.hours;
+  const originalType=config.businessType;
+  config.hours=hours;
+  config.businessType="tcm_clinic";
+  const now=new Date();
+  // Select a future open date relative to the test runner's clock.
+  let day=new Date(now.getTime()+7*86400000);
+  while([0,1].includes(localParts(day).weekday))day=new Date(day.getTime()+86400000);
+  const date=localParts(day).date;
+  let updateParams=null;
+  try{
+    const mark=createBookingReadyOutcomeService({
+      database:{async connect(){return {
+        async query(sql,params){
+          if(sql.includes("UPDATE contacts c"))updateParams=params;
+          return {rows:[]};
+        },
+        release(){},
+      };}},
+      lockContactAlertQueue:async()=>{},
+      publish(){throw Error("no update expected");},
+      sendBookingReadyAlert(){throw Error("no update expected");},
+    });
+    const result=await mark(9294,23511,{
+      details:{appointmentPreference:"Wrong day at 4pm",staffSummary:"Wrong day at 4pm"},
+      customerText:date+" 3pm",receivedAt:now,durationMinutes:90,
+    });
+    assert.equal(updateParams[4],date+" 15:00");
+    assert.equal(result.details.appointmentPreference,date+" 15:00");
+    assert.match(result.details.staffSummary,/Customer preference:/);
+    assert.doesNotMatch(result.details.staffSummary,/Wrong day|4pm/);
+  }finally{
+    config.hours=originalHours;
+    config.businessType=originalType;
+  }
+});
