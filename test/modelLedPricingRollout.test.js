@@ -108,7 +108,7 @@ test("natural multi-turn treatment context, verified staff assistance, and chang
  const delivered={...turn("assistant","[Verified STAFF message] 骨盆调理 Before & After",3000),pricingStaffAuthored:true,pricingDeliveredStaffImage:true};
  a.conversationHistory.splice(-1,0,delivered);
  assert.equal(resolveModelLedPricingDecision(a)?.treatment,"骨盆调理");
- a.conversationHistory[a.conversationHistory.length-2]={...delivered,pricingDeliveredStaffImage:false,pricingDeliveredStaffText:true,content:"[Verified STAFF message] 骨盆调理是本店护理项目。"};
+ a.conversationHistory[a.conversationHistory.length-2]={...delivered,pricingDeliveredStaffImage:false,pricingVerifiedStaffText:true,content:"[Verified STAFF message] 骨盆调理是本店护理项目。"};
  assert.equal(resolveModelLedPricingDecision(a)?.treatment,"骨盆调理");
  a.conversationHistory[a.conversationHistory.length-2].content="[Verified STAFF message] 骨盆调理 RM999";
  assert.equal(resolveModelLedPricingDecision(a),null);
