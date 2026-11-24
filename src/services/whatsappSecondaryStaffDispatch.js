@@ -354,8 +354,8 @@ async function sendSecondaryStaffText({
       reservationId: reserved.reservationId,
     }, { database, env }).catch(() => {});
   };
-  // Only automated marketing uses this narrow proof of NO Meta request.
-  // AI/staff/other ambiguous outcomes retain their existing protective holds.
+  // Only proven pre-message cancellations may settle a reservation as rejected.
+  // Actual ambiguous provider sends retain their existing protective holds.
   const cancelProvenMarketingBeforeProvider = async (code) => {
     const outcome = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId, definitivelyRejected: true,
@@ -369,7 +369,7 @@ async function sendSecondaryStaffText({
   try {
     const fresh = await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (origin === "marketing_followup") {
+      if (origin === "marketing_followup" || origin === "ai_media") {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
       }
       await markUnknown();
@@ -377,7 +377,7 @@ async function sendSecondaryStaffText({
         unknown: true, ambiguous: true };
     }
     if (fresh.policyAllowed !== true) {
-      if (origin === "marketing_followup") {
+      if (origin === "marketing_followup" || origin === "ai_media") {
         return cancelProvenMarketingBeforeProvider(fresh.code || "secondary_staff_policy_changed");
       }
       await markUnknown();
@@ -394,7 +394,7 @@ async function sendSecondaryStaffText({
       return block("secondary_staff_reservation_unverified");
     }
     if (!await stillEligible()) {
-      if (origin === "marketing_followup") {
+      if (origin === "marketing_followup" || origin === "ai_media") {
         return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
       }
       await markUnknown();
@@ -405,7 +405,7 @@ async function sendSecondaryStaffText({
     // possible point before calling Meta. The consumed billing hold stays
     // unknown even when cancellation prevents the provider call.
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (origin === "marketing_followup") {
+      if (origin === "marketing_followup" || origin === "ai_media") {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_before_provider");
       }
       await markUnknown();
@@ -426,11 +426,11 @@ async function sendSecondaryStaffText({
     // only with this exact marker before the provider send. All other AI,
     // staff and uncertain Meta outcomes still keep their billing holds.
     if (origin === "ai_media" && typeof dispatchTransport === "function" &&
-        send?.code === "secondary_ai_media_language_changed" &&
+        ["secondary_ai_media_language_changed","secondary_ai_media_preparation_failed",
+         "secondary_ai_media_cancelled_before_provider"].includes(send?.code) &&
         send?.preProviderCancelled === true && send?.success === false &&
         !send?.wamid && send?.unknown !== true && send?.ambiguous !== true) {
-      return cancelProvenMarketingBeforeProvider(
-        "secondary_ai_media_language_changed");
+      return cancelProvenMarketingBeforeProvider(send.code);
     }
     // Marketing's existing narrow no-provider proof remains unchanged.
     if (origin === "marketing_followup" &&
