@@ -226,6 +226,24 @@ async function reserveSecondaryBillingAttempt({
           String(gate.rows[0].reservation_id||"").toLowerCase());
       const proof = await client.query(`
         SELECT a.reservation_id,
+          EXISTS (
+            SELECT 1 FROM whatsapp_sender_unknown_gate_inbox_reviews review
+            JOIN messages fresh ON fresh.id=$7 AND fresh.contact_id=a.contact_id
+              AND fresh.role='assistant' AND fresh.sent_by_username=review.actor
+              AND fresh.is_automated_follow_up IS DISTINCT FROM TRUE
+              AND fresh.whatsapp_template IS NULL
+              AND fresh.created_at>=review.reviewed_at
+              AND fresh.whatsapp_message_id IS NULL
+              AND fresh.whatsapp_accepted_at IS NULL
+            WHERE review.reservation_id=a.reservation_id AND review.sender_id=a.sender_id
+              AND review.contact_id=a.contact_id AND review.old_message_id=a.message_id
+              AND review.non_delivery_checked=TRUE AND review.billing_no_charge_checked=TRUE
+              AND review.reviewed_at>=NOW()-INTERVAL '24 hours'
+              AND old.whatsapp_accepted_at IS NULL
+              AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=old.id)
+              AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts prior_fresh WHERE prior_fresh.message_id=fresh.id)
+              AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=fresh.id)
+          ) AS inbox_reviewed,
           CASE WHEN a.wamid IS NULL AND old.whatsapp_message_id IS NULL
               AND old.delivery_status='unknown'
               AND NOT EXISTS (
@@ -277,7 +295,7 @@ async function reserveSecondaryBillingAttempt({
         await client.query("ROLLBACK"); inTransaction = false;
         return deny("secondary_billing_previous_send_unresolved");
       }
-      if (approved.release_basis !== "signed_failed" && !manuallyReviewed) {
+      if (approved.release_basis !== "signed_failed" && !manuallyReviewed && approved.inbox_reviewed !== true) {
         await client.query("ROLLBACK"); inTransaction = false;
         // No-WAMID remains a possible provider send; the operator bypass
         // setting must be enabled before any manual UUID review is relevant.
