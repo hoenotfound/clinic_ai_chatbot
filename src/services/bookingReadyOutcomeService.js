@@ -1,6 +1,6 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
-const { evaluateAppointmentHours } = require("../utils/appointmentHoursGuard");
+const { evaluateAppointmentHours, verifiedAppointmentPreference, appointmentCustomerContext } = require("../utils/appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
@@ -120,7 +120,8 @@ function createBookingReadyOutcomeService({
         recentCustomerMessages,
         receivedAt, now: now(), durationMinutes,
       });
-      if (["closed", "past", "outside_hours", "ambiguous", "unknown", "unconfigured", "valid_day"].includes(hoursCheck.status)) {
+      const verifiedPreference = verifiedAppointmentPreference(hoursCheck);
+      if (!verifiedPreference) {
         console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
           " reason=" + hoursCheck.status);
         return {
@@ -128,6 +129,25 @@ function createBookingReadyOutcomeService({
           details, blockedReason: hoursCheck.status,
         };
       }
+      // Never persist or notify staff with an unverified model-written time.
+      // The same canonical date and time is used by CRM and alert delivery.
+      details.appointmentPreference = verifiedPreference;
+      if (!details.branch && clinicConfig.branches?.length === 1)
+        details.branch = canonicalConfiguredValue(clinicConfig.branches[0]?.name, clinicConfig.branches);
+      // Keep actual customer concerns separate from the canonical appointment
+      // field. Use excerpts rather than trusting model-generated timing claims.
+      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:new Date()});
+      const formatClock = t => String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+      const feasibleWindow = hoursCheck.validWindows?.length
+        ? hoursCheck.validWindows.map(range=>range.map(formatClock).join("–")).join(" or ") : null;
+      details.staffSummary = [
+        details.treatment ? "Treatment: " + details.treatment : null,
+        details.branch ? "Location: " + details.branch : null,
+        "Customer preference: " + verifiedPreference,
+        feasibleWindow ? "Feasible start window within clinic hours (availability not checked): " + feasibleWindow : null,
+        "Staff to confirm availability.",
+        context.length ? "Customer context (quoted; not scheduling details): " + context.map(value=>JSON.stringify(value)).join("; ") : null,
+      ].filter(Boolean).join(". ").slice(0,600);
     }
     const client = await database.connect();
     let contactUpdated = false;

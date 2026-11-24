@@ -71,12 +71,12 @@ test("service candidate and hint only scan recent inbound contacts before the or
    [marketing.CANDIDATES_SQL, 5],
    [marketing.POTENTIAL_DUE_SQL, 5],
    [marketing.RECHECK_SQL, 5],
-   [marketing.EXTENDED_CANDIDATES_SQL, 9],
-   [marketing.EXTENDED_RECHECK_SQL, 9],
+   [marketing.EXTENDED_CANDIDATES_SQL, 8],
+   [marketing.EXTENDED_RECHECK_SQL, 8],
  ]){
   assert.match(sql,/SELECT DISTINCT recent\.contact_id/);
   assert.ok(sql.includes("recent.created_at > $4::timestamptz - INTERVAL '" + days + " days'"),
-   "48h/66h need five days; Day4/Day6 preserve nine days");
+   "48h/66h need five days; Day4/Day6 keep the proven 8-day ad origin superset");
   assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
   assert.match(sql,/whatsapp_marketing_consent_events consent/);
  }

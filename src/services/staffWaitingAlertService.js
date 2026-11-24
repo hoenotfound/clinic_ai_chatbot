@@ -5,6 +5,7 @@ const { isSecondaryAiReplyEligible, secondaryAllContactReplyActivation } =
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { createCoalescedImmediateWake } = require("../utils/followUpWakePolicy");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const {
   formatContactIdentifier,
@@ -368,6 +369,17 @@ function startStaffWaitingAlerts() {
   return staffWaitingWorker.start();
 }
 
+// Several stored message/status changes can publish synchronously for one
+// inbound. Fold those events into one immediate worker wake without adding
+// time delay, discarding later real messages, or altering the ten-minute
+// alert threshold, scheduled retries, or startup recovery.
+function createStaffWaitingChangeSignal(wake, scheduleMicrotask = queueMicrotask) {
+  return createCoalescedImmediateWake(wake,scheduleMicrotask);
+}
+const staffWaitingChangeSignal = createStaffWaitingChangeSignal(
+  () => wakeStaffWaitingAlerts(0)
+);
+
 // A message or ownership change can start, resolve, or move the next waiting
 // deadline. Recalculate immediately while the database is already active.
 // Startup still performs one catch-up sweep for anything overdue after Render
@@ -376,9 +388,10 @@ realtimeEvents.subscribe("conversation_changed", (payload) => {
   if (
     payload?.reason === "message" ||
     payload?.reason === "message_updated" ||
-    payload?.reason === "contact_state"
+    (payload?.reason === "contact_state" &&
+     payload?.followUpStateUnchanged !== true)
   ) {
-    wakeStaffWaitingAlerts(0);
+    staffWaitingChangeSignal();
   }
 });
 
@@ -389,6 +402,7 @@ module.exports = {
   buildStaffWaitingAlertMessage,
   createStaffWaitingAlertRunner,
   createStaffWaitingAlertService,
+  createStaffWaitingChangeSignal,
   delayUntilNextStaffWaitingAlert,
   findNextStaffWaitingDueAt,
   findWaitingStaffOwnedConversations,
