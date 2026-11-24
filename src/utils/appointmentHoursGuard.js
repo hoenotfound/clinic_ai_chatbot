@@ -48,7 +48,7 @@ function calendarDate(year,month,day,anchorDate){
   return !year&&date&&date<anchorDate&&+anchorDate.slice(5,7)>=11&&month<=2?validDate(y+1,month,day):date;
 }
 const DAYPART=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|\bmorning\b|\bafternoon\b|\bevening\b|\bpagi\b|\bpetang\b|\bmalam\b|\btengah hari\b)/iu;
-const BARE_TIME=/^(?:(?:at|pukul|jam)\s+)?(?:\d{1,2}(?:[:.：]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)|\d{1,2}[:.：]\d{2}|(?:上午|早上|中午|下午|晚上|傍晚)?[零〇一二两兩三四五六七八九十\d]{1,3}\s*(?:点|點|时|時)(?:\s*[零〇一二两兩三四五六七八九十\d]{1,3}\s*分?)?|(?:morning|afternoon|evening|pagi|petang|malam|tengah hari|上午|早上|中午|下午|晚上|傍晚))[？?.!！。\s]*$/iu;
+const BARE_TIME=/^(?:(?:at|pukul|jam)\s+)?(?:\d{1,2}(?:[:.：]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)|\d{1,2}[:.：]\d{2}|(?:上午|早上|中午|下午|晚上|傍晚)?[零〇一二两兩三四五六七八九十\d]{1,3}\s*(?:点|點|时|時)(?:\s*(?:半|[零〇一二两兩三四五六七八九十\d]{1,3}\s*分?))?|(?:morning|afternoon|evening|pagi|petang|malam|tengah hari|上午|早上|中午|下午|晚上|傍晚))[？?.!！。\s]*$/iu;
 function preferenceText(text){
   return String(text||"").normalize("NFKC").trim()
     .replace(/^(?:yes|please|ok(?:ay)?|baik|boleh)[,\s]+/iu,"")
@@ -56,7 +56,7 @@ function preferenceText(text){
 }
 function isBareTimePreference(text){return BARE_TIME.test(preferenceText(text));}
 function rejectsPreference(text){
-  return /(?:取消(?:预约|預約)?|不(?:要|想|能|可以)(?:来|來|过来|過來|预约|預約)|不能(?:了|来|來)|\b(?:cancel(?:led|ling)?|cannot (?:come|make it|attend)|can't (?:come|make it|attend)|not available|no longer interested|tak jadi|batal(?:kan)?|tak boleh datang)\b|\b(?:cannot|can't|not possible|doesn['’]t work|won['’]t work)\s*[.!?]*$|不(?:行|方便|可以)[。！？\s]*$)/iu.test(text);
+  return /(?:取消(?:预约|預約)?|不(?:要|想|能|可以)(?:来|來|过来|過來|预约|預約)|不能(?:了|来|來)|\b(?:cancel(?:led|ling)?|cannot (?:come|make it|attend)|can't (?:come|make it|attend)|not available|no longer interested|(?:decided|choose|chosen) not to proceed|(?:do not|don't|won't) (?:want to )?proceed|not proceeding|tak jadi|batal(?:kan)?|tak boleh datang)\b|\b(?:cannot|can't|not possible|doesn['’]t work|won['’]t work)\s*[.!?]*$|不(?:行|方便|可以)[。！？\s]*$)/iu.test(text);
 }
 function isBareCalendarPreference(text,anchorDate){
   const value=preferenceText(text);
@@ -167,50 +167,96 @@ function intervals(hours,dayIndex){
   return times.every(([open,close])=>open!==null&&close!==null&&close>open)?times:null;
 }
 
-function timesInText(text){
+// Clock extraction is deliberately separate from conversational intent.
+// Each clock retains its source span; a range is not a pair of alternatives.
+function parseClockPreference(text){
   const value=String(text||"").normalize("NFKC");
-  const period=/(?:下午|傍晚|晚上|\bafternoon\b|\bevening\b|\bpetang\b|\bmalam\b)/iu.test(value)?"pm":
-    /(?:上午|早上|凌晨|\bmorning\b|\bpagi\b)/iu.test(value)?"am":"";
-  const results=new Set();
-  function addTime(hour,minute,suffix=""){
-    if(!Number.isInteger(hour)||hour<0||hour>23||minute<0||minute>59)return;
-    const marker=String(suffix||period).toLowerCase();
-    if(marker==="pm"&&hour>0&&hour<12)hour+=12;
-    if(marker==="am"&&hour===12)hour=0;
-    if(!marker&&hour>0&&hour<8)return; // ambiguous "2点" without daypart
-    results.add(hour*60+minute);
-  }
-  const chineseDigits={"零":0,"〇":0,"一":1,"二":2,"两":2,"兩":2,"三":3,"四":4,
+  const tokens=[];
+  const digits={"零":0,"〇":0,"一":1,"二":2,"两":2,"兩":2,"三":3,"四":4,
     "五":5,"六":6,"七":7,"八":8,"九":9,"十":10};
-  function chineseNumber(input){
+  function number(input){
     if(/^\d{1,2}$/.test(input))return +input;
     if(input==="十")return 10;
-    if(input.startsWith("十"))return 10+(chineseDigits[input.slice(1)]||0);
-    if(input.endsWith("十"))return (chineseDigits[input.slice(0,-1)]||0)*10;
+    if(input.startsWith("十"))return 10+(digits[input.slice(1)]||0);
+    if(input.endsWith("十"))return (digits[input.slice(0,-1)]||0)*10;
     if(input.includes("十")){
       const [a,b]=input.split("十");
-      return (chineseDigits[a]||0)*10+(chineseDigits[b]||0);
+      return (digits[a]||0)*10+(digits[b]||0);
     }
-    return Object.prototype.hasOwnProperty.call(chineseDigits,input)?chineseDigits[input]:null;
+    return Object.prototype.hasOwnProperty.call(digits,input)?digits[input]:null;
   }
-  for(const m of value.matchAll(/([零〇一二两兩三四五六七八九十\d]{1,3})\s*(?:点|點|时|時)(?:\s*([零〇一二两兩三四五六七八九十\d]{1,3})\s*分?)?/gu)){
-    const h=chineseNumber(m[1]);
-    const min=m[2]?chineseNumber(m[2]):0;
-    if(h!==null&&min!==null)addTime(h,min);
+  const periodPattern=/(?:下午|傍晚|晚上|\bafternoon\b|\bevening\b|\bpetang\b|\bmalam\b|上午|早上|凌晨|\bmorning\b|\bpagi\b)/giu;
+  function markerFromWord(word){
+    return /下午|傍晚|晚上|afternoon|evening|petang|malam/iu.test(word)?"pm":"am";
   }
-  for(const m of value.matchAll(/(?:^|[^\d])(\d{1,2})[:.：](\d{2})(?:\s*(a\.?m\.?|p\.?m\.?))?(?!\d)/giu)){
+  function add(m,h,min,marker="",explicit=false){
+    const index=m.index, end=index+m[0].length;
+    if(tokens.some(t=>index<t.end&&end>t.index))return;
+    tokens.push({index,end,h,min,marker,explicit});
+  }
+  for(const m of value.matchAll(/([零〇一二两兩三四五六七八九十\d]{1,3})\s*(?:点|點|时|時)(?:\s*(半|[零〇一二两兩三四五六七八九十\d]{1,3})\s*分?)?/gu))
+    add(m,number(m[1]),m[2]==="半"?30:m[2]?number(m[2]):0);
+  for(const m of value.matchAll(/(?<!\d)(\d{1,2})[:.：](\d{2})(?:\s*(a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari))?(?!\d)/giu)){
     const suffix=String(m[3]||"").toLowerCase().replace(/\./g,"");
-    addTime(+m[1],+m[2],suffix);
+    const marker=/^(?:am|pm)$/.test(suffix)?suffix:suffix?(/petang|malam|tengah hari/.test(suffix)?"pm":"am"):"";
+    add(m,+m[1],+m[2],marker,Boolean(suffix));
   }
-  for(const m of value.matchAll(/(?<![\d:.：])\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/giu)){
-    addTime(+m[1],0,m[2].toLowerCase().replace(/\./g,""));
+  for(const m of value.matchAll(/(?<![\d:.：])\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)\b/giu)){
+    const suffix=m[2].toLowerCase().replace(/\./g,"");
+    add(m,+m[1],0,/^(?:am|pm)$/.test(suffix)?suffix:/petang|malam|tengah hari/.test(suffix)?"pm":"am",true);
   }
-  for(const m of value.matchAll(/(?<![\d:.：])\b(?:pukul\s*)?(\d{1,2})\s*(?:pagi|petang|malam|tengah hari)\b/giu)){
-    const suffix=/petang|malam|tengah hari/iu.test(m[0])?"pm":"am";
-    addTime(+m[1],0,suffix);
+  // "3 to 5pm" shares the suffix of the second endpoint. A date/price
+  // numeral is never treated as a clock without a range connector.
+  for(const m of value.matchAll(/(?<![\d:.])\b(\d{1,2})\s*(?=(?:to|until|[-–])\s*\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b)/giu))
+    add(m,+m[1],0);
+  tokens.sort((a,b)=>a.index-b.index);
+  const periods=[...value.matchAll(periodPattern)];
+  const connector=/^\s*(?:to|until|through|[-–—~]|至|到|hingga|sampai)\s*$/iu;
+  const between=(a,b)=>value.slice(a.end,b.index);
+  let invalid=false;
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i],prior=tokens[i-1],next=tokens[i+1];
+    let marker=t.marker;
+    if(!marker){
+      const nearby=periods.filter(p=>p.index<t.index&&p.index>=(prior?.end||0)).at(-1);
+      if(nearby)marker=markerFromWord(nearby[0]);
+      else if(next&&connector.test(between(t,next))&&next.marker)marker=next.marker;
+      else if(prior&&connector.test(between(prior,t))&&prior.marker)marker=prior.marker;
+    }
+    if(!Number.isInteger(t.h)||!Number.isInteger(t.min)||t.h<0||t.h>23||t.min<0||t.min>59||
+      (t.explicit&&(t.h<1||t.h>12))){
+      invalid=true;continue;
+    }
+    let h=t.h;
+    if(marker==="pm"&&h>0&&h<12)h+=12;
+    if(marker==="am"&&h===12)h=0;
+    if(!marker&&h>0&&h<8){t.ambiguous=true;continue;}
+    t.minute=h*60+t.min;
+    // Only local, explicit rejection counts. Complex corrections are left
+    // to the model/clarification, not guessed by choosing the last number.
+    const before=value.slice(prior?.end||0,t.index);
+    const after=value.slice(t.end,next?.index??value.length);
+    t.rejected=/(?:\bnot|\bexcept|\bno|不要|不是|不能|不选|不選|bukan|jangan)\s*$/iu.test(before)||
+      /^\s*(?:[,，]?\s*)?(?:not (?:possible|available|good|suitable|okay|ok)|doesn['’]t work|won['’]t work|cannot\b|can't\b|不行|不方便|不可以|tak boleh|tidak sesuai)/iu.test(after);
   }
-  return [...results];
+  const accepted=tokens.filter(t=>Number.isInteger(t.minute)&&!t.rejected);
+  const ranges=[];
+  for(let i=0;i<tokens.length-1;i++){
+    const a=tokens[i],b=tokens[i+1];
+    if(!connector.test(between(a,b)))continue;
+    if(!Number.isInteger(a.minute)||!Number.isInteger(b.minute)||a.rejected||b.rejected||a.minute>=b.minute){
+      invalid=true;continue;
+    }
+    ranges.push([a.minute,b.minute]);
+  }
+  // Mixed alternatives/ranges require clarification rather than collapsing
+  // distinct meanings. Keep the exact range endpoints if a single window.
+  const range=ranges.length===1&&accepted.length===2?ranges[0]:null;
+  if(ranges.length&&!range)invalid=true;
+  return {times:[...new Set(accepted.map(t=>t.minute))],range,invalid,
+    rejected:tokens.some(t=>t.rejected),hasClock:tokens.length>0};
 }
+function timesInText(text){return parseClockPreference(text).times;}
 
 function durationFromText(text){
   const source=String(text||"").normalize("NFKC");
@@ -256,8 +302,9 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   const anchor=localParts(receivedAt),today=localParts(now);
   if(!anchor||!today)return {status:"unknown"};
   const current=parseCalendar(customerText,anchor.date);
-  const hasTime=timesInText(customerText).length>0||DAYPART.test(customerText);
-  if(rejectsPreference(customerText))return {status:"not_appointment"};
+  const currentClock=parseClockPreference(customerText);
+  const hasTime=currentClock.times.length>0||DAYPART.test(customerText);
+  if(rejectsPreference(customerText)&&!(currentClock.rejected&&currentClock.times.length))return {status:"not_appointment"};
   if(current?.invalid)return {status:"invalid_date",hasTime};
   if(current?.ambiguous)return {status:"ambiguous",dates:current.dates,hasTime};
   let selected=current?.date||null;
@@ -305,17 +352,18 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
     }
   }
   let timeText=customerText;
-  const invalidClock=text=>/\b\d{1,2}[:.]\d{2}\b/u.test(text)&&!timesInText(text).length;
+  const invalidClock=text=>{const clock=parseClockPreference(text);return clock.invalid||(clock.hasClock&&!clock.times.length);};
   if(invalidClock(timeText))return {status:"valid_day",...info};
   if(!timesInText(timeText).length&&!DAYPART.test(timeText)){
     for(const {content} of matchingHistory){
-      if(timesInText(content).length||DAYPART.test(content)){timeText=content;break;}
+      if(parseClockPreference(content).hasClock||DAYPART.test(content)){timeText=content;break;}
     }
   }
   if(!timesInText(timeText).length&&!DAYPART.test(timeText)&&trustPreferenceWithoutCustomer)
     timeText=appointmentPreference;
   if(invalidClock(timeText))return {status:"valid_day",...info};
-  const times=timesInText(timeText);
+  const clock=parseClockPreference(timeText);
+  const times=clock.times;
   const length=Math.max(0,Math.min(480,Number(durationMinutes)||0));
   const fits=t=>opening.some(([open,close])=>t>=open&&t<close&&t+length<=close);
   const future=t=>selected!==today.date||t>today.minute;
@@ -331,6 +379,18 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
     });
     return {status:canFitFuture?"valid_preference":canFit?"past":"outside_hours",...info,daypart:part};
   }
+  if(clock.range){
+    const [from,to]=clock.range;
+    // The range is a window of acceptable start times, not an exact slot.
+    // Intersect it with opening hours and latest feasible start.
+    const windows=opening.map(([open,close])=>[
+      Math.max(from,open,selected===today.date?today.minute+1:0),
+      Math.min(to,close-Math.max(1,length))
+    ]).filter(([start,end])=>start<=end);
+    if(windows.length)return {status:"valid_preference",...info,range:clock.range,validWindows:windows};
+    const overlaps=opening.some(([open,close])=>Math.max(from,open)<=Math.min(to,close-Math.max(1,length)));
+    return {status:overlaps?"past":"outside_hours",...info,range:clock.range};
+  }
   const validTimes=times.filter(t=>fits(t)&&future(t));
   return {status:validTimes.length?"valid_preference":times.some(fits)?"past":"outside_hours",...info,
     times:validTimes,requestedTimes:times};
@@ -345,16 +405,29 @@ function daypartInText(text){
   if(/(?:上午|早上|\bmorning\b|\bpagi\b)/iu.test(value))return "morning";
   return null;
 }
+function asksSchedulingQuestion(text){
+  return /(?:\b(?:which|what|preferred)\s+(?:day|date|time)|\b(?:when|what time)\s+(?:would|can|are|do|you)|\b(?:date|day|time)\b.{0,35}\b(?:prefer|suit|convenient|work for you)|weekday or weekend|哪一天|哪天|几时|幾時|几点|幾點|什么时候|甚麼時候|星期几|星期幾|hari mana|tarikh mana|pukul berapa|bila.*sesuai)/iu.test(text);
+}
+function claimsConfirmedAppointment(text){
+  // Positive assertions only; an offer to check/confirm or an explicit
+  // disclaimer is not a confirmation. Verified staff bookings bypass this guard.
+  const clauses=String(text||"").split(/[。！？!?;\n]|\.(?=\s+[A-Z])/u);
+  return clauses.some(clause=>{
+    const value=clause.trim();
+    if(/(?:\bnot (?:yet )?(?:confirmed|booked|reserved)|\b(?:once|after|when|before|until)\b.{0,25}\bconfirm|尚未|还没|還沒|确认后|確認後|belum disahkan|selepas disahkan)/iu.test(value)&&
+      !/(?:\b(?:is|has been|you're|you are)\s+(?:already\s+)?confirmed|已经确认|已經確認)/iu.test(value))return false;
+    return /(?:\b(?:appointment|booking|reservation|slot|visit)\b.{0,30}\b(?:is|has been|now|successfully|already)\s*(?:been\s+)?(?:confirmed|booked|reserved|secured|set)|\b(?:you(?:'re| are) (?:all set|booked|confirmed)|(?:i|we)(?:'ve| have) (?:booked|reserved|confirmed)|see you (?:on|at|then))\b|(?:预约|預約|订位|訂位|时段|時段).{0,12}(?:已(?:经|經)?确认|已(?:经|經)?確認|确认成功|確認成功|预约成功|預約成功|安排好了)|(?:已(?:经|經)?帮您|已(?:经|經)?幫您).{0,10}(?:预约|預約|留位)|\b(?:janji temu|temujanji|tempahan|slot)\b.{0,25}\b(?:telah|sudah)\s+(?:disahkan|ditempah|ditetapkan))/iu.test(value);
+  });
+}
 function canRecoverBookingReady({customerText,previousAssistantText,issue}={}){
   if(issue?.status!=="valid_preference"||rejectsPreference(customerText))return false;
   const prompt=String(previousAssistantText||"");
-  const asks=/(?:which (?:day|date|time)|what (?:day|date|time)|weekday or weekend|when (?:would|can|are)|what.*(?:suit|convenient)|哪一天|哪天|几时|幾時|几点|幾點|什么时候|甚麼時候|星期几|星期幾|hari mana|tarikh mana|pukul berapa|bila.*sesuai)/iu;
-  return asks.test(prompt)&&(isBareCalendarPreference(customerText,issue.date)||isBareTimePreference(customerText));
+  return asksSchedulingQuestion(prompt)&&(isBareCalendarPreference(customerText,issue.date)||isBareTimePreference(customerText));
 }
 function verifiedAppointmentPreference(issue){
   if(issue?.status!=="valid_preference"||!issue.date)return null;
   const clock=t=>String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
-  const time=issue.times?.length?issue.times.map(clock).join(" or "):issue.daypart;
+  const time=issue.range?issue.range.map(clock).join("–"):issue.times?.length?issue.times.map(clock).join(" or "):issue.daypart;
   return time?issue.date+" "+time:null;
 }
 
@@ -393,15 +466,15 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   const promotional=/(?:优惠|促销|价格|价钱|折扣|活动|promotion|discount|promo|price|offer|diskaun)/iu.test(customerText);
   const explicitBooking=/(?:预约|預約|约时间|約時間|安排|空档|空檔|有空|\b(?:appointment|booking|book|visit|slot|temujanji|janji temu)\b)/iu.test(customerText);
   const promotionalOnly=promotional&&!explicitBooking;
-  const inboundAppointment=!promotionalOnly&&!rejectsPreference(customerText)&&(
+  const inboundAppointment=!promotionalOnly&&(!rejectsPreference(customerText)||parseClockPreference(customerText).times.length>0)&&(
     bookingContext.test(customerText)||timesInText(customerText).length>0||
     (String(customerText).trim().length<=25&&shortDay.test(customerText))||
     isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date)||
     isBareTimePreference(customerText)||Boolean(parseCalendar(customerText,localParts(receivedAt||now)?.date)?.invalid));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
-  if(rejectsPreference(customerText))return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
-  if(promotionalOnly&&requireValidPreference)
+  if(rejectsPreference(customerText)&&!parseClockPreference(customerText).times.length)return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+  if(promotionalOnly&&requireValidPreference&&!claimsConfirmedAppointment(original))
     return {reply:original,blocked:true,issue:{status:"not_appointment"}};
   const issue=inboundAppointment||requireValidPreference
     ? evaluateAppointmentHours({
@@ -418,17 +491,19 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     !/(?:今天|today|hari ini).{0,35}(?:确认|確認|check|semak|看空档|看空檔|安排)/iu.test(original);
   let outboundIssue=null;
   const outboundDates=new Set(),outboundTimes=new Set();
+  const outboundRanges=[];
   let outboundDaypart=null;
   const anchor=localParts(now)?.date;
   // Keep commas and line breaks together, since date and time commonly span
   // these boundaries. A separate genuine closure statement is not an offer.
   const segments=original.split(/[。！？?!；;]|\.(?=\s+[A-Z])/u).map(x=>x.trim()).filter(Boolean)
-    .flatMap(segment=>closureWords.test(segment)?segment.split(/[,，\n]/u).map(x=>x.trim()):[segment]);
+    .flatMap(segment=>closureWords.test(segment)?segment.split(/[,，\n]|\b(?:but|however|yet|tetapi|namun)\b|但是|不过|不過|可是/u).map(x=>x.trim()):[segment]);
   const bad=["closed","past","outside_hours"];
   for(const segment of segments){
     if(closureWords.test(segment))continue;
     const parsed=parseCalendar(segment,anchor);
-    const segmentTimes=timesInText(segment);
+    const segmentClock=parseClockPreference(segment);
+    const segmentTimes=segmentClock.times;
     const scheduling=replyScheduling.test(segment)||inboundAppointment||requireValidPreference;
     if(!replyScheduling.test(segment)&&/(?:promotion|promo|discount|price|offer|优惠|促销|价格|折扣|活动|diskaun)/iu.test(segment))continue;
     // A time alone in a scheduling proposal must be checked against the
@@ -436,6 +511,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     if(!scheduling&&!(parsed?.date&&segmentTimes.length))continue;
     if(!parsed&&!segmentTimes.length&&!replyScheduling.test(segment))continue;
     if(parsed?.invalid){outboundIssue={status:"invalid_date"};break;}
+    if(segmentClock.invalid&&scheduling){outboundIssue={status:"invalid_time"};break;}
     const dates=parsed?.dates?.length?parsed.dates:
       (segmentTimes.length&&issue.date?[issue.date]:[]);
     const part=daypartInText(segment);
@@ -446,7 +522,13 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
       });
       if(bad.includes(check.status)){outboundIssue=check;break;}
       // Check ALL proposed start times, not merely one open option.
-      for(const t of segmentTimes){
+      if(segmentClock.range){
+        const format=t=>String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+        const checked=evaluateAppointmentHours({hours,customerText:date+" "+format(segmentClock.range[0])+" to "+format(segmentClock.range[1]),receivedAt:now,now,durationMinutes});
+        if(bad.includes(checked.status)||checked.status!=="valid_preference"){outboundIssue=bad.includes(checked.status)?checked:{status:"invalid_time"};break;}
+        outboundRanges.push(segmentClock.range);
+      }
+      for(const t of segmentClock.range?[]:segmentTimes){
         const h=Math.floor(t/60);
         const time=(h%12||12)+":"+String(t%60).padStart(2,"0")+(h>=12?" PM":" AM");
         const inspected=evaluateAppointmentHours({hours,customerText:date+" "+time,
@@ -460,17 +542,18 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
       }
     }
     if(outboundIssue)break;
-    for(const t of segmentTimes)outboundTimes.add(t);
+    for(const t of segmentClock.range?[]:segmentTimes)outboundTimes.add(t);
     if(part)outboundDaypart=part;
   }
   const lang=String(language||"zh").toLowerCase().slice(0,2);
   const acknowledgement=()=>{
     const date=issue.date;
     const pref=verifiedAppointmentPreference(issue);
-    const clock=issue.times?.length?issue.times.map(t=>{
+    const clockValues=issue.range||issue.times;
+    const clock=clockValues?.length?clockValues.map(t=>{
       const h=Math.floor(t/60);
       return (h%12||12)+":"+String(t%60).padStart(2,"0")+(h>=12?" PM":" AM");
-    }).join(" / "):null;
+    }).join(issue.range?" – ":" / "):null;
     const parts={morning:["morning","pagi","上午"],noon:["around noon","tengah hari","中午"],
       afternoon:["afternoon","petang","下午"],evening:["evening","malam","晚上"],overnight:["overnight","awal pagi","凌晨"]};
     const time=clock||parts[issue.daypart]?.[lang==="en"?0:lang==="ms"?1:2]||"";
@@ -479,16 +562,18 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     if(lang==="ms")return "Terima kasih 😊 Kami akan semak pilihan anda ("+date+", "+time+") dengan pusat dan maklumkan selepas disahkan.";
     return "好的亲爱的 😊 我帮您向诊所确认您选择的日期和时间（"+date+" "+time+"），确认后再回复您哦。";
   };
-  const redundant=/(?:which date and time would you prefer|what date and time (?:would|do)|which (?:date|day) would (?:you prefer|suit you)|what time (?:on that day )?would suit you|tarikh dan masa mana yang sesuai|想预约哪一天、几点|哪一天.*几点.*方便)/iu.test(original);
+  const redundant=asksSchedulingQuestion(original);
+  const falseConfirmation=claimsConfirmedAppointment(original);
   const mismatch=issue.status==="valid_preference"&&(
     [...outboundDates].some(d=>d!==issue.date)||
     (outboundTimes.size>0&&(!issue.times?.length||[...outboundTimes].some(t=>!issue.times.includes(t))))||
+    outboundRanges.some(range=>!issue.range||range[0]!==issue.range[0]||range[1]!==issue.range[1])||
     (outboundDaypart&&issue.daypart&&outboundDaypart!==issue.daypart));
   // If the customer preference is valid, do not replace it with an invalid or
   // invented model suggestion. Preserve Booking Ready and acknowledge the
   // verified preference instead. Do not override genuine closure explanations.
   if(issue.status==="valid_preference"&&(requireValidPreference||inboundAppointment)&&
-    (redundant||(requireValidPreference&&(mismatch||outboundIssue))||(!outboundIssue&&mismatch))){
+    (redundant||falseConfirmation||(requireValidPreference&&(mismatch||outboundIssue))||(!outboundIssue&&mismatch))){
     return {reply:acknowledgement(),blocked:false,issue,repairedPreference:true,redundantClarification:redundant};
   }
   const invalid=["closed","past","outside_hours"];
@@ -498,7 +583,11 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     return {reply:alreadyCorrects&&issue.status==="closed"&&!outboundIssue?original:
       issueReply(conflict,{hours,language}),blocked:true,issue:conflict};
   }
-  if(outboundIssue?.status==="invalid_date"&&!requireValidPreference){
+  if(falseConfirmation){
+    const safe=lang==="en"?"Our team needs to check availability before confirming any appointment.":lang==="ms"?"Pihak pusat perlu semak kekosongan sebelum janji temu disahkan.":"预约需要由门店同事核实空档后才能确认哦。";
+    return {reply:safe,blocked:true,issue:{status:"unverified_confirmation"}};
+  }
+  if(["invalid_date","invalid_time"].includes(outboundIssue?.status)&&!requireValidPreference){
     return {reply:lang==="en"?"Which date would suit you?":lang==="ms"?"Tarikh mana yang sesuai?":"请问哪一天方便呢？",blocked:true,issue:outboundIssue};
   }
   if((requireValidPreference||(inboundAppointment&&redundant))&&["unknown","ambiguous","invalid_date","unconfigured","valid_day"].includes(issue.status)){
@@ -548,4 +637,4 @@ function currentClinicDate(value=new Date()){
 }
 module.exports={ZONE,localParts,detectDate,intervals,timesInText,
   durationMinutesForPackage,evaluateAppointmentHours,issueReply,
-  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady};
+  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady,parseClockPreference,claimsConfirmedAppointment};
