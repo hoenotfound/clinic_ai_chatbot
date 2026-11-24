@@ -408,6 +408,7 @@ function resolveAiPricingDecision({
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
+      hasFuturePromotionPermissionWithoutPrice(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current) &&
         !(allowOfferEnquiries && isCurrentOfferEnquiry(current,
           { modelOfferQuery: packageQuery === true }))) ||
