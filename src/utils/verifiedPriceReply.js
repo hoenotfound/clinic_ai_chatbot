@@ -77,6 +77,28 @@ function ambiguousCopyMatchesStructuredPrice(copy, structured) {
   return amounts.length > 0 && amounts.every((amount) => amount === structured.offer);
 }
 
+// Check a staff quote against the configured option without confusing labelled
+// normal prices and vouchers with its payable price. Ambiguity fails closed.
+function staffQuoteMatchesConfiguredPrice(copy,structured,verified){
+  const source=String(copy||"").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
+  if(!verified?.price)return false;
+  const evidence=priceEvidence(source);
+  if(evidence.originalPrices.some(n=>!Number.isSafeInteger(structured?.normal) ||
+      n!==structured.normal))return false;
+  const vouchers=[...source.matchAll(VOUCHER_AFTER),...source.matchAll(VOUCHER_BEFORE)];
+  if(vouchers.some(m=>{
+    const n=Number(m[0].match(/\d+/u)?.[0]);
+    return !verified.afterVoucher || !Number.isSafeInteger(structured?.normal) ||
+      !Number.isSafeInteger(structured?.offer) || n!==structured.normal-structured.offer;
+  }))return false;
+  const payable=source.replace(ORIGINAL," ").replace(VOUCHER_AFTER," ").replace(VOUCHER_BEFORE," ");
+  const amounts=[...payable.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+  if(!amounts.length)return false;
+  if(evidence.price && evidence.price!==verified.price)return false;
+  if(evidence.ambiguous && structured && !ambiguousCopyMatchesStructuredPrice(source,structured))return false;
+  return amounts.every(m=>"RM"+m[1]===verified.price);
+}
+
 // Resolve package choices once for both the customer-facing text and any
 // optional promotional images. Multiple explicitly named packages are valid.
 // Carry a package from history only for a standalone price follow-up; a new
@@ -664,4 +686,4 @@ function guardUnfulfilledPriceQuote(reply, language = "zh") {
   return { reply: safe, changed: true };
 }
 
-module.exports = { preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
