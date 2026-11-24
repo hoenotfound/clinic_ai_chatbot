@@ -668,6 +668,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
     bookingContext: optionsOrFirstMessage?.bookingContext || null,
+    ...(Array.isArray(optionsOrFirstMessage?.priorClinicalContext) ? {priorClinicalContext:optionsOrFirstMessage.priorClinicalContext.filter(v=>typeof v==="string").slice(-8).map(v=>v.slice(0,600))} : {}),
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,

@@ -382,11 +382,20 @@ function scopeRecoveryCommercialHistory(history) {
   return index<0 ? history : history.slice(index);
 }
 
+// Retain safety-relevant customer disclosures outside commercial history.
+function priorRecoveryClinicalContext(history,isClinical) {
+  if(!Array.isArray(history)||typeof isClinical!=="function")return [];
+  const reset=history.findLastIndex(row=>row?.role==="user"&&isOtherRecoverySelection(row.content));
+  if(reset<0)return [];
+  return history.slice(0,reset).filter(row=>row?.role==="user"&&isClinical(row.content))
+    .slice(-8).map(row=>String(row.content||"").slice(0,600));
+}
+
 module.exports = {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
   recoveryTreatmentGroups, validRecoveryOrder, RECOVERY_SECOND_TEXT, reserveRecoveryContinuation, cancelRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
-  isOtherRecoverySelection, scopeRecoveryCommercialHistory,
+  isOtherRecoverySelection, scopeRecoveryCommercialHistory, priorRecoveryClinicalContext,
 };

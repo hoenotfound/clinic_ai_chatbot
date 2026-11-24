@@ -18,7 +18,7 @@ const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,neutralTreatmentFollowUpText,staffDiscussedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
-  chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
+  chooseSecondaryFollowUpTreatment,recoveryTopicDecision,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
@@ -956,7 +956,8 @@ async function runOnce({
       text:candidate.customer_texts?.[0],clinicConfig,
     });
     // Reject the entire reminder after an explicit withdrawal or deferral.
-    if(isStoppedDecision(latestDecision?.status) ||
+    const resetDecision=recoveryTopicDecision(candidate.customer_texts,clinicConfig);
+    if(isStoppedDecision(latestDecision?.status) || isStoppedDecision(resetDecision?.status) ||
        isStoppedDecision(candidate.verified_treatment_status))continue;
     const choice=chooseSecondaryFollowUpTreatment({
       candidate,clinicConfig,adFollowUpPolicy,latestDecision,
@@ -971,7 +972,7 @@ async function runOnce({
           originalTreatment:choice.treatment,
         }) : {unsafe:false};
     const unsafeTopic=safety.unsafe===true;
-    const staffTopic=staffTopicFeatureEnabled(env) && !unsafeTopic &&
+    const staffTopic=staffTopicFeatureEnabled(env) && !unsafeTopic && !resetDecision &&
       !candidate.recovery_no_selection &&
       latestDecision?.status!=="ambiguous" &&
       candidate.verified_treatment_status!=="ambiguous"
@@ -1002,6 +1003,7 @@ async function runOnce({
       staff_discussed_followup_topic:staffTopic?.treatment||null,
       unsafe_followup_topic:unsafeTopic};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
+    const commercialCustomerTexts=resetDecision ? (candidate.customer_texts||[]).slice(0,(candidate.customer_texts||[]).findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理")+1) : candidate.customer_texts;
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
     const replyLanguage=customerLanguage ||
@@ -1014,10 +1016,10 @@ async function runOnce({
         ? staffDiscussedFollowUpText({slot,language:replyLanguage,
             treatment:staffTopic.treatment})
         : neutralMixedAdFollowUp({
-          policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
+          policy:generalOnly&&!resetDecision?adFollowUpPolicy:null,language:replyLanguage,slot,
         }) || localizedFollowUpText({
           slot,originalText:candidate.message_text,
-          customerTexts:candidate.customer_texts,
+          customerTexts:commercialCustomerTexts,
           languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
           treatmentInterest:followupTreatment,
           selectedTreatment:followupTreatment,
@@ -1203,7 +1205,7 @@ async function runOnce({
       }
       if(slot===20){
         outboundText=adaptNeutroAppointmentInvitation({
-          message:outboundText,customerTexts:[...(candidate.customer_texts||[])].reverse(),
+          message:outboundText,customerTexts:[...(commercialCustomerTexts||[])].reverse(),
           language:replyLanguage,businessConfig:clinicConfig,
         });
       }

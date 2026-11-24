@@ -361,3 +361,36 @@ test("breast care selection invites a separate RM68 choice and never assumes con
  }
  assert.equal(recoveryBreastOfferInvitation({customerText:"胸部护理",config,now:Date.parse("2026-12-07T00:00:00Z")}),null);
 });
+
+test("newest treatment after Other overrides a stale CRM and marketing snapshot",()=>{
+ const {chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,recoveryTopicDecision}=require("../src/services/whatsappSecondaryFollowUpDecision");
+ const config={services:[...services.services,{name:"脉冲波调理"}],serviceAliases:services.serviceAliases};
+ const candidate={customer_texts:["多少钱？","脉冲波调理","其他护理","骨盆调理"],verified_treatment_status:"selected",verified_treatment_name:"骨盆调理",treatment_interest:"骨盆调理"};
+ const choice=()=>chooseSecondaryFollowUpTreatment({candidate,clinicConfig:config,adFollowUpPolicy:{treatment:"骨盆调理"}});
+ assert.deepEqual(choice(),{treatment:"脉冲波调理",generalOnly:false,customerSelected:true});
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"骨盆调理",clinicConfig:config}),false);
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"脉冲波调理",clinicConfig:config}),true);
+ candidate.customer_texts.unshift("3D 和 9D 有什么分别","好的");
+ assert.equal(choice().generalOnly,true);
+ candidate.customer_texts=["好的","其他护理","脉冲波调理","其他护理","骨盆调理"];
+ assert.equal(choice().generalOnly,true);
+ candidate.customer_texts=["好的","不感兴趣","脉冲波调理","其他护理"];
+ assert.equal(recoveryTopicDecision(candidate.customer_texts,config).status,"declined");
+});
+test("topic reset separates old clinical evidence from pricing and preserves original appointment history",()=>{
+ const {scopeRecoveryCommercialHistory,priorRecoveryClinicalContext}=require("../src/services/whatsapp131060Recovery");
+ const {normalizeReplyOptions}=require("../src/services/aiService");
+ const {normalizeOptions,buildSystemPrompt}=require("../src/utils/systemPrompt");
+ const history=[{role:"user",content:"骨盆调理多少钱"},{role:"assistant",content:"RM388"},{role:"user",content:"剖腹产后两周"},{role:"assistant",content:"周六下午可以吗"},{role:"user",content:"其他护理"},{role:"user",content:"脉冲波调理"}];
+ assert.deepEqual(scopeRecoveryCommercialHistory(history),history.slice(4));
+ const priorClinicalContext=priorRecoveryClinicalContext(history,value=>value.includes("剖腹产"));
+ assert.deepEqual(priorClinicalContext,["剖腹产后两周"]);
+ assert.equal(history.length,6);
+ const options=normalizeOptions(normalizeReplyOptions({priorClinicalContext,bookingContext:{status:"set"}}));
+ assert.deepEqual(options.priorClinicalContext,priorClinicalContext);
+ assert.equal(options.bookingContext.status,"set");
+ const prompt=buildSystemPrompt(options);
+ assert.match(prompt,/PREVIOUS TOPIC SAFETY CONTEXT/);
+ assert.match(prompt,/剖腹产后两周/);
+ assert.match(prompt,/never use them to infer current treatment, pricing/);
+});

@@ -126,6 +126,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentGroups, isOtherRecoverySelection, scopeRecoveryCommercialHistory,
+  priorRecoveryClinicalContext,
   validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
@@ -1348,6 +1349,7 @@ async function processIncomingMessage(
     // current-turn context is narrowed to the separately asked service question
     // so it cannot interpret the marketing refusal as a request for a deal.
     const modelContextHistory = recoveryTopicReset ? scopeRecoveryCommercialHistory(readableRecoveryHistory) : readableRecoveryHistory;
+    const priorClinicalContext = recoveryTopicReset ? priorRecoveryClinicalContext(readableRecoveryHistory,hasClinicalMediaRisk) : [];
     const replyHistory = marketingStopQuestion
       ? modelContextHistory.map((entry, index) =>
           index === modelContextHistory.length - 1 && entry?.role === "user"
@@ -1520,6 +1522,7 @@ async function processIncomingMessage(
           ? replyHistory.slice(-1) : replyHistory;
         const replyOptions = {
           bookingContext,
+          ...(priorClinicalContext.length ? {priorClinicalContext} : {}),
           contactId: contact.id,
           pricingIntentMode: aiPricingMode,
           isFirstMessage,
@@ -1690,7 +1693,7 @@ async function processIncomingMessage(
       const verifiedFreeIntroFee = isComplimentaryAssessmentFeeQuestion(
         text,
         clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
-        history
+        commercialHistory
       ) && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
       if (verifiedFreeIntroFee &&
@@ -1817,7 +1820,10 @@ async function processIncomingMessage(
         returningPricingHistory = await conversationStore.getPricingHistoryForContact(
           contact.id, { throughMessageId: savedInbound.id }
         );
-        if (secondaryAiConversation && Array.isArray(returningPricingHistory)) returningPricingHistory = scopeRecoveryCommercialHistory(returningPricingHistory);
+        if (secondaryAiConversation && Array.isArray(returningPricingHistory)) {
+          const scoped = scopeRecoveryCommercialHistory(returningPricingHistory);
+          returningPricingHistory = recoveryTopicReset && scoped === returningPricingHistory ? null : scoped;
+        }
         else if (recoveryTopicReset) returningPricingHistory = null;
       } catch (err) {
         console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
@@ -2448,7 +2454,7 @@ async function processIncomingMessage(
         !approvedPricingDecision?.prices?.length &&
         !pricingDecision?.prices?.length && !verifiedPriceService) {
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
-        text, history, mediaLanguage
+        text, commercialHistory, mediaLanguage
       );
       if (feeClarification) reply = feeClarification;
     }
@@ -2715,7 +2721,7 @@ async function processIncomingMessage(
         channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const adminAnswer = administrativeReviewReply({
-        customerText: text, history, branches: clinicConfig.branches,
+        customerText: text, history: commercialHistory, branches: clinicConfig.branches,
         language: mediaLanguage, services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
@@ -2976,7 +2982,7 @@ async function processIncomingMessage(
         isBusinessLocationQuestion(text) && hasExplicitPriceRequest(text) &&
         !approvedPricingDecision) {
       const verifiedMixed = administrativeReviewReply({
-        customerText: text, history, branches: clinicConfig.branches,
+        customerText: text, history: commercialHistory, branches: clinicConfig.branches,
         language: mediaLanguage, services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
@@ -3308,7 +3314,7 @@ async function processIncomingMessage(
         comboOfferDecision,
         promotions: clinicConfig.promotions,
         customerText: text,
-        session: comboOfferDecision ? recentVerifiedPricingSession(history, text) : null,
+        session: comboOfferDecision ? recentVerifiedPricingSession(commercialHistory, text) : null,
         reply,
       });
       const comboMediaUnavailable = Boolean(comboOfferDecision && !comboMediaPricingDecision);

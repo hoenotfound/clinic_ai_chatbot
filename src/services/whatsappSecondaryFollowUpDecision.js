@@ -92,12 +92,29 @@ function isStoppedDecision(status){
  return status==="declined" || status==="deferred";
 }
 
+// Resolve the newest meaningful decision after the latest explicit reset.
+function recoveryTopicDecision(customerTexts,clinicConfig) {
+ const texts=Array.isArray(customerTexts)?customerTexts:[];
+ const reset=texts.findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理");
+ if(reset<0)return null;
+ for(const value of texts.slice(0,reset)){
+   const decision=classifyVerifiedTreatmentTurn({text:value,clinicConfig});
+   if(decision)return decision;
+ }
+ return {status:"ambiguous",treatment:null};
+}
+
 // Always rank the newest verified customer choice ahead of older CRM fields
 // and Meta ad creatives. Keep the same choice for the text, video and 20h AI.
 function chooseSecondaryFollowUpTreatment({
  candidate={},clinicConfig,adFollowUpPolicy=null,latestDecision=null,
 }={}){
  const services=(clinicConfig?.services||[]).map(x=>x?.name).filter(Boolean);
+ const resetDecision=recoveryTopicDecision(candidate.customer_texts,clinicConfig);
+ if(resetDecision){
+   const valid=resetDecision.status==="selected" && services.includes(resetDecision.treatment);
+   return {treatment:valid?resetDecision.treatment:null,generalOnly:!valid,customerSelected:valid};
+ }
  if(latestDecision?.status!=="selected" && isSuspectStoredPostpartumChoice({
   customerTexts:candidate.customer_texts,
   storedTreatment:candidate.verified_treatment_name,
@@ -112,13 +129,6 @@ function chooseSecondaryFollowUpTreatment({
  if(isBarePostpartumConcernAnswer(candidate.customer_texts?.[0]) &&
     !(candidate.verified_treatment_status==="selected" &&
       candidate.verified_treatment_name==="骨盆调理"))
-   return {treatment:null,generalOnly:true,customerSelected:false};
- // If the newest explicit topic change is Other, do not inherit older
- // CRM/ad context even when the state write is delayed or unavailable.
- const currentTexts=Array.isArray(candidate.customer_texts)?candidate.customer_texts:[];
- const latestTopicReset=currentTexts.findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理");
- if(latestTopicReset>=0 && !currentTexts.slice(0,latestTopicReset)
-    .some(value=>classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.status==="selected"))
    return {treatment:null,generalOnly:true,customerSelected:false};
  const selectedLatest=latestDecision?.status==="selected" ? latestDecision.treatment : null;
  const selectedStored=candidate.verified_treatment_status==="selected"
@@ -152,9 +162,8 @@ function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinic
  const latestText=Array.isArray(customerMessages)?customerMessages[0]:null;
  if(isBarePostpartumConcernAnswer(latestText) &&
     treatmentInterest!=="骨盆调理") return false;
- const currentTexts=Array.isArray(customerMessages)?customerMessages:[];
- const reset=currentTexts.findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理");
- if(reset>=0 && !currentTexts.slice(0,reset).some(value=>classifyVerifiedTreatmentTurn({text:value,clinicConfig})?.status==="selected"))return false;
+ const resetDecision=recoveryTopicDecision(customerMessages,clinicConfig);
+ if(resetDecision)return resetDecision.status==="selected" && resetDecision.treatment===treatmentInterest;
  const latest=classifyVerifiedTreatmentTurn({
    text:latestText,
    clinicConfig,
@@ -162,6 +171,6 @@ function latestMarketingIntentMatches({customerMessages,treatmentInterest,clinic
  return !latest || (latest.status==="selected" && latest.treatment===treatmentInterest);
 }
 module.exports={classifyVerifiedTreatmentTurn,isStoppedDecision,
- chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,WITHDRAWN,DEFERRED,
+ chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,recoveryTopicDecision,WITHDRAWN,DEFERRED,
   customerPolitelyDeferred,
  DISTANCE_OBJECTION,DISTANCE_OBJECTION_SQL};

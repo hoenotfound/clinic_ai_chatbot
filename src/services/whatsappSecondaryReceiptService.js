@@ -778,7 +778,7 @@ async function recordSignedSecondaryStatusBatch({
     // revisit deferred images. This is a queue wake, never a message retry.
     // A failure here must not invalidate a successfully saved signed receipt.
     if (autoReconciled > 0) {
-      require("./whatsapp131060ContinuationQueue").wake();
+      // The recovery queue wakes on creation/startup and polls only while pending.
       try {
         await require("./whatsappSecondaryAiMediaQueue")
           .wakeAfterVerifiedReconciliation({contactIds:[...reconciledContactIds],database,env});
