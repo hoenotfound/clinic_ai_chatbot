@@ -875,6 +875,10 @@ test("compact price knowledge does not authorize quotes or media for quantity an
       const decision=resolveModelLedPricingDecision({modelIntent,customerText,conversationHistory:history,
         services,serviceAliases:aliases,promotions:[trial]});
       assert.equal(decision,null,customerText);
+      assert.equal(resolveModelLedPricingDecision({
+        modelIntent:{...modelIntent,priceQuery:true},customerText,conversationHistory:history,
+        services,serviceAliases:aliases,promotions:[trial],
+      }),null,"Incorrect model intent must not quote for "+customerText);
       const result=ensureVerifiedPriceReply({customerText,reply:"Here is the treatment price RM488.",treatment:trial.linkedService,
         pricingDecision:decision,priceRequested:false,services,serviceAliases:aliases,promotions:[trial],language:"en"});
       assert.doesNotMatch(result.reply,/RM\s*488/u,customerText);
