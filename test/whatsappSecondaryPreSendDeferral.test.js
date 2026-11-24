@@ -27,7 +27,9 @@ test("defer requires provider-proof exclusions and atomic cancelled Inbox draft"
   assert.match(sql,/outbound_message_evidence/);
   assert.match(sql,/m.whatsapp_message_id IS NULL/);
   assert.match(sql,/m.whatsapp_accepted_at IS NULL/);
-  assert.match(sql,/a.defer_count<8/);
+  assert.match(sql,/defer_count=LEAST\(8,a.defer_count\+1\)/);
+   assert.doesNotMatch(sql,/a.defer_count<8/);
+   assert.match(sql,/LEAST\(900,30\*POWER/);
   assert.match(sql,/SET delivery_status='cancelled'/);
   assert.match(sql,/status='deferred',message_id=NULL/);
   assert.deepEqual(args,[7,42,9001]);
