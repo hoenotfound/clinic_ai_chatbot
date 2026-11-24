@@ -589,7 +589,7 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
         isVerifiedStaffTurn(t) || t.verifiedOutboundImageUrl ||
         !findServicesInText(copy,candidates).includes(treatment) ||
         assistantIntroducesCompetingPaidService(t,treatment,candidates) ||
-        !/[?？]\\s*$/u.test(copy) || !isRecentPricingThread(turns,i,now)) continue;
+        !/[?？]\s*$/u.test(copy) || !isRecentPricingThread(turns,i,now)) continue;
     const before=turns[i-1], answer=turns[i+1];
     const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
       t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
@@ -597,7 +597,7 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
       !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
       !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
       !hasExplicitPriceRequest(t.content) &&
-      !/^\\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\\s.!！。]*$/iu.test(t.content);
+      !/^\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\s.!！。]*$/iu.test(t.content);
     if (!meaningful(before) || !meaningful(answer) || /[?？]/u.test(answer.content)) continue;
     const safe=turns.slice(i+1,end).every(t=>{
       const value=pricingMessageText(t);
@@ -605,7 +605,7 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
         findServicesInText(value,candidates).every(name=>name===treatment);
       if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
           t.pricingDeliveredBotMessage!==true || t.verifiedOutboundImageUrl ||
-          /\\b(?:RM|MYR)\\s*\\d/iu.test(value)) return false;
+          /\b(?:RM|MYR)\s*\d/iu.test(value)) return false;
       // A clearly complimentary introductory assessment is not a second
       // paid recommendation, even if this particular turn omits the service.
       const names=findServicesInText(value,candidates);
