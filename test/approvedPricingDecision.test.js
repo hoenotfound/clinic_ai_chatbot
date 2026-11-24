@@ -203,7 +203,8 @@ test("Manually delivered picture with an older caption still suppresses repeat",
 
 test("Server wires one approved decision to guard, quote, media and duplicate lookup",()=>{
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(server,/const pricingApproval = resolveApprovedPricingAssessment\(/u);
+  assert.match(server,/const legacyPricingApproval = resolveApprovedPricingAssessment\(/u);
+  assert.match(server,/const pricingApproval = semanticPricingApproval \|\| legacyPricingApproval;/u);
   assert.match(server,/const approvedPricingDecision = pricingApproval.decision/u);
   assert.match(server,/verifiedPricingIntent: Boolean\(approvedPricingDecision\)/u);
   assert.match(server,/const authorizedPricingInput = pricingAuthorityRequired\s*\? approvedPricingDecision : undefined/u);
