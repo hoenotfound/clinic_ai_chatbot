@@ -544,10 +544,12 @@ async function runOnce({
        imageUrl:job.image_url,caption:job.caption,kind:job.media_kind,
        selectedMedia:media,getConfig,
      });
-     const languageChangedBeforeProvider=()=>({
-       success:false,preProviderCancelled:true,retryable:false,
-       code:"secondary_ai_media_language_changed",
+     const cancelledBeforeProvider=(code)=>({
+       success:false,preProviderCancelled:true,retryable:false,code,
      });
+     const languageChangedBeforeProvider=()=>cancelledBeforeProvider("secondary_ai_media_language_changed");
+     const preparationFailed=()=>cancelledBeforeProvider("secondary_ai_media_preparation_failed");
+     const policyCancelled=()=>cancelledBeforeProvider("secondary_ai_media_cancelled_before_provider");
      const preSendCheck=async()=>{
        const check=await database.query(STILL_VALID_SQL,[
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -613,7 +615,7 @@ async function runOnce({
        origin:"ai_media",preSendCheck,anchorMessageId:job.inbound_message_id,
        dispatchTransport:async(transport)=>{
          if(!imageApproved() || !await preSendCheck())
-           return {success:false,unknown:true,ambiguous:true,retryable:false};
+           return policyCancelled();
          // This callback runs after the sender's final billing reservation
          // checks. A new language request proves no image SEND has occurred.
          if(!await currentLanguageSelection())
@@ -622,14 +624,18 @@ async function runOnce({
            // Never pass a private before/after preview URL to Meta.
            // Download only a matching-purpose configured image from Neon,
            // then upload it using the SECONDARY phone's Graph transport.
-           const image=await loadClinicImage(media.imageUrl);
-           if(!image)return {success:false,unknown:true,ambiguous:true,retryable:false};
-           const uploaded=await transport.uploadMedia(
-             image.buffer,image.mimeType,image.filename);
+           let image,uploaded;
+           try{
+             image=await loadClinicImage(media.imageUrl);
+             if(!image)return preparationFailed();
+             uploaded=await transport.uploadMedia(image.buffer,image.mimeType,image.filename);
+           }catch{return preparationFailed();}
+           // /media uploads cannot deliver a customer message, even if the
+           // upload response is uncertain. No /messages call has occurred.
            if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||"")))
-             return {success:false,unknown:true,ambiguous:true,retryable:false};
+             return preparationFailed();
            if(!imageApproved() || !await preSendCheck())
-             return {success:false,unknown:true,ambiguous:true,retryable:false};
+             return policyCancelled();
            // Uploading image bytes is not a WhatsApp message send. The
            // customer may switch languages while those bytes upload.
            if(!await currentLanguageSelection())
@@ -637,7 +643,7 @@ async function runOnce({
            return transport.sendMediaById("image",uploaded.mediaId,{caption:media.caption});
          }
          if(!imageApproved() || !await preSendCheck())
-           return {success:false,unknown:true,ambiguous:true,retryable:false};
+           return policyCancelled();
          if(!await currentLanguageSelection())
            return languageChangedBeforeProvider();
          return transport.sendImageByUrl(media.imageUrl,media.caption);
@@ -663,13 +669,12 @@ async function runOnce({
            err?.message);
        }
      }else if(result?.preProviderCancelled===true &&
-              result?.code==="secondary_ai_media_language_changed" &&
-              result?.unknown!==true && result?.ambiguous!==true){
+              result?.unknown!==true && result?.ambiguous!==true && !result?.wamid){
        // Reservation was definitively rejected with proof that no WhatsApp
        // image send occurred. Do not leave a false unknown-send billing hold.
        await update("expired");
      }else if(["secondary_staff_billing_blocked","secondary_billing_previous_send_unresolved",
-       "secondary_billing_sender_alarm"].includes(result?.code) && !result?.unknown){
+       "secondary_billing_sender_alarm","secondary_billing_unknown_hold_not_reviewed"].includes(result?.code) && !result?.unknown && !result?.ambiguous && !result?.wamid && result?.policyBlocked===true){
        // No provider call or billable reservation occurred. Safe to defer.
        // This documented billing block happened before any provider attempt.
        // Keep an accurate queued badge, rather than an ambiguous send warning.
