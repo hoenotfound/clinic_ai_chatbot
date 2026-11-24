@@ -6,6 +6,7 @@
 // only its separately verified exception (or a previously verified numbered
 // menu/scoped package continuation) can change the real customer reply.
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 const {
   relatedPricingConflict, unpricedRelatedPrimary, configuredServiceMention,
 } = require("./relatedServicePolicy");
@@ -71,6 +72,7 @@ function resolveApprovedPricingAssessment({
   const rejected = reason => ({ decision: null, reason });
   if (!["shadow", "enabled"].includes(mode)) return rejected("mode_off");
   if (marketingStopQuestion) return rejected("marketing_opt_out");
+  if (hasFuturePromotionPermissionWithoutPrice(customerText)) return rejected("future_offer_permission_only");
   if (flagged || bookingReady || keywordReason) return rejected("review_or_booking");
   if (hasClinicalMediaRisk(customerText)) return rejected("clinical_safety");
 
