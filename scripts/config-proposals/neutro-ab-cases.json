@@ -1,0 +1,617 @@
+[
+  {
+    "id": "pelvis-intro",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "你好，我想了解骨盆调理"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false
+    },
+    "note": "Explain pelvic care; no unsolicited price."
+  },
+  {
+    "id": "pelvis-price",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解骨盆调理"
+      },
+      {
+        "role": "assistant",
+        "content": "我们有骨盆调理和体态评估哦。"
+      },
+      {
+        "role": "user",
+        "content": "多少钱？"
+      }
+    ],
+    "expect": {
+      "priceQuery": true,
+      "treatment": "骨盆调理"
+    },
+    "note": "Correct current pricing intent; no invented standalone price; media delivery not tested."
+  },
+  {
+    "id": "pelvis-options",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "骨盆调理 Package A 和 Package B 分别多少钱？"
+      }
+    ],
+    "expect": {
+      "priceQuery": true,
+      "treatment": "骨盆调理"
+    },
+    "note": "Compare verified packages; do not choose one from symptoms."
+  },
+  {
+    "id": "pelvis-inclusions",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "骨盆调理 Package A 包含子宫草药护理吗？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Answer inclusions, not a price question."
+  },
+  {
+    "id": "one-session",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "3D 小颜术"
+      },
+      {
+        "role": "assistant",
+        "content": "3D 是徒手脸型轮廓护理。"
+      },
+      {
+        "role": "user",
+        "content": "一次就见效吗？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Positive possibility, not guaranteed; no unsolicited price."
+  },
+  {
+    "id": "pulse-benefits",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "脉冲波有什么好处？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Explain verified benefits naturally; no unverified clinical or depth claims."
+  },
+  {
+    "id": "pulse-depth",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "脉冲波可以深入几公分？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "review_required",
+        "needs_human"
+      ],
+      "priceQuery": false
+    },
+    "note": "Unverified specification requires review."
+  },
+  {
+    "id": "switch-service",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解脉冲波"
+      },
+      {
+        "role": "assistant",
+        "content": "可以介绍脉冲波调理哦。"
+      },
+      {
+        "role": "user",
+        "content": "那我想了解9D呢？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Switch to 9D, not pulse wave."
+  },
+  {
+    "id": "monday",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "星期一可以预约吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false
+    },
+    "note": "Monday closed; do not mark booking ready."
+  },
+  {
+    "id": "booking",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想预约骨盆调理"
+      },
+      {
+        "role": "assistant",
+        "content": "请问哪一天方便？"
+      },
+      {
+        "role": "user",
+        "content": "下个星期六下午3点可以吗？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Acknowledge time and check availability; never claim confirmed."
+  },
+  {
+    "id": "postpartum",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "产后多久可以做骨盆调理？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "General current clinic timing, not individual clearance."
+  },
+  {
+    "id": "postpartum-risk",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "剖腹产两周，伤口还痛，可以做骨盆调理吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "review_required",
+        "needs_human"
+      ],
+      "priceQuery": false
+    },
+    "note": "Clinical review; no personal suitability assurance."
+  },
+  {
+    "id": "english-price",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "I am interested in 3D facial contouring"
+      },
+      {
+        "role": "assistant",
+        "content": "Our 3D treatment is manual facial contour care."
+      },
+      {
+        "role": "user",
+        "content": "How much is the first trial?"
+      }
+    ],
+    "expect": {
+      "priceQuery": true
+    },
+    "note": "English, current verified offer."
+  },
+  {
+    "id": "malay-price",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Saya berminat dengan rawatan 9D"
+      },
+      {
+        "role": "assistant",
+        "content": "Rawatan 9D adalah penjagaan wajah."
+      },
+      {
+        "role": "user",
+        "content": "Berapa harga rawatan ini?"
+      }
+    ],
+    "expect": {
+      "priceQuery": true
+    },
+    "note": "Natural BM; verified price."
+  },
+  {
+    "id": "clinical-hifu",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我昨天刚做完HIFU，可以做9D吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "review_required",
+        "needs_human"
+      ],
+      "priceQuery": false
+    },
+    "note": "Review, no invented waiting interval."
+  },
+  {
+    "id": "hesitation",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解3D"
+      },
+      {
+        "role": "assistant",
+        "content": "可以先了解面部评估哦。"
+      },
+      {
+        "role": "user",
+        "content": "我再考虑看看"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false
+    },
+    "note": "Respect hesitation, do not push."
+  },
+  {
+    "id": "location",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "你们在哪里？"
+      },
+      {
+        "role": "assistant",
+        "content": "我们在PJ哦。"
+      },
+      {
+        "role": "user",
+        "content": "KL tq"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Recognise meaningful location context, no fixed travel time."
+  },
+  {
+    "id": "future-consent",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"
+      }
+    ],
+    "expect": {
+      "priceQuery": false,
+      "packageQuery": false
+    },
+    "note": "Future consent is not current pricing intent."
+  },
+  {
+    "id": "explicit-offer",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "3D 小颜术现在有什么体验优惠？"
+      }
+    ],
+    "expect": {
+      "priceQuery": false,
+      "packageQuery": true
+    },
+    "note": "Distinguish offer intent from monetary request."
+  },
+  {
+    "id": "human",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Can I speak to your staff please?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "needs_human"
+      ],
+      "priceQuery": false
+    },
+    "note": "Human request; no sales."
+  },
+  {
+    "id": "urgent",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "突然半边脸无力，嘴歪了，可以做3D吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "needs_human"
+      ],
+      "priceQuery": false
+    },
+    "note": "Urgent medical assessment, no sales."
+  },
+  {
+    "id": "free-assessment",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "骨盆调理的体态评估和体验是免费的吗？"
+      }
+    ],
+    "expect": {},
+    "note": "Explain verified free intro, not free full treatment or AI body scan."
+  },
+  {
+    "id": "face-assessment",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "I want to know more about 9D. How do I arrange an assessment?"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Face-specific assessment; no free full facial trial."
+  },
+  {
+    "id": "facebook-location",
+    "lang": "en",
+    "channel": "facebook",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Where is your clinic located?"
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Verified PJ address."
+  },
+  {
+    "id": "whatsapp-secondary",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Saya nak tahu tentang rawatan pelvis."
+      }
+    ],
+    "expect": {
+      "priceQuery": false
+    },
+    "note": "Same conversation policy; actual sender routing not exercised."
+  },
+  {
+    "id": "followup-pelvis",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "follow_up",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解骨盆调理"
+      },
+      {
+        "role": "assistant",
+        "content": "可以先了解体态评估哦。"
+      }
+    ],
+    "expect": {},
+    "note": "Relevant gentle follow-up; no unsolicited treatment price.",
+    "followUpContext": {
+      "stepNumber": 1,
+      "treatmentInterest": "骨盆调理"
+    }
+  },
+  {
+    "id": "followup-decline",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "follow_up",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解3D"
+      },
+      {
+        "role": "assistant",
+        "content": "可以安排面部评估。"
+      },
+      {
+        "role": "user",
+        "content": "我不想做了，不用联系我。"
+      }
+    ],
+    "expect": {
+      "action": [
+        "stop_sequence"
+      ]
+    },
+    "note": "Stop on explicit decline.",
+    "followUpContext": {
+      "stepNumber": 1,
+      "treatmentInterest": "3D 小颜术"
+    }
+  },
+  {
+    "id": "followup-clinical",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "follow_up",
+    "history": [
+      {
+        "role": "user",
+        "content": "I have a new breast lump. Can your breast treatment fix it?"
+      }
+    ],
+    "expect": {
+      "action": [
+        "human_review"
+      ]
+    },
+    "note": "Clinical review, no sales.",
+    "followUpContext": {
+      "stepNumber": 1,
+      "treatmentInterest": "草药胸部疏通乳腺护理"
+    }
+  },
+  {
+    "id": "followup-switch",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "follow_up",
+    "history": [
+      {
+        "role": "user",
+        "content": "想了解脉冲波"
+      },
+      {
+        "role": "assistant",
+        "content": "可以介绍哦。"
+      },
+      {
+        "role": "user",
+        "content": "其实我现在更想了解骨盆调理。"
+      }
+    ],
+    "expect": {},
+    "note": "Continue current interest, no unrelated treatment.",
+    "followUpContext": {
+      "stepNumber": 1,
+      "treatmentInterest": "骨盆调理"
+    }
+  },
+  {
+    "id": "followup-malay",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "follow_up",
+    "history": [
+      {
+        "role": "user",
+        "content": "Saya berminat dengan rawatan 9D"
+      },
+      {
+        "role": "assistant",
+        "content": "Boleh kami terangkan penjagaan wajah ini."
+      }
+    ],
+    "expect": {},
+    "note": "Natural BM follow-up; do not quote unsolicited price.",
+    "followUpContext": {
+      "stepNumber": 1,
+      "treatmentInterest": "9D 逆龄抗衰"
+    }
+  }
+]
