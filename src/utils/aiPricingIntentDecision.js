@@ -676,8 +676,7 @@ function resolveModelLedPricingDecision({
       const t=turns[menuIndex];
       if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
          t.pricingDeliveredBotMessage!==true ||
-         !matchingImages.has(t.verifiedOutboundImageUrl) ||
-         assistantIntroducesCompetingPaidService(t,intent.treatment,candidates)) break;
+         !matchingImages.has(t.verifiedOutboundImageUrl)) break;
       menuIndex--;skipped++;
     }
     const previous=turns[menuIndex];
