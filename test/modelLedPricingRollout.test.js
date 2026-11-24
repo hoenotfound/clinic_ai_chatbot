@@ -349,3 +349,65 @@ test("live WhatsApp: old or resolved price enquiries do not authorize new treatm
  a.conversationHistory=[turn("user","多少钱？",4000),turn("assistant","请问想了解哪项疗程的价格？3D 小颜术 或 9D 逆龄抗衰",3000),turn("user","3D",0)];
  assert.equal(resolveRecentPriceSelection({...a,session:a.conversationHistory})?.name,"3D 小颜术");
 });
+
+
+test("live retest: a model's false-positive price flag cannot turn plain named treatment interest into a quote",()=>{
+ for(const [current,name] of [
+  ["我想了解骨盆调理","骨盆调理"],
+  ["我也想了解3D小颜术","3D 小颜术"],
+  ["I'm interested in the 3D facial treatment.","3D 小颜术"],
+  ["Saya berminat dengan Pelvic Care.","骨盆调理"],
+  ["你好，我想了解骨盆调理","骨盆调理"],
+ ]){
+  const a=args(current,name);
+  a.conversationHistory=[turn("user","那我要准备多少预算呢？",5000),
+    turn("assistant","骨盆调理 Package A RM388 / Package B RM268",4000),
+    turn("user",current,0)];
+  for(const flags of [{priceQuery:true,packageQuery:false},{priceQuery:false,packageQuery:true}]){
+   assert.equal(resolveModelLedPricingDecision({...a,allowOfferEnquiries:true,
+     modelIntent:{...a.modelIntent,...flags}}),null,current);
+  }
+ }
+ // Do not replace semantic understanding with a mandatory positive keyword.
+ for(const [current,name] of [["What would I be paying for 9D?","9D 逆龄抗衰"],
+  ["那我要准备多少预算呢？","骨盆调理"],["Berapa perlu saya sediakan?","骨盆调理"],
+  ["我想了解骨盆调理多少钱","骨盆调理"]]){
+  assert.ok(resolveModelLedPricingDecision(args(current,name)),current);
+ }
+});
+
+test("live retest: approved relative selection narrows the protected returning-treatment fallback",async()=>{
+ const a=args("比较便宜的那个多少钱？","骨盆调理");
+ a.modelIntent.promotionOption="Package B";
+ a.conversationHistory[1].content="骨盆调理目前的配套价格是：\n• Package A：RM388\n• Package B：RM268\n\nPackage A 的上述价格为使用优惠券后的价格 😊\n\n骨盆调理目前有两款配套可以参考哦：";
+ const d=resolveModelLedPricingDecision(a);
+ assert.deepEqual(d?.prices.map(p=>p.name),["Package B"]);
+ const legacy={...d,source:"customer_returning_treatment_price",
+  prices:[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]};
+ const legacyApproval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:legacy});
+ const semanticApproval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:d});
+ const input={mode:"enabled",legacyCandidate:legacy,legacyApproval,semanticApproval,hasSpecialDecision:true};
+ assert.equal(shouldApplyModelLedPricing(input),true);
+ assert.equal(shouldApplyModelLedPricing({...input,mode:"shadow"}),false);
+ assert.equal(shouldApplyModelLedPricing({...input,legacyApproval:{decision:null}}),false);
+ for(const source of ["confirmed_prior_quote","customer_staff_result_price","customer_concern_both"]){
+  assert.equal(shouldApplyModelLedPricing({...input,legacyApproval:{decision:{...legacy,source}}}),false,source);
+ }
+ for(const changed of [{...d,treatment:"9D 逆龄抗衰"},
+   {...d,prices:[{name:"Package B",price:"RM999"}]},
+   {...d,prices:legacy.prices}]){
+  assert.equal(shouldApplyModelLedPricing({...input,semanticApproval:{decision:changed}}),false);
+ }
+ assert.equal(shouldBlockRejectedModelPricing({mode:"enabled",modelIntent:a.modelIntent,
+   semanticCandidate:null,semanticApproval:{decision:null},legacyApproval,hasSpecialDecision:true,
+   customerText:a.customerText,promotions}),true);
+ const chosen=shouldApplyModelLedPricing(input)?semanticApproval.decision:legacyApproval.decision;
+ const formatted=ensureVerifiedPriceReply({...a,reply:"Package A RM388\nPackage B RM268",
+   treatment:chosen.treatment,pricingDecision:chosen,priceRequested:true,priceOnlyResponse:true,language:"zh"});
+ assert.match(formatted.reply,/RM268/u);
+ assert.doesNotMatch(formatted.reply,/RM388/u);
+ const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:chosen,
+   treatment:chosen.treatment,verifiedServiceFromText:chosen.treatment,textSendSucceeded:true,contactId:1,
+   wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.deepEqual(media?.packages?.map(p=>p.name),["Package B"]);
+});
