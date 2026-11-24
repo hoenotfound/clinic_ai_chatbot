@@ -131,9 +131,29 @@ function resolveRecentPriceSelection({
   const selected = shortChoice(current, services, serviceAliases, before.slice(-12));
   if (!selected) return null;
   const customers = before.filter(turn => turn.role === "user").slice(-5);
-  if (!customers.some(turn => hasExplicitPriceRequest(pricingMessageText(turn)) &&
-      !ADMIN_FEE.test(pricingMessageText(turn)) &&
-      !BROAD.test(pricingMessageText(turn)))) return null;
+  // Only an unresolved price question can authorize a later selection.
+  // A delivered quote/menu of amounts closes the earlier request; a new
+  // treatment introduction is not a request to repeat or switch the quote.
+  const priceIndex=before.findLastIndex(turn => turn.role==="user" &&
+    hasExplicitPriceRequest(pricingMessageText(turn)) &&
+    !ADMIN_FEE.test(pricingMessageText(turn)) &&
+    !BROAD.test(pricingMessageText(turn)));
+  if(priceIndex<0 || !customers.includes(before[priceIndex])) return null;
+  const afterPrice=before.slice(priceIndex+1);
+  const quotedAmount=/(?:RM|MYR)\s*(?:[1-9]\d|[0-9]\uFE0F?\u20E3)/iu;
+  if(afterPrice.some(t=>t.role==="assistant" && quotedAmount.test(pricingMessageText(t)))) return null;
+  const candidates=serviceCandidates(services,serviceAliases);
+  // If the original question belongs to a single established service, a
+  // new named service must actually be offered by the clarification/menu.
+  // A generic "which package?" cannot authorize an unrelated service.
+  const lastNamed=before.slice(0,priceIndex+1).findLast(t=>t.role==="user" &&
+    findServicesInText(pricingMessageText(t),candidates).length>0);
+  const priorNames=lastNamed ? [...new Set(findServicesInText(pricingMessageText(lastNamed),candidates))] : [];
+  if(priorNames.length===1 && priorNames[0]!==selected.name &&
+     !afterPrice.some(t=>t.role==="assistant" &&
+       findServicesInText(pricingMessageText(t),candidates).includes(selected.name))) return null;
+  if(afterPrice.some(t=>t.role==="user" &&
+     findServicesInText(pricingMessageText(t),candidates).length>0)) return null;
   if (!before.slice(-10).some(turn => turn.role === "assistant" &&
       !isVerifiedStaffTurn(turn) &&
       (CLARIFICATION.test(pricingMessageText(turn)) ||
