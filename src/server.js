@@ -29,7 +29,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, resolveModelLedPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -2111,7 +2111,7 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
         !fixedAdFirstReply && !twoTreatmentQuote &&
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
-        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery)) {
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || pricingApproval.decision)) {
       const semanticCandidate = resolveModelLedPricingDecision({
         modelIntent:modelPricingIntent,customerText:text,conversationHistory:history,
         services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
@@ -2132,11 +2132,15 @@ async function processIncomingMessage(
         (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
       // Compare exact treatment and package amounts, not only a boolean.
       // No raw message content, extra provider calls or new DB writes.
-      semanticPricingApplied = semanticMode==="enabled" && Boolean(next) &&
-        !old && !shadowPriceException &&
-        !(aiPricingMode==="enabled" && pricingDecision);
+      semanticPricingApplied = shouldApplyModelLedPricing({
+        mode:semanticMode,legacyMode:aiPricingMode,legacyCandidate:pricingDecision,
+        legacyApproval:pricingApproval,semanticApproval,
+        hasSpecialDecision:Boolean(shadowPriceException),
+      });
       console.info("[Semantic pricing] "+JSON.stringify({
         contact:contact.id,inbound:savedInbound.id,mode:semanticMode,
+        modelPriceQuery:modelPricingIntent.priceQuery===true,
+        modelPackageQuery:modelPricingIntent.packageQuery===true,
         legacyApproved:Boolean(old),semanticApproved:Boolean(next),
         agreement:signature(old)===signature(next),reason:semanticApproval.reason,
         legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
