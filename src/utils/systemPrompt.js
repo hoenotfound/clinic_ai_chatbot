@@ -43,6 +43,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     ...(Array.isArray(optionsOrFirstMessage?.priorClinicalContext) ? {priorClinicalContext:optionsOrFirstMessage.priorClinicalContext.filter(v=>typeof v==="string").slice(-8).map(v=>v.slice(0,600))} : {}),
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
+    rm68CampaignDay: ["both","dec6","expired"].includes(optionsOrFirstMessage?.rm68CampaignDay) ? optionsOrFirstMessage.rm68CampaignDay : null,
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     correctionSourceReply: typeof optionsOrFirstMessage?.correctionSourceReply === "string"
       ? optionsOrFirstMessage.correctionSourceReply.slice(0, 2000) : null,
@@ -1554,6 +1555,7 @@ ${metaAdContextSection(normalizedOptions.metaAdContext)}
 
 LANGUAGE:
 ${requiredLanguageInstruction}
+${normalizedOptions.rm68CampaignDay ? "VERIFIED RM68 CAMPAIGN CONTEXT: " + (normalizedOptions.rm68CampaignDay === "expired" ? "The December 5–6, 2026 event has ended; do not offer it." : "RM68 first trial is restricted to " + (normalizedOptions.rm68CampaignDay === "dec6" ? "December 6, 2026" : "December 5 and 6, 2026") + ". Breast wellness assessment, gentle pulse wave care and daily care advice; complimentary moxibustion; 45 minutes breast care, 90 minutes total. All slots require clinic confirmation.") + " Answer the latest customer question naturally in the required language. If they reject the event dates or ask for another date, acknowledge that and explain that availability and ordinary charges must be confirmed; never ask them to choose the rejected dates again. Do not offer RM68 outside the event, use unrelated RM388 pricing, assert ultrasound availability, or give medical diagnosis. Preserve all review and booking rules." : ""}
 ${correctionInstruction}
 Write the "reply" in whichever language the ${terms.customerSingular} writes in — English, Bahasa Malaysia, or Chinese (Simplified). An explicit language request such as "English" or "BM" overrides the language of service names and previous conversation turns. A short English sales term such as "price", "trial price", "package" or "First Trial" inside an otherwise Chinese or Malay conversation does not by itself request a language switch. Follow the latest substantive customer language, unless they explicitly ask to switch. If they mix languages (common in Malaysia), mirror that mix naturally. Keep it short and appropriate to ${channelLabel(channel)} chat — a few sentences, not an email.
 
