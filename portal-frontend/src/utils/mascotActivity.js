@@ -17,13 +17,20 @@ export function classifyMascotEvent(payload, selectedId) {
   return null;
 }
 
+const DEDUP_MS = 30000;
+const GREETING_COOLDOWN_MS = 5000;
+const MAX_RECENT = 64;
 export function nextMascotActivity(previous, event, now) {
-  if (!event || !Object.hasOwn(DURATIONS, event.kind)) return previous;
+  if (!event || !Object.hasOwn(DURATIONS, event.kind) || !Number.isFinite(now)) return previous;
+  const recent = (previous?.recent || []).filter(item => now - item.at < DEDUP_MS);
+  if (recent.some(item => item.contactId === event.contactId && item.key === event.key)) return previous;
   const sameContact = previous?.contactId === event.contactId;
-  if (sameContact && previous.key === event.key && now < previous.until + 10000) return previous;
   if (sameContact && now < previous.until && PRIORITY[previous.kind] > PRIORITY[event.kind]) return previous;
+  if (event.kind === "greeting" && recent.some(item => item.kind === "greeting" &&
+      item.contactId === event.contactId && now - item.at < GREETING_COOLDOWN_MS)) return previous;
   return {
     ...event, sequence: (previous?.sequence ?? 0) + 1,
     until: now + DURATIONS[event.kind],
+    recent: [...recent, { contactId: event.contactId, key: event.key, kind: event.kind, at: now }].slice(-MAX_RECENT),
   };
 }

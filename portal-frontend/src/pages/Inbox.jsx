@@ -2009,6 +2009,7 @@ export default function Inbox() {
         mobileThreadOpen={visibleMobileThreadOpen}
         onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
+        mascotActivity={mascotActivity}
       />
       )}
       <ContactDetailsDrawer
@@ -2396,7 +2397,7 @@ function ConversationList({
         <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
           <InboxMascot activity={mascotActivity} selectedId={selectedId}
-            searching={Boolean(filters.query.trim()) && pageLoading} />
+            mobileThreadOpen={mobileThreadOpen} searching={Boolean(filters.query.trim()) && pageLoading} />
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {!conversations
               ? "Loading…"
@@ -3018,6 +3019,7 @@ function ThreadView({
   mobileThreadOpen,
   onBack,
   customerSingular,
+  mascotActivity,
 }) {
   const bottomRef = useRef(null);
   const threadScrollRef = useRef(null);
@@ -4054,6 +4056,8 @@ function ThreadView({
               </div>
             </div>
           </div>
+          <InboxMascot activity={mascotActivity} selectedId={contact.contact_id}
+            placement="thread" mobileThreadOpen={mobileThreadOpen} busy={sending || loading || actionPending || isRecording || isStartingRecording || !!voiceBlob || actionsOpen} />
           <div ref={actionsMenuRef} className="wa-thread-actions relative flex shrink-0 items-center gap-1.5 sm:gap-2">
             {contact.mode === "human" ? (
               <button

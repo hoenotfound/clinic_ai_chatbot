@@ -60,3 +60,66 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   }));
   expect(dimensions.width).toBeLessThanOrEqual(dimensions.viewport + 1);
 });
+
+test("Dashy reacts to selected-thread messages, failures and verified booking sends", async ({ page }) => {
+  await page.addInitScript(() => {
+    class StubEventSource {
+      constructor() { this.listeners = new Map(); window.dashyEventSource = this; setTimeout(() => this.onopen?.(), 0); }
+      addEventListener(name, fn) { this.listeners.set(name, fn); }
+      removeEventListener(name) { this.listeners.delete(name); }
+      close() {}
+    }
+    window.EventSource = StubEventSource;
+  });
+  const user = { username: "mascot-reviewer", role: "admin", permissions: {
+    view_all_leads: true, view_assigned_leads: true, reply_to_assigned_leads: true, manage_assigned_leads: true,
+  } };
+  const now = new Date().toISOString();
+  const contact = { contact_id: 201, name: "Dashy Customer", whatsapp_profile_name: "Dashy Customer",
+    whatsapp_number: "60121234567", channel: "whatsapp", mode: "human",
+    last_message_at: now, latest_inbound_at: now, last_message: "Hello", last_message_role: "user",
+    is_unread: false, has_unreplied: false, needs_attention: false };
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    let value = {};
+    if (path === "/api/auth/me") value = { user, username: user.username };
+    else if (path === "/api/auth/branding") value = { clientName: "Test Clinic", clientLogoUrl: "" };
+    else if (path === "/api/conversations") value = [contact];
+    else if (path === "/api/conversations/201/summary") value = contact;
+    else if (path === "/api/conversations/201/attribution") value = { lead: null, attribution: null };
+    else if (path === "/api/conversations/201/messages") value = route.request().method() === "POST"
+      ? { id: 300, role: "assistant", content: "Appointment confirmed", created_at: now, delivered: true, bookingSynced: true }
+      : { messages: [], hasMore: false };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
+  });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/inbox?contact=201");
+  const thread = page.getByRole("region", { name: "Conversation with Dashy Customer" });
+  await expect(thread).toBeVisible();
+  const mascot = page.getByTestId("inbox-mascot");
+  await expect(mascot).toHaveCount(1);
+  await expect(mascot).toBeVisible();
+  const stage = mascot.locator(".da-mascot-stage");
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  const emit = payload => page.evaluate(payload => {
+    window.dashyEventSource.listeners.get("conversation_changed")?.({ data: JSON.stringify(payload) });
+  }, payload);
+  await emit({ contactId: 201, reason: "message", messageId: 101 });
+  await expect(stage).toHaveAttribute("data-pose", "greeting");
+  await emit({ contactId: 201, deliveryStatus: "failed", messageId: 102 });
+  await expect(stage).toHaveAttribute("data-pose", "alert");
+  await emit({ contactId: 201, reason: "message", messageId: 103 });
+  await expect(stage).toHaveAttribute("data-pose", "alert");
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await emit({ contactId: 201, deliveryStatus: "failed", messageId: 102 });
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await thread.locator("textarea").fill("Appointment confirmed");
+  await thread.getByRole("button", { name: "Send message" }).click();
+  await expect(stage).toHaveAttribute("data-pose", "success");
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  const mobile = await page.evaluate(() => innerWidth < 1024);
+  if (mobile) {
+    await expect(thread.getByTestId("inbox-mascot")).toBeVisible();
+    await expect(thread.getByRole("button", { name: "Conversation actions" })).toBeVisible();
+  }
+});

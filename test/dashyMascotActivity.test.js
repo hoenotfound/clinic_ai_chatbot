@@ -29,3 +29,22 @@ test("Dashy avoids repeated events and preserves important reactions", async () 
   assert.equal(nextMascotActivity(s, greeting, 500), s);
   assert.equal(nextMascotActivity(s, alert, 500).kind, "alert");
 });
+
+test("Dashy deduplicates across intervening events and throttles greeting bursts", async () => {
+  const { nextMascotActivity: next } = await load();
+  const event = (kind, key, contactId = 9) => ({ kind, key, contactId });
+  const a = next(null, event("greeting", "message:1"), 100);
+  assert.equal(next(a, event("greeting", "message:2"), 2000), a);
+  const b = next(a, event("alert", "failed:3"), 2000);
+  assert.equal(next(b, event("greeting", "message:1"), 9000), b);
+  const c = next(b, event("greeting", "message:4"), 9000);
+  assert.equal(c.kind, "greeting");
+  assert.equal(next(c, event("alert", "failed:3"), 10000), c);
+  const d = next(c, event("alert", "failed:5", 10), 11000);
+  assert.equal(d.kind, "alert");
+  assert.equal(next(d, event("greeting", "message:4"), 12000), d);
+  assert.equal(next(d, event("alert", "failed:3"), 40000).kind, "alert");
+  let state = null;
+  for (let i = 0; i < 100; i++) state = next(state, event("alert", "failed:" + i), i);
+  assert.equal(state.recent.length, 64);
+});
