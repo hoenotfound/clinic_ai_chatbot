@@ -314,5 +314,12 @@ test("actual reply correction runs ahead of downstream pricing, booking and outb
   const assembled = src.indexOf("let reply = isFirstMessage && !flagged");
   const sent = src.indexOf("const sendOutcome = await sendTrackedText(");
   assert.ok(draft > 0 && guard > draft && assembled > guard && sent > assembled);
-  assert.match(src.slice(draft - 500, assembled), /replyLanguage: mediaLanguage/);
+  // Locate the actual options object rather than relying on its length.
+  // Additional campaign context must not obscure the language assertion.
+  const optionsStart = src.lastIndexOf("const replyOptions = {", draft);
+  assert.ok(optionsStart > 0 && optionsStart < draft);
+  const options = src.slice(optionsStart, draft);
+  assert.match(options, /replyLanguage:\s*mediaLanguage\s*,/);
+  assert.match(src.slice(draft, guard), /ai\.getReply\(modelReplyHistory, replyOptions\)/);
+  assert.match(src.slice(guard, assembled), /parsedReply, modelReplyHistory, replyOptions/);
 });
