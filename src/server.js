@@ -93,7 +93,7 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts,
+const { campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, selectCampaignReply,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign } =
@@ -1489,7 +1489,7 @@ async function processIncomingMessage(
           !hasClinicalMediaRisk(text) && !isRm68ClinicalConcern(text) &&
           !acceptedStaffOffer && !bookingContext?.appointmentAt &&
           !/^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))) {
-        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig});
+        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig,language:mediaLanguage});
       }
       if (recoveryOther && !keywordReason && !marketingStopQuestion) {
         aiReply = "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。";
@@ -1530,6 +1530,7 @@ async function processIncomingMessage(
           channel,
           metaAdContext,
           replyLanguage: mediaLanguage,
+          rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) && hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory) ? require("./utils/neutroBreastRm68Campaign").campaignDay() : null,
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
@@ -2685,7 +2686,7 @@ async function processIncomingMessage(
         isCampaignAvailabilityQuestion(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
+      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
@@ -2922,10 +2923,10 @@ async function processIncomingMessage(
     let rm68CampaignContinuationTextOnly = false;
     if (!flagged && !bookingReady && !marketingStopQuestion &&
         !keywordReason && !urgentSafety && !isActiveSafetyConcern(text)) {
-      const campaignAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
+      const campaignAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (campaignAnswer) {
-        reply = campaignAnswer;
+        reply = selectCampaignReply({ reply, fallback: campaignAnswer, customerText: text, history: commercialHistory, language: mediaLanguage });
         rm68CampaignContinuationTextOnly = true;
         priceQuery = false;
         packageQuery = false;
@@ -2933,7 +2934,7 @@ async function processIncomingMessage(
         serviceQuerySource = null;
       } else {
         const replyBeforeCampaignGuard = reply;
-        reply = guardCampaignPriceConflicts({ history:commercialHistory, customerText: text, reply,
+        reply = guardCampaignPriceConflicts({ history:commercialHistory, customerText: text, reply, language: mediaLanguage,
         });
         // If any old Pulse Wave terms were corrected, do not attach media
         // derived from the conflicting generic service offer.
@@ -3097,6 +3098,13 @@ async function processIncomingMessage(
         reviewContinuationTextOnly=true;
         priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
       }
+    }
+    // Campaign-specific final language validation, including downstream overrides.
+    if (!flagged && !bookingReady && rm68CampaignContinuationTextOnly &&
+        require("./utils/replyLanguageGuard").clearReplyLanguageMismatch(reply,mediaLanguage)) {
+      reply = campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
+        (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
+          mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
     }
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
