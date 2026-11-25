@@ -190,14 +190,20 @@ test("failed R2 deletion is stored for retry, wakes cleanup and later completes"
     repository: repo,
     storage,
     createWorkerTimer(options) {
-      cleanupOptions = options;
+      if (options.label === "Customer media cleanup recovery") {
+        assert.equal(cleanupOptions, undefined, "only one media cleanup worker should be registered");
+        cleanupOptions = options;
+      }
       return {
         start() {},
-        wake(ms) { wakeDelays.push(ms); return true; },
+        wake(ms) {
+          if (options.label === "Customer media cleanup recovery") wakeDelays.push(ms);
+          return true;
+        },
       };
     },
-    setIntervalFn: () => ({ unref() {} }),
   });
+  assert.ok(cleanupOptions, "media cleanup recovery worker must be registered");
   const result = await lifecycle.purgeCustomerData({ contactId: 72 }, {
     repository: repo, storage,
     events: { publish() {} },
