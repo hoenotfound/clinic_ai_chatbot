@@ -21,7 +21,7 @@
 }
 .da-inbox-mascot-head { clip-path: inset(0 19% 30% 25%); }
 .da-inbox-mascot-left { clip-path: inset(20% 75% 42% 0); transform-origin: 19% 48%; }
-.da-inbox-mascot-right { clip-path: inset(31% 0 39% 81%); transform-origin: 85% 49%; }
+.da-inbox-mascot-right { clip-path: inset(31% 0 39% 81%); transform-origin: 85% 49%; animation: da-mascot-hand-bob 4.4s ease-in-out infinite; }
 .da-inbox-mascot-rings { clip-path: inset(70% 0 0 0); transform-origin: 54% 78%; animation: da-mascot-thrust 1.8s ease-in-out infinite; }
 .da-inbox-mascot-spark { clip-path: inset(11% 0 72% 81%); animation: da-mascot-spark 4.4s ease-in-out infinite; }
 .da-inbox-mascot:hover .da-inbox-mascot-left,
@@ -38,6 +38,7 @@
   0%, 100% { transform: translate(-3px, 1px); }
   50% { transform: translate(3px, -3px); }
 }
+@keyframes da-mascot-hand-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px) rotate(4deg); } }
 @keyframes da-mascot-thrust {
   0%, 100% { transform: scaleY(1); }
   50% { transform: scaleY(.87); }

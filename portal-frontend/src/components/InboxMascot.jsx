@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import mascot from "../assets/da-mascot-inbox.webp";
 import "./InboxMascot.css";
 
@@ -15,6 +15,7 @@ export default function InboxMascot({ activity }) {
   const [enabled, setEnabled] = useState(readEnabled);
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const [reaction, setReaction] = useState("idle");
+  const seenSequence = useRef(activity?.sequence ?? 0);
 
   useEffect(() => {
     const update = () => setVisible(document.visibilityState !== "hidden");
@@ -23,7 +24,10 @@ export default function InboxMascot({ activity }) {
   }, []);
 
   useEffect(() => {
-    if (!enabled || !visible || !activity?.sequence) {
+    const sequence = activity?.sequence ?? 0;
+    const fresh = sequence !== seenSequence.current;
+    seenSequence.current = sequence;
+    if (!enabled || !visible || !fresh) {
       setReaction("idle");
       return;
     }
