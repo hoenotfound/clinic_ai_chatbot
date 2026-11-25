@@ -4,6 +4,36 @@ const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const { hasTreatmentPriceContent } = require("../utils/initialOfferReplyGuard");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 const { hasUnsafeClinicalFollowUpClaim } = require("../utils/followUpClinicalSafety");
+const { canonicalConfiguredService } = require("../utils/aiReplyResult");
+const { serviceCandidates, strongServiceMatchesInText } = require("../utils/conversationPromptContext");
+
+// Match the actual configured asset, not a CRM label or a guessed filename.
+// A default/general video has no asserted treatment. Shared/ambiguous keys
+// cannot be represented as a single verified treatment.
+function configuredVideoTreatment(key, config = clinicConfig) {
+  if (!key) return null;
+  const base = config.automatedFollowUp || {};
+  const names = new Set();
+  for (const step of [base, ...(base.additionalSteps || [])]) {
+    for (const entry of step?.serviceOverrides || []) {
+      if (entry?.videoKey !== key) continue;
+      const name = canonicalConfiguredService(entry.serviceName, config.services, config.serviceAliases);
+      if (name) names.add(name);
+    }
+  }
+  return names.size === 1 ? [...names][0] : null;
+}
+
+function validateFollowUpMediaDecision(decision, mediaTreatment, config = clinicConfig) {
+  if (!mediaTreatment || decision?.action !== "send") return decision;
+  const expected = canonicalConfiguredService(mediaTreatment, config.services, config.serviceAliases);
+  const actual = canonicalConfiguredService(decision.topic, config.services, config.serviceAliases);
+  const named = strongServiceMatchesInText(decision.message, serviceCandidates(config.services, config.serviceAliases));
+  // Metadata must authorize the specific asset; obvious conflicting named
+  // treatments in the actual draft also fail closed. Do not infer intent here.
+  if (expected && actual === expected && named.every(name => name === expected)) return decision;
+  return { action: "skip", message: "", reason: "followup_media_topic_mismatch", topic: decision.topic || "" };
+}
 
 const MAX_CONTEXT_MESSAGES = 10;
 const MAX_CONTEXT_CHARS = 6_000;
@@ -525,6 +555,10 @@ async function generatePersonalizedFollowUp({
   stepNumber,
   treatmentInterest = null,
   restrictTreatmentContext = false,
+  verifiedTreatment = null,
+  staffDiscussedTreatment = false,
+  mediaTreatment = null,
+  mediaAttached = false,
   stageName = null,
   branchName = null,
   appointmentStatus = null,
@@ -567,6 +601,11 @@ async function generatePersonalizedFollowUp({
           stepNumber: Number(stepNumber) || 1,
           treatmentInterest: cleanContent(treatmentInterest),
           recentServiceNames,
+          restrictTreatmentContext,
+          verifiedTreatment,
+          staffDiscussedTreatment,
+          mediaTreatment,
+          mediaAttached,
           stageName: cleanContent(stageName),
           branchName: cleanContent(branchName),
           appointmentStatus: meaningfulAppointmentStatus(appointmentStatus)
@@ -635,6 +674,8 @@ module.exports = {
   MAX_CONTEXT_CHARS,
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
+  configuredVideoTreatment,
+  validateFollowUpMediaDecision,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
   isSchedulingNudge,
