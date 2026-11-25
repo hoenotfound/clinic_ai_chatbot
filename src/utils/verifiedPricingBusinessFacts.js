@@ -49,6 +49,8 @@ function confirmedSingleBranchLocationAnswer({
   return {
     kind: "verified_location",
     verifiedAddress: address,
+    verifiedName: name,
+    language: ms ? "ms" : en ? "en" : "zh",
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
         + "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji."
@@ -58,6 +60,45 @@ function confirmedSingleBranchLocationAnswer({
         : "我们位于 " + (name || "门店") + " 😊\n📍 " + address
           + "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️",
   };
+}
+
+// Only authorize an unchanged, self-contained address answer. This is a
+// bounded factual-output contract, not a customer-intent or city-name parser.
+// Any unrecognized extra prose stays on the established safe fallback path.
+// The full configured address must occur exactly once; contradictory claims,
+// unsupported directions/landmarks, pricing and scheduling claims cannot pass.
+function verifyLocationDraft(reply, facts) {
+  if (typeof reply !== "string" || !reply.trim()) return "no_draft";
+  if (!facts?.verifiedAddress) return "unconfigured";
+  const norm = value => String(value || "").normalize("NFKC")
+    .replace(/\s+/gu," ").trim().toLowerCase();
+  const original = norm(reply), address = norm(facts.verifiedAddress);
+  const index = original.indexOf(address);
+  if (index < 0) return "address_missing";
+  if (original.indexOf(address,index+address.length) >= 0) return "extra_or_unverified_text";
+  const clean = value => value.replace(/[\p{P}\p{S}\p{Extended_Pictographic}\uFE0F\u200D]+/gu," ").replace(/\s+/gu," ").trim();
+  let prefix=clean(original.slice(0,index)), suffix=clean(original.slice(index+address.length));
+  // Optional branch name must be the exact configured name, in a location
+  // statement. Do not globally erase it from arbitrary prose.
+  const name=clean(norm(facts.verifiedName));
+  const endings={zh:["哦","呀","呢","啦"],en:[""],ms:["ya"]};
+  if (suffix && !(endings[facts.language]||[]).includes(suffix)) return "extra_or_unverified_text";
+  const wrappers={
+    zh:["","地址","我们的地址","门店地址","我们在","我们位于","我们坐落在","我们的门店在","门店位于","亲爱的 我们在","您好 我们在","你好 我们在"],
+    en:["","address","our address","clinic address","we re located at","we are located at","we re at","we are at","our clinic is at","you can find us at","here is our address","hi here is our address"],
+    ms:["","alamat","alamat kami","alamat klinik","kami berada di","lokasi kami di","klinik kami di","ini alamat kami"],
+  };
+  const allowed=wrappers[facts.language]||[];
+  if (allowed.includes(prefix)) return "verified_address_only";
+  if (name) {
+    const labels=facts.language==="zh"?["","地址","哦 地址","哦"]:facts.language==="ms"?["","alamat","ya alamat"]:["","address"];
+    for (const start of allowed) for (const label of labels) {
+      const joined=[start,name,label].filter(Boolean).join(" ");
+      if (prefix===joined || (facts.language==="zh" && prefix.replace(/ /gu,"")===joined.replace(/ /gu,"")))
+        return "verified_address_only";
+    }
+  }
+  return "extra_or_unverified_text";
 }
 
 function appendRequestedBusinessFacts({
@@ -180,4 +221,4 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
 }
 
 module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply,
-  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer };
+  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft };

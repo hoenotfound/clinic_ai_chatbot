@@ -801,5 +801,149 @@
       "treatment": "9D 逆龄抗衰"
     },
     "note": "Later administrative pricing does not grant clinical clearance; pending review remains a downstream concern."
+  },
+  {
+    "id": "stage2-location-zh",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "你们店在哪里？可以给我地址吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false,
+      "bookingReady": false
+    },
+    "note": "Exact configured address; no invented second branch or landmark."
+  },
+  {
+    "id": "stage2-location-ms",
+    "lang": "ms",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Boleh share alamat clinic?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false,
+      "bookingReady": false
+    },
+    "note": "Natural Malay; preserve exact configured address."
+  },
+  {
+    "id": "stage2-location-stale",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Are you in Puchong?"
+      },
+      {
+        "role": "assistant",
+        "content": "We are in Puchong."
+      },
+      {
+        "role": "user",
+        "content": "Can you confirm your current address in English?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false,
+      "bookingReady": false
+    },
+    "note": "Current Settings override stale assistant claim; no contradictory city."
+  },
+  {
+    "id": "stage2-location-treatment",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "Where are you located and what does 骨盆调理 involve?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false,
+      "bookingReady": false
+    },
+    "note": "Answer both questions; do not infer price or booking."
+  },
+  {
+    "id": "stage2-language-switch",
+    "lang": "en",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解骨盆调理"
+      },
+      {
+        "role": "assistant",
+        "content": "我们有体态评估哦。"
+      },
+      {
+        "role": "user",
+        "content": "Please reply in English. Where is your clinic?"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "normal"
+      ],
+      "priceQuery": false,
+      "bookingReady": false
+    },
+    "note": "Explicit English preference, exact address unchanged."
+  },
+  {
+    "id": "stage2-slot-preference",
+    "lang": "zh",
+    "channel": "whatsapp",
+    "surface": "conversation",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想预约骨盆调理"
+      },
+      {
+        "role": "assistant",
+        "content": "您哪一天方便？"
+      },
+      {
+        "role": "user",
+        "content": "下星期二下午3点可以吗？"
+      }
+    ],
+    "expect": {
+      "outcome": [
+        "booking_ready"
+      ],
+      "bookingReady": true,
+      "priceQuery": false
+    },
+    "note": "Record time as preference only; never imply practitioner availability. Human review of reply required."
   }
 ]

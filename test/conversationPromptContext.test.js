@@ -1368,6 +1368,7 @@ test("single configured business address is available even when the context clas
     assert.doesNotMatch(prompt,/KL_ADDRESS_SENTINEL/);
     assert.doesNotMatch(prompt,/INSTAGRAM_SENTINEL/);
     assert.match(prompt,/never say it is available, can be arranged, or accepted by the practitioner/);
+    assert.equal((prompt.match(/APPOINTMENT AVAILABILITY POLICY:/g)||[]).length,1);
     assert.match(prompt,/Use the current configured business location\/address/);
   });
 });
