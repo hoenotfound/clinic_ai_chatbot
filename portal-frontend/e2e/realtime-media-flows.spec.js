@@ -779,12 +779,16 @@ async function openInboxConversation(page, name = "Alex Customer") {
 }
 
 test("large Inbox lists render bounded rows while searching every older active conversation", async ({ page }) => {
+  // Give every fixture a distinct timestamp so an asynchronous summary
+  // refresh cannot reorder equal-timestamp contacts across the row boundary.
+  const newest = Date.now() - 60 * 60 * 1000;
   const extras = Array.from({ length: 139 }, (_, index) => conversation({
     contactId: 1000 + index,
     name: `Synthetic Customer ${String(index + 1).padStart(3, "0")}`,
+    lastMessageAt: new Date(newest - (index + 1) * 1000).toISOString(),
   }));
   const apiState = await installApi(page, {
-    initialConversations: [conversation(), ...extras],
+    initialConversations: [conversation({ lastMessageAt: new Date(newest).toISOString() }), ...extras],
   });
   await page.goto("/inbox");
   const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
@@ -792,12 +796,28 @@ test("large Inbox lists render bounded rows while searching every older active c
   await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toHaveCount(0);
 
   const search = inbox.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  const listResponse = (query) => page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET" && response.ok() &&
+      url.pathname === "/api/conversations" && url.searchParams.get("query") === query;
+  });
+  const searched = listResponse("Synthetic Customer 139");
   await search.fill("Synthetic Customer 139");
+  await (await searched).finished();
   await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toBeVisible();
   await expect(inbox.getByRole("button", { name: /Show more conversations/ })).toHaveCount(0);
+  const cleared = listResponse("");
   await search.fill("");
-  await inbox.getByRole("button", { name: /Show more conversations/ }).click();
+  await search.blur();
+  await (await cleared).finished();
+  const more = inbox.getByRole("button", { name: "Show more conversations (80 remaining)" });
+  await expect(more).toBeEnabled();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 070/ })).toHaveCount(0);
+  await more.scrollIntoViewIfNeeded();
+  await more.click();
+  await expect(inbox.getByRole("button", { name: "Show more conversations (20 remaining)" })).toBeVisible();
   await expect(inbox.getByRole("button", { name: /Synthetic Customer 070/ })).toBeVisible();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
 });
 
