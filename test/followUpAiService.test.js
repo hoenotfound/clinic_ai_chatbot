@@ -736,6 +736,11 @@ test("AI follow-up attachment authorization accepts matching topic and rejects i
   assert.equal(configuredVideoTreatment("pelvic.mp4",cfg),"Pelvic Care");
   assert.equal(configuredVideoTreatment("face.mp4",cfg),"Face Lift");
   assert.equal(configuredVideoTreatment("unknown.mp4",cfg),null);
+  cfg.automatedFollowUp.additionalSteps[0].serviceOverrides.push({serviceName:"Face Lift",videoKey:"pelvic.mp4"});
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg,"Pelvic Care"),"Pelvic Care");
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg,"3D"),"Face Lift");
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg), "");
+  assert.equal(validateFollowUpMediaDecision({action:"send",topic:"Pelvic Care",message:"Hello"},"",cfg).action,"skip");
   const valid={action:"send",topic:"Pelvic Care",message:"Would you like to learn more?"};
   assert.equal(validateFollowUpMediaDecision(valid,"Pelvic Care",cfg),valid);
   for (const changed of [{topic:"Face Lift"},{topic:""},{message:"3D may interest you."}]) {
