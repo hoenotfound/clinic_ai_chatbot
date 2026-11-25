@@ -266,3 +266,37 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
   assert.match(freeEntry, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
     "RM68 event must not use unrelated free-entry marketing graphics");
 });
+
+test("Hui's English alternative date request gets a localized non-confirming answer",()=>{
+  const {selectCampaignReply,alternativeDateRequest}=require("../src/utils/neutroBreastRm68Campaign");
+  const text="December 5 and 6, I am not available\nIs that possible to do the treatment and checking today";
+  const h=[...history,{role:"user",content:"How to conduct the checking"},{role:"assistant",content:"Our practitioner will conduct a consultation."},{role:"user",content:"Any ultrasound screening"},{role:"user",content:text}];
+  const fallback=campaignContextReply({history:h,customerText:text,now:early,language:"en"});
+  assert.match(fallback,/only for December 5 and 6/);
+  assert.match(fallback,/applicable charges/);
+  assert.doesNotMatch(fallback,/[\u3400-\u9fff]|ultrasound|which day/i);
+  assert.equal(selectCampaignReply({reply:"Would December 5 or 6 suit you?",fallback,history:h,customerText:text,language:"en",now:early}),fallback);
+  assert.equal(alternativeDateRequest("Can I come today?",dec6),false);
+  assert.equal(alternativeDateRequest(text,early),true);
+  const next=[...h,{role:"assistant",content:fallback},{role:"user",content:"How much?"}];
+  assert.match(campaignContextReply({history:next,customerText:"How much?",now:early,language:"en"}),/applicable charges/);
+});
+
+test("RM68 localized opening, continuation and reminders retain campaign evidence",()=>{
+  const {selectCampaignReply}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const [language,question,prefill] of [["en","How much is the breast care?","I am interested in the RM68 breast care trial"],["ms","Berapa harga?","Saya berminat dengan RM68 breast care trial"]]){
+    const h=[{role:"user",content:prefill},{role:"assistant",content:firstReply(early,language)},{role:"user",content:question}];
+    assert.equal(hasCampaignConversation(h),true);
+    const fallback=campaignContextReply({history:h,customerText:question,now:early,language});
+    assert.match(fallback,/RM68/);
+    assert.doesNotMatch(fallback,/[\u3400-\u9fff]/);
+    assert.equal(selectCampaignReply({reply:"RM388",fallback,history:h,customerText:question,language,now:early}),fallback);
+  }
+  const enQuestion="How much is the breast care?";
+  const enFallback=campaignContextReply({history,customerText:enQuestion,now:early,language:"en"});
+  const draft="The first trial is RM68 for the December 5 and 6 event 😊";
+  assert.equal(selectCampaignReply({reply:draft,fallback:enFallback,history,customerText:enQuestion,language:"en",now:early}),draft);
+  const candidate={trigger_message_content:firstReply(early),recent_inbound_messages:["Where is your location",PREFILL],ad_followup_source:"meta_ads",ad_followup_headline:creative.headline,ad_followup_body:creative.body};
+  assert.match(campaignFollowUp({candidate,now:early}).message,/friendly reminder/);
+  assert.doesNotMatch(campaignFollowUp({candidate,now:early}).message,/[\u3400-\u9fff]/);
+});
