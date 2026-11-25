@@ -51,7 +51,7 @@ const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPa
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
-  confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion } =
+  confirmedSingleBranchLocationAnswer, verifyLocationDraft, isBusinessLocationQuestion } =
   require("./utils/verifiedPricingBusinessFacts");
 const { administrativeReviewReply,
   isStandalonePriceQuestion: isStandaloneNeutroPriceQuestion } =
@@ -1377,6 +1377,7 @@ async function processIncomingMessage(
       console.info("[Pricing test contact] contact="+contact.id+" inbound="+savedInbound.id+" mode=enabled");
     }
     let aiReply;
+    let originalModelReply = null;
     let flagged = false;
     let reviewRequired = false;
     let reviewType = null;
@@ -1537,6 +1538,7 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        originalModelReply = parsedReply.text; // Before language, pricing, location or other rewrites.
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -3025,7 +3027,18 @@ async function processIncomingMessage(
         language: mediaLanguage,
       });
       if (verifiedLocation) {
-        reply = verifiedLocation.reply;
+        const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
+        const finalStatus = verifyLocationDraft(reply, verifiedLocation);
+        // Only pass an independently verified, unchanged model answer. Keep
+        // existing exact-campaign, mixed pricing, clinical and media behavior.
+        const preserveModelLocation = originalStatus === "verified_address_only" &&
+          finalStatus === "verified_address_only" && reply === originalModelReply &&
+          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly &&
+          !priceQuery && !packageQuery && !serviceQuery;
+        console.info("[Location facts] contact=" + contact.id +
+          " original=" + originalStatus + " final=" + finalStatus +
+          " decision=" + (preserveModelLocation ? "preserve" : "fallback"));
+        if (!preserveModelLocation) reply = verifiedLocation.reply;
         reviewContinuationTextOnly = true;
         priceQuery = false;
         packageQuery = false;

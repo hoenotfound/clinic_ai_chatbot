@@ -1355,3 +1355,20 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, ["子宫调理"]);
   });
 });
+
+test("single configured business address is available even when the context classifier sees no location enquiry", () => {
+  const fixture = scopedConfig();
+  withConfig({...fixture, branches:[fixture.branches[0]]}, () => {
+    const prompt = buildSystemPrompt({channel:"whatsapp", conversationContext:{
+      currentCustomerText:"可以吗？", relevantServiceNames:["骨盆调理"],
+      schedulingIntent:false,contactIntent:false,promotionIntent:false,
+    }});
+    assert.match(prompt,/PJ_ADDRESS_SENTINEL/);
+    assert.match(prompt,/HOURS_SENTINEL/);
+    assert.doesNotMatch(prompt,/KL_ADDRESS_SENTINEL/);
+    assert.doesNotMatch(prompt,/INSTAGRAM_SENTINEL/);
+    assert.match(prompt,/never say it is available, can be arranged, or accepted by the practitioner/);
+    assert.equal((prompt.match(/APPOINTMENT AVAILABILITY POLICY:/g)||[]).length,1);
+    assert.match(prompt,/Use the current configured business location\/address/);
+  });
+});
