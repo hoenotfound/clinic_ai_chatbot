@@ -422,8 +422,14 @@ const CANDIDATES_SQL=`
      WHERE event_reply.contact_id=c.id AND event_reply.role='assistant'
        AND event_reply.created_at>=first_reply.at
        AND event_reply.created_at<first_reply.at+INTERVAL '167 hours'
-       AND event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
-       AND event_reply.content LIKE '%首次体验只需 RM68%'
+       AND (
+          (event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
+           AND event_reply.content LIKE '%首次体验只需 RM68%')
+          OR (event_reply.content LIKE '%Our limited-time breast wellness assessment + gentle pulse wave care offer%'
+              AND event_reply.content LIKE '%First trial: RM68%')
+          OR (event_reply.content LIKE '%Promosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut%'
+              AND event_reply.content LIKE '%Percubaan pertama: RM68%')
+        )
    )
  ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
