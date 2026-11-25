@@ -248,6 +248,34 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
     dates + "，全程约1小时30分钟。名额需要由门店确认哦 😊";
 }
 
+// Keep a natural model answer only when it is compatible with the verified
+// campaign and its current date window. Uncertain commercial or clinical
+// claims fall back to localized verified copy, never a second AI call.
+function selectCampaignReply({reply, fallback, history, customerText, language, now=Date.now()}={}) {
+  if(!fallback) return reply;
+  const value=String(reply||"").trim();
+  const locale=localeFor(history,customerText,language);
+  const prior=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user").slice(-5);
+  if(!value || alternativeDateRequest(customerText) ||
+      (AMOUNT_QUESTION.test(String(customerText||"")) && prior.some(r=>alternativeDateRequest(r.content)))) return fallback;
+  if(campaignDay(now)==="expired" || campaignDay(now)==="dec6") return fallback;
+  const {clearReplyLanguageMismatch}=require("./replyLanguageGuard");
+  if(clearReplyLanguageMismatch(value,locale)) return fallback;
+  // An arbitrary number, unsupported diagnostic statement, or confirmation
+  // is not authorized merely because Gemini mentioned RM68.
+  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow)\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin)\b/iu.test(value)) return fallback;
+  if(/\b(?:RM|MYR)\s*(?!68\b)\d/iu.test(value) ||
+      /\b(?:2\s*(?:hours?|jam)\s*15|2h\s*15)\b|2\s*(?:小时|小時)\s*15/iu.test(value)) return fallback;
+  if(AMOUNT_QUESTION.test(String(customerText||"")) && !/\bRM\s*68\b/iu.test(value)) return fallback;
+  if(DATE_QUESTION.test(String(customerText||"")) &&
+     (!/(?:December|Dec\b|Disember|12月)/iu.test(value) ||
+      !/(?:check|confirm|semak|sahkan|确认|確認)/iu.test(value))) return fallback;
+  if(DURATION_QUESTION.test(String(customerText||"")) &&
+     !/(?:90\s*(?:minutes|minit|分钟|分鐘)|1\s*(?:hour|jam|小时|小時)\s*30|1\.5\s*(?:hours?|jam|小时|小時))/iu.test(value)) return fallback;
+  // Avoid a generic reply that has lost the event context.
+  if(!/(?:RM\s*68|breast|payudara|胸部|乳腺|乳房|December|Disember|12月|moxibustion|moksibusi|艾灸)/iu.test(value)) return fallback;
+  return value;
+}
 function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.now(), language } = {}) {
   const original = String(reply || "");
   if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
@@ -320,13 +348,13 @@ function isRecoveryOfferChoice(history,customerText) {
     String(previousAssistant.content||"").startsWith(RECOVERY_BREAST_INVITE_PREFIX) &&
     /^(?:RM\s*68|(?:我)?(?:想|要|想要)(?:了解)?(?:这个|这项|限时)?活动|这个活动|限时活动|活动优惠|RM\s*68\s*(?:活动|优惠|体验))(?:[。！!😊\s]*)$/iu.test(normalize(customerText));
 }
-function recoveryBreastCampaignOpening({history,customerText,config,now=Date.now()}={}) {
+function recoveryBreastCampaignOpening({history,customerText,config,now=Date.now(),language}={}) {
   if (!isNeutro(config?.businessName||config?.clinicName) || config?.adFirstReply?.enabled!==true ||
       campaignDay(now)==="expired" || (!isSimpleRm68Enquiry(customerText) && !isRecoveryOfferChoice(history,customerText)) ||
       hasCampaignConversation(history)) return null;
   const latestPrior=(Array.isArray(history)?history:[]).slice(0,-1).reverse().find(row=>row?.role==="user");
   if (normalize(latestPrior?.content)!=="胸部护理") return null;
-  return {reply:firstReply(now),treatment:null,serviceQuery:false,serviceQuerySource:null,campaignKey:CAMPAIGN_KEY};
+  return {reply:firstReply(now,localeFor(history,customerText,language)),treatment:null,serviceQuery:false,serviceQuerySource:null,campaignKey:CAMPAIGN_KEY};
 }
 
 module.exports = {
@@ -334,6 +362,6 @@ module.exports = {
   isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
-  campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateReply,
+  campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateReply, selectCampaignReply,
   candidateIsCampaign, campaignFollowUp, recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
 };
