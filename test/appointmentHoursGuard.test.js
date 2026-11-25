@@ -622,3 +622,34 @@ test("cross-day model interpretation requires independent customer evidence and 
   assert.equal(evaluateAppointmentHours({...args,...old,customerText:"5号噢",
     recentCustomerMessages:[{content:"3pm",createdAt:"2026-11-23T03:12:06Z"},prior]}).status,"valid_day");
 });
+
+test("QQ: CRM backstop independently verifies the same cross-day preference",async()=>{
+  const originalHours=config.hours,originalType=config.businessType;
+  config.hours=hours;config.businessType="tcm_clinic";
+  const now="2026-11-25T11:50:27.356Z";
+  let params=null;
+  try{
+    const mark=createBookingReadyOutcomeService({
+      database:{async connect(){return {
+        async query(sql,values){if(sql.includes("UPDATE contacts c"))params=values;return {rows:[]};},
+        release(){},
+      };}},
+      now:()=>new Date(now),lockContactAlertQueue:async()=>{},
+      publish(){throw Error("no update expected");},
+      sendBookingReadyAlert(){throw Error("no update expected");},
+    });
+    const result=await mark(9164,24187,{
+      customerText:"5号噢",receivedAt:now,durationMinutes:90,
+      details:{appointmentPreference:"2026-12-05 13:00"},
+      recentCustomerMessages:[
+        {content:"3pm ok ma",createdAt:"2026-11-25T11:47:45.684Z"},
+        {content:"不是说了5/12",createdAt:"2026-11-22T03:12:06.682Z"},
+      ],
+      recentStaffMessages:[
+        {content:"Hi dear 5/12- 1 pm 可以吗☺️",createdAt:"2026-11-22T06:42:01.186Z"},
+      ],
+    });
+    assert.equal(params[4],"2026-12-05 15:00");
+    assert.equal(result.details.appointmentPreference,"2026-12-05 15:00");
+  }finally{config.hours=originalHours;config.businessType=originalType;}
+});
