@@ -735,6 +735,7 @@ test("AI follow-up attachment authorization accepts matching topic and rejects i
       additionalSteps:[{serviceOverrides:[{serviceName:"Face Lift",videoKey:"face.mp4"}]}]}};
   assert.equal(configuredVideoTreatment("pelvic.mp4",cfg),"Pelvic Care");
   assert.equal(configuredVideoTreatment("face.mp4",cfg),"Face Lift");
+  assert.equal(configuredVideoTreatment("face.mp4",cfg,"Pelvic Care"),"");
   assert.equal(configuredVideoTreatment("unknown.mp4",cfg),null);
   cfg.automatedFollowUp.additionalSteps[0].serviceOverrides.push({serviceName:"Face Lift",videoKey:"pelvic.mp4"});
   assert.equal(configuredVideoTreatment("pelvic.mp4",cfg,"Pelvic Care"),"Pelvic Care");
