@@ -97,6 +97,103 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
 });
 
 
+test("Dashy gently hovers on desktop and touch screens and pauses for typing", async ({ page }) => {
+  await mockEmptyDashyInbox(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/inbox");
+  const mascot = page.getByTestId("inbox-mascot");
+  const stage = mascot.locator(".da-mascot-stage");
+  const drift = mascot.locator(".da-mascot-drift");
+  await expect(mascot).toBeVisible();
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+  const compact = await page.evaluate(() => matchMedia("(max-width: 1023px), (pointer: coarse)").matches);
+  await expect(drift).toHaveCSS("animation-duration", compact ? "4s" : "3.8s");
+  const displacement = await drift.evaluate(el => {
+    const animation = el.getAnimations().find(a => a.animationName === "da-mascot-idle");
+    const duration = animation.effect.getTiming().duration;
+    animation.pause();
+    animation.currentTime = 0;
+    const start = new DOMMatrix(getComputedStyle(el).transform);
+    animation.currentTime = duration / 2;
+    const middle = new DOMMatrix(getComputedStyle(el).transform);
+    animation.play();
+    return Math.abs(middle.m42 - start.m42);
+  });
+  expect(displacement).toBeCloseTo(compact ? 4 : 6, 1);
+  const search = page.getByRole("searchbox", { name: /Search by name/ });
+  await search.focus();
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+  // Dispatch a real editable-input key without starting a search request.
+  await search.press("Shift");
+  await expect(stage).toHaveAttribute("data-mode", "stationary");
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle", { timeout: 6000 });
+  // A long IME composition must remain still beyond the ordinary typing timeout.
+  await search.dispatchEvent("compositionstart");
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await page.waitForTimeout(2700);
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await search.dispatchEvent("compositionend");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle", { timeout: 6000 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+});
+
+test("Dashy roams safely after inactivity on desktop and mobile and stops on interaction", async ({ page }) => {
+  await mockEmptyDashyInbox(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install();
+  await page.goto("/inbox");
+  const mascot = page.getByTestId("inbox-mascot");
+  const stage = mascot.locator(".da-mascot-stage");
+  const drift = mascot.locator(".da-mascot-drift");
+  await expect(mascot).toBeVisible();
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+  const original = await mascot.boundingBox();
+  const compact = await page.evaluate(() => matchMedia("(max-width: 1023px), (pointer: coarse)").matches);
+  await page.clock.fastForward(45000);
+  await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
+  await page.clock.fastForward(20000);
+  await expect(mascot).toHaveAttribute("data-roaming", "false");
+  await page.clock.fastForward(41000);
+  await expect(mascot).toHaveAttribute("data-roaming", "true");
+  const flight = await mascot.evaluate(el => {
+    const animation = el.getAnimations().find(a => a.effect.getTiming().duration >= 2000);
+    if (!animation) return null;
+    const frame = animation.effect.getKeyframes()[2];
+    const matrix = new DOMMatrix(frame.transform);
+    return { x: matrix.m41, y: matrix.m42, duration: animation.effect.getTiming().duration };
+  });
+  expect(flight).not.toBeNull();
+  expect(flight.duration).toBe(compact ? 2000 : 2200);
+  expect(Math.abs(flight.x)).toBeLessThanOrEqual(compact ? 35 : 72);
+  expect(Math.abs(flight.y)).toBeLessThanOrEqual(compact ? 20 : 38);
+  expect(Math.hypot(flight.x, flight.y)).toBeGreaterThan(0);
+  await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
+  await expect(mascot).toHaveAttribute("data-roaming", "false");
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await expect.poll(async () => { const r = await mascot.boundingBox(); return Math.hypot(r.x - original.x, r.y - original.y); }).toBeLessThan(2);
+  const search = page.getByRole("searchbox", { name: /Search by name/ });
+  await search.focus();
+  await page.clock.fastForward(61000);
+  await expect(mascot).toHaveAttribute("data-roaming", "false");
+  await search.evaluate(el => el.blur());
+  // An active drag suspends the artwork even with animated mode enabled.
+  const box = await mascot.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - 40, box.y + box.height / 2 - 12, { steps: 4 });
+  await expect(mascot).toHaveAttribute("data-dragging", "true");
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await page.mouse.up();
+  await page.mouse.move(1, 1);
+  await expect(mascot).toHaveAttribute("data-dragging", "false");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+});
+
 test("Dashy controls use the local theme palette", async ({ page }) => {
   await mockEmptyDashyInbox(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -212,13 +309,15 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   await expect(stage).toHaveAttribute("data-pose", "success");
   await expect(stage).toHaveAttribute("data-pose", "idle");
   await page.evaluate(() => document.activeElement?.blur());
-  await page.clock.fastForward(65000);
+  await page.clock.fastForward(50000);
   await page.evaluate(() => document.dispatchEvent(new Event("keydown")));
   await page.clock.fastForward(20000);
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  await page.clock.fastForward(56000);
-  const desktop = await page.evaluate(() => matchMedia("(min-width: 1024px)").matches);
-  await expect(stage).toHaveAttribute("data-pose", desktop ? "roaming" : "idle");
+  await page.clock.fastForward(41000);
+  // In a populated thread geometry may deliberately reject all flight paths.
+  // The dedicated empty-Inbox test below asserts actual roaming on every device.
+  const roaming = await mascot.getAttribute("data-roaming");
+  await expect(stage).toHaveAttribute("data-pose", roaming === "true" ? "roaming" : "idle");
   await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
   await expect(stage).toHaveAttribute("data-pose", "idle");
   await expect(thread.getByRole("button", { name: "Conversation actions" })).toBeVisible();
