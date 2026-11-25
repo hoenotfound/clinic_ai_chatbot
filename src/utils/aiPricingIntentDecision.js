@@ -650,6 +650,55 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
   return -1;
 }
 
+// Treatment continuity does not authorize a new commercial request. In a
+// recent pricing exchange, separate a new question from a concern fragment
+// even when the provider has copied its commercial flags from an earlier
+// turn. This also covers a burst of customer messages before the first bot
+// reply: each inbound is processed with its own current intent.
+function staleCommercialIntent({customerText,conversationHistory=[],services=[],
+  serviceAliases=[],allowOfferEnquiries=false,modelIntent,now=Date.now()}={}) {
+  const current=String(customerText||"").normalize("NFKC").trim();
+  if (!current || (!modelIntent?.priceQuery && !modelIntent?.packageQuery)) return false;
+  const turns=Array.isArray(conversationHistory)?conversationHistory:[];
+  const last=turns.at(-1);
+  if (last?.role!=="user" || pricingMessageText(last).normalize("NFKC").trim()!==current ||
+      !isRecentPricingThread(turns,turns.length-1,now)) return false;
+  // Explicit current monetary/offer questions are never stale solely because
+  // the same price was previously quoted. Existing scope checks still apply.
+  if (hasExplicitPriceRequest(current) || hasExplicitPackageOptionsRequest(current) ||
+      isStandalonePriceQuestion(current) ||
+      (allowOfferEnquiries && isCurrentOfferEnquiry(current,
+        {modelOfferQuery:modelIntent.packageQuery===true}))) return false;
+  // Preserve a real answer to the immediately preceding price clarification,
+  // not an answer to a treatment/concern question or an older priced menu.
+  if (resolveClarifiedPriceService({customerText,conversationHistory:turns,services,serviceAliases}) &&
+      !hasTreatmentPriceContent(pricingMessageText(turns.at(-2)))) return false;
+  const relative=relativePackageReference(current);
+  if (relative.cheaper || relative.dearer) return false; // exact menu is checked below
+  let recentCommercial=false;
+  for(let i=turns.length-2;i>=Math.max(0,turns.length-12);i--){
+    const t=turns[i],at=t?.pricingCreatedAtMs;
+    if(!Number.isFinite(at)||at>now+60_000||at<now-24*3600000)break;
+    const prior=pricingMessageText(t);
+    if(t.role==="user" &&
+        (hasExplicitPriceRequest(prior)||hasExplicitPackageOptionsRequest(prior)||
+          isStandalonePriceQuestion(prior)||isCurrentOfferEnquiry(prior))) {
+      recentCommercial=true;break;
+    }
+    if(t.role==="assistant" && hasTreatmentPriceContent(prior)) {
+      recentCommercial=true;break;
+    }
+  }
+  if(!recentCommercial)return false;
+  // The model remains responsible for interpreting natural-language monetary
+  // questions, including unseen paraphrases. Require a current question or
+  // request shape only in this carryover-risk case; a bare symptom, body area,
+  // goal, or affirmative answer supplies treatment context, not a new quote.
+  // These are grammatical markers, not a list of treatments or concerns.
+  const requestShape=/(?:[?？]|(?:吗|嗎|呢|么|麼)\s*[。!！]*$|(?:怎么|怎麼|如何|怎样|怎樣|多少|几多|幾多|什么|什麼|哪些|哪种|哪種|请问|請問|想知道|想了解|想问|想問|麻烦|麻煩|给我|給我|发我|發我)|^(?:what|which|how|would|could|can|may|do|does|is|are|tell|show|send|please|i (?:want|need|would like) to (?:know|see|ask)|berapa|apa|macam mana|bagaimana|boleh|nak tahu|mahu tahu)\b)/iu;
+  return !requestShape.test(current);
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -690,6 +739,8 @@ function resolveModelLedPricingDecision({
   if (last?.role !== "user" || typeof last.content !== "string" ||
       last.content.trim() !== original ||
       !isRecentPricingThread(turns, turns.length - 1, now)) return null;
+  if (staleCommercialIntent({customerText:original,conversationHistory:turns,services,
+    serviceAliases,allowOfferEnquiries,modelIntent:intent,now})) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
@@ -974,4 +1025,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { staleCommercialIntent, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
