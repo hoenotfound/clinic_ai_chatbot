@@ -38,7 +38,9 @@ export default function SettingsSectionLayout({ children }) {
   const isGoLive = location.pathname === "/settings/go-live";
   const isSetup = location.pathname === "/settings/setup";
   const isAdvancedConfig = location.pathname === "/settings/advanced-config";
-  const mobileValue = isNotifications
+  const mobileValue = location.pathname === "/settings/appearance"
+    ? "appearance"
+    : isNotifications
     ? "notifications"
     : isTeam
       ? "team"
@@ -53,6 +55,7 @@ export default function SettingsSectionLayout({ children }) {
             : "general";
 
   const notificationsItem = { id: "notifications", to: "/settings/notifications", label: "Notifications" };
+  const appearanceItem = { id: "appearance", to: "/settings/appearance", label: "Appearance" };
   const teamItem = permissions.manage_users
     ? { id: "team", to: "/settings/team", label: "Team & Access" }
     : null;
@@ -68,7 +71,7 @@ export default function SettingsSectionLayout({ children }) {
   const advancedConfigItem = user?.role === "admin"
     ? { id: "advancedConfig", to: "/settings/advanced-config", label: "Advanced Config" }
     : null;
-  const destinationItems = [notificationsItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
+  const destinationItems = [notificationsItem, appearanceItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = configItems.find((item) => item.id === value);
@@ -110,6 +113,7 @@ export default function SettingsSectionLayout({ children }) {
               Preferences
             </p>
             <SettingsNavLink item={notificationsItem} />
+            <SettingsNavLink item={appearanceItem} />
           </div>
 
           {teamItem && (
@@ -153,6 +157,7 @@ export default function SettingsSectionLayout({ children }) {
                 <option key={item.id} value={item.id}>{item.label}</option>
               ))}
               <option value={notificationsItem.id}>{notificationsItem.label}</option>
+              <option value={appearanceItem.id}>{appearanceItem.label}</option>
               {teamItem && <option value={teamItem.id}>{teamItem.label}</option>}
               {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
               {goLiveItem && <option value={goLiveItem.id}>{goLiveItem.label}</option>}
