@@ -262,37 +262,17 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
   }
   const dates = dayLine(now);
   const text = String(customerText || "");
-  // If the customer cannot attend the advertised dates and staff/AI has
-  // offered ordinary care at a different time, an unscoped "how much?"
-  // could refer to THAT care. Never quote the event RM68 as its price.
-  if (AMOUNT_QUESTION.test(text) &&
-      /^(?:(?:请问|請問|那么|那|想问|想問|请问一下)\s*)?(?:[价價][钱錢格]|价格|價格|多少钱|多少錢|收费|收費|费用|費用|how much|price|berapa harga)(?:呢|呀|啊|是)?[\s？?。!！]*$/iu.test(text)) {
-    const prior = (Array.isArray(history) ? history : []).filter(
-      item => item && item.role === "user" &&
-        String(item.content || "").trim() !== text.trim()
-    ).slice(-4).map(item => String(item.content || ""));
-    const cannotAttend = prior.some(msg =>
-      /(?:这两天|這兩天|那两天|那兩天|[56]\s*号|[56]\s*日).{0,35}(?:不在|不方便|没空|沒空|来不了|來不了|无法|無法|不行|can't|cannot)|(?:不在|不方便|没空|沒空|来不了|來不了|无法|無法|不行|can't|cannot).{0,35}(?:这两天|這兩天|那两天|那兩天|[56]\s*号|[56]\s*日)/iu.test(msg));
-    const ordinaryCareOffered = (Array.isArray(history) ? history : []).slice(-6)
-      .some(msg => msg?.role === "assistant" &&
-        /(?:平日|平时|平時|其他日期|其他时间|其他時間|改天|平日.*护理|平日.*護理|\b(?:regular care|other days?|other dates?)\b)/iu.test(String(msg.content || "")));
-    if (cannotAttend && ordinaryCareOffered) {
-      return "RM68 是12月5日及6日的限时胸部护理体验优惠哦 😊 " +
-        "如果你想安排其他日期，平日护理的收费需要先请门店确认，不能直接按 RM68 活动价计算。" +
-        "请问你是想了解活动当天的 RM68 优惠，还是其他日期的护理收费呢？";
-    }
-  }
   if (isCampaignAvailabilityQuestion(text)) {
     // Never imply that a date, place, or appointment is confirmed.
     return "RM68 胸部健康评估 + 脉冲波舒缓护理的活动日期是" + dates +
       "，全程约1小时30分钟。具体名额需要由门店确认哦 😊 " + dayQuestion(now);
   }
   if (INCLUDES_QUESTION.test(text)) {
-    return "RM68 首次体验包含专业胸部健康评估、脉冲波舒缓护理、胸部日常护理建议，并免费赠送艾灸护理；全程合计约1小时30分钟。" +
+    return "RM68（仅限"+dates+"）首次体验包含专业胸部健康评估、脉冲波舒缓护理、胸部日常护理建议，并免费赠送艾灸护理；全程合计约1小时30分钟。" +
       "这项护理不等于医院的乳腺癌筛查或医学诊断 😊";
   }
   if (AMOUNT_QUESTION.test(text)) {
-    return "您咨询的【胸部健康评估 + 脉冲波舒缓护理】12月活动首次体验是 RM68，免费赠送艾灸护理，合计全程约1小时30分钟。" +
+    return "您咨询的【胸部健康评估 + 脉冲波舒缓护理】"+dates+" 活动首次体验是 RM68，免费赠送艾灸护理，合计全程约1小时30分钟。" +
       (/RM\s*388/iu.test(text)
         ? "RM388 属于另一项全身脉冲波护理优惠，两者不是同一个活动。"
         : "这是独立于其他脉冲波疗程的限时活动。") +
