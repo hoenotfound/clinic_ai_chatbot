@@ -575,3 +575,50 @@ test("verified staff recap retains customer-authored non-scheduling context",()=
   ]});
   assert.deepEqual(result,["I am interested in Package A.","My lower back feels stiff and I want to improve my posture."]);
 });
+
+test("QQ: a customer-selected future date survives a three-day staff scheduling gap",()=>{
+  const prior={content:"不是说了5/12",createdAt:"2026-11-22T03:12:06.682Z"};
+  const staff={content:"Hi dear 5/12- 1 pm 可以吗☺️",createdAt:"2026-11-22T06:42:01.186Z"};
+  const now="2026-11-25T11:47:45.684Z";
+  const args={hours,receivedAt:now,now,durationMinutes:90,
+    recentCustomerMessages:[prior],recentStaffMessages:[staff],requireValidPreference:true};
+  const first=guardAppointmentReply({...args,customerText:"3pm ok ma",
+    reply:"请问您哪一天方便呢？我帮您向诊所确认空档哦☺️"});
+  assert.equal(first.blocked,false);
+  assert.equal(first.issue.date,"2026-12-05");
+  assert.deepEqual(first.issue.times,[900]);
+  assert.match(first.reply,/2026-12-05 3:00 PM/);
+  const {canRecoverBookingReady,verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  assert.equal(canRecoverBookingReady({customerText:"3pm ok ma",previousAssistantText:staff.content,issue:first.issue}),true);
+  const later="2026-11-25T11:50:27.356Z";
+  const second=guardAppointmentReply({...args,receivedAt:later,now:later,customerText:"5号噢",
+    recentCustomerMessages:[{content:"3pm ok ma",createdAt:now},prior],
+    reply:"请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️"});
+  assert.equal(second.blocked,false);
+  assert.equal(verifiedAppointmentPreference(second.issue),"2026-12-05 15:00");
+  assert.doesNotMatch(second.reply,/哪一天|几点/);
+});
+test("cross-day model interpretation requires independent customer evidence and respects conflicts",()=>{
+  const now="2026-11-25T11:47:45Z";
+  const prior={content:"5/12",createdAt:"2026-11-22T03:12:06Z"};
+  const args={hours,customerText:"3pm ok ma",receivedAt:now,now,durationMinutes:90};
+  const old={recentCustomerMessages:[prior],appointmentPreference:"2026-12-05 15:00"};
+  assert.equal(evaluateAppointmentHours({...args,...old}).status,"valid_preference");
+  assert.equal(evaluateAppointmentHours({...args,appointmentPreference:old.appointmentPreference}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,recentCustomerMessages:[prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"6号噢"}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"6号噢",createdAt:"2026-11-25T10:00:00Z"},prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"Actually cancel the appointment",createdAt:"2026-11-23T03:12:06Z"},prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"Promotion ends 5/12",createdAt:prior.createdAt}]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"5号噢",recentCustomerMessages:[]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"7pm"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,appointmentPreference:"2026-11-30 15:00",
+    recentCustomerMessages:[{content:"30/11",createdAt:prior.createdAt}]}).status,"closed");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"5/12",createdAt:"2026-11-26T03:12:06Z"}]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"5号噢",
+    recentCustomerMessages:[{content:"3pm",createdAt:"2026-11-23T03:12:06Z"},prior]}).status,"valid_day");
+});
