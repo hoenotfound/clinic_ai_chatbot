@@ -30,7 +30,7 @@ const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply, staleCommercialIntent } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -2173,6 +2173,7 @@ async function processIncomingMessage(
     // special cases and final safety rejections keep precedence.
     let semanticPricingApproval = null;
     let rejectedModelPricing = false;
+    let staleModelPricing = false;
     if (["shadow","enabled"].includes(aiPricingMode) &&
         !flagged && !bookingReady && !keywordReason && !urgentSafety &&
         !marketingStopQuestion && !isActiveSafetyConcern(text) &&
@@ -2181,6 +2182,12 @@ async function processIncomingMessage(
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
         (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
       try {
+        const staleIntent = staleCommercialIntent({customerText:text,conversationHistory:commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+          allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,modelIntent:modelPricingIntent});
+        // Preserve independently approved legacy/explicit menu continuations.
+        // Shadow observes but never changes customer replies.
+        staleModelPricing = aiPricingEnabled && staleIntent && !legacyPricingApproval.decision;
         const semanticCandidate = resolveModelLedPricingDecision({
           modelIntent:modelPricingIntent,customerText:text,conversationHistory: commercialHistory,
           services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
@@ -2211,14 +2218,14 @@ async function processIncomingMessage(
           modelPriceQuery:modelPricingIntent.priceQuery===true,
           modelPackageQuery:modelPricingIntent.packageQuery===true,
           legacyApproved:Boolean(old),semanticApproved:Boolean(next),
-          agreement:signature(old)===signature(next),reason:semanticApproval.reason,
+          agreement:signature(old)===signature(next),reason:staleIntent && !semanticApproval.decision ? "stale_current_intent" : semanticApproval.reason,
           legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
           legacyPackages:old?.prices?.map(p=>p.name)||[],
           semanticPackages:next?.prices?.map(p=>p.name)||[],
           applied:apply,
         }));
         if (apply) semanticPricingApproval=semanticApproval;
-        rejectedModelPricing = shouldBlockRejectedModelPricing({
+        rejectedModelPricing = !staleModelPricing && shouldBlockRejectedModelPricing({
           mode:aiPricingMode,modelIntent:modelPricingIntent,semanticCandidate,
           semanticApproval,legacyApproval:legacyPricingApproval,
           hasSpecialDecision:protectedLegacyPrice,customerText:text,
@@ -2230,13 +2237,15 @@ async function processIncomingMessage(
         console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
       }
     }
-    const selectedPricingApproval = rejectedModelPricing
+    const selectedPricingApproval = staleModelPricing
+      ? {decision:null,reason:"stale_current_intent"}
+      : rejectedModelPricing
       ? {decision:null,reason:"model_price_scope_unverified"}
       : semanticPricingApproval || legacyPricingApproval;
     // Conflicting human quotes must not be overridden by either pricing path.
     // Shadow remains observational; the existing special cases retain scope.
     const conflictTreatment = selectedPricingApproval.decision?.treatment ||
-      (modelPricingIntent?.priceQuery || modelPricingIntent?.packageQuery
+      (!staleModelPricing && (modelPricingIntent?.priceQuery || modelPricingIntent?.packageQuery)
         ? modelPricingIntent.treatment : null);
     const staffPriceConflict = aiPricingEnabled && !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion && !urgentSafety &&
@@ -2250,6 +2259,13 @@ async function processIncomingMessage(
     const pricingApproval = staffPriceConflict
       ? {decision:null,reason:"conflicting_staff_quote"} : selectedPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
+    if (staleModelPricing) {
+      // Do not propagate the rejected model flags into later pricing/media
+      // helpers. Keep treatment, service and all non-commercial intent intact.
+      priceQuery = false;
+      packageQuery = false;
+      modelPricingStage = null;
+    }
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
     // NOT an independent request for new pricing or promotional graphics.
@@ -2279,7 +2295,7 @@ async function processIncomingMessage(
         pelvicPackageComparison = null;
       }
     }
-    if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
+    if (staleModelPricing || priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
         twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
         " inbound=" + savedInbound.id +
@@ -3468,7 +3484,7 @@ async function processIncomingMessage(
       // Store a stage summary only for pricing-related inbound turns.
       // This optional write occurs after the text-send outcome is known and
       // cannot affect accepted text, media sending or retry semantics.
-      if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
+      if (staleModelPricing || priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
           twoTreatmentQuote || comboOfferDecision?.mode === "direct" ||
           shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
         const quotedApprovedPrices = approvedPricingDecision?.prices?.length
