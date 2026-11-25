@@ -192,7 +192,7 @@ function alternativeDateReply(language, now=Date.now()) {
 }
 function campaignContextReply({ history, customerText, now = Date.now(), language } = {}) {
   if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
-      (!CAMPAIGN_QUERY.test(String(customerText || "")) && !isCampaignAvailabilityQuestion(customerText) && !alternativeDateRequest(customerText,now)) ||
+      (!CAMPAIGN_QUERY.test(String(customerText || "")) && !AMOUNT_QUESTION.test(String(customerText || "")) && !DURATION_QUESTION.test(String(customerText || "")) && !INCLUDES_QUESTION.test(String(customerText || "")) && !isCampaignAvailabilityQuestion(customerText) && !alternativeDateRequest(customerText,now)) ||
       isOtherTreatmentQuery(customerText)) return null;
   const locale=localeFor(history,customerText,language);
   if (alternativeDateRequest(customerText,now)) return alternativeDateReply(locale,now);
@@ -330,7 +330,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   const day = campaignDay(now);
   if (day === "expired") return { expired: true, message: null };
   // Do not keep selling the same dates when the customer has rejected them.
-  if (alternativeDateRequest(latest,now)) return { expired: false, message: alternativeDateReply(detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"),now) };
+  if ((candidate.recent_inbound_messages || []).slice(0,5).some(value=>alternativeDateRequest(value,now))) return { expired: false, message: alternativeDateReply(detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"),now) };
   const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
   const dates=localizedDates(now,locale);
   if(locale==="en" || locale==="ms") return {expired:false,message:locale==="en" ? "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on "+dates+", with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊" : "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada "+dates+", termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"};
