@@ -84,6 +84,7 @@ async function createPersonalized20h({
      treatmentInterest:clean(candidate.adFollowUpPolicy
        ? candidate.adFollowUpPolicy.treatment
        : lead.treatment_interest),
+     restrictTreatmentContext:candidate.recovery_topic_reset===true,
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
