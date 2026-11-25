@@ -48,13 +48,32 @@ function calendarDate(year,month,day,anchorDate){
   return !year&&date&&date<anchorDate&&+anchorDate.slice(5,7)>=11&&month<=2?validDate(y+1,month,day):date;
 }
 const DAYPART=/(?:上午|早上|中午|下午|晚上|傍晚|凌晨|\bmorning\b|\bafternoon\b|\bevening\b|\bpagi\b|\bpetang\b|\bmalam\b|\btengah hari\b)/iu;
+const APPOINTMENT_HISTORY_LIMIT = 20;
+const SHORT_CONTEXT_MS = 36*3600000;
+const MAX_CONTEXT_MS = 30*24*3600000;
 const BARE_TIME=/^(?:(?:at|pukul|jam)\s+)?(?:\d{1,2}(?:[:.：]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?|pagi|petang|malam|tengah hari)|\d{1,2}[:.：]\d{2}|(?:上午|早上|中午|下午|晚上|傍晚)?[零〇一二两兩三四五六七八九十\d]{1,3}\s*(?:点|點|时|時)(?:\s*(?:半|[零〇一二两兩三四五六七八九十\d]{1,3}\s*分?))?|(?:morning|afternoon|evening|pagi|petang|malam|tengah hari|上午|早上|中午|下午|晚上|傍晚))[？?.!！。\s]*$/iu;
 function preferenceText(text){
   return String(text||"").normalize("NFKC").trim()
     .replace(/^(?:yes|please|ok(?:ay)?|baik|boleh)[,\s]+/iu,"")
-    .replace(/(?:[,\s]+(?:please|pls|thanks|thank you|ya|terima kasih|boleh)|[，,\s]*(?:谢谢|謝謝|可以吗|可以嗎|可以的))[。.!?！？\s]*$/iu,"").trim();
+    .replace(/(?:[,\s]+(?:please|pls|thanks|thank you|ya|ok(?:ay)?(?:\s+ma)?|terima kasih|boleh)|[，,\s]*(?:谢谢|謝謝|可以吗|可以嗎|可以的))[。.!?！？\s]*$/iu,"").trim();
 }
 function isBareTimePreference(text){return BARE_TIME.test(preferenceText(text));}
+// A day number is never a date by itself; resolve only against customer evidence.
+function partialCalendarDay(text){
+  const match=/^(\d{1,2})\s*[号號日]\s*(?:哦|噢|喔|啊|呀|啦|呢|哈)?[。.!?！？\s]*$/u.exec(preferenceText(text));
+  return match&&+match[1]>=1&&+match[1]<=31?+match[1]:null;
+}
+function explicitCalendarText(text){
+  return /\d{1,2}[/-]\d{1,2}|\d{1,2}月\s*\d{1,2}/u.test(text)||
+    new RegExp(DAY_FIRST,"iu").test(text)||new RegExp(MONTH_FIRST,"iu").test(text);
+}
+function customerDateEvidence(content,anchorDate){
+  if(/(?:旧预约|之前的预约|上次预约|old booking|previous appointment|last appointment)/iu.test(content))return false;
+  return schedulingEvidence(content,anchorDate)||
+    (explicitCalendarText(content)&&
+      /(?:不是说了|不是說了|已经说了|已經說了|我说了|我說了|already (?:said|told))/iu.test(content)&&
+      !/(?:优惠|促销|价格|活动|promo|price|offer)/iu.test(content));
+}
 function rejectsPreference(text){
   return /(?:取消(?:预约|預約)?|不(?:要|想|能|可以)(?:来|來|过来|過來|预约|預約)|不能(?:了|来|來)|\b(?:cancel(?:led|ling)?|cannot (?:come|make it|attend)|can't (?:come|make it|attend)|not available|no longer interested|(?:decided|choose|chosen) not to proceed|(?:do not|don't|won't) (?:want to )?proceed|not proceeding|tak jadi|batal(?:kan)?|tak boleh datang)\b|\b(?:cannot|can't|not possible|doesn['’]t work|won['’]t work)\s*[.!?]*$|不(?:行|方便|可以)[。！？\s]*$)/iu.test(text);
 }
@@ -71,7 +90,7 @@ function isBareCalendarPreference(text,anchorDate){
     .replace(/^[\s,，。.!?！？-]+|[\s,，。.!?！？-]+$/gu,"").trim();
   return !rest||isBareTimePreference(rest);
 }
-function appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now}){
+function appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now,maxAgeMs=SHORT_CONTEXT_MS}){
   const history=recentCustomerMessages.length?recentCustomerMessages:
     recentCustomerTexts.map(content=>({content,createdAt:receivedAt}));
   const latest=new Date(receivedAt).getTime(),current=new Date(now).getTime();
@@ -81,7 +100,7 @@ function appointmentHistory({recentCustomerMessages,recentCustomerTexts,received
     const timestamp=at==null?NaN:new Date(at).getTime();
     return {content,timestamp,local:Number.isFinite(timestamp)?localParts(timestamp):null};
   }).filter(item=>item.local&&item.timestamp<=latest&&item.timestamp<=current+120000&&
-    current-item.timestamp<=36*3600000).sort((a,b)=>b.timestamp-a.timestamp);
+    current-item.timestamp<=maxAgeMs).sort((a,b)=>b.timestamp-a.timestamp).slice(0,APPOINTMENT_HISTORY_LIMIT);
 }
 function schedulingEvidence(content,anchorDate){
   const visit=/(?:预约|預約|安排|过来|過來|来店|來店|有空|方便|可以(?:吗|嗎)|几点|幾點|几时|幾時|\b(?:appointment|booking|book|visit|slot|available|come|temujanji|janji temu)\b)/iu;
@@ -126,7 +145,7 @@ function parseCalendar(text,anchorDate){
     [/(?:明天|(?<!day after )\btomorrow\b|\besok\b)/iu,1],
     [/(?:后天|後天|\bday after tomorrow\b|\blusa\b)/iu,2],
   ])if(pattern.test(source))add(plusDays(anchorDate,offset));
-  for(const m of source.matchAll(/((?:下|这|這|本)(?:个|個)?(?:星期|礼拜|禮拜|周|週)|(?:星期|礼拜|禮拜|周|週))\s*([一二三四五六日天1-7])/gu)){
+  for(const m of source.matchAll(/((?:下|这|這|本)(?:个|個)?(?:星期|礼拜|禮拜|周|週)|(?:星期|礼拜|禮拜|周|週))\s*([一二三四五六日天1-7])(?!\s*次)/gu)){
     const target=/^[1-7]$/u.test(m[2])?+m[2]%7:
       m[2]==="日"||m[2]==="天"?0:"一二三四五六".indexOf(m[2])+1;
     let distance=(target-weekday(anchorDate)+7)%7;
@@ -298,7 +317,7 @@ function durationMinutesForPackage({config,customerTexts=[],treatment=""}={}){
 }
 
 function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
-  recentCustomerMessages=[],appointmentPreference="",receivedAt=new Date(),now=new Date(),
+  recentCustomerMessages=[],recentStaffMessages=[],appointmentPreference="",receivedAt=new Date(),now=new Date(),
   durationMinutes=0,trustPreferenceWithoutCustomer=false}={}){
   if(!hours?.weekly)return {status:"unconfigured"};
   const anchor=localParts(receivedAt),today=localParts(now);
@@ -311,21 +330,47 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   if(current?.ambiguous)return {status:"ambiguous",dates:current.dates,hasTime};
   let selected=current?.date||null;
   let selectedIndex=-1;
-  const history=appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now});
+  const history=appointmentHistory({recentCustomerMessages,recentCustomerTexts,receivedAt,now,maxAgeMs:MAX_CONTEXT_MS});
   const boundary=history.findIndex(item=>rejectsPreference(item.content));
   const activeHistory=boundary<0?history:history.slice(0,boundary);
+  const dayOnly=partialCalendarDay(customerText);
+  const modelDate=parseCalendar(appointmentPreference,anchor.date)?.date;
+  const continuation=isBareTimePreference(customerText)||dayOnly!==null;
+  // Authenticated staff text corroborates the thread, not customer consent.
+  const staffHistory=appointmentHistory({recentCustomerMessages:recentStaffMessages,
+    recentCustomerTexts:[],receivedAt,now,maxAgeMs:MAX_CONTEXT_MS});
+  const staffExchange=staffHistory.find(item=>{
+    const parsed=parseCalendar(item.content,item.local.date);
+    return parsed&&(asksSchedulingQuestion(item.content)||
+      (parseClockPreference(item.content).hasClock&&
+        /(?:可以吗|可以嗎|方便|[?？]|\b(?:can|would|could|boleh)\b)/iu.test(item.content)));
+  });
+  const staffDate=staffExchange?parseCalendar(staffExchange.content,staffExchange.local.date)?.date:null;
   if(!selected){
     for(let i=0;i<activeHistory.length;i++){
       const {content,local}=activeHistory[i];
       const found=parseCalendar(content,local.date);
       if(found?.invalid&&!/promotion|promo|优惠|促销/iu.test(content))return {status:"invalid_date",hasTime};
-      if(!schedulingEvidence(content,local.date))continue;
+      if(!customerDateEvidence(content,local.date))continue;
       if(found?.ambiguous)return {status:"ambiguous",dates:found.dates,hasTime};
-      if(found?.date&&found.date>=today.date){selected=found.date;selectedIndex=i;break;}
+      if(found?.date&&found.date>=today.date){
+        const older=new Date(now).getTime()-activeHistory[i].timestamp>SHORT_CONTEXT_MS;
+        // Preserve explicit future dates across days only when the current
+        // scheduling reply and model or authenticated staff corroborate them.
+        if(older&&(!continuation||!explicitCalendarText(content)||
+          (modelDate!==found.date&&staffDate!==found.date)))break;
+        const conflictingPartial=activeHistory.slice(0,i).some(item=>{
+          const day=partialCalendarDay(item.content);
+          return day!==null&&day!==+found.date.slice(8);
+        });
+        if((dayOnly!==null&&+found.date.slice(8)!==dayOnly)||conflictingPartial)
+          return {status:"unknown",hasTime};
+        selected=found.date;selectedIndex=i;break;
+      }
       if(found?.date&&found.date<today.date)return {status:"unknown",hasTime};
     }
   }
-  if(!selected&&trustPreferenceWithoutCustomer){
+  if(!selected&&trustPreferenceWithoutCustomer&&dayOnly===null){
     const found=parseCalendar(appointmentPreference,anchor.date);
     if(found?.invalid)return {status:"invalid_date",hasTime};
     if(found?.ambiguous)return {status:"ambiguous",dates:found.dates,hasTime};
@@ -342,11 +387,13 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   for(let i=0;i<activeHistory.length;i++){
     const item=activeHistory[i];
     const referenced=parseCalendar(item.content,item.local.date);
-    if(referenced?.invalid||referenced?.ambiguous||(referenced?.date&&referenced.date!==selected))break;
-    if(referenced?.date===selected&&schedulingEvidence(item.content,item.local.date)){
+    const partial=partialCalendarDay(item.content);
+    if(referenced?.invalid||referenced?.ambiguous||(referenced?.date&&referenced.date!==selected)||
+      (partial!==null&&partial!==+selected.slice(8)))break;
+    if(referenced?.date===selected&&customerDateEvidence(item.content,item.local.date)){
       matchingHistory.push(item);continue;
     }
-    if(!referenced&&isBareTimePreference(item.content)){
+    if(!referenced&&isBareTimePreference(item.content)&&new Date(now).getTime()-item.timestamp<=SHORT_CONTEXT_MS){
       if(selectedIndex>=0&&i<selectedIndex){matchingHistory.push(item);continue;}
       if(selectedIndex<0&&i===0&&isBareCalendarPreference(customerText,anchor.date)&&
         new Date(receivedAt).getTime()-item.timestamp<=5*60000&&
@@ -424,7 +471,12 @@ function claimsConfirmedAppointment(text){
 function canRecoverBookingReady({customerText,previousAssistantText,issue}={}){
   if(issue?.status!=="valid_preference"||rejectsPreference(customerText))return false;
   const prompt=String(previousAssistantText||"");
-  return asksSchedulingQuestion(prompt)&&(isBareCalendarPreference(customerText,issue.date)||isBareTimePreference(customerText));
+  const promptDate=parseCalendar(prompt,issue.date)?.date;
+  const datedOffer=promptDate===issue.date&&parseClockPreference(prompt).times.length>0&&
+    /(?:可以吗|可以嗎|方便|[?？]|\b(?:can|would|could|boleh)\b)/iu.test(prompt);
+  return (asksSchedulingQuestion(prompt)||datedOffer)&&
+    (isBareCalendarPreference(customerText,issue.date)||isBareTimePreference(customerText)||
+      partialCalendarDay(customerText)===+issue.date.slice(8));
 }
 function verifiedAppointmentPreference(issue){
   if(issue?.status!=="valid_preference"||!issue.date)return null;
@@ -478,7 +530,7 @@ function issueReply(issue,{hours,language="zh"}={}){
 }
 
 function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=[],
-  recentCustomerMessages=[],appointmentPreference="",receivedAt,now=new Date(),
+  recentCustomerMessages=[],recentStaffMessages=[],appointmentPreference="",receivedAt,now=new Date(),
   language="zh",durationMinutes=0,requireValidPreference=false}={}){
   const original=String(reply||"");
   if(!hours?.weekly)return {reply:original,blocked:false,issue:{status:"unconfigured"}};
@@ -491,7 +543,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     bookingContext.test(customerText)||timesInText(customerText).length>0||
     (String(customerText).trim().length<=25&&shortDay.test(customerText))||
     isBareCalendarPreference(customerText,localParts(receivedAt||now)?.date)||
-    isBareTimePreference(customerText)||Boolean(parseCalendar(customerText,localParts(receivedAt||now)?.date)?.invalid));
+    isBareTimePreference(customerText)||partialCalendarDay(customerText)!==null||Boolean(parseCalendar(customerText,localParts(receivedAt||now)?.date)?.invalid));
   // A spurious model booking_ready on a pricing/promotion enquiry must not
   // replace a valid price reply with an unrelated closed-day apology.
   if(rejectsPreference(customerText)&&!(parseClockPreference(customerText).rejected&&parseClockPreference(customerText).times.length)&&!claimsConfirmedAppointment(original))return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
@@ -499,7 +551,7 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
     return {reply:original,blocked:true,issue:{status:"not_appointment"}};
   const issue=inboundAppointment||requireValidPreference
     ? evaluateAppointmentHours({
-        hours,customerText,recentCustomerTexts,recentCustomerMessages,
+        hours,customerText,recentCustomerTexts,recentCustomerMessages,recentStaffMessages,
         appointmentPreference,receivedAt,now,durationMinutes,
       })
     : {status:"unknown"};
@@ -631,6 +683,24 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   return {reply:original,blocked:false,issue};
 }
 
+// AI decides whether this turn is scheduling. Do not parse ordinary medical,
+// treatment-frequency, pricing or other conversational prose as calendar dates.
+// Booking Ready still requires independent customer-evidence validation.
+// The narrowly scoped confirmation-claim check remains a safety backstop.
+function guardAiAppointmentReply(options={}){
+  const original=String(options.reply||"");
+  const {appointmentScheduling,requireValidPreference=false,language="zh"}=options;
+  if(appointmentScheduling===true||(requireValidPreference&&appointmentScheduling!==false)){
+    return guardAppointmentReply(options);
+  }
+  if(claimsConfirmedAppointment(original)){
+    const lang=String(language).toLowerCase().slice(0,2);
+    const safe=lang==="en"?"Our team needs to check availability before confirming any appointment.":lang==="ms"?"Pihak pusat perlu semak kekosongan sebelum janji temu disahkan.":"预约需要由门店同事核实空档后才能确认哦。";
+    return {reply:safe,blocked:true,issue:{status:"unverified_confirmation"}};
+  }
+  return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+}
+
 function describeWeeklyHours(hours){
   if(!hours?.weekly)return null;
   const weekly=hours.weekly;
@@ -658,4 +728,4 @@ function currentClinicDate(value=new Date()){
 }
 module.exports={ZONE,localParts,detectDate,intervals,timesInText,
   durationMinutesForPackage,evaluateAppointmentHours,issueReply,
-  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady,parseClockPreference,claimsConfirmedAppointment,appointmentCustomerContext};
+  guardAppointmentReply,guardAiAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady,parseClockPreference,claimsConfirmedAppointment,appointmentCustomerContext};

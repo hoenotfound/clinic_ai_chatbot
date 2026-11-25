@@ -89,7 +89,9 @@ function normalizeOptions(reasonOrOptions) {
     receivedAt: options.receivedAt || new Date(),
     durationMinutes: Number(options.durationMinutes) || 0,
     recentCustomerMessages: Array.isArray(options.recentCustomerMessages)
-      ? options.recentCustomerMessages.slice(0, 8) : [],
+      ? options.recentCustomerMessages.slice(0, 20) : [],
+    recentStaffMessages: Array.isArray(options.recentStaffMessages)
+      ? options.recentStaffMessages.slice(0, 20) : [],
   };
 }
 
@@ -108,7 +110,7 @@ function createBookingReadyOutcomeService({
     const capturedMessageId = safeMessageId(messageId);
     const { reason, activityDescription, details, allowReschedule = false,
       customerText = "", receivedAt, durationMinutes = 0,
-      recentCustomerMessages = [] } = normalizeOptions(reasonOrOptions);
+      recentCustomerMessages = [], recentStaffMessages = [] } = normalizeOptions(reasonOrOptions);
     // Second independent guard: no CRM attention, activity or Telegram alert
     // may be created for a closed/past/out-of-hours AI booking preference.
     // This also protects callers other than the normal inbound send path.
@@ -118,7 +120,7 @@ function createBookingReadyOutcomeService({
       const hoursCheck = evaluateAppointmentHours({
         hours: clinicConfig.hours, customerText,
         appointmentPreference: details.appointmentPreference || "",
-        recentCustomerMessages,
+        recentCustomerMessages, recentStaffMessages,
         receivedAt, now: evaluationTime, durationMinutes,
       });
       const verifiedPreference = verifiedAppointmentPreference(hoursCheck);

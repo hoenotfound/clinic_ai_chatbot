@@ -575,3 +575,116 @@ test("verified staff recap retains customer-authored non-scheduling context",()=
   ]});
   assert.deepEqual(result,["I am interested in Package A.","My lower back feels stiff and I want to improve my posture."]);
 });
+
+test("QQ: a customer-selected future date survives a three-day staff scheduling gap",()=>{
+  const prior={content:"不是说了5/12",createdAt:"2026-11-22T03:12:06.682Z"};
+  const staff={content:"Hi dear 5/12- 1 pm 可以吗☺️",createdAt:"2026-11-22T06:42:01.186Z"};
+  const now="2026-11-25T11:47:45.684Z";
+  const args={hours,receivedAt:now,now,durationMinutes:90,
+    recentCustomerMessages:[prior],recentStaffMessages:[staff],requireValidPreference:true};
+  const first=guardAppointmentReply({...args,customerText:"3pm ok ma",
+    reply:"请问您哪一天方便呢？我帮您向诊所确认空档哦☺️"});
+  assert.equal(first.blocked,false);
+  assert.equal(first.issue.date,"2026-12-05");
+  assert.deepEqual(first.issue.times,[900]);
+  assert.match(first.reply,/2026-12-05 3:00 PM/);
+  const {canRecoverBookingReady,verifiedAppointmentPreference}=require("../src/utils/appointmentHoursGuard");
+  assert.equal(canRecoverBookingReady({customerText:"3pm ok ma",previousAssistantText:staff.content,issue:first.issue}),true);
+  const later="2026-11-25T11:50:27.356Z";
+  const second=guardAppointmentReply({...args,receivedAt:later,now:later,customerText:"5号噢",
+    recentCustomerMessages:[{content:"3pm ok ma",createdAt:now},prior],
+    reply:"请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️"});
+  assert.equal(second.blocked,false);
+  assert.equal(verifiedAppointmentPreference(second.issue),"2026-12-05 15:00");
+  assert.doesNotMatch(second.reply,/哪一天|几点/);
+});
+test("cross-day model interpretation requires independent customer evidence and respects conflicts",()=>{
+  const now="2026-11-25T11:47:45Z";
+  const prior={content:"5/12",createdAt:"2026-11-22T03:12:06Z"};
+  const args={hours,customerText:"3pm ok ma",receivedAt:now,now,durationMinutes:90};
+  const old={recentCustomerMessages:[prior],appointmentPreference:"2026-12-05 15:00"};
+  assert.equal(evaluateAppointmentHours({...args,...old}).status,"valid_preference");
+  assert.equal(evaluateAppointmentHours({...args,appointmentPreference:old.appointmentPreference}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,recentCustomerMessages:[prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"6号噢"}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"6号噢",createdAt:"2026-11-25T10:00:00Z"},prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"Actually cancel the appointment",createdAt:"2026-11-23T03:12:06Z"},prior]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"Promotion ends 5/12",createdAt:prior.createdAt}]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"5号噢",recentCustomerMessages:[]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"7pm"}).status,"outside_hours");
+  assert.equal(evaluateAppointmentHours({...args,appointmentPreference:"2026-11-30 15:00",
+    recentCustomerMessages:[{content:"30/11",createdAt:prior.createdAt}]}).status,"closed");
+  assert.equal(evaluateAppointmentHours({...args,...old,recentCustomerMessages:[
+    {content:"5/12",createdAt:"2026-11-26T03:12:06Z"}]}).status,"unknown");
+  assert.equal(evaluateAppointmentHours({...args,...old,customerText:"5号噢",
+    recentCustomerMessages:[{content:"3pm",createdAt:"2026-11-23T03:12:06Z"},prior]}).status,"valid_day");
+});
+
+test("QQ: CRM backstop independently verifies the same cross-day preference",async()=>{
+  const originalHours=config.hours,originalType=config.businessType;
+  config.hours=hours;config.businessType="tcm_clinic";
+  const now="2026-11-25T11:50:27.356Z";
+  let params=null;
+  try{
+    const mark=createBookingReadyOutcomeService({
+      database:{async connect(){return {
+        async query(sql,values){if(sql.includes("UPDATE contacts c"))params=values;return {rows:[]};},
+        release(){},
+      };}},
+      now:()=>new Date(now),lockContactAlertQueue:async()=>{},
+      publish(){throw Error("no update expected");},
+      sendBookingReadyAlert(){throw Error("no update expected");},
+    });
+    const result=await mark(9164,24187,{
+      customerText:"5号噢",receivedAt:now,durationMinutes:90,
+      details:{appointmentPreference:"2026-12-05 13:00"},
+      recentCustomerMessages:[
+        {content:"3pm ok ma",createdAt:"2026-11-25T11:47:45.684Z"},
+        {content:"不是说了5/12",createdAt:"2026-11-22T03:12:06.682Z"},
+      ],
+      recentStaffMessages:[
+        {content:"Hi dear 5/12- 1 pm 可以吗☺️",createdAt:"2026-11-22T06:42:01.186Z"},
+      ],
+    });
+    assert.equal(params[4],"2026-12-05 15:00");
+    assert.equal(result.details.appointmentPreference,"2026-12-05 15:00");
+  }finally{config.hours=originalHours;config.businessType=originalType;}
+});
+
+test("AI-led appointment validation preserves treatment frequency and generic invitations",()=>{
+  const now="2026-11-25T13:19:15Z";
+  const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
+  for(const [customerText,reply] of [
+    ["调多少次？ 之后多久maintain 一次","建议初期每星期一次，大约4–6次，之后根据身体状况保养，方便的话可以预约评估哦😊"],
+    ["多久保养一次？","每周一次，之后可以安排定期保养。"],
+    ["How often should I maintain?","Start with once a week. You can book an assessment if convenient."],
+    ["Berapa kerap maintain?","Biasanya seminggu sekali. Boleh datang untuk penilaian."],
+  ]){
+    const result=guardAiAppointmentReply({hours,customerText,reply,receivedAt:now,now,appointmentScheduling:false});
+    assert.equal(result.reply,reply);
+    assert.equal(result.blocked,false);
+    assert.equal(result.issue.status,"not_appointment");
+  }
+  assert.equal(detectDate("每星期一次", "2026-11-25"),null);
+  assert.equal(detectDate("每周1次", "2026-11-25"),null);
+  assert.equal(detectDate("下星期一下午2点", "2026-11-25").date,"2026-11-30");
+});
+test("AI-led appointment gate retains actual booking and unverified confirmation protection",()=>{
+  const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
+  const args={hours,receivedAt:monday,now:laterMonday,language:"en"};
+  const proposal=guardAiAppointmentReply({...args,appointmentScheduling:true,customerText:"Can I visit next week?",reply:"Would Monday afternoon 2pm work for you?"});
+  assert.equal(proposal.blocked,true);
+  assert.equal(proposal.issue.status,"closed");
+  const inconsistent=guardAiAppointmentReply({...args,appointmentScheduling:false,requireValidPreference:true,customerText:"How often?",reply:"Once a week."});
+  assert.equal(inconsistent.blocked,true);
+  assert.equal(inconsistent.reply,"Once a week.");
+  const falseConfirmation=guardAiAppointmentReply({...args,appointmentScheduling:false,reply:"Your appointment is confirmed."});
+  assert.equal(falseConfirmation.blocked,true);
+  assert.equal(falseConfirmation.issue.status,"unverified_confirmation");
+  const actualBooking=guardAiAppointmentReply({...args,appointmentScheduling:true,requireValidPreference:true,customerText:"Tuesday 2pm",appointmentPreference:"2026-11-24 14:00",reply:"I'll check Tuesday 2pm with the clinic."});
+  assert.equal(actualBooking.blocked,false);
+  assert.equal(actualBooking.issue.status,"valid_preference");
+});
