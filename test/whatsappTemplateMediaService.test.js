@@ -290,3 +290,32 @@ test("approved extended templates accept the three existing Neutro videos only f
   assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", faceExperience), false);
   assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", { ...faceExperience, format: "IMAGE" }), false);
 });
+
+
+test("new Package B artwork is available to the pricing template even if follow-up uses a separate image",()=>{
+  const config={promotions:[{
+    name:"Pelvic current offer",linkedService:"骨盆调理",validFrom:"2026-11-01",
+    validUntil:"2026-11-30",packages:[{
+      name:"Package B",imageUrl:"https://clinic.test/promo-images/43",
+      followUpImageUrl:"https://clinic.test/promo-images/44",
+      pricing:{offer:268,normal:388},
+    }],
+  }]};
+  const now=Date.parse("2026-11-19T13:00:00Z");
+  const items=media.listReusableMedia({config,now});
+  const current=items.find(item=>item.id==="promo:43");
+  assert.ok(current,"the active public offer image must be selectable");
+  assert.equal(current.packageName,"Package B");
+  assert.equal(items.some(item=>item.id==="promo:44"),true);
+  const listed=media.publicMediaOptions(items).find(item=>item.id==="promo:43");
+  assert.ok(listed.compatibleTemplates.includes("ns_fu_pricing_graphic"));
+  assert.equal(listed.suggestedValues.zh_CN,"骨盆调理 Package B");
+  assert.equal(listed.suggestedValues.en_US,"Pelvis Care Package B");
+  assert.equal(listed.suggestedValues.ms,"Pakej B Penjagaan Pelvis");
+  assert.equal(media.validateTemplateMediaChoice("ns_fu_pricing_graphic","zh_CN",
+    "promo:43",{body:["骨盆调理 Package B"]},{config,now}).imageId,43);
+  assert.throws(()=>media.validateTemplateMediaChoice("ns_fu_pricing_graphic","zh_CN",
+    "promo:43",{body:["骨盆调理 Package B（RM268）"]},{config,now}),/package name must match/);
+  assert.throws(()=>media.validateTemplateMediaChoice("ns_fu_pricing_graphic","zh_CN",
+    "",{body:["骨盆调理 Package B"]},{config,now}),/matching configured clinic media/);
+});

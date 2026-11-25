@@ -394,13 +394,14 @@ test("Day 4 and Day 6 count accepted reminders in this verified ad session, not 
  assert.match(sql,/gate\.state IN \('reserved','awaiting_pricing'\)/);
  assert.doesNotMatch(sql,/gate\.state<>'idle'/);
 });
-test("extended Day 4/6 due-time hint checks both workers without an extra poll when disabled",async()=>{
+test("extended Day 4/6 due-time hint uses one combined read only when enabled",async()=>{
  const time=new Date("2026-11-11T04:00:00Z");
  const calls=[];
  const database={query:async(sql,params)=>{
    calls.push({sql,params});
    if(sql===svc.POTENTIAL_DUE_SQL)return {rows:[{next_due_at:new Date("2026-11-12T04:00:00Z"),has_overdue:false}]};
-   if(sql===svc.EXTENDED_POTENTIAL_DUE_SQL)return {rows:[{next_due_at:new Date("2026-11-11T15:00:00Z"),has_overdue:true}]};
+   if(sql===svc.combinedPotentialDueSql({extended:true,general:false}))
+     return {rows:[{next_due_at:new Date("2026-11-11T15:00:00Z"),has_overdue:true}]};
    throw Error("Unexpected SQL hint");
  }};
  const ordinary=await svc.nextPotentialDueAt({database,env,now:time});
@@ -409,7 +410,8 @@ test("extended Day 4/6 due-time hint checks both workers without an extra poll w
  const hint=await svc.nextPotentialDueAt({database,env:{
    ...env,WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true",
  },now:time});
- assert.equal(calls.length,3);
+ assert.equal(calls.length,2,"extended lane shares the one due-time statement");
+ assert.equal(calls[1].params.length,7);
  assert.equal(new Date(hint.next_due_at).toISOString(),"2026-11-11T15:00:00.000Z");
  assert.equal(hint.has_overdue,true);
 });
@@ -436,4 +438,68 @@ test("Day4/Day6 refuses unreviewed UNKNOWN holds before any one-shot claim",()=>
   assert.match(sql,/previous\.reopened_at>NOW\(\)-INTERVAL '30 days'/);
  }
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/gate\.state IN \('reserved','awaiting_pricing'\)/);
+});
+
+test("all enabled marketing hints execute as one sender-scoped read",async()=>{
+ const e={...env,
+   WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ENABLED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_BILLING_APPROVED:"true",
+   WHATSAPP_SECONDARY_GENERAL_SIX_DAY_ACTIVATED_AT:"2026-11-20T00:00:00Z",
+ };
+ assert.equal(svc.enabled(e),true);
+ assert.equal(svc.extendedEnabled(e),true);
+ assert.equal(require("../src/services/neutroSecondaryGeneralMarketingSql").enabled(e),true);
+ const now=new Date("2026-11-23T02:00:00Z");
+ let reads=0;
+ const db={query:async(sql,params)=>{
+  reads++;
+  assert.equal(sql,svc.combinedPotentialDueSql({extended:true,general:true}));
+  assert.equal(params.length,8,"general activation parameter is bound once");
+  assert.equal(params[0],e.WHATSAPP_SECONDARY_SENDER_KEY);
+  assert.equal(params[3],now);
+  return {rows:[{next_due_at:"2026-11-23T03:00:00Z",has_overdue:false}]};
+ }};
+ const hint=await svc.nextPotentialDueAt({database:db,env:e,now});
+ assert.equal(reads,1,"three enabled marketing lanes must make one database checkout");
+ assert.equal(hint.has_overdue,false);
+ assert.equal(hint.next_due_at.toISOString(),"2026-11-23T03:00:00.000Z");
+});
+
+test("combined marketing due hint preserves missing-result fail-open and ordinary-only fallback",async()=>{
+ let reads=0;
+ const db={query:async(sql,params)=>{
+  reads++;
+  assert.equal(sql,svc.POTENTIAL_DUE_SQL,"ordinary-only SQL remains unchanged");
+  assert.equal(params.length,7);
+  return {rows:[]};
+ }};
+ const result=await svc.nextPotentialDueAt({
+  database:db,env,now:new Date("2026-11-23T02:00:00Z"),
+ });
+ assert.equal(reads,1);
+ assert.equal(result,null,"a missing aggregate must never certify no due leads");
+});
+
+test("Day4/Day6 use ad-origin seed without weakening verified send or due checks",()=>{
+ const ordinary=svc.CANDIDATES_SQL;
+ const extended=svc.EXTENDED_CANDIDATES_SQL;
+ const recheck=svc.EXTENDED_RECHECK_SQL;
+ const hint=svc.EXTENDED_POTENTIAL_DUE_SQL;
+ for(const sql of [extended,recheck,hint]){
+   assert.match(sql,/FROM whatsapp_free_entry_referrals seed_referral/);
+   assert.match(sql,/JOIN messages recent ON recent.id=seed_referral.origin_message_id/);
+   assert.match(sql,/seed_referral.source_type='ad'/);
+   assert.match(sql,/seed_referral.ctwa_clid/);
+   assert.match(sql,/seed_referral.meta_ad_id/);
+   assert.match(sql,/recent.created_at > \$4::timestamptz - INTERVAL '8 days'/);
+   assert.match(sql,/consent_seed.marketing_consent='opted_in'/);
+   assert.match(sql,/JOIN whatsapp_sender_status_receipts receipt/);
+   assert.match(sql,/receipt.matched=TRUE AND receipt.pricing_type='free_entry_point'/);
+   assert.match(sql,/receipt.pricing_billable=FALSE/);
+   assert.match(sql,/qualified_session.first_reply_at>=rule.updated_at/);
+ }
+ assert.match(ordinary,/FROM messages recent\s+WHERE recent.created_at > \$4::timestamptz - INTERVAL '5 days'/);
+ assert.doesNotMatch(ordinary,/FROM whatsapp_free_entry_referrals seed_referral/);
+ assert.equal(167+24<8*24,true,"origin created up to 24h before a reply no older than 167h");
 });

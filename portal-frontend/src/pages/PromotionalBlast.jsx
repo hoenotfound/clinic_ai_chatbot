@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 
-const CAMPAIGN = "ns_3d_1111_rm388_2026";
+const CAMPAIGN = "ns_pelvic_rm268_reengage_2026";
 const LANGUAGES = [
   { value: "zh_CN", label: "中文" },
   { value: "en_US", label: "English" },
@@ -17,6 +17,24 @@ function fmtTime(value) {
   }).format(new Date(value));
 }
 
+function hasCampaignImage(campaign,file) {
+  return campaign?.audienceMode==='past_leads'
+    ? Boolean(campaign.packageImageUrl && campaign.packageOfferPrice)
+    : Boolean(file);
+}
+
+async function getCurrentGraphic(campaign) {
+  // The active clinic promo is authoritative, never an old file upload.
+  const uri=new URL(campaign.packageImageUrl);
+  if(!/^\/promo-images\/[0-9]+$/.test(uri.pathname))throw new Error('Configured promotional image is invalid.');
+  const response=await fetch(uri.pathname,{credentials:'same-origin',cache:'no-store'});
+  if(!response.ok)throw new Error('Could not load the current promotional image. No messages sent.');
+  const blob=await response.blob();
+  if(!['image/jpeg','image/png'].includes(blob.type) || blob.size<=0 || blob.size>5*1024*1024)
+    throw new Error('The current promo image is not a valid JPG or PNG. No messages sent.');
+  return new File([blob], 'current-promotion.'+(blob.type==='image/png'?'png':'jpg'),{type:blob.type});
+}
+
 function sendable(person) {
   return !person.alreadyClaimed && !person.blockedReason &&
     new Date(person.expiresAt).getTime() > Date.now();
@@ -27,7 +45,7 @@ export default function PromotionalBlast() {
   const [campaignKey,setCampaignKey]=useState(CAMPAIGN);
   const [newCampaign,setNewCampaign]=useState({
     campaignKey:"",title:"",templateName:"",promotedTreatment:"3D 小颜术",
-    targetTreatments:"3D 小颜术",validUntil:"",
+    targetTreatments:"3D 小颜术",validUntil:"",audienceMode:"recent_ad",packageName:"",
   });
   const [creating,setCreating]=useState(false);
   const [relatedReview,setRelatedReview]=useState({});
@@ -66,7 +84,7 @@ export default function PromotionalBlast() {
       setBillingApproved(false);setConsentReviewed(false);
       setNewCampaign({
         campaignKey:"",title:"",templateName:"",promotedTreatment:"3D 小颜术",
-        targetTreatments:"3D 小颜术",validUntil:"",
+        targetTreatments:"3D 小颜术",validUntil:"",audienceMode:"recent_ad",packageName:"",
       });
     }catch(err){setError(err.message||"Could not create this campaign.")}
     finally{setCreating(false);}
@@ -119,7 +137,7 @@ export default function PromotionalBlast() {
   };
 
   async function start() {
-    if (sending || targets.length === 0 || !file || !currentCampaign ||
+    if (sending || targets.length === 0 || !hasCampaignImage(currentCampaign,file) || !currentCampaign ||
         !billingApproved || !consentReviewed) return;
     if (!window.confirm(
       `Send "${currentCampaign.title}" to ${targets.length} selected customers?\n\nMeta may charge for these sends. Each contact will be checked again. No automatic retries will occur.`
@@ -133,6 +151,14 @@ export default function PromotionalBlast() {
       // A stale browser tab cannot turn an earlier preview into authority.
       const checked = await api.getPromotionalBlastPreview(campaignKey);
       const fresh = new Map((checked.recipients || []).map(p => [p.contactId, p]));
+      if(currentCampaign.audienceMode==='past_leads' &&
+         (checked.packageImageUrl!==currentCampaign.packageImageUrl ||
+          String(checked.packageOfferPrice)!==String(currentCampaign.packageOfferPrice) ||
+          JSON.stringify(checked.packageTemplateValues)!==JSON.stringify(currentCampaign.packageTemplateValues))) {
+        throw new Error('The promotion changed. Refresh the campaign before sending.');
+      }
+      const currentGraphic=currentCampaign.audienceMode==='past_leads'
+        ? await getCurrentGraphic(currentCampaign) : file;
       if (targets.some(person => !fresh.has(person.contactId) ||
           !sendable(fresh.get(person.contactId)) ||
           fresh.get(person.contactId).senderId !== person.senderId ||
@@ -158,6 +184,35 @@ export default function PromotionalBlast() {
           if (!version || !token || catalog.eligibility?.allowed !== true) {
             throw new Error("Template, sender or billing review unavailable. No message sent.");
           }
+          const fields=version.variableFields||[];
+          const pastLead=currentCampaign.audienceMode==='past_leads';
+          if(pastLead && (fields.length!==1 || fields[0].component!=='body' || fields[0].index!==1))
+            throw new Error('This approved template does not support the package text field. No message sent.');
+          if(!pastLead && fields.length>0)
+            throw new Error('The existing blast needs a template without variables.');
+          // The clinic determines the exact body variable; never append the
+          // price to the approved package label (the image already shows it).
+          const packageLabel=pastLead
+            ? currentCampaign.packageTemplateValues?.[languageCode] : null;
+          if(pastLead && !packageLabel)
+            throw new Error('The current package label cannot be verified for this language.');
+          const values=pastLead ? {body:[packageLabel],header:[]} : {};
+          let selectedMediaId=null;
+          if(pastLead && person.senderId===1) {
+            // The primary Inbox only permits configured clinic media with
+            // the pricing template. It explicitly rejects a fresh file upload.
+            const currentImageId=new URL(currentCampaign.packageImageUrl)
+              .pathname.match(/^\/promo-images\/([0-9]+)$/)?.[1];
+            selectedMediaId=currentImageId ? 'promo:'+currentImageId : null;
+            const asset=(catalog.reusableMedia||[]).find(item=>
+              item.id===selectedMediaId &&
+              item.format==='IMAGE' &&
+              item.compatibleTemplates?.includes(currentCampaign.templateName) &&
+              item.suggestedValues?.[languageCode]===packageLabel
+            );
+            if(!asset)
+              throw new Error('The latest promo is missing from the approved clinic media list. No message sent.');
+          }
 
           const claim=await api.claimPromotionalBlastRecipient({
             campaignKey,
@@ -173,13 +228,14 @@ export default function PromotionalBlast() {
           const response = await api.sendWhatsAppTemplate(person.contactId, {
             templateName: currentCampaign.templateName,
             languageCode,
-            values: {},
+            values,
+            ...(selectedMediaId ? {mediaSelectionId:selectedMediaId} : {}),
             marketingConsentConfirmed: true,
             billingAcknowledged: true,
             billingReviewToken: token,
             blastCampaignKey: campaignKey,
             blastReservationToken: claim.reservationToken,
-          }, file);
+          }, selectedMediaId ? null : currentGraphic);
           const accepted = Boolean(response.whatsapp_message_id) &&
             !["unknown", "failed", "cancelled"].includes(response.delivery_status);
           if (!accepted) {
@@ -216,9 +272,9 @@ export default function PromotionalBlast() {
           <p className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">WhatsApp marketing</p>
           <h1 className="font-display text-2xl font-bold">Promotional Blast</h1>
           <p className="max-w-3xl text-sm text-[var(--color-text-muted)]">
-            Preview opted-in Click-to-WhatsApp ad leads, choose their language and send one approved
-            image template per customer. Existing free-entry and marketing-consent rules apply.
-            Verified ad history does not guarantee free Meta messaging.
+            Preview eligible customers, choose their language and send one approved image template per person.
+            Past-lead campaigns require verified marketing consent, with booked and recently contacted leads excluded.
+            Meta may charge for each promotional send.
           </p>
         </header>
 
@@ -242,10 +298,26 @@ export default function PromotionalBlast() {
           {currentCampaign&&<p className="text-xs text-[var(--color-text-muted)]">
             Template: <code>{currentCampaign.templateName}</code> · Promoted treatment: {currentCampaign.promotedTreatment}
             · Ends: {fmtTime(currentCampaign.validUntil)}
+            · Audience: {currentCampaign.audienceMode==='past_leads'?'Past opted-in leads':'Recent verified ad leads'}
           </p>}
           <details className="rounded-lg border border-[var(--color-border)] p-3">
             <summary className="cursor-pointer font-semibold text-sm">Create a future campaign</summary>
             <form onSubmit={createNewCampaign} className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm">Audience
+                <select className="mt-2 block w-full rounded-lg border border-[var(--color-border)] p-2"
+                  value={newCampaign.audienceMode} disabled={creating||sending}
+                  onChange={e=>setNewCampaign(v=>({...v,audienceMode:e.target.value}))}>
+                  <option value="recent_ad">Recent verified ad leads (existing)</option>
+                  <option value="past_leads">Past leads with explicit marketing consent</option>
+                </select>
+              </label>
+              {newCampaign.audienceMode==='past_leads' && <label className="text-sm">
+                Exact configured package name
+                <input required placeholder="Package B" value={newCampaign.packageName}
+                  disabled={creating||sending}
+                  onChange={e=>setNewCampaign(v=>({...v,packageName:e.target.value}))}
+                  className="mt-2 block w-full rounded-lg border border-[var(--color-border)] p-2" />
+              </label>}
               {[
                 ["campaignKey","Unique campaign key (lowercase)", "ns_next_promo_2026"],
                 ["title","Campaign title","Example: December Facial Special"],
@@ -275,17 +347,22 @@ export default function PromotionalBlast() {
               is checked before sending. Campaign definitions are not editable after creation.
             </p>
           </details>
-          <label className="block text-sm font-semibold">
+          {currentCampaign?.audienceMode==='past_leads' && <p className="text-sm">
+            Using current {currentCampaign.packageName} artwork,
+            RM{currentCampaign.packageOfferPrice || 'unavailable'}.
+            {currentCampaign.packageImageUrl ? ' The image loads automatically.' : ' The promotion is missing or inactive; sending is disabled.'}
+          </p>}
+          {currentCampaign?.audienceMode!=='past_leads' && <label className="block text-sm font-semibold">
             Upload this campaign's promotional graphic once
             <input
               className="mt-2 block w-full rounded-lg border border-[var(--color-border)] p-2 text-sm"
               type="file" accept="image/jpeg,image/png" onChange={chooseFile} disabled={sending}
             />
-          </label>
-          {file && <p className="text-xs text-[var(--color-text-muted)]">Selected: {file.name}</p>}
+          </label>}
+          {currentCampaign?.audienceMode!=='past_leads' && file && <p className="text-xs text-[var(--color-text-muted)]">Selected: {file.name}</p>}
           <p className="text-xs text-[var(--color-text-muted)]">
-            The image is reused for the selected customers, but uploaded separately through the
-            correct WhatsApp account's existing sending path.
+            Past-lead campaigns use the current clinic promotional graphic.
+            The correct sender's existing WhatsApp upload path is used for every recipient.
           </p>
         </section>
 
@@ -396,7 +473,7 @@ export default function PromotionalBlast() {
           {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={() => void start()}
-              disabled={sending || loading || !file || !targets.length || !billingApproved || !consentReviewed}
+              disabled={sending || loading || !hasCampaignImage(currentCampaign,file) || !targets.length || !billingApproved || !consentReviewed}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
               {sending ? "Sending one at a time…" : `Review and send ${targets.length} selected`}
             </button>

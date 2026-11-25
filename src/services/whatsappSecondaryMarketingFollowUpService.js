@@ -1,5 +1,4 @@
 "use strict";
-const { scopeSecondaryRead } = require("../utils/secondaryContactRead");
 const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 // Never share primary Neutro marketing templates, opt-in or billing entries.
 // Exact one-shot sender, contact, inbound and template authorization required.
@@ -16,7 +15,7 @@ const tools=require("./whatsappTemplateService");
 const generalSql=require("./neutroSecondaryGeneralMarketingSql");
 const {pinned:pinnedGeneralTemplate}=require("./neutroSecondaryGeneralMarketingTemplates");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -25,7 +24,8 @@ const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
-const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
+ hasSecondaryClinicQuietHoursGuard}=
  require("../utils/secondaryDueTimeScheduler");
 
 // Select a locale only from actual sender-owned customer text. Do not infer
@@ -134,8 +134,9 @@ const CANDIDATES_SQL=`
  -- For 48h/66h, the first verified reply must occur within 24h of
  -- the inbound, and can be no more than eight hours overdue. A five-day
  -- shortlist safely covers 66+24+8 hours of possible sessions.
- -- Day4/Day6 deliberately restores nine days below. The original sender,
- -- consent, staff, booking, billing and one-shot checks still authorize sends.
+ -- Day4/Day6 instead starts from a verified ad-origin within eight days
+ -- below. Sender, consent, staff, booking, billing and one-shot checks still
+ -- independently authorize sends.
  JOIN (
    WITH recent_seed AS MATERIALIZED (
      SELECT DISTINCT recent.contact_id
@@ -403,11 +404,16 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
+     WHERE discovery_alarm.sender_id=sa.id)
    -- The RM68 event is a different 90-minute offer from the standing RM388
    -- Pulse Wave template. Skip unapproved generic 48h/66h/Day4/Day6
    -- templates for this verified RM68 session (also on pre-send rechecks).
@@ -416,8 +422,14 @@ const CANDIDATES_SQL=`
      WHERE event_reply.contact_id=c.id AND event_reply.role='assistant'
        AND event_reply.created_at>=first_reply.at
        AND event_reply.created_at<first_reply.at+INTERVAL '167 hours'
-       AND event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
-       AND event_reply.content LIKE '%首次体验只需 RM68%'
+       AND (
+          (event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
+           AND event_reply.content LIKE '%首次体验只需 RM68%')
+          OR (event_reply.content LIKE '%Our limited-time breast wellness assessment + gentle pulse wave care offer%'
+              AND event_reply.content LIKE '%First trial: RM68%')
+          OR (event_reply.content LIKE '%Promosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut%'
+              AND event_reply.content LIKE '%Percubaan pertama: RM68%')
+        )
    )
  ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
@@ -427,6 +439,8 @@ const CANDIDATES_SQL=`
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
  dueExpression:ORDINARY_MARKETING_DUE_SQL,
+ retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","inbound.id"),
+ deferredReadyPredicate:DEFERRED_READY_PREDICATE,
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
 // Day4/Day6 must be anchored to the first verified reply in the seven-day
@@ -518,8 +532,25 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
  .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)\n   AND qualified_session.first_reply_at>=rule.updated_at")
- .replace("recent.created_at > $4::timestamptz - INTERVAL '5 days'",
-   "recent.created_at > $4::timestamptz - INTERVAL '9 days'")
+ // Only Day4/Day6 needs a seven-day, verified ad-origin session. The
+ // original broad scan starts from every recent WhatsApp inbound; instead
+ // use its proven referral origin as a *shortlist* before the expensive
+ // sender/reply/receipt joins. The complete signed session + Meta billing
+ // and all customer-consent/appointment safeguards remain below unchanged.
+ //
+ // At most 167h after the first reply, and reply < origin+24h, means any
+ // valid origin must be newer than 191h ago. Eight days is a conservative
+ // superset, including the 8h overdue tolerance of the due-time hint.
+ .replace(
+   "FROM messages recent\n     WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'",
+   `FROM whatsapp_free_entry_referrals seed_referral
+     JOIN messages recent ON recent.id=seed_referral.origin_message_id
+       AND recent.contact_id=seed_referral.contact_id
+     WHERE seed_referral.source_type='ad'
+       AND (NULLIF(BTRIM(seed_referral.ctwa_clid),'') IS NOT NULL
+         OR NULLIF(BTRIM(seed_referral.meta_ad_id),'') IS NOT NULL)
+       AND recent.created_at > $4::timestamptz - INTERVAL '8 days'`
+ )
  .replaceAll("first_reply.at","qualified_session.first_reply_at")
  .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
   "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
@@ -559,19 +590,25 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
 const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_marketing_followup_rules",
   dueExpression:"qualified_session.first_reply_at+rule.slot_hours*INTERVAL '1 hour'",
+  retryAtExpression:deferredRetryAtSql("whatsapp_sender_marketing_followup_attempts","qualified_session.origin_id"),
+  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
   quietWindowEndMarker:"   AND qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'",
   orderMarker:"ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
 });
 
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
-const RECHECK_SQL=CANDIDATES_SQL.replace(
+const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+     WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
+       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+`;
+const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  `   AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -582,7 +619,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
 );
 // Candidate discovery rejects every unsettled reservation. Rechecking an
 // already-claimed slot must allow only its own new reservation, never another.
-const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
+const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  "AND gate.state IN ('reserved','awaiting_pricing'))",
  `AND gate.state IN ('reserved','awaiting_pricing')
        AND NOT (gate.state='reserved' AND EXISTS (
@@ -598,7 +635,7 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=qualified_session.origin_id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )`,
  `   AND EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
@@ -672,7 +709,7 @@ function approvedStaticMarketingTemplate(definition,expectedSignature){
      ?normalized:null;
 }
 async function runOnce({
- env=process.env,database=pool,now=new Date(),limit=10,contactIds,
+ env=process.env,database=pool,now=new Date(),limit=10,
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
  getConfig=()=>configRepo.getConfig(),
@@ -686,14 +723,14 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env)];
- const candidates=(await runFollowUpRead(database,pool,...scopeSecondaryRead(CANDIDATES_SQL,params,contactIds),{env})).rows||[];
+ const candidates=(await runFollowUpRead(database,pool,CANDIDATES_SQL,params,{env})).rows||[];
  if(generalSql.enabled(env)){
-   const generic=(await runFollowUpRead(database,pool,...scopeSecondaryRead(generalSql.CANDIDATES_SQL,
-     [...params,generalSql.activation(env)],contactIds),{env})).rows||[];
+   const generic=(await runFollowUpRead(database,pool,generalSql.CANDIDATES_SQL,
+     [...params,generalSql.activation(env)],{env})).rows||[];
    candidates.push(...generic);
  }
  if(extendedEnabled(env)){
-   const extra=(await runFollowUpRead(database,pool,...scopeSecondaryRead(EXTENDED_CANDIDATES_SQL,params,contactIds),{env})).rows||[];
+   const extra=(await runFollowUpRead(database,pool,EXTENDED_CANDIDATES_SQL,params,{env})).rows||[];
    candidates.push(...extra);
  }
  let attempted=0,accepted=0;
@@ -725,6 +762,7 @@ async function runOnce({
   const id=claimed.rows?.[0]?.id;
   if(!id)continue;
   attempted++;
+  let savedMessageId=null;
   const fail=async code=>{
    // If a fresh customer message arrived AFTER discovery but before any
    // outbound message was saved, safely release only this unsent generic
@@ -759,7 +797,9 @@ async function runOnce({
     }catch{}
    }
    await database.query(
-    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
+    savedMessageId===null
+      ? "UPDATE whatsapp_sender_marketing_followup_attempts SET status='blocked',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'"
+      : "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
     [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   };
   const current=async()=>{
@@ -821,6 +861,7 @@ async function runOnce({
      isAutomatedFollowUp:true,initialDeliveryStatus:"unknown",
      initialDeliveryError:"Secondary marketing template attempted; provider delivery unconfirmed.",
     });
+   savedMessageId=saved.id;
    await database.query(
     "UPDATE whatsapp_sender_marketing_followup_attempts SET message_id=$2 WHERE id=$1 AND status='claimed'",
     [id,saved.id]);
@@ -860,22 +901,21 @@ async function runOnce({
     // A signed failed receipt may have moved a claimed slot to unknown
     // before Meta HTTP acceptance reached this worker.
     if(finalized.rowCount===1)accepted++;
-   }else if(await finishProvenMarketingPreProviderCancellation({
-     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
-   })){
-     // No Meta send was attempted; preserve the historical slot.
    }else if(await deferProvenUnsent({
      database,table:"whatsapp_sender_marketing_followup_attempts",
      attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
    })){
-     // Billing refused before provider dispatch. Preserve the cancelled
-     // Inbox draft and let an eligible later slot claim retry safely.
+     // Proven unsent draft. Keep the same slot and recheck current eligibility.
+   }else if(await finishProvenMarketingPreProviderCancellation({
+     database,attemptId:id,messageId:saved.id,contactId:candidate.contact_id,result,
+   })){
+     // Retain legacy terminal proof when the defer transition is unavailable.
    }else await fail(result?.code||"secondary_marketing_send_unconfirmed");
   }catch{await fail("secondary_marketing_unconfirmed");}
  }
  return{disabled:false,attempted,accepted};
 }
-async function nextPotentialDueAt({database=pool,env=process.env,now=new Date(),contactIds}={}){
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
  const params=[
@@ -885,19 +925,48 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date(),
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
  ];
- const ordinary=(await runFollowUpRead(database,pool,...scopeSecondaryRead(POTENTIAL_DUE_SQL,params,contactIds),{env})).rows?.[0]||null;
- const extended=extendedEnabled(env)
-   ?(await runFollowUpRead(database,pool,...scopeSecondaryRead(EXTENDED_POTENTIAL_DUE_SQL,params,contactIds),{env})).rows?.[0]||null:null;
- const generic=generalSql.enabled(env)
-   ?(await runFollowUpRead(database,pool,...scopeSecondaryRead(generalSql.POTENTIAL_DUE_SQL,
-     [...params,generalSql.activation(env)],contactIds),{env})).rows?.[0]||null:null;
- const dueTimes=[ordinary?.next_due_at,extended?.next_due_at,generic?.next_due_at]
-   .filter(Boolean).map(value=>new Date(value).getTime())
-   .filter(Number.isFinite);
+ const isExtended=extendedEnabled(env);
+ const isGeneral=generalSql.enabled(env);
+ // PostgreSQL computes exactly the same lane aggregates as before, but one
+ // read/pool checkout replaces up to three serial reads on every wake.
+ // Every enabled lane remains mandatory; a SQL error or incomplete row
+ // falls back to the full candidate scan in the shared scheduler.
+ const sql=combinedPotentialDueSql({extended:isExtended,general:isGeneral});
+ const values=isGeneral?[...params,generalSql.activation(env)]:params;
+ const result=await runFollowUpRead(database,pool,sql,values,{env});
+ const row=result.rows?.[0]||null;
+ return combinePotentialDueHints([row]);
+}
+function combinedPotentialDueSql({extended=false,general=false}={}){
+ const lanes=[POTENTIAL_DUE_SQL];
+ if(extended)lanes.push(EXTENDED_POTENTIAL_DUE_SQL);
+ if(general)lanes.push(generalSql.POTENTIAL_DUE_SQL);
+ if(lanes.length===1)return lanes[0];
+ return `SELECT MIN(next_due_at) AS next_due_at,
+ COALESCE(BOOL_OR(has_overdue),FALSE) AS has_overdue
+ FROM (${lanes.map(sql=>`(${sql})`).join("\n UNION ALL\n")}) lane_due_hints`;
+}
+function combinePotentialDueHints(hints){
+ // The short-circuit is safe only if EVERY enabled marketing lane
+ // actually returned a valid aggregate row. Never turn a missing/invalid
+ // sub-query result into the authoritative "nothing is due" answer.
+ if(!Array.isArray(hints)||!hints.length)return null;
+ const dueTimes=[];
+ let hasOverdue=false;
+ for(const hint of hints){
+   if(!hint||typeof hint.has_overdue!=="boolean"||
+      !Object.prototype.hasOwnProperty.call(hint,"next_due_at")||
+      hint.next_due_at===undefined)return null;
+   hasOverdue ||= hint.has_overdue;
+   if(hint.next_due_at!=null){
+     const dueAt=new Date(hint.next_due_at).getTime();
+     if(!Number.isFinite(dueAt))return null;
+     dueTimes.push(dueAt);
+   }
+ }
  return {
    next_due_at:dueTimes.length?new Date(Math.min(...dueTimes)):null,
-   has_overdue:ordinary?.has_overdue===true||extended?.has_overdue===true||
-     generic?.has_overdue===true,
+   has_overdue:hasOverdue,
  };
 }
 
@@ -908,6 +977,12 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
  scheduler=createSecondaryDueScheduler({
    label:"Secondary WhatsApp marketing followup scheduler",
    run,readNextDue,database,env,events,createTimer,now,
+   // Avoid the expensive multi-slot candidate search when no slot is due.
+   preflightDueHint:true,
+   quietHoursPreflight:[
+     CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+     generalSql.CANDIDATES_SQL,generalSql.RECHECK_SQL,
+   ].every(hasSecondaryClinicQuietHoursGuard),
  });
  return scheduler.start();
 }
@@ -917,6 +992,6 @@ module.exports={
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
  PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
- POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
+ POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,combinedPotentialDueSql,combinePotentialDueHints,customerTemplateLocale,
  approvedStaticMarketingTemplate,finishProvenMarketingPreProviderCancellation,runOnce,nextPotentialDueAt,start,stop,
 };

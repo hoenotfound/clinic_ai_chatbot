@@ -135,7 +135,8 @@ test("policy revoked before upload blocks all provider calls", async () => {
   const f = setup({ check: async () => false });
   const result = await dispatchSecondaryFollowUpVideo({ ...f.args });
   assert.equal(result.success, false);
-  assert.equal(result.unknown, true);
+  assert.equal(result.preProviderCancelled, true);
+  assert.notEqual(result.unknown, true);
   assert.equal(f.calls.download, 0);
   assert.equal(f.calls.upload, 0);
   assert.equal(f.calls.send, 0);
@@ -163,7 +164,8 @@ test("cached upload error never triggers a second Meta upload", async () => {
     cacheFactory: () => ({ resolveMediaId: async () => ({ kind: "upload_failed" }) }),
   });
   assert.equal(result.success, false);
-  assert.equal(result.ambiguous, true);
+  assert.equal(result.preProviderCancelled, true);
+  assert.notEqual(result.ambiguous, true);
   assert.equal(f.calls.upload, 0);
   assert.equal(f.calls.send, 0);
 });

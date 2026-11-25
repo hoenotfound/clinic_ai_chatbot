@@ -104,7 +104,12 @@ function stripFutureFollowUpPermission(customerText) {
   if (!original || original.length > 2000 || !RELATED_OFFERS.test(original)) {
     return { text: original, hasFuturePermission: false };
   }
-  const clauses = original.split(/[，,。.!！;；\n]+/u).map((part) => part.trim()).filter(Boolean);
+  // A conditional Malay notification request can span the comma between
+  // its future offer and the request to notify. Strip the complete clause
+  // together so "ada promosi" cannot authorize an immediate offer.
+  const malayFuture = /(?:^|[，,。.!！;；\n]\s*)(?:kalau|jika|sekiranya)\s+(?:ada|terdapat)\s+(?:promosi|tawaran)(?:\s+(?:baru|terkini))?\s+(?:nanti|kelak|akan\s+datang)\s*[,，]?\s*(?:tolong\s+|sila\s+)?(?:beritahu|maklumkan|hubungi)\s+saya(?:\s+ya)?(?=\s*(?:$|[，,。.!！;；\n]))/iu;
+  const hasMalayFuture = malayFuture.test(original);
+  const clauses = original.replace(malayFuture, "").split(/[，,。.!！;；\n]+/u).map((part) => part.trim()).filter(Boolean);
   const denied = clauses.some((part) =>
     REFUSED_FOLLOW_UP.test(part) || REFUSED_PROMOTION.test(part)
   );
@@ -112,7 +117,7 @@ function stripFutureFollowUpPermission(customerText) {
     FOLLOW_UP_PERMISSION.test(part) && !REFUSED_FOLLOW_UP.test(part) &&
     !REFUSED_PROMOTION.test(part)
   );
-  const standaloneFutureOffer = clauses.some((part) =>
+  const standaloneFutureOffer = hasMalayFuture || clauses.some((part) =>
     FUTURE_OFFER_NOTIFICATION.test(part) &&
     /(?:之后|之後|以后|以後|后续|後續|将来|將來)/u.test(part) &&
     !REFUSED_FOLLOW_UP.test(part) && !REFUSED_PROMOTION.test(part)

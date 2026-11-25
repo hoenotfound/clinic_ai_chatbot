@@ -5,6 +5,8 @@ const contactsRepo = require("../db/contactsRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("../db/outboundMessageEvidenceRepo");
 const channelMessaging = require("./channelMessagingService");
+const { sendSecondaryStaffText } = require("./whatsappSecondaryStaffDispatch");
+const { isProvenPreProviderBlock, PRE_PROVIDER_CODE } = require("./whatsappSecondaryPreSendDeferral");
 const {
   TRANSIENT_SEND_ERROR_CODES,
 } = require("./whatsappService");
@@ -12,6 +14,11 @@ const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
+// Secondary retry identification is a stable code, never the human-facing
+// error sentence. Existing primary WhatsApp retry rows retain their format.
+const SECONDARY_RETRY_MAX_AGE_MS = 10 * 60 * 1000;
+const SECONDARY_RETRY_EXPIRED_REASON =
+  "Automatic secondary AI reply expired before delivery. Review the current conversation before replying.";
 const INITIAL_RETRY_DELAY_MS = 15 * 1000;
 const RETRY_DELAYS_MS = Object.freeze([
   INITIAL_RETRY_DELAY_MS,
@@ -43,6 +50,14 @@ function retryErrorText(result) {
     result?.error ||
       "WhatsApp temporarily rejected this message."
   ).slice(0, 1000);
+}
+
+function secondaryRetryFresh(row, nowMs = Date.now()) {
+  const created = new Date(row?.message_created_at).getTime();
+  return Number.isFinite(created) &&
+    Number.isFinite(nowMs) &&
+    created <= nowMs &&
+    nowMs - created < SECONDARY_RETRY_MAX_AGE_MS;
 }
 
 function retryDelayForAttempt(attempts) {
@@ -101,14 +116,20 @@ async function queueTextRetry({
   recipient,
   origin,
   sendResult,
+  secondaryPreProviderCode = null,
 }, repository = retryRepo) {
+  // Only the proven pre-provider secondary case may persist a reason code in
+  // the durable retry queue. Do not change primary retry error tracking.
+  const stableCode = secondaryPreProviderCode === PRE_PROVIDER_CODE &&
+    isProvenPreProviderBlock(sendResult) && origin === "ai_reply"
+      ? PRE_PROVIDER_CODE : null;
   const queued = await repository.enqueueTextRetry({
     messageId,
     contactId,
     recipient,
     origin,
     delaySeconds: Math.ceil(INITIAL_RETRY_DELAY_MS / 1000),
-    errorText: retryErrorText(sendResult),
+    errorText: stableCode || retryErrorText(sendResult),
     providerStatus: sendResult?.providerStatus ?? null,
     providerErrorCode: sendResult?.providerErrorCode ?? null,
   });
@@ -330,7 +351,8 @@ async function failClosedAmbiguous(row, reason, {
 async function currentEligibility(
   row,
   repository,
-  isAutomationEnabled
+  isAutomationEnabled,
+  { allowSecondaryStarted = false } = {}
 ) {
   if (isAutomationEnabled() !== true) return null;
   if (typeof repository.checkSendEligibility !== "function") {
@@ -342,6 +364,7 @@ async function currentEligibility(
     leaseToken: row.lease_token,
     messageId: row.message_id,
     contactId: row.contact_id,
+    allowSecondaryStarted,
   });
   if (!latest || !rowStillEligible(latest, isAutomationEnabled)) return null;
   return latest;
@@ -399,6 +422,17 @@ function primaryRetrySenderVerified(row, env = process.env) {
   );
 }
 
+function secondaryRetrySenderVerified(row, env = process.env) {
+  return Boolean(
+    row?.current_sender_id != null &&
+    row.current_sender_key === "neutro_secondary" &&
+    row.current_sender_state === "active" &&
+    row.current_sender_phone_number_id === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+    row.current_sender_account_id === env.WHATSAPP_SECONDARY_WABA_ID &&
+    row.current_sender_key === env.WHATSAPP_SECONDARY_SENDER_KEY
+  );
+}
+
 async function runWhatsappOutboundRetryQueue({
   repository = retryRepo,
   messages = messagesRepo,
@@ -408,6 +442,8 @@ async function runWhatsappOutboundRetryQueue({
   isAutomationEnabled = automatedRepliesEnabled,
   sendText = channelMessaging.sendText,
   sendMessage = null,
+  sendSecondaryText = sendSecondaryStaffText,
+  senderEnv = process.env,
 } = {}) {
   const deliverText = compatibleSender({ sendText, sendMessage });
 
@@ -508,11 +544,29 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
-      if (!primaryRetrySenderVerified(row)) {
+      const primarySender = primaryRetrySenderVerified(row);
+      // Only the exact secondary AI reply refused BEFORE a billing reservation
+      // or Meta attempt may enter this path. Never redirect another sender's
+      // message into the primary Cloud API transport.
+      const secondaryPreProvider =
+        !primarySender && secondaryRetrySenderVerified(row, senderEnv) &&
+        row.origin === "ai_reply" && row.last_error === PRE_PROVIDER_CODE &&
+        row.delivery_status === "failed" && !row.whatsapp_message_id &&
+        row.message_content && row.recipient === row.current_recipient;
+      if (!primarySender && !secondaryPreProvider) {
         await finishAttention(row,
           "Automatic retry blocked: this message belongs to a different or unverified WhatsApp sender. Review the original chat before resending.", {
             terminal: "cancelled", repository, contacts, inbound, leaseToken,
           });
+        continue;
+      }
+
+      // Never revive a reply that sat in the queue for too long, even if
+      // WhatsApp's wider 24-hour service window is still open.
+      if (secondaryPreProvider && !secondaryRetryFresh(row)) {
+        await finishAttention(row, SECONDARY_RETRY_EXPIRED_REASON, {
+          terminal: "cancelled", repository, contacts, inbound, leaseToken,
+        });
         continue;
       }
 
@@ -530,10 +584,13 @@ async function runWhatsappOutboundRetryQueue({
         const latest = await currentEligibility(
           row,
           repository,
-          isAutomationEnabled
+          isAutomationEnabled,
+          { allowSecondaryStarted: secondaryPreProvider && providerCallStarted }
         );
-        if (!latest ||
-            !primaryRetrySenderVerified(latest) ||
+        if (!latest || (secondaryPreProvider && !secondaryRetryFresh(latest)) ||
+            !(secondaryPreProvider
+              ? secondaryRetrySenderVerified(latest, senderEnv)
+              : primaryRetrySenderVerified(latest)) ||
             String(latest.current_sender_id || "") !== String(row.current_sender_id || "") ||
             verifiedRecipientForContact({
               whatsapp_number: latest.current_recipient,
@@ -541,9 +598,21 @@ async function runWhatsappOutboundRetryQueue({
               whatsapp_user_id: latest.current_user_id,
             }) !== verifiedRecipientForContact(contactForSend)) return false;
 
-        const started = typeof repository.markSendStarted === "function"
-          ? await repository.markSendStarted(row.id, leaseToken)
-          : { id: row.id };
+        if (secondaryPreProvider && !providerCallStarted) {
+          // This is checked before the secondary billing reservation. Later
+          // rechecks must not mistake this new, valid reservation for evidence
+          // of the original definitively-unsent attempt.
+          if (typeof repository.secondaryPreProviderRetrySafe !== "function" ||
+              !await repository.secondaryPreProviderRetrySafe({
+                id: row.id, leaseToken,
+                messageId: row.message_id, contactId: row.contact_id,
+                failureCode: PRE_PROVIDER_CODE,
+              })) return false;
+        }
+        const started = providerCallStarted ? { id: row.id }
+          : typeof repository.markSendStarted === "function"
+            ? await repository.markSendStarted(row.id, leaseToken)
+            : { id: row.id };
         if (!started) return false;
         providerCallStarted = true;
         return true;
@@ -553,16 +622,43 @@ async function runWhatsappOutboundRetryQueue({
       // That preserves the 24-hour WhatsApp policy gate before preSendCheck,
       // while preSendCheck is the last ownership/conversation fence immediately
       // before the provider request.
-      const result = await deliverText(
-        contactForSend,
-        row.message_content,
-        {
-          purpose: "service",
-          currentMessageId: row.message_id,
-          preSendCheck,
-        }
-      );
+      const result = secondaryPreProvider
+        ? await sendSecondaryText({
+            contact: await contacts.getContactById(row.contact_id),
+            messageId: row.message_id, text: row.message_content,
+            origin: "ai_reply", preSendCheck,
+          })
+        : await deliverText(
+            contactForSend,
+            row.message_content,
+            {
+              purpose: "service",
+              currentMessageId: row.message_id,
+              preSendCheck,
+            }
+          );
       providerResultResolved = true;
+
+      // A secondary cancellation AFTER reservation may still have an
+      // uncertain provider/billing outcome. Never downgrade it to "cancelled".
+      if (secondaryPreProvider && (result?.ambiguous || result?.unknown)) {
+        await failClosedAmbiguous(row, retryErrorText(result), {
+          repository, messages, contacts, evidence, inbound, leaseToken,
+        });
+        continue;
+      }
+      if (secondaryPreProvider && isProvenPreProviderBlock(result) &&
+          Number(row.attempts) < MAX_RETRY_ATTEMPTS) {
+        const delayMs = retryDelayForAttempt(row.attempts);
+        await repository.reschedule(row.id, leaseToken, {
+          delaySeconds: Math.ceil(delayMs / 1000),
+          errorText: PRE_PROVIDER_CODE,
+        });
+        console.warn(
+          `Secondary AI reply deferred before provider for message ${row.message_id}.`
+        );
+        continue;
+      }
 
       if (result?.cancelled) {
         const reason = result?.preSendCheckFailed
@@ -582,7 +678,8 @@ async function runWhatsappOutboundRetryQueue({
         providerAcceptedUnpersisted = true;
         const updated = await messages.setWhatsappMessageId(
           row.message_id,
-          result.wamid
+          result.wamid,
+          { preserveVerifiedSecondaryReceipt: secondaryPreProvider }
         );
         if (!updated?.whatsapp_message_id) {
           const persistenceError = new Error(
@@ -739,6 +836,8 @@ function startWhatsappOutboundRetryWorker() {
 module.exports = {
   ATTENTION_RETRY_DELAY_MS,
   BATCH_SIZE,
+  SECONDARY_RETRY_MAX_AGE_MS,
+  secondaryRetryFresh,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_ATTEMPTS,
   RETRY_DELAYS_MS,

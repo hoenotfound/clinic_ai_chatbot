@@ -1595,6 +1595,19 @@ async function resolveAiReviewItem(contactId, reviewId) {
   return updated;
 }
 
+// Only close the exact informational 131060 item after the caller verifies
+// an accepted sender-bound menu and a new explicit treatment selection.
+async function resolveRecovered131060Review(contactId, unavailableMessageId) {
+  const result=await pool.query(
+    `SELECT id FROM ai_review_items
+      WHERE contact_id=$1 AND inbound_message_id=$2 AND status='pending'
+        AND category='information'
+        AND summary LIKE 'WhatsApp message unavailable (Meta 131060).%'`,
+    [contactId,unavailableMessageId]
+  );
+  for(const row of result.rows) await resolveAiReviewItem(contactId,row.id);
+}
+
 // Delivery problems should not replace a more important reason that already
 // needs staff attention, such as an urgent keyword or an AI handoff. Repeated
 // delivery failures may update the existing delivery reason with newer detail.
@@ -1875,6 +1888,7 @@ module.exports = {
   setAiReviewAttention,
   dismissAttentionAndReviews,
   resolveAiReviewItem,
+  resolveRecovered131060Review,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
   setDeliveryAttention,

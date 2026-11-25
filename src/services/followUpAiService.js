@@ -4,6 +4,44 @@ const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const { hasTreatmentPriceContent } = require("../utils/initialOfferReplyGuard");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 const { hasUnsafeClinicalFollowUpClaim } = require("../utils/followUpClinicalSafety");
+const { canonicalConfiguredService } = require("../utils/aiReplyResult");
+const { serviceCandidates, strongServiceMatchesInText } = require("../utils/conversationPromptContext");
+
+// Match the actual configured asset, not a CRM label or a guessed filename.
+// A default/general video has no asserted treatment. Shared/ambiguous keys
+// cannot be represented as a single verified treatment.
+function configuredVideoTreatment(key, config = clinicConfig, preferredTreatment = null) {
+  if (!key) return null;
+  const base = config.automatedFollowUp || {};
+  const names = new Set();
+  let mapped = false;
+  for (const step of [base, ...(base.additionalSteps || [])]) {
+    for (const entry of step?.serviceOverrides || []) {
+      if (entry?.videoKey !== key) continue;
+      mapped = true;
+      const name = canonicalConfiguredService(entry.serviceName, config.services, config.serviceAliases);
+      if (name) names.add(name);
+    }
+  }
+  if (!mapped) return null; // ordinary general attachment
+  const preferred = canonicalConfiguredService(preferredTreatment, config.services, config.serviceAliases);
+  // Empty string means treatment-specific but unresolved or inconsistent,
+  // NOT general. A fixed rule cannot override the verified current treatment.
+  if (preferredTreatment && (!preferred || !names.has(preferred))) return "";
+  if (names.size === 1) return [...names][0];
+  return preferred && names.has(preferred) ? preferred : "";
+}
+
+function validateFollowUpMediaDecision(decision, mediaTreatment, config = clinicConfig) {
+  if (mediaTreatment == null || decision?.action !== "send") return decision;
+  const expected = canonicalConfiguredService(mediaTreatment, config.services, config.serviceAliases);
+  const actual = canonicalConfiguredService(decision.topic, config.services, config.serviceAliases);
+  const named = strongServiceMatchesInText(decision.message, serviceCandidates(config.services, config.serviceAliases));
+  // Metadata must authorize the specific asset; obvious conflicting named
+  // treatments in the actual draft also fail closed. Do not infer intent here.
+  if (expected && actual === expected && named.every(name => name === expected)) return decision;
+  return { action: "skip", message: "", reason: "followup_media_topic_mismatch", topic: decision.topic || "" };
+}
 
 const MAX_CONTEXT_MESSAGES = 10;
 const MAX_CONTEXT_CHARS = 6_000;
@@ -284,23 +322,28 @@ function isSubstantiallySimilar(message, previousMessages) {
 // Detect actual scheduling QUESTIONS, not informational weekday mentions.
 // Malaysian Chinese questions often end with 呢/呀/咯 rather than ? or ？.
 const SCHEDULING_NUDGE =
-  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week)\b)/iu;
+  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week|hari\s+apa|minggu\s+(?:depan|ini)|pukul\s+berapa)\b)/iu;
 const SCHEDULING_VISIT_CONTEXT =
-  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suit|prefer|make\s+it)\b)/iu;
+  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suits?|prefer|make\s+it|sesuai|boleh\s+datang|temu\s+janji|janji\s+temu|atur|semak\s+masa|waktu)\b)/iu;
 const SCHEDULING_QUESTION_END =
   /(?:吗|嗎|呢|呀|啊|咯|啦|么|麼)[\s～~!！。.…😊🙂☺️]*$/u;
 const SCHEDULING_ENGLISH_REQUEST =
   /\b(?:can|could|would)\s+you\b.{0,70}\b(?:come|visit|make\s+it|available|free|drop\s+by)\b|\b(?:please\s+(?:tell|share|let)|let\s+me\s+know)\b.{0,70}\b(?:available|free|visit|come|day|time)\b/iu;
 function isSchedulingNudge(message) {
   const current = cleanContent(message);
-  if (!current || current.length > 240) return false;
-  const schedulingTopic = SCHEDULING_NUDGE.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
-  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
-  const asksForAnswer = /[?？]/u.test(current) ||
-    SCHEDULING_QUESTION_END.test(current) ||
-    SCHEDULING_ENGLISH_REQUEST.test(current);
+  if (!current) return false;
+  // Look at the closing portion rather than rejecting replies over 240
+  // characters. Long EN/MS consultation descriptions may still end with a
+  // scheduling question. Avoid classifying historical booking references in
+  // an unrelated long message as a fresh nudge.
+  const bookingTail = current.slice(-420);
+  const schedulingTopic = SCHEDULING_NUDGE.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
+  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
+  const asksForAnswer = /[?？]/u.test(bookingTail) ||
+    SCHEDULING_QUESTION_END.test(bookingTail) ||
+    SCHEDULING_ENGLISH_REQUEST.test(bookingTail);
   return schedulingTopic && actuallyBooking && asksForAnswer;
 }
 function repeatsSchedulingNudge(message, previousMessages = []) {
@@ -519,6 +562,11 @@ async function generatePersonalizedFollowUp({
   triggerMessageId,
   stepNumber,
   treatmentInterest = null,
+  restrictTreatmentContext = false,
+  verifiedTreatment = null,
+  staffDiscussedTreatment = false,
+  mediaTreatment = null,
+  mediaAttached = false,
   stageName = null,
   branchName = null,
   appointmentStatus = null,
@@ -544,7 +592,9 @@ async function generatePersonalizedFollowUp({
     branchName,
     appointmentStatus,
   });
-  const recentServiceNames = recentConfiguredServiceNames(trimmed);
+  // Secondary recovery can explicitly reset the commercial topic. Keep the
+  // old turns available for safety/stop decisions, not treatment retrieval.
+  const recentServiceNames = restrictTreatmentContext ? [] : recentConfiguredServiceNames(trimmed);
   let avoidMessage = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -559,6 +609,11 @@ async function generatePersonalizedFollowUp({
           stepNumber: Number(stepNumber) || 1,
           treatmentInterest: cleanContent(treatmentInterest),
           recentServiceNames,
+          restrictTreatmentContext,
+          verifiedTreatment,
+          staffDiscussedTreatment,
+          mediaTreatment,
+          mediaAttached,
           stageName: cleanContent(stageName),
           branchName: cleanContent(branchName),
           appointmentStatus: meaningfulAppointmentStatus(appointmentStatus)
@@ -627,6 +682,8 @@ module.exports = {
   MAX_CONTEXT_CHARS,
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
+  configuredVideoTreatment,
+  validateFollowUpMediaDecision,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
   isSchedulingNudge,

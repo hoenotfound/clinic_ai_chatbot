@@ -3,7 +3,7 @@ const { pendingAcceptedAppointmentAllowedSql } = require("./pendingAcceptedAppoi
 const {pendingCancellationFollowupAllowedSql}=require("./appointmentCancellationSafety");
 const {isSimpleGreeting}=require("./simpleGreetingReviewRecovery");
 
-const ADMINISTRATIVE_QUESTION = /\b(price|cost|how much|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|park|deposit|payment|credit card|debit card|card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|价钱|多少钱|收费|费用|优惠|配套|营业时间|营业|地址|地点|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
+const ADMINISTRATIVE_QUESTION = /\b(price|cost|how much|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|park|deposit|payment|credit card|debit card|card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|價錢|价钱|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|营业时间|營業時間|营业|營業|地址|地点|地點|在哪里|在哪裡|在哪|店在哪|门店|門店|只有这两天|只有這兩天|只有两天|只有兩天|活动日期|活動日期|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
 // Exact technical/model enquiries are ordinary information requests. This
 // exception does not bypass the clinical/safety checks below.
 const TECHNICAL_DEVICE_QUESTION =
@@ -90,6 +90,12 @@ function hasRecentPostpartumInterval(customerText) {
   return false;
 }
 
+// Breast lumps, nodules or tumors are clinical questions, not ordinary
+// RM68 promotion qualification. Detect the concern even in mixed prefills
+// without claiming diagnosis or treatment eligibility.
+const BREAST_LUMP_CONCERN =
+  /(?:结节|結節|乳瘤|乳房(?:有|里|內|内)?(?:肿块|腫塊|硬块|硬塊|瘤|肿瘤|腫瘤)|乳腺(?:肿块|腫塊|结节|結節|瘤)|胸(?:部|口)?(?:有|里|內|内)?(?:肿块|腫塊|硬块|硬塊|瘤|肿瘤|腫瘤)|\b(?:breast\s+)?(?:lumps?|nodules?|breast\s+cysts?|breast\s+tumou?rs?)\b)/iu;
+
 // If AI misses a clinical outcome flag, images still fail closed here. Keep
 // this separate from review categorization, which has different purposes.
 // The single-character verb 用 must not match the 用 in 费用/費用. Without
@@ -98,9 +104,13 @@ function hasRecentPostpartumInterval(customerText) {
 const CLINICAL_MEDIA_SUITABILITY =
   /(?:可不可以|能不能|是否可以|可以|能否|适不适合|適不適合)(?:.{0,15})(?:做|(?<![费費])用|接受|进行|進行)(?:.{0,10})(?:吗|嗎|呢|\?|？)|(?:can|could|should)\s+i\s+(?:have|receive|undergo|try|do)\s+(?:(?:this|the|a|your)\s+)?(?:[\w-]+\s+){0,3}(?:treatment|procedure|therapy|rawatan)|\b(?:am i|is it)\s+(?:eligible|suitable|safe)\b|\b(?:boleh|sesuai)\s+(?:buat|cuba|jalani|rawatan|ke)\b/iu;
 
+function isBreastLumpConcern(customerText) {
+  return BREAST_LUMP_CONCERN.test(String(customerText || ""));
+}
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
-  return isUrinaryLeakageConcern(value) ||
+  return isBreastLumpConcern(value) ||
+    isUrinaryLeakageConcern(value) ||
     CLINICAL_MEDIA_SUITABILITY.test(value) ||
     (hasRecentPostpartumInterval(value) || RECENT_POSTPARTUM_RISK.test(value)) ||
     CLINICAL_MEDIA_RED_FLAGS.test(value) ||
@@ -112,6 +122,9 @@ function hasClinicalMediaRisk(customerText) {
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
+  // A mixed promotional price enquiry does not downgrade a breast lump,
+  // tumor or nodule concern to ordinary information.
+  if (isBreastLumpConcern(customerText)) return "clinical";
   // A lone greeting cannot on its own justify a clinical label. Higher-level
   // server safeguards must separately check pending real clinical reviews.
   if (isSimpleGreeting(customerText) && !hasClinicalMediaRisk(customerText)) return "information";
@@ -124,8 +137,18 @@ function categorizeAiReview(customerText, proposedCategory) {
   if(isSimpleVisitTimingQuestion(customerText)||
      (isDefiniteAppointmentCancellation(customerText)&&
       !hasClinicalMediaRisk(customerText)))return 'information';
+  const text = String(customerText || "").trim();
+  // A short, clearly administrative enquiry is not a medical question merely
+  // because the model suggested clinical review. Preserve all clinical flags.
+  // Only unambiguous short enquiry forms override an erroneous model label.
+  // Do not turn arbitrary admin keywords inside clinical conversations into
+  // permission to bypass review for Neutro or any other clinic.
+  const SAFE_SHORT_ADMIN_QUESTION =
+    /^(?:(?:请问|請問|想问|想問|请问一下|請問一下|可以问下|你好|hi)\s*)?(?:(?:价钱|價錢|价格|價格|多少钱|多少錢|收费|收費|费用|費用)(?:呢|吗|嗎|是多少|多少)?|(?:只有|就|仅有|僅有)(?:这|這)?(?:两|兩|2)(?:天|日)(?:吗|嗎)?|(?:你们|你們|你家)?(?:的)?(?:店|门店|門店|诊所|診所)?(?:是)?(?:在(?:哪里|哪裡|哪|哪儿|哪兒)|地址(?:是|在哪里|在哪裡)?|地点(?:是|在哪里|在哪裡)?|地點(?:是|在哪里|在哪裡)?))[\s?!？。!！～~]*$/iu;
+  if (SAFE_SHORT_ADMIN_QUESTION.test(text) && !CLINICAL_QUESTION.test(text) &&
+      !hasClinicalMediaRisk(text) && !MEDICAL_HISTORY.test(text) &&
+      !checkKeywordTriggers(text)) return "information";
   if (proposedCategory !== "information") return "clinical";
-  const text = String(customerText || "");
   if ((!ADMINISTRATIVE_QUESTION.test(text) && !TECHNICAL_DEVICE_QUESTION.test(text)) ||
       CLINICAL_QUESTION.test(text) ||
       isUrinaryLeakageConcern(text) ||
@@ -154,6 +177,7 @@ function followUpAttentionAllowedSql(alias = "c") {
 
 module.exports = {
   isUrinaryLeakageConcern,
+  isBreastLumpConcern,
   categorizeAiReview,
   hasClinicalMediaRisk,
   followUpAttentionAllowedSql,

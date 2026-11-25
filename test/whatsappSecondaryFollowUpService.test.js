@@ -586,7 +586,7 @@ test("20h fallback respects one-shot claim and never retries ambiguous sends",as
  assert.equal(second.attempted,1);
  assert.equal(second.accepted,0);
  assert.equal(unknown.sends,1);
- assert.equal(unknown.calls.filter(x=>x.sql?.includes("status='unknown'")).length,1);
+ assert.equal(unknown.calls.filter(x=>x.sql?.includes("UPDATE whatsapp_sender_followup_attempts SET status='unknown'")).length,1);
 });
 
 test("20h pre-save AI exception records fixed phase and never sends or retries",async()=>{
@@ -1004,18 +1004,254 @@ test("definitive video upload HTTP rejection is separately recorded as blocked",
    x.args?.[1]==="sender_followup_video_upload_rejected"));
 });
 
-test("stale proven pre-provider slot alone can permit later 6h/20h service reminders",()=>{
+test("expired never-claimed or proven-unsent predecessors permit later eligible slots, but unsafe attempts do not",()=>{
  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
-  assert.match(sql,/earlier_deferred\.status='deferred'/);
-  assert.match(sql,/earlier_deferred\.message_id IS NULL/);
-  assert.match(sql,/earlier_deferred\.error_code='pre_provider_billing_deferred'/);
-  assert.match(sql,/earlier_deferred\.defer_count>0/);
-  assert.match(sql,/earlier_deferred\.claimed_at <= NOW\(\)-INTERVAL '8 hours'/);
-  assert.match(sql,/rule\.slot_hours IN \(6,20\)/);
+  assert.match(sql,/earlier_attempt\.status='deferred'/);
+  assert.match(sql,/earlier_attempt\.message_id IS NULL/);
+  assert.match(sql,/earlier_attempt\.wamid IS NULL/);
+  assert.match(sql,/earlier_attempt\.error_code='pre_provider_billing_deferred'/);
+  assert.match(sql,/earlier_attempt\.defer_count>0/);
+  assert.match(sql,/earlier_rule\.slot_hours<rule\.slot_hours/);
+  assert.match(sql,/> NOW\(\)-INTERVAL '8 hours'/);
   assert.match(sql,/previous_step\.completed_at IS NULL/);
-  assert.match(sql,/any_six\.slot_hours=6/);
-  assert.match(sql,/first_reply\.at\+INTERVAL '14 hours'<NOW\(\)/);
-  assert.match(sql,/previous_step\.completed_at IS NOT NULL[\s\S]*STALE|OR \(/);
   assert.match(sql,/previous\.status IN\('unknown','blocked'\)|prior_problem\.status IN\('unknown','blocked'\)/);
  }
+ assert.match(worker.CANDIDATES_SQL,/attempted\.retry_after>\$4::timestamptz/);
+ assert.match(worker.POTENTIAL_DUE_SQL,/SELECT pending\.retry_after/);
+});
+
+
+test("Neutro pulse ad to staff-discussed pelvic Package A sends pelvic copy and approved video only",async()=>{
+ const config={
+  services:[{name:"脉冲波调理"},{name:"骨盆调理"},{name:"子宫调理"}],
+  serviceAliases:[
+   {alias:"脉冲",officialService:"脉冲波调理"},
+   {alias:"骨盆",officialService:"骨盆调理"},
+   {alias:"子宫",officialService:"子宫调理"}],
+  promotions:[{name:"骨盆调理套餐",linkedService:"骨盆调理",
+   packages:[{name:"Package A"},{name:"Package B"}]}],
+ };
+ const turns=[
+  {id:700,role:"user",content:"你好，我对脉冲波调理有兴趣",created_at:"2026-11-20T09:00:00Z"},
+  {id:701,role:"user",content:"生完后肚子没有瘦下来",created_at:"2026-11-20T09:02:00Z"},
+  {id:702,role:"user",content:"肚子是哪个配套呢",created_at:"2026-11-20T09:04:00Z"},
+  {id:703,role:"assistant",content:"比较建议 Package A，包括骨盆调整与体态矫正",
+   created_at:"2026-11-20T09:06:00Z"},
+ ];
+ const row={...candidate,inbound_id:700,slot_hours:6,
+  customer_texts:[turns[0].content],first_reply_text:"您好，欢迎咨询",
+  verified_treatment_status:"selected",verified_treatment_name:"脉冲波调理",
+  verified_treatment_source_message_id:700,
+  followup_topic_turns:turns,treatment_interest:"脉冲波调理"};
+ const f=fake({rows:[row]});
+ let videos=0;
+ const out=await worker.runOnce({
+  ...f,
+  env:{...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+   NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro_secondary"})},
+  getConfig:()=>config,
+  videoSelection:({treatmentInterest})=>{
+   videos++;assert.equal(treatmentInterest,"骨盆调理");
+   return {mediaKey:"pelvic-verified-media",mediaType:"video",mediaMimeType:"video/mp4",
+    mediaFilename:"pelvic-clinic.mp4"};
+  },
+  videoApproved:()=>true,videoQuarantined:async()=>false,
+  storage:{downloadMedia:async()=>Buffer.from("valid approved test video")},
+ });
+ assert.equal(out.accepted,1);
+ assert.equal(videos,1);
+ const saved=f.calls.find(x=>x.save).save;
+ assert.match(saved[2],/之前介绍的骨盆调理/);
+ assert.doesNotMatch(saved[2],/你之前想了解骨盆调理对吗|脉冲波调理/);
+ assert.equal(saved[8].whatsappTemplate.treatmentInterest,"脉冲波调理",
+  "verified selection stays unchanged");
+ assert.equal(saved[8].whatsappTemplate.discussionTreatment,"骨盆调理");
+ assert.equal(saved[8].mediaKey,"pelvic-verified-media");
+ assert.equal(typeof f.calls.find(x=>x.send).send.dispatchTransport,"function");
+ assert.equal(f.calls.filter(x=>x.sql?.includes("INSERT INTO whatsapp_sender_followup_attempts")).length,1);
+});
+test("Neutro staff clinical caution always sends neutral secondary text with no media or 20h AI",async()=>{
+ const config={
+  services:[{name:"脉冲波调理"},{name:"骨盆调理"}],
+  serviceAliases:[{alias:"脉冲",officialService:"脉冲波调理"},
+   {alias:"骨盆",officialService:"骨盆调理"}],
+  promotions:[{linkedService:"骨盆调理",packages:[{name:"Package A"}]}],
+ };
+ const turns=[
+  {id:700,role:"user",content:"我想了解脉冲波调理",created_at:"2026-11-20T09:00:00Z"},
+  {id:701,role:"user",content:"生完肚子没有瘦下来",created_at:"2026-11-20T09:02:00Z"},
+  {id:702,role:"assistant",content:"不建议做脉冲波调理，建议先评估骨盆调理",
+   created_at:"2026-11-20T09:04:00Z"},
+ ];
+ for(const slot of [2,6,20]){
+  const row={...candidate,inbound_id:700,slot_hours:slot,
+   customer_texts:[turns[0].content],first_reply_text:"您好，欢迎咨询",
+   verified_treatment_status:"selected",verified_treatment_name:"脉冲波调理",
+   verified_treatment_source_message_id:700,
+   followup_topic_turns:turns,treatment_interest:"脉冲波调理"};
+  const f=fake({rows:[row]});
+  const result=await worker.runOnce({
+   ...f,env:{...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+    WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true"},
+   contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro_secondary"})},
+   getConfig:()=>config,
+   videoSelection:()=>assert.fail("unsafe topic must never select video"),
+   personalize20h:()=>assert.fail("unsafe topic must never personalize from old service"),
+   storage:{downloadMedia:()=>assert.fail("unsafe topic must not download media")},
+  });
+  assert.equal(result.accepted,1,"slot "+slot);
+  const saved=f.calls.find(x=>x.save).save;
+  assert.match(saved[2],/中医师了解情况/,"slot "+slot);
+  assert.doesNotMatch(saved[2],/脉冲波调理|骨盆调理|RM\d+/,"slot "+slot);
+  assert.equal(saved[8].mediaKey,null);
+  assert.equal(saved[8].whatsappTemplate.treatmentInterest,"脉冲波调理");
+  assert.equal(saved[8].whatsappTemplate.discussionTreatment,null);
+  assert.equal(f.calls.find(x=>x.send).send.dispatchTransport,undefined);
+ }
+});
+test("unresolved staff menu cannot re-send stale pulse service/video",async()=>{
+ const config={services:[{name:"脉冲波调理"},{name:"3D 小颜术"},{name:"9D 逆龄抗衰"}],
+  serviceAliases:[{alias:"脉冲",officialService:"脉冲波调理"},
+   {alias:"3D",officialService:"3D 小颜术"},
+   {alias:"9D",officialService:"9D 逆龄抗衰"}]};
+ const row={...candidate,inbound_id:700,slot_hours:2,
+  customer_texts:["我对脉冲波调理有兴趣"],
+  verified_treatment_status:"selected",verified_treatment_name:"脉冲波调理",
+  verified_treatment_source_message_id:700,
+  followup_topic_turns:[
+   {id:700,role:"user",content:"我对脉冲波调理有兴趣"},
+   {id:701,role:"assistant",content:"你可以比较3D小颜术或者9D逆龄抗衰的护理"}],
+  treatment_interest:"脉冲波调理"};
+ const f=fake({rows:[row]});
+ const out=await worker.runOnce({...f,
+  env:{...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+   NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro_secondary"})},
+  getConfig:()=>config,videoSelection:()=>assert.fail("ambiguous service cannot use video"),
+ });
+ assert.equal(out.accepted,1);
+ const saved=f.calls.find(x=>x.save).save;
+ assert.equal(saved[8].mediaKey,null);
+ assert.match(saved[2],/practitioner|中医师|Pengamal/);
+ assert.doesNotMatch(saved[2],/脉冲波调理|3D 小颜术|9D 逆龄抗衰/);
+});
+
+test("early secondary AI skip and stop are never replaced by generic follow-ups",async()=>{
+  for(const [slot,action] of [[2,"skip"],[6,"stop_sequence"]]){
+    const f=fake({rows:[{...candidate,slot_hours:slot,media_key:null}]});
+    let decisions=0;
+    const result=await worker.runOnce({
+      ...f,
+      env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+      getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+        automatedFollowUp:{message:"2h",additionalSteps:[
+          {message:"6h"},{message:"20h"}]}}),
+      personalize20h:async()=>{decisions++;return{
+        ok:false,action,code:"secondary_contextual_ai_"+action,
+      };},
+    });
+    assert.equal(decisions,1,"slot "+slot);
+    assert.equal(result.attempted,1);
+    assert.equal(result.accepted,0);
+    assert.equal(f.sends,0);
+    assert.equal(f.calls.some(x=>x.save),false);
+    assert.equal(f.calls.find(x=>x.sql?.includes("status='blocked'"))?.args?.[1],
+      "secondary_contextual_ai_"+action);
+  }
+});
+
+test("secondary AI human-review decision creates staff attention without sending",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:2,media_key:null}]});
+  const alerts=[];
+  const result=await worker.runOnce({
+    ...f,
+    env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+    getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+      automatedFollowUp:{message:"2h",additionalSteps:[
+        {message:"6h"},{message:"20h"}]}}),
+    contacts:{
+      getContactById:async()=>({...contact}),
+      setAttention:async(...args)=>{alerts.push(args);return {...contact,needs_attention:true};},
+    },
+    personalize20h:async()=>({
+      ok:false,action:"human_review",code:"secondary_contextual_ai_human_review",
+    }),
+  });
+  assert.equal(result.attempted,1);
+  assert.equal(result.accepted,0);
+  assert.equal(f.sends,0);
+  assert.equal(f.calls.some(x=>x.save),false);
+  assert.equal(alerts.length,1);
+  assert.equal(alerts[0][0],80);
+  assert.equal(alerts[0][1],true);
+  assert.match(alerts[0][2],/staff review/i);
+});
+
+test("secondary AI review does not flag a staff-owned contact after ownership changes",async()=>{
+  const f=fake({rows:[{...candidate,slot_hours:2,media_key:null}]});
+  const alerts=[];
+  await worker.runOnce({
+    ...f,env:{...env,WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED:"true"},
+    getConfig:()=>({services:[{name:"骨盆调理"}],serviceAliases:[],
+      automatedFollowUp:{message:"2h",additionalSteps:[
+        {message:"6h"},{message:"20h"}]}}),
+    contacts:{
+      getContactById:async()=>({...contact,mode:"human"}),
+      setAttention:async(...args)=>alerts.push(args),
+    },
+    personalize20h:async()=>({ok:false,action:"human_review"}),
+  });
+  assert.equal(alerts.length,0);
+  assert.equal(f.sends,0);
+});
+
+
+test("signed staff captions suppress ONLY their matching secondary video follow-up stage",async()=>{
+ for(const slot of [2,6]){
+  const f=fake({rows:[{...candidate,slot_hours:slot,media_key:null,
+   staff_video_caption_sent:true,staff_video_sent:false}]});
+  const result=await worker.runOnce({
+   ...f,env,
+   getConfig:()=>({services:[{name:"骨盆调理"}],
+    automatedFollowUp:{message:"Intro",
+     additionalSteps:[{message:"Customer example"},{message:"Invitation"}]}}),
+  });
+  assert.equal(result.attempted,1,"slot "+slot);
+  assert.equal(result.accepted,0,"slot "+slot);
+  assert.equal(f.sends,0,"slot "+slot);
+  assert.equal(f.calls.some(x=>x.save),false);
+  const blocked=f.calls.find(x=>x.sql?.includes("status='blocked'"));
+  assert.equal(blocked?.args?.[1],slot===2
+    ?"staff_already_sent_video_introduction"
+    :"staff_already_sent_customer_example_video");
+ }
+});
+test("ambiguous signed Business App video placeholder makes media text-only, not a duplicate",async()=>{
+ const f=fake({rows:[{...candidate,slot_hours:6,media_key:"approved-video",
+  media_type:"video",media_mime_type:"video/mp4",media_filename:"example.mp4",
+  staff_video_placeholder_sent:true}]});
+ const result=await worker.runOnce({
+  ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+   automatedFollowUp:{additionalSteps:[{message:"Followup"}]}}),
+  storage:{downloadMedia:async()=>assert.fail("must not redownload staff-sent video")},
+ });
+ assert.equal(result.accepted,1);
+ assert.equal(f.sends,1);
+ assert.equal(f.calls.find(x=>x.save).save[8].mediaKey,null);
+ assert.equal(f.calls.find(x=>x.send).send.dispatchTransport,undefined);
+});
+test("generic staff messages mentioning video do not suppress 2h or 6h",()=>{
+ assert.match(worker.CANDIDATES_SQL,/staff_video_caption_sent/);
+ assert.match(worker.CANDIDATES_SQL,/slot_hours/);
+ assert.match(worker.RECHECK_SQL,/FROM messages staff_caption/);
+ assert.match(worker.RECHECK_SQL,/staff_caption\.created_at>=inbound\.created_at/);
+ assert.match(worker.CANDIDATES_SQL,/🎥.*这段影片简单介绍/);
+ assert.match(worker.CANDIDATES_SQL,/跟你分享一位顾客/);
+ assert.doesNotMatch(worker.CANDIDATES_SQL,/staff_caption\.content.*'\(\^\|\[\^\[:alpha:\]\]\)video/);
 });

@@ -19,6 +19,25 @@ function hasCustomerRefusedPriceQuote(customerText) {
   return REFUSED_QUOTE.test(String(customerText || "").normalize("NFKC"));
 }
 
+// Recognize the same exact correction at both the candidate and fallback
+// boundaries. An unresolved correction must not resurrect the refused service.
+function correctedService(clause, services, serviceAliases) {
+  const correction = clause.match(/^(?:不是|不要|不想(?:做|了解)?|not|no|bukan)\s*(.+)$/iu);
+  const key = value => String(value || "").normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+  const corrected = correction && safeServiceFromCustomer(correction[1], services, serviceAliases);
+  return corrected && [
+    corrected.name,
+    ...serviceAliases.filter(a => a.officialService === corrected.name).map(a => a.alias),
+  ].some(name => key(name) === key(correction[1])) ? corrected.name : null;
+}
+
+function hasScopedServiceCorrection({customerText, services = [], serviceAliases = []} = {}) {
+  const raw = String(customerText || "").normalize("NFKC").trim();
+  if (!DELIMITER.test(raw)) return false;
+  const first = raw.split(DELIMITER)[0].trim();
+  return Boolean(correctedService(first, services, serviceAliases));
+}
+
 function resolveIndependentRefusalPriceRequest({
   customerText, services = [], serviceAliases = [],
 } = {}) {
@@ -26,10 +45,14 @@ function resolveIndependentRefusalPriceRequest({
   if (!raw || raw.length > 180 || HIGH_RISK.test(raw) || !DELIMITER.test(raw)) return null;
   const clauses = raw.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
     .map(x => x.trim()).filter(Boolean);
-  // Only support one explicit refusal followed by one independent request.
+  // Only support one explicit refusal/correction followed by one independent request.
   // More clauses require normal clarification, not automatic sending.
-  if (clauses.length !== 2 || !REFUSED_QUOTE.test(clauses[0]) ||
-      REFUSED_QUOTE.test(clauses[1])) return null;
+  if (clauses.length !== 2 || REFUSED_QUOTE.test(clauses[1])) return null;
+  // A correction can reject a service rather than its quotation ("不是3D").
+  // Accept only an exact configured service/alias after a negation, not
+  // arbitrary prose or a second affirmative treatment.
+  if (!REFUSED_QUOTE.test(clauses[0]) &&
+      !correctedService(clauses[0], services, serviceAliases)) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const mentioned = (part) => [...new Set(findServicesInText(part, candidates))];
   const refused = mentioned(clauses[0]);
@@ -48,4 +71,4 @@ function resolveIndependentRefusalPriceRequest({
   });
 }
 
-module.exports = { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote };
+module.exports = { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote, hasScopedServiceCorrection };

@@ -5,6 +5,7 @@ const assert=require("node:assert/strict");
 const {
   IDLE_RECHECK_MS,ERROR_RETRY_MS,DELIVERY_RECEIPT_WAKE_DELAY_MS,
   nextAllowedClinicTime,nextSecondaryDueDelay,
+  quietHoursNextOpenHint,hasSecondaryClinicQuietHoursGuard,
   createSecondaryDueScheduler,measureSecondaryWorkerRun,
   secondaryEventRequiresWake,
 }=require("../src/utils/secondaryDueTimeScheduler");
@@ -70,12 +71,12 @@ test("service candidate and hint only scan recent inbound contacts before the or
    [marketing.CANDIDATES_SQL, 5],
    [marketing.POTENTIAL_DUE_SQL, 5],
    [marketing.RECHECK_SQL, 5],
-   [marketing.EXTENDED_CANDIDATES_SQL, 9],
-   [marketing.EXTENDED_RECHECK_SQL, 9],
+   [marketing.EXTENDED_CANDIDATES_SQL, 8],
+   [marketing.EXTENDED_RECHECK_SQL, 8],
  ]){
   assert.match(sql,/SELECT DISTINCT recent\.contact_id/);
   assert.ok(sql.includes("recent.created_at > $4::timestamptz - INTERVAL '" + days + " days'"),
-   "48h/66h need five days; Day4/Day6 preserve nine days");
+   "48h/66h need five days; Day4/Day6 keep the proven 8-day ad origin superset");
   assert.match(sql,/sc\.contact_id=recent_contact\.contact_id/);
   assert.match(sql,/whatsapp_marketing_consent_events consent/);
  }
@@ -335,6 +336,19 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  assert.equal(check("pipeline_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("conversation_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"facebook"}),true,
+  "a channel label alone cannot silence shared booking changes");
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"instagram"}),true);
+ assert.equal(check("pipeline_changed",{reason:"whatsapp_opt_out",channel:"facebook"}),true,
+  "cross-channel opt-out must never be ignored");
+ assert.equal(check("pipeline_changed",{
+  reason:"appointment_set",channel:"facebook",
+  businessPhoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+ }),true,"conflicting sender evidence must conservatively wake");
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",channel:"whatsapp"}),true,
+  "WhatsApp booking must still trigger recheck");
+ assert.equal(check("pipeline_changed",{reason:"lead_scored",channel:"facebook"}),false,
+  "only proven CRM-only pipeline reasons may skip");
  assert.equal(check("pipeline_changed",{}),true);
  assert.equal(check("config_changed",{}),true);
 });
@@ -412,69 +426,274 @@ test("unrelated verified events do not reschedule a genuine due slot",async()=>{
  scheduler.stop();
 });
 
-const secondaryEnv={WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"secondary"};
-const messageEvent=contactId=>({reason:"message",channel:"whatsapp",businessPhoneNumberId:"secondary",contactId});
-
-test("contact events narrow reads without postponing another contact's deadline",async()=>{
- const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
- const deadline=clock.now()+120000;
- const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
-  createTimer:clock.createTimer,now:clock.now,
-  run:async options=>{scopes.push(options.contactIds||null);return{attempted:0};},
-  readNextDue:async({contactIds})=>({next_due_at:new Date(contactIds?clock.now()+3600000:deadline),has_overdue:false}),
+test("secondary preflight skips full candidate scans until a fresh hint shows due work",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let due=false,runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary WhatsApp marketing followup scheduler",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return due
+    ? {next_due_at:null,has_overdue:true}
+    : {next_due_at:"2026-11-02T02:00:00Z",has_overdue:false};},
  });
  scheduler.start();await clock.advance(0);
- events.publish("conversation_changed",messageEvent(11));
- events.publish("conversation_changed",messageEvent(22));
- await Promise.resolve();await clock.advance(0);
- assert.deepEqual(scopes,[null,[11,22]]);
- assert.equal(scheduler.state().dueAt,deadline);
- await clock.advance(120000);
- assert.deepEqual(scopes,[null,[11,22],null],"due timer scans all contacts, not just the most recent event");
- scheduler.stop();
-});
-
-test("new contact deadline can advance a global timer; billing and unknown events remain global",async()=>{
- const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
- const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
-  createTimer:clock.createTimer,now:clock.now,
-  run:async o=>{scopes.push(o.contactIds||null);return{attempted:0};},
-  readNextDue:async({contactIds})=>({next_due_at:new Date(clock.now()+(contactIds?60000:3600000)),has_overdue:false}),
- });
- scheduler.start();await clock.advance(0);
- events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
- assert.equal(scheduler.state().dueAt,clock.now()+60000);
- events.publish("conversation_changed",{...messageEvent(11),reason:"delivery_status"});
+ assert.equal(reads,1);
+ assert.equal(runs,0,"no candidate scan when no slot could be due");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T02:00:00Z"));
+ events.publish("conversation_changed",{reason:"delivery_status",deliveryStatus:"sent"});
  await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
- assert.equal(scopes.at(-1),null,"billing receipt may release work for another contact");
- events.publish("conversation_changed",messageEvent(22));
- events.publish("pipeline_changed",{});await Promise.resolve();await clock.advance(0);
- assert.equal(scopes.at(-1),null,"unknown/global events take precedence over contact events");
+ assert.equal(reads,2,"receipt wakes still read a fresh due hint");
+ assert.equal(runs,0,"status-only wake avoids the full candidate scan");
+ due=true;
+ events.publish("conversation_changed",{reason:"message"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,1,"a new eligible customer message must run full safeguards");
+ assert.equal(reads,4,"due work refreshes its hint after the candidate scan");
+ events.publish("pipeline_changed",{reason:"appointment_set"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,2,"booking updates still trigger the full check when a slot is due");
+ scheduler.stop();
+ assert.equal(clock.scheduled.size,0);
+});
+
+test("secondary preflight fails open to the candidate scan for untrusted due hints",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const hints=[
+  null,
+  {next_due_at:"invalid",has_overdue:false},
+  {next_due_at:null,has_overdue:null},
+  {next_due_at:null,has_overdue:true},
+ ];
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary WhatsApp service followup scheduler",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return hints[Math.min(runs,hints.length-1)];},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"null hint must not suppress due work");
+ events.publish("conversation_changed",{reason:"message"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,2,"malformed future time must not suppress due work");
+ events.publish("conversation_changed",{reason:"booking_confirmed"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,3,"ambiguous overdue flag must not suppress due work");
+ events.publish("conversation_changed",{reason:"whatsapp_opt_out"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,4,"actual overdue work must still run");
+ assert.equal(reads,8,"every full run reads preflight and post-run due hints");
  scheduler.stop();
 });
 
-test("scoped failure retries globally without delaying an earlier due slot",async()=>{
- const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
- const deadline=clock.now()+60000;
- const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
-  logger:{error(){}},createTimer:clock.createTimer,now:clock.now,
-  run:async o=>{scopes.push(o.contactIds||null);if(o.contactIds)throw Error("read failed");return{attempted:0};},
-  readNextDue:async()=>({next_due_at:new Date(deadline),has_overdue:false}),
- });
- scheduler.start();await clock.advance(0);
- events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
- assert.equal(scheduler.state().dueAt,deadline);
- await clock.advance(60000);assert.deepEqual(scopes,[null,[11],null]);scheduler.stop();
+test("no-due preflight never suppresses disabled or uncertain follow-up state",()=>{
+ const {noPotentialDueNow}=require("../src/utils/secondaryDueTimeScheduler");
+ const now=time("2026-11-02T00:00:00Z");
+ assert.equal(noPotentialDueNow(null,now),false);
+ assert.equal(noPotentialDueNow({has_overdue:true,next_due_at:null},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:null,next_due_at:null},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false},now),false,
+  "missing next_due_at is not a valid negative due hint");
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:undefined},now),false,
+  "undefined next_due_at must not be interpreted as a valid SQL NULL");
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"not-a-date"},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-01T23:59:59Z"},now),false);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:"2026-11-02T00:00:01Z"},now),true);
+ assert.equal(noPotentialDueNow({has_overdue:false,next_due_at:null},now),true);
 });
 
-test("events arriving during a scoped read are preserved for a trailing run",async()=>{
- const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents(),scopes=[];
- const scheduler=createSecondaryDueScheduler({label:"secondary",env:secondaryEnv,events,
-  createTimer:clock.createTimer,now:clock.now,
-  run:async o=>{scopes.push(o.contactIds||null);if(o.contactIds?.includes(11))events.publish("conversation_changed",messageEvent(22));return{attempted:0};},
-  readNextDue:async()=>({next_due_at:new Date(clock.now()+3600000),has_overdue:false}),
+test("failed secondary preflight read falls back to normal scan before error backoff",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0,warnings=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary due-hint fail-open test",
+  env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+  preflightDueHint:true,
+  logger:{error:()=>assert.fail("preflight failure must not abort the worker"),
+    warn:()=>warnings++},
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{
+   reads++;
+   if(reads===1)throw Error("temporary Neon error");
+   return {next_due_at:"2026-11-02T02:00:00Z",has_overdue:false};
+  },
  });
  scheduler.start();await clock.advance(0);
- events.publish("conversation_changed",messageEvent(11));await Promise.resolve();await clock.advance(0);
- assert.deepEqual(scopes,[null,[11],[22]]);scheduler.stop();
+ assert.equal(runs,1,"the original full selector runs if preflight fails");
+ assert.equal(reads,2,"the normal post-run hint still determines the next schedule");
+ assert.equal(warnings,1);
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T02:00:00Z"));
+ scheduler.stop();
+});
+
+test("combined secondary marketing hints do not turn missing lane data into no due work",()=>{
+ const combine=marketing.combinePotentialDueHints;
+ const none={next_due_at:null,has_overdue:false};
+ const future={next_due_at:"2026-11-02T08:00:00Z",has_overdue:false};
+ const due={next_due_at:null,has_overdue:true};
+ assert.equal(combine([none,null]),null,"missing Day4 or general lane must force full query");
+ assert.equal(combine([none,{next_due_at:null}]),null,"missing overdue boolean is uncertain");
+ assert.equal(combine([none,{has_overdue:false}]),null,
+  "an enabled lane with missing next_due_at must be uncertain");
+ assert.equal(combine([none,{has_overdue:false,next_due_at:undefined}]),null,
+  "undefined due-time values must be uncertain");
+ assert.equal(combine([none,{next_due_at:"bad",has_overdue:false}]),null,
+  "invalid future deadline must not be silently discarded");
+ assert.equal(combine([]),null);
+ assert.deepEqual(combine([none,none]),none);
+ assert.equal(combine([none,due]).has_overdue,true);
+ assert.equal(combine([none,future]).next_due_at.toISOString(),
+  "2026-11-02T08:00:00.000Z");
+});
+
+test("unknown secondary due hints use five-minute recovery rather than one-hour sleep",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0,reads=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary uncertain due recovery",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>{reads++;return null;},
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"a missing hint must execute the full candidate selector");
+ assert.equal(reads,2,"both preflight and regular post-run hints are attempted");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:05:00Z"),
+  "unknown hint must not strand a due slot behind the one-hour idle backstop");
+ await clock.advance(ERROR_RETRY_MS);
+ assert.equal(runs,2,"recovery retries after five minutes");
+ scheduler.stop();
+});
+
+test("known-empty secondary hints retain hourly recovery and no full scan",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary known-empty due idle",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>({next_due_at:null,has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,0,"no full scan when an aggregate proves no due work");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T01:00:00Z"),
+  "valid empty hints preserve the existing hourly idle recovery");
+ scheduler.stop();
+});
+
+test("incomplete object-shaped secondary due hints use five-minute recovery",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary incomplete due recovery",env:{},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,preflightDueHint:true,
+  run:async()=>{runs++;return {attempted:0,accepted:0};},
+  readNextDue:async()=>({has_overdue:false,next_due_at:undefined}),
+ });
+ scheduler.start();await clock.advance(0);
+ assert.equal(runs,1,"the incomplete preflight must not skip candidate processing");
+ assert.equal(scheduler.state().dueAt,time("2026-11-02T00:05:00Z"),
+  "the incomplete post-run hint must recheck promptly");
+ scheduler.stop();
+});
+
+test("quiet-hour hints enforce the original 07:00 Malaysia opening without any SQL",()=>{
+ const q=quietHoursNextOpenHint;
+ assert.equal(new Date(q(time("2026-11-22T16:00:00Z")).next_due_at).toISOString(),
+  "2026-11-22T23:00:00.000Z","midnight MYT waits until 07:00 MYT");
+ assert.equal(new Date(q(time("2026-11-22T22:59:59Z")).next_due_at).toISOString(),
+  "2026-11-22T23:00:00.000Z","06:59:59 is still quiet");
+ assert.equal(q(time("2026-11-22T23:00:00Z")),null,"07:00 is eligible");
+ assert.equal(q(time("2026-11-22T15:59:59Z")),null,"23:59:59 is eligible");
+ assert.equal(q(NaN),null);
+ assert.equal(q(Infinity),null);
+ // The service recheck binds $4 to the sender key, not current time.
+ // Full candidate discovery is the only way the worker starts a new send.
+ assert.equal(hasSecondaryClinicQuietHoursGuard(service.RECHECK_SQL),false);
+ for(const sql of [service.CANDIDATES_SQL,
+   marketing.CANDIDATES_SQL,marketing.RECHECK_SQL,
+   marketing.EXTENDED_CANDIDATES_SQL,marketing.EXTENDED_RECHECK_SQL,
+   require("../src/services/neutroSecondaryGeneralMarketingSql").CANDIDATES_SQL,
+   require("../src/services/neutroSecondaryGeneralMarketingSql").RECHECK_SQL]){
+   assert.equal(hasSecondaryClinicQuietHoursGuard(sql),true,
+    "all live send selectors must retain the hard quiet-hours predicate");
+ }
+ assert.equal(hasSecondaryClinicQuietHoursGuard("SELECT true"),false);
+ const genuineGuard = "SELECT true\n   AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n       BETWEEN 7 AND 23";
+ assert.equal(hasSecondaryClinicQuietHoursGuard(genuineGuard),true);
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true\n -- AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n -- BETWEEN 7 AND 23"),false,
+   "commented quiet-hour rule cannot enable skipping all nightly checks");
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+   "SELECT true /*\n AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))\n BETWEEN 7 AND 23\n */"),false,
+   "block-commented rule must not be treated as a real guard");
+ assert.equal(hasSecondaryClinicQuietHoursGuard(
+  "EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 23"),false);
+});
+
+test("quiet-hour service and marketing wakes never query Neon and recheck at 07:00",async()=>{
+ const clock=fakeClock("2026-11-22T20:00:00Z"),events=fakeEvents();
+ const states={secondary_service:{scans:0,reads:0},
+   secondary_marketing:{scans:0,reads:0}};
+ const schedulers=[];
+ for(const lane of Object.keys(states)){
+  const state=states[lane];
+  const scheduler=createSecondaryDueScheduler({
+   label:lane==="secondary_service"
+    ?"Secondary WhatsApp service followup scheduler"
+    :"Secondary WhatsApp marketing followup scheduler",
+   env:{},database:{},events,createTimer:clock.createTimer,now:clock.now,
+   quietHoursPreflight:true,preflightDueHint:true,
+   run:async()=>{state.scans++;return {attempted:0,accepted:0};},
+   readNextDue:async()=>{state.reads++;return {
+    next_due_at:null,has_overdue:true,
+   };},
+  });
+  scheduler.start();schedulers.push(scheduler);
+ }
+ try{
+  await clock.advance(0);
+  assert.equal(states.secondary_service.reads,0);
+  assert.equal(states.secondary_marketing.scans,0);
+  for(const scheduler of schedulers)
+   assert.equal(scheduler.state().dueAt,time("2026-11-22T23:00:00Z"));
+  events.publish("conversation_changed",{reason:"message",channel:"whatsapp"});
+  events.publish("pipeline_changed",{reason:"appointment_set"});
+  await Promise.resolve();await clock.advance(0);
+  events.publish("conversation_changed",{reason:"delivery_status",channel:"whatsapp"});
+  await Promise.resolve();await clock.advance(DELIVERY_RECEIPT_WAKE_DELAY_MS);
+  for(const state of Object.values(states))
+   assert.deepEqual(state,{scans:0,reads:0},
+    "receipt, booking, and messages cannot cause sends or SQL before 07:00");
+  await clock.advance(time("2026-11-22T23:00:00Z")-clock.now()-1);
+  for(const state of Object.values(states))assert.equal(state.reads,0);
+  await clock.advance(1);
+  for(const state of Object.values(states))
+   assert.deepEqual(state,{scans:1,reads:2},
+    "exact opening must run fresh due SQL, full eligibility and post-scan hint");
+ }finally{for(const scheduler of schedulers)scheduler.stop();}
+});
+
+test("ordinary and all enabled marketing hints are batched in one SQL statement",()=>{
+ const general=require("../src/services/neutroSecondaryGeneralMarketingSql");
+ assert.equal(marketing.combinedPotentialDueSql({}),marketing.POTENTIAL_DUE_SQL,
+  "disabled lanes preserve exact original ordinary hint");
+ const sql=marketing.combinedPotentialDueSql({extended:true,general:true});
+ assert.ok(sql.includes(marketing.POTENTIAL_DUE_SQL));
+ assert.ok(sql.includes(marketing.EXTENDED_POTENTIAL_DUE_SQL));
+ assert.ok(sql.includes(general.POTENTIAL_DUE_SQL));
+ assert.equal(sql.split(" UNION ALL").length-1,2);
+ assert.match(sql,/COALESCE\(BOOL_OR\(has_overdue\),FALSE\)/);
+ assert.match(sql,/\$8::timestamptz/,"general marketing activation remains bound");
+ assert.doesNotMatch(sql,/\$9\b/,"candidate LIMIT binding must be removed");
+ const extendedOnly=marketing.combinedPotentialDueSql({extended:true,general:false});
+ assert.equal(extendedOnly.split(" UNION ALL").length-1,1);
+ assert.doesNotMatch(extendedOnly,/\$8::timestamptz/,
+  "only general campaign uses the eighth due-hint parameter");
+ const generalOnly=marketing.combinedPotentialDueSql({extended:false,general:true});
+ assert.ok(generalOnly.includes(general.POTENTIAL_DUE_SQL));
+ assert.equal(generalOnly.split(" UNION ALL").length-1,1);
 });

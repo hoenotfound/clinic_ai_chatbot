@@ -20,6 +20,7 @@ const {
 } = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { resolveNeutroFacialConcernPrice }=require("./neutroFacialConcernPrice");
+const { resolveStaffResultPriceContext }=require("./neutroStaffResultPriceContext");
 const { resolveCurrentOfferService, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -251,7 +252,7 @@ function resolveShadowPriceException({
   complimentaryAssessmentExperienceEnabled = false,
   allowOfferEnquiries = false, modelOfferQuery = false,
   allowVerifiedAdPricing = false, allowReturningTrialPrice = false,
-  returningPricingHistory = undefined, now = Date.now(),
+  returningPricingHistory = undefined, allowStaffResultPriceContext = false, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
   if (!text || hasClinicalMediaRisk(text) || PRICE_INDIFFERENCE_ONLY.test(text)) return null;
@@ -277,6 +278,22 @@ function resolveShadowPriceException({
     });
   }
 
+  // Explicit Neutro opt-in. A human-sent delivered result image may bridge
+  // a prior exact customer selection, never a staff-only treatment guess.
+  if (allowStaffResultPriceContext === true) {
+    const selected=resolveStaffResultPriceContext({
+      customerText:text,conversationHistory,services,serviceAliases,now,
+    });
+    if (selected && !isComplimentaryAssessmentFeeQuestion(text,
+      complimentaryAssessmentExperienceEnabled,conversationHistory)) {
+      const verified=shadowVerifiedPrice({
+        source:"customer_staff_result_price",treatment:selected.name,
+        customerText:selected.priceText,conversationHistory,promotions,
+        clarifiedPriceService:selected.name,
+      });
+      if (verified)return verified;
+    }
+  }
   const session = recentVerifiedPricingSession(conversationHistory, text, now);
   if (!session || isComplimentaryAssessmentFeeQuestion(
     text, complimentaryAssessmentExperienceEnabled, session
@@ -346,7 +363,7 @@ function resolveShadowPriceException({
   // Recover a service the customer explicitly chose after the bot provided
   // pricing options. This does not treat a model/advertisement as the choice.
   const recentSelection = resolveRecentPriceSelection({
-    customerText:text, session, services, serviceAliases, now,
+    customerText:text, session, services, serviceAliases, promotions, now,
   });
   if (recentSelection) {
     const decision = shadowVerifiedPrice({

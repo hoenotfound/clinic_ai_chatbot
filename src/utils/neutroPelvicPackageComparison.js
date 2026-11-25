@@ -30,7 +30,7 @@ function includedItems(item, locale) {
     .filter(s => /^✅/u.test(s))
     .map(s => s.replace(/^✅\s*/u, "").trim())
     .filter(s => s && s.length <= 110);
-  return points.length >= 2 && points.length <= 8 ? points : null;
+  return points.length >= 1 && points.length <= 8 ? points : null;
 }
 
 // A manual WhatsApp Business App reply does not necessarily switch an
@@ -184,10 +184,10 @@ function resolveNeutroPelvicPackageComparison({
     item.name + " (RM" + safeOffer(item) + " | " + item.title + "):\n" +
     points.map(point => "• " + point).join("\n");
   const ending = locale === "en"
-    ? "Both include pelvic and posture care. The main differences are the session length and included care. The clinic can confirm voucher eligibility, and the practitioner can recommend the suitable option after an assessment."
+    ? "Both include pelvic and posture care. The main differences are the session length and included care. Our practitioner can help you choose after an assessment 😊"
     : locale === "ms"
-      ? "Kedua-duanya termasuk penjagaan pelvis dan postur. Perbezaannya ialah tempoh dan rawatan yang termasuk. Syarat baucar perlu disahkan dengan pusat dan pilihan sesuai boleh dibincangkan selepas penilaian."
-      : "两个配套都有骨盆与体态调整，主要区别是护理时长和包含的项目。优惠券使用条件请向门店确认；适合哪一种，可以先让中医师评估后再决定哦 😊";
+      ? "Kedua-duanya termasuk penjagaan pelvis dan postur. Perbezaannya ialah tempoh dan rawatan yang termasuk. Pengamal boleh bantu pilih pakej yang sesuai selepas penilaian 😊"
+      : "两个配套都有骨盆与体态调整，主要区别是护理时长和包含的项目。适合哪一种，可以先让中医师评估后再决定哦 😊";
   const lead = locale === "en" ? "Here's the difference between the two packages:"
     : locale === "ms" ? "Ini perbezaan antara kedua-dua pakej:"
       : "这两个骨盆调理配套的区别是：";

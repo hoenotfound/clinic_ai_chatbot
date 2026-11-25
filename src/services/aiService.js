@@ -37,8 +37,8 @@ const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 12 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
-const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 12 * 1000;
-const DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS = 8 * 1000;
+const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 10 * 1000;
+const DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS = 10 * 1000;
 const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
@@ -89,6 +89,7 @@ async function runCandidate(
   {
     globalBudgetMs = 0,
     clock = () => Date.now(),
+    minAttemptWindowMs = 0,
   } = {}
 ) {
   let lastError = null;
@@ -101,8 +102,8 @@ async function runCandidate(
       : Number.POSITIVE_INFINITY;
 
     const attemptLabel = candidate.logLabel || candidate.label;
-    if (remainingBudgetMs <= 0) {
-      const err = new Error(`${attemptLabel} exhausted its provider time budget.`);
+    if (remainingBudgetMs <= 0 || remainingBudgetMs < minAttemptWindowMs) {
+      const err = new Error(`${attemptLabel} has insufficient provider time budget.`);
       err.code = "AI_GLOBAL_BUDGET_EXCEEDED";
       throw err;
     }
@@ -261,18 +262,30 @@ async function runGeminiModelAttempt(
     sleepFn = sleep,
     randomFn = Math.random,
     signal = null,
+    correctiveRetry = false,
   } = {}
 ) {
   const boundedRetryCount = Math.max(0, Math.min(Number(overloadRetryCount) || 0, 1));
 
   for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
+    if (signal?.aborted) {
+      const err = new Error("Gemini attempt was cancelled before generation.");
+      err.code = "AI_TIMEOUT";
+      throw err;
+    }
     try {
       const raw = await gemini.getReply(messages, options, apiKey, model, {
         signal,
+        ...(correctiveRetry ? { correctiveRetry: true } : {}),
         // The usage event must be tagged rejected_invalid_output when the
         // provider completes but the structured reply is unusable. Keep the
         // existing outer validation for injected/test providers.
         validateResponse: (response) => {
+          if (response?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+            const err = new Error("Gemini reached its output token limit.");
+            err.code = "AI_OUTPUT_TRUNCATED";
+            throw err;
+          }
           const text = response?.text?.trim();
           if (!text) {
             const err = new Error("Gemini returned an empty response.");
@@ -496,6 +509,7 @@ async function runGeminiReply(
     clock = () => Date.now(),
     sleepFn = sleep,
     randomFn = Math.random,
+    hasLaterProvider = false,
   } = {}
 ) {
   const policy = getGeminiReplyPolicy(env);
@@ -525,6 +539,8 @@ async function runGeminiReply(
     if (remainingBudgetMs <= 0) break;
 
     const hasLaterModel = modelIndex < models.length - 1;
+    const hasNextRoute = hasLaterModel || hasLaterProvider;
+    const isFlashLite = model.trim().toLowerCase() === "gemini-3.5-flash-lite";
     const modelBudgetMs = computeGeminiModelBudgetMs(
       remainingBudgetMs,
       hasLaterModel,
@@ -532,6 +548,16 @@ async function runGeminiReply(
     );
     const modelPolicy = { ...policy, globalBudgetMs: modelBudgetMs };
     const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, modelPolicy);
+    // The fair-share key window can shrink to milliseconds as the budget
+    // runs out. Do not use it as the minimum useful generation window.
+    const minAttemptWindowMs = Math.min(policy.minRemainingKeyWindowMs, policy.preferredTimeoutMs, policy.fallbackTimeoutMs);
+    const isFallbackModel = model !== configuredModels[0];
+    if (isFallbackModel && modelBudgetMs < minAttemptWindowMs) {
+      const err = new Error("Insufficient time for a fallback Gemini generation.");
+      err.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
+      failures.push({ model, error: err });
+      continue;
+    }
 
     try {
       const reply = await runWithGeminiKeys(
@@ -539,7 +565,8 @@ async function runGeminiReply(
           // A provider-level 503 says the model is unavailable, not the key.
           // When another model is ready, switch immediately rather than spend
           // a second quota-counting request on the same overloaded model.
-          overloadRetryCount: hasLaterModel ? 0 : policy.retryCount,
+          overloadRetryCount: hasNextRoute || requestControl.correctiveRetry ? 0 : policy.retryCount,
+          correctiveRetry: requestControl.correctiveRetry === true,
           sleepFn,
           randomFn,
           signal: requestControl.signal || null,
@@ -556,8 +583,11 @@ async function runGeminiReply(
           // A 503/high-demand response is already model-scoped. If another
           // reply model is available, switch models immediately instead of
           // spending its reserved time confirming the same outage on key 2.
-          confirmModelUnavailableAcrossKeys: !hasLaterModel,
-          stopKeyRotationOnTimeout: hasLaterModel,
+          confirmModelUnavailableAcrossKeys: !hasNextRoute,
+          stopKeyRotationOnTimeout: hasNextRoute,
+          stopKeyRotationOnInvalidResponse: isFlashLite,
+          allowInvalidResponseRecovery: isFlashLite && !hasNextRoute,
+          minAttemptWindowMs: hasNextRoute || isFlashLite ? minAttemptWindowMs : 0,
           smartRetryDelayMinMs: 500,
           smartRetryDelayMaxMs: 1000,
           clock,
@@ -569,7 +599,11 @@ async function runGeminiReply(
       return reply;
     } catch (err) {
       failures.push({ model, error: err });
-      if (err?.code === "GEMINI_MODEL_UNAVAILABLE") {
+      // Preserve the established primary-model cooldown policy. For Flash-Lite
+      // with multiple configured credentials, a single capacity error may be
+      // project-specific; do not suppress the entire pool without confirmation.
+      if (err?.code === "GEMINI_MODEL_UNAVAILABLE" &&
+          (!isFlashLite || err.modelCapacityConfirmed === true || getGeminiApiKeys(env).length === 1)) {
         const health = markGeminiModelUnavailable(model, env, clock());
         if (health?.cooldownUntil) {
           console.warn(
@@ -609,6 +643,7 @@ async function runClaudeReply(
   {
     globalBudgetMs = 0,
     clock = () => Date.now(),
+    minAttemptWindowMs = 0,
   } = {}
 ) {
   const candidate = buildCandidates(env).find((item) => item.provider === "claude");
@@ -632,7 +667,7 @@ async function runClaudeReply(
     options,
     timeoutMs,
     retryCount,
-    { globalBudgetMs, clock }
+    { globalBudgetMs, clock, minAttemptWindowMs }
   );
 }
 
@@ -668,8 +703,10 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
     bookingContext: optionsOrFirstMessage?.bookingContext || null,
+    ...(Array.isArray(optionsOrFirstMessage?.priorClinicalContext) ? {priorClinicalContext:optionsOrFirstMessage.priorClinicalContext.filter(v=>typeof v==="string").slice(-8).map(v=>v.slice(0,600))} : {}),
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
+    rm68CampaignDay: ["both","dec6","expired"].includes(optionsOrFirstMessage?.rm68CampaignDay) ? optionsOrFirstMessage.rm68CampaignDay : null,
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     correctionSourceReply: typeof optionsOrFirstMessage?.correctionSourceReply === "string"
       ? optionsOrFirstMessage.correctionSourceReply.slice(0, 2000) : null,
@@ -729,6 +766,14 @@ async function getReplyWithEnv(
       hasLaterProvider,
       policy.fallbackProviderReserveMs
     );
+    const geminiPolicy = getGeminiReplyPolicy(env);
+    const fallbackWindow = Math.min(geminiPolicy.minRemainingKeyWindowMs,
+      candidateProvider === "claude" ? timeoutMs : geminiPolicy.preferredTimeoutMs);
+    if (providerIndex > 0 && providerBudgetMs < fallbackWindow) {
+      failures.push({ provider: candidateProvider, code: "AI_GLOBAL_BUDGET_EXCEEDED",
+        message: "Insufficient time for fallback provider generation.", recoverable: true });
+      continue;
+    }
 
     try {
       if (candidateProvider === "gemini") {
@@ -736,7 +781,7 @@ async function getReplyWithEnv(
           messages,
           options,
           geminiEnvForProviderBudget(env, providerBudgetMs),
-          { clock }
+          { clock, hasLaterProvider }
         );
       }
 
@@ -746,7 +791,7 @@ async function getReplyWithEnv(
         timeoutMs,
         retryCount,
         env,
-        { globalBudgetMs: providerBudgetMs, clock }
+        { globalBudgetMs: providerBudgetMs, clock, minAttemptWindowMs: providerIndex > 0 ? fallbackWindow : 0 }
       );
       if (preferredProvider === "gemini" && failures.some((item) => item.provider === "gemini")) {
         recordRoutingEvent({

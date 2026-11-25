@@ -1,5 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
+const { adaptNeutroAppointmentInvitation } = require("../utils/appointmentInviteContinuity");
+const { guardAppointmentReply } = require("../utils/appointmentHoursGuard");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const policyHoldRepo = require("../db/whatsappFollowUpPolicyHoldRepo");
@@ -12,6 +14,8 @@ const { createCoalescedImmediateWake, followUpChangeRequiresWake,
   primaryPipelineChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled} =
+  require("../utils/followUpCurrentTopic");
 const { campaignFollowUp } = require("../utils/neutroBreastRm68Campaign");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { resolveAdFollowUpTreatment, neutralMixedAdFollowUp } =
@@ -671,16 +675,53 @@ function activePromotionFollowUpStillConfigured(
 }
 
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
+  // Follow-up-only, sender-verified staff discussion. Never update the
+  // customer selection, CRM, marketing permission or Before & After triggers.
+  const enabledStaffTopic = staffTopicFeatureEnabled() &&
+    candidate.channel === "whatsapp" &&
+    clinicConfig.businessType === "tcm_clinic" &&
+    /^Neutro Sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""));
+  const topicSafety=enabledStaffTopic ? assessFollowUpTopicSafety({
+    turns:candidate.followup_topic_turns,clinicConfig,
+    originalTreatment:candidate.adFollowUpPolicy?.treatment||candidate.treatment_interest,
+  }) : {unsafe:false};
+  if(topicSafety.unsafe){
+    const copy={
+      zh:"Hi～之前聊到的护理还需要中医师了解情况，才能判断是否适合您 😊 若想了解评估流程，可以随时问我们，不需要急着决定。",
+      en:"Hi! Our practitioner would need to understand your situation before recommending any care 😊 Feel free to ask about the assessment; there is no need to decide now.",
+      ms:"Hai! Pengamal kami perlu memahami keadaan anda sebelum cadangkan rawatan 😊 Kalau ada soalan tentang penilaian, boleh tanya kami bila-bila masa.",
+    };
+    // No treatment-specific promotion, video, photo, voice or AI rewrite.
+    return {message:copy[language]||copy.en,
+      targetedService:null,targetedMediaService:null,
+      selectedImageUrl:"",selectedVideoKey:"",selectedVideoFilename:"",
+      selectedVoiceNote:null,promotionFollowUp:false,
+      promotionPackageSelection:null,unsafeFollowUpTopic:true};
+  }
+  const staffTopic = enabledStaffTopic &&
+
+    candidate.channel === "whatsapp" &&
+    clinicConfig.businessType === "tcm_clinic" &&
+    /^Neutro Sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+    !candidate.adFollowUpPolicy?.ambiguous
+    ? resolveStaffDiscussedFollowUpTopic({
+        turns:candidate.followup_topic_turns,clinicConfig,
+      }) : null;
   let promotionPackageSelection = null;
+  // Preserve the established promotion-specific eligibility, exact caption
+  // and graphic selection. Staff discussion only affects the normal fallback
+  // when the existing promotion logic does not select a valid offer.
   if (stepIndex === 1) {
     const promotionFollowUp = promotionFollowUpForCandidate(candidate, language);
     if (promotionFollowUp?.promotionFollowUp) return promotionFollowUp;
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
-  const currentService = candidate.adFollowUpPolicy
-    ? {mentioned:true,serviceName:candidate.adFollowUpPolicy.treatment}
-    : followUpServiceContext(candidate);
+  const currentService = staffTopic
+    ? {mentioned:true,serviceName:staffTopic.treatment}
+    : candidate.adFollowUpPolicy
+      ? {mentioned:true,serviceName:candidate.adFollowUpPolicy.treatment}
+      : followUpServiceContext(candidate);
   const overrideForService = (serviceName) =>
     step.serviceOverrides.find(
       (item) =>
@@ -726,6 +767,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     selectedVoiceNote: mediaSource ? selectedVoiceNote(mediaSource.voiceNotes, language) : null,
     promotionFollowUp: false,
     promotionPackageSelection,
+    staffDiscussedFollowupTopic:staffTopic?.treatment||null,
   };
 }
 
@@ -1279,12 +1321,12 @@ async function sendCandidate(candidate) {
   if (!step) return;
 
   const rm68FollowUp = campaignFollowUp({ candidate });
-  if (rm68FollowUp?.expired) {
+  if (rm68FollowUp?.expired || rm68FollowUp?.stop) {
     // End only this expired ad's follow-up sequence; avoid repeatedly
     // attempting to send an obsolete offer after 6 December.
     const decision = normalizeFollowUpDecision({
       action: "stop_sequence",
-      reason: "neutro_rm68_campaign_expired",
+      reason: rm68FollowUp.expired ? "neutro_rm68_campaign_expired" : "neutro_rm68_alternative_date_requested",
     });
     return Boolean(await followUpRepo.recordAiDecisionIfStillEligible({
       contactId: candidate.contact_id,
@@ -1292,7 +1334,7 @@ async function sendCandidate(candidate) {
       stepIndex,
       action: decision.action,
       reason: decision.reason,
-      topic: "expired_rm68_event",
+      topic: rm68FollowUp.expired ? "expired_rm68_event" : "rm68_alternative_date",
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
@@ -1365,6 +1407,8 @@ async function sendCandidate(candidate) {
     language,
     stepIndex
   );
+  // Do not let a campaign-specific offer overwrite a staff clinical caution.
+  if (fallbackSelection.unsafeFollowUpTopic && rm68FollowUp) return;
   let followUpMessage = rm68FollowUp?.message || fallbackSelection.message;
   let targetedService = rm68FollowUp ? null : fallbackSelection.targetedService;
   let targetedMediaService = fallbackSelection.targetedMediaService || null;
@@ -1384,6 +1428,7 @@ async function sendCandidate(candidate) {
   let aiLeaseToken = null;
   const needsAiWork =
     !rm68FollowUp &&
+    !fallbackSelection.unsafeFollowUpTopic &&
     !candidate.adFollowUpPolicy?.ambiguous &&
     (Boolean(promotionPackageSelection) ||
      (step.messageMode === "ai" && !promotionFollowUp));
@@ -1486,26 +1531,29 @@ async function sendCandidate(candidate) {
         followUpMessageMode = "ai_fallback";
       } else {
         try {
-          const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
+          const mediaTreatment = targetedMediaService ||
+            followUpAiService.configuredVideoTreatment(selectedVideoKey);
+          const rawDecision = await followUpAiService.generatePersonalizedFollowUp({
             conversation: aiContext.messages,
             triggerMessageId: candidate.trigger_message_id,
             stepNumber: stepIndex,
             treatmentInterest:
+              fallbackSelection.staffDiscussedFollowupTopic ||
               aiContext.lead?.treatment_interest || candidate.treatment_interest,
+            verifiedTreatment: fallbackSelection.staffDiscussedFollowupTopic || null,
+            staffDiscussedTreatment: Boolean(fallbackSelection.staffDiscussedFollowupTopic),
+            mediaTreatment,
+            mediaAttached: Boolean(selectedVideoKey || selectedImageUrl || selectedVoice),
             stageName: aiContext.lead?.stage_name,
             branchName: aiContext.lead?.branch_name,
             appointmentStatus: aiContext.lead?.appointment_status,
-            instruction: [
-              step.aiInstruction,
-              clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true && selectedVideoKey
-                ? "A verified treatment-specific video may accompany your text. Write a short, relevant, safe caption, grounded in the actual concern. Do not claim a guaranteed outcome. For Messenger/Instagram, do not say the video has already been delivered; the attachment is sent separately."
-                : "No video is attached to this message. Never claim to be sharing or attaching a video, image, testimonial clip or result photo.",
-            ].filter(Boolean).join("\n").slice(0, 1000),
+            instruction: step.aiInstruction,
             channel: candidate.channel || "whatsapp",
             contactId: candidate.contact_id,
             leadId: aiContext.lead?.id || null,
           });
 
+          const aiDecision = followUpAiService.validateFollowUpMediaDecision(rawDecision, mediaTreatment);
           if (aiDecision.action !== "send") {
             const suppressStaffPromotionReview =
               aiDecision.action === "human_review" &&
@@ -1613,6 +1661,16 @@ async function sendCandidate(candidate) {
   // Guard every follow-up channel and mode just before durable reservation.
   // If configured media was paired with a price-bearing caption, omit the
   // attachment as well: an image itself might display an unasked amount.
+  // Keep fixed/AI booking invitations aligned with the latest customer-provided
+  // visit day. Never ask them to choose a different week when they already
+  // proposed one; this does not confirm a slot or change promotion media.
+  if (stepIndex === 3) {
+    followUpMessage = adaptNeutroAppointmentInvitation({
+      message: followUpMessage,
+      customerTexts: [...(candidate.recent_inbound_messages || [])].reverse(),
+      language, businessConfig: clinicConfig,
+    });
+  }
   const safeFollowUp = rm68FollowUp
     ? { message: rm68FollowUp.message, suppressMedia: false }
     : enforceAssessmentFirstFollowUpCopy({
@@ -1632,7 +1690,7 @@ async function sendCandidate(candidate) {
   const selectedFollowUpImage = rm68FollowUp ? ""
     : promotionFollowUp ? promotionFollowUpImageUrl
     : selectedImageUrl;
-  const effectiveImageUrl =
+  let effectiveImageUrl =
     originalHasPrice ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
@@ -1712,6 +1770,26 @@ async function sendCandidate(candidate) {
     followUpMessageMode = "fixed";
   }
 
+  // Check the FINAL selected text, after RM68/promotion/media fallback
+  // overrides. Otherwise those late rewrites could bypass the first guard.
+  // A corrected scheduling reply is text only; do not attach a now-mismatched
+  // promotion graphic or an old media caption.
+  if (clinicConfig.hours?.weekly) {
+    const checked = guardAppointmentReply({
+      hours: clinicConfig.hours, customerText: "",
+      reply: followUpMessage, receivedAt: new Date(), now: new Date(),
+      language,
+    });
+    if (checked.blocked && checked.reply !== followUpMessage) {
+      followUpMessage = checked.reply;
+      effectiveImageUrl = "";
+      effectiveVideoKey = "";
+      effectiveVoice = null;
+      console.info("[Appointment hours] corrected final follow-up contact=" +
+        candidate.contact_id + " reason=" + checked.issue?.status);
+    }
+  }
+
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
@@ -1719,6 +1797,22 @@ async function sendCandidate(candidate) {
   // WhatsApp message references that key, so Inbox history and Retry use the
   // same bytes without copying them into each customer's folder.
   const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
+  // A staff-approved recorded voice note cannot be rewritten. If its
+  // transcript offers a closed/past time, send the already guarded text
+  // instead of delivering contradictory appointment guidance by audio.
+  if (effectiveVoice && clinicConfig.hours?.weekly) {
+    const voiceCheck = guardAppointmentReply({
+      hours: clinicConfig.hours,
+      customerText: effectiveVoice.transcript,
+      reply: effectiveVoice.transcript,
+      receivedAt: new Date(), now: new Date(), language,
+    });
+    if (voiceCheck.blocked) {
+      effectiveVoice = null;
+      console.info("[Appointment hours] suppressed invalid voice invitation contact=" +
+        candidate.contact_id + " reason=" + voiceCheck.issue?.status);
+    }
+  }
   let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;

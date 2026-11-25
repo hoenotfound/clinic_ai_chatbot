@@ -7,6 +7,8 @@ import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
+import InboxMascot from "../components/InboxMascot";
+import { classifyMascotEvent, nextMascotActivity } from "../utils/mascotActivity";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
 import WhatsAppTemplateModal from "../components/WhatsAppTemplateModal";
 import LeadAssignmentBadge, {
@@ -626,6 +628,10 @@ export default function Inbox() {
   const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [mascotActivity, setMascotActivity] = useState(null);
+  const mascotHostRef = useRef(null);
+  const [mascotSearching, setMascotSearching] = useState(false);
+  const [mascotWork, setMascotWork] = useState(null);
   const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
@@ -727,6 +733,7 @@ export default function Inbox() {
   function handleInboxFiltersChange(nextFilters) {
     const previous=inboxFiltersRef.current;
     inboxFiltersRef.current={...nextFilters};
+    setMascotSearching(Boolean(nextFilters.query.trim()));
     if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
     if (previous.query!==nextFilters.query) {
       // Search is global and server-backed. Debounce typing but not filter taps.
@@ -1271,6 +1278,13 @@ export default function Inbox() {
             )
           );
         }
+        // Cosmetic reaction only for identified activity in the open conversation.
+        // Do not infer AI generation, bookings or customer activity from redacted events.
+        const mascotEvent = classifyMascotEvent(payload, selectedIdRef.current);
+        if (mascotEvent) {
+          const now = Date.now();
+          setMascotActivity(previous => nextMascotActivity(previous, mascotEvent, now));
+        }
         if (payload.reason === "message_mutation") pendingMessageMutation = true;
         scheduleRefresh(payload.contactId ?? null, "unknown_conversation_event", {
           refreshThread: inboxEventNeedsMessageRefresh(
@@ -1723,6 +1737,12 @@ export default function Inbox() {
         showToast(result.bookingSyncWarning, "warning");
       } else if (result?.bookingSynced) {
         showToast("Appointment confirmed and saved in Pipeline.", "success");
+        if (Number(selectedIdRef.current) === Number(contactId)) {
+          const now = Date.now();
+          setMascotActivity(previous => nextMascotActivity(previous, {
+            kind: "success", contactId: Number(contactId), key: "booking:" + (result.id ?? optimisticId),
+          }, now));
+        }
       }
       if (result?.delivery_unknown === true) {
         showToast(
@@ -1945,7 +1965,7 @@ export default function Inbox() {
     !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
-    <div className="wa-inbox-shell flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
+    <div ref={mascotHostRef} className="wa-inbox-shell relative flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -2004,6 +2024,7 @@ export default function Inbox() {
         canReplyToLeads={canReplyToLeads}
         canManageLeads={canManageLeads}
         canManageAutomation={canManageAutomation}
+        canReviewSecondaryBilling={user?.role==="admin" && permissions.manage_settings===true && canManageAutomation && canViewAllLeads && canReplyToLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
         mutationNotices={customerEditNotices}
@@ -2046,6 +2067,7 @@ export default function Inbox() {
         mobileThreadOpen={visibleMobileThreadOpen}
         onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
+        onMascotWork={setMascotWork}
       />
       )}
       <ContactDetailsDrawer
@@ -2088,6 +2110,11 @@ export default function Inbox() {
           }}
         />
       )}
+      <InboxMascot hostRef={mascotHostRef} activity={mascotActivity} selectedId={selectedId}
+        searching={mascotSearching && inboxPageLoading} mobileThreadOpen={visibleMobileThreadOpen}
+        busy={messagesLoading || actionPending || conversationStatePending || Boolean(outboundPendingByContact[String(selectedId)]) || Boolean(mascotWork?.busy)}
+        suspended={contactDetailsOpen || whatsappTemplateOpen || Boolean(mascotWork?.modal)}
+        layoutKey={String(selectedId) + ":" + visibleMobileThreadOpen + ":" + Boolean(selectedContactIsFilteredOut)} />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -2329,7 +2356,9 @@ function ConversationList({
     () => filteredConversations.slice(0, visibleRowCount),
     [filteredConversations, visibleRowCount]
   );
-  useEffect(() => {
+  // Reset the row window before painting a changed filter. Otherwise a
+  // deferred effect can overwrite a Show more action on the newly restored list.
+  useLayoutEffect(() => {
     setVisibleRowCount(60);
     setRevealedArchiveId(null);
   }, [filters.status, filters.channel, filters.sender, filters.control,
@@ -2427,7 +2456,7 @@ function ConversationList({
       aria-label="Conversation inbox"
     >
       <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {!conversations
@@ -2966,6 +2995,49 @@ function DateSeparator({ value }) {
   );
 }
 
+function SecondaryBillingReview({contactId,onToast}) {
+  const [review,setReview]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [nonDelivery,setNonDelivery]=useState(false);
+  const [noCharge,setNoCharge]=useState(false);
+  const [reason,setReason]=useState("");
+  async function inspect(){
+    setBusy(true);
+    try {
+      const result=await api.getSecondaryInboxReview(contactId);
+      setReview(result);
+      if(!result.eligible)onToast("No eligible unconfirmed billing hold for this contact.","warning");
+    }catch(error){onToast(error.message||"Could not inspect billing hold.","error");}
+    finally{setBusy(false);}
+  }
+  async function approve(event){
+    event.preventDefault();
+    setBusy(true);
+    try{
+      const result=await api.approveSecondaryInboxReview(contactId,{reservationId:review.reservationId,
+        reason,nonDeliveryChecked:nonDelivery,billingNoChargeChecked:noCharge});
+      if(result.reviewed!==true)throw Error("Review was not recorded.");
+      setReview({...review,reviewed:true});
+      onToast("Review recorded. Compose a new message; the original message cannot be retried.","success");
+    }catch(error){onToast(error.message||"Could not record review.","error");}
+    finally{setBusy(false);}
+  }
+  return <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs">
+    {!review?.eligible ? <button type="button" disabled={busy} onClick={inspect}
+      className="font-semibold underline">Review secondary WhatsApp billing hold</button>
+      : review.reviewed ? <p>Review recorded for message #{review.messageId}. Compose a new message from the reviewing administrator account. Do not retry the original.</p>
+      : <form onSubmit={approve} className="space-y-2" aria-label="Review secondary WhatsApp billing hold">
+        <p className="font-semibold">Review original message #{review.messageId}</p>
+        <label className="flex gap-2"><input type="checkbox" checked={nonDelivery} onChange={e=>setNonDelivery(e.target.checked)} required/>I checked the actual WhatsApp conversation: the original message was not received.</label>
+        <label className="flex gap-2"><input type="checkbox" checked={noCharge} onChange={e=>setNoCharge(e.target.checked)} required/>I checked Meta Billing Hub: no charge for this original attempt.</label>
+        <textarea aria-label="Review evidence" placeholder="Record what you checked (12–500 characters)" className="w-full rounded border p-2" value={reason} onChange={e=>setReason(e.target.value)} required minLength={12} maxLength={500}/>
+        <p>Only a distinct, newly composed message is eligible. Normal WhatsApp policy and billing checks still apply.</p>
+        <button type="submit" disabled={busy||!nonDelivery||!noCharge||reason.trim().length<12} className="rounded border px-2 py-1 font-semibold disabled:opacity-50">Authorise one new send</button>
+        <button type="button" disabled={busy} onClick={()=>{setReview(null);setNonDelivery(false);setNoCharge(false);setReason("");}} className="ml-2 underline">Cancel</button>
+      </form>}
+  </div>;
+}
+
 function ThreadView({
   contact,
   initialDraft,
@@ -2975,6 +3047,7 @@ function ThreadView({
   canReplyToLeads,
   canManageLeads,
   canManageAutomation,
+  canReviewSecondaryBilling,
   showUnassignedAssignment,
   messages,
   mutationNotices = [],
@@ -3006,6 +3079,7 @@ function ThreadView({
   mobileThreadOpen,
   onBack,
   customerSingular,
+  onMascotWork,
 }) {
   const bottomRef = useRef(null);
   const threadScrollRef = useRef(null);
@@ -3056,6 +3130,11 @@ function ThreadView({
   const [verifiedFreeTemplateWindow, setVerifiedFreeTemplateWindow] = useState(null);
   const [freeWindowRefreshSignal, setFreeWindowRefreshSignal] = useState(0);
   const freeWindowLastCheckedAt = useRef(0);
+  useEffect(() => {
+    onMascotWork?.({ busy: sending || isRecording || isStartingRecording || !!voiceBlob || imagePreparing || actionsOpen || attachmentMenuOpen,
+      modal: Boolean(lightboxSrc || forwardingMessage || attachmentMenuOpen) });
+    return () => onMascotWork?.(null);
+  }, [onMascotWork, sending, isRecording, isStartingRecording, voiceBlob, imagePreparing, actionsOpen, attachmentMenuOpen, lightboxSrc, forwardingMessage]);
 
   activeContactIdRef.current = contact?.contact_id;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
@@ -4214,6 +4293,11 @@ function ThreadView({
               className={`mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform ${attentionExpanded ? "rotate-180" : ""}`}
             />
           </button>
+        )}
+        {canReviewSecondaryBilling && contact.whatsapp_is_secondary===true && contact.needs_attention && (
+          <div hidden={!attentionExpanded}>
+            <SecondaryBillingReview key={contact.contact_id} contactId={contact.contact_id} onToast={onToast}/>
+          </div>
         )}
         {contact.needs_attention && attentionExpanded &&
           Array.isArray(contact.pending_review_items) && contact.pending_review_items.length > 0 && (
@@ -5677,6 +5761,7 @@ function MessageBubble({
               {!policyFailureExplanationText && !isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled && (
                 <button
                   type="button"
+                  data-dashy-priority="true"
                   onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
                   disabled={message._retrying}
                   className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"

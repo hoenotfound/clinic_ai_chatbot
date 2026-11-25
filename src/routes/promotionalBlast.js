@@ -21,6 +21,9 @@ router.get("/campaigns",async(req,res)=>{
       campaignKey:row.campaign_key,templateName:row.template_name,title:row.title,
       promotedTreatment:row.promoted_treatment,targetTreatments:row.target_treatments,
       validUntil:row.valid_until,enabled:row.enabled,
+      audienceMode:row.audience_mode||'recent_ad',packageName:row.package_name||null,
+      packageImageUrl:row.package_image_url||null,packageOfferPrice:row.package_offer_price??null,
+      packageTemplateValues:row.package_template_values||null,
     }))});
   }catch(error){
     console.error("[Promotional blast] Campaign list unavailable:",error?.message);
@@ -32,12 +35,15 @@ router.post("/campaigns",async(req,res)=>{
   try{
     const record=await blast.createCampaign(req.body,req.session?.username);
     if(!record)return res.status(400).json({
-      error:"Invalid campaign. Supply a unique lowercase key, a MARKETING template name, a title, a promoted treatment, target treatments and a deadline within 90 days.",
+      error:"Invalid campaign. Supply a unique key, MARKETING template, audience, treatments and deadline. Past-lead campaigns also require a valid active package.",
     });
     return res.status(201).json({
       campaignKey:record.campaign_key,templateName:record.template_name,title:record.title,
       promotedTreatment:record.promoted_treatment,targetTreatments:record.target_treatments,
       validUntil:record.valid_until,enabled:record.enabled,
+      audienceMode:record.audience_mode||'recent_ad',packageName:record.package_name||null,
+      packageImageUrl:record.package_image_url||null,packageOfferPrice:record.package_offer_price??null,
+      packageTemplateValues:record.package_template_values||null,
     });
   }catch(error){
     console.error("[Promotional blast] Campaign creation unavailable:",error?.message);
@@ -53,10 +59,16 @@ router.get("/preview",async(req,res)=>{
     if(!campaign||campaign.enabled!==true||new Date(campaign.valid_until).getTime()<=Date.now()){
       return res.status(409).json({error:"This campaign is disabled or has ended."});
     }
+    if(campaign.audience_mode==='past_leads' && !campaign.package_image_url) {
+      return res.status(409).json({error:'The current promotional package image is unavailable. Do not send.'});
+    }
     const rows=await blast.candidates(key);
     return res.json({
       campaignKey:key,campaignLabel:campaign.title,templateName:campaign.template_name,
       promotedTreatment:campaign.promoted_treatment,validUntil:campaign.valid_until,
+      audienceMode:campaign.audience_mode||'recent_ad',packageName:campaign.package_name||null,
+      packageImageUrl:campaign.package_image_url||null,packageOfferPrice:campaign.package_offer_price??null,
+      packageTemplateValues:campaign.package_template_values||null,
       recipients:rows.map(row=>({
         contactId:Number(row.contact_id),senderId:Number(row.sender_id),
         name:row.contact_name,treatmentInterest:row.treatment_interest,

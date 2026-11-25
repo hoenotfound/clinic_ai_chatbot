@@ -314,5 +314,39 @@ test("actual reply correction runs ahead of downstream pricing, booking and outb
   const assembled = src.indexOf("let reply = isFirstMessage && !flagged");
   const sent = src.indexOf("const sendOutcome = await sendTrackedText(");
   assert.ok(draft > 0 && guard > draft && assembled > guard && sent > assembled);
-  assert.match(src.slice(draft - 500, assembled), /replyLanguage: mediaLanguage/);
+  // Locate the actual options object rather than relying on its length.
+  // Additional campaign context must not obscure the language assertion.
+  const optionsStart = src.lastIndexOf("const replyOptions = {", draft);
+  assert.ok(optionsStart > 0 && optionsStart < draft);
+  const options = src.slice(optionsStart, draft);
+  assert.match(options, /replyLanguage:\s*mediaLanguage\s*,/);
+  assert.match(src.slice(draft, guard), /ai\.getReply\(modelReplyHistory, replyOptions\)/);
+  assert.match(src.slice(guard, assembled), /parsedReply, modelReplyHistory, replyOptions/);
+});
+
+test("configured address is neutral factual data, not Malay or English prose", () => {
+  const config = require("../src/config/clinicConfig");
+  const old = config.branches;
+  const address = "Pusat Rawatan Kami Untuk Anda, Jalan Semak 12";
+  try {
+    config.branches = [{name:"PJ",address}];
+    assert.equal(clearReplyLanguageMismatch(address,"en"),false);
+    assert.equal(clearReplyLanguageMismatch("Here is our address: "+address,"en"),false);
+    assert.equal(clearReplyLanguageMismatch("Saya akan semak harga untuk anda. "+address,"en"),true);
+    assert.equal(clearReplyLanguageMismatch("我们在这里哦 😊 "+address,"zh"),false);
+    assert.equal(clearReplyLanguageMismatch("好的 😊 "+address,"en"),true);
+  } finally { config.branches = old; }
+});
+
+test("configured business and branch labels do not masquerade as a language switch", () => {
+  const config=require("../src/config/clinicConfig");
+  const old={businessName:config.businessName,clinicName:config.clinicName,branches:config.branches};
+  try {
+    config.businessName="Pusat Rawatan Kami Untuk Anda";
+    config.clinicName=config.businessName;
+    config.branches=[{name:"Klinik Kami Boleh Semak"}];
+    assert.equal(clearReplyLanguageMismatch("Welcome to "+config.businessName+"!", "en", names),false);
+    assert.equal(clearReplyLanguageMismatch("Here is "+config.branches[0].name, "en", names),false);
+    assert.equal(clearReplyLanguageMismatch("Saya akan semak harga untuk anda. "+config.businessName,"en",names),true);
+  } finally {Object.assign(config,old);}
 });

@@ -85,6 +85,56 @@ function withPricingHistoryMetadata(entry, row) {
       value: isVerifiedHumanStaffRow(row),
       enumerable: false,
     },
+    // Local-only provenance for a narrow same-service pricing continuation.
+    pricingDeliveredStaffImage: {
+      value: isVerifiedHumanStaffRow(row) &&
+        ["delivered","read"].includes(row?.delivery_status) &&
+        typeof row?.whatsapp_message_id==="string" &&
+        row.whatsapp_message_id.startsWith("wamid.") &&
+        row.has_media_attachment===true &&
+        String(row.media_mime_type||"").startsWith("image/"),
+      enumerable:false,
+    },
+    // A readable, authenticated native-app echo establishes what staff
+    // wrote, not proof that the recipient read it. It may preserve an
+    // existing customer-named topic but never independently authorize a
+    // quote or prove a package menu was delivered.
+    pricingVerifiedStaffText: {
+      value: isVerifiedHumanStaffRow(row) &&
+        (["delivered","read"].includes(row?.delivery_status) ||
+          (row.sent_by_username==="WhatsApp Business App" && row.delivery_status==null &&
+            typeof row.whatsapp_message_id==="string" && row.whatsapp_message_id.startsWith("wamid."))) &&
+        row.whatsapp_customer_mutation==null &&
+        row.has_media_attachment!==true && !row.media_url && !row.media_mime_type &&
+        typeof row.content==="string" && !!row.content.trim() &&
+        !/\[unsupported|message deleted/iu.test(row.content),
+      enumerable:false,
+    },
+    pricingBusinessAppPlaceholder: {
+      value: isVerifiedHumanStaffRow(row) && row.sent_by_username==="WhatsApp Business App" &&
+        typeof row.whatsapp_message_id==="string" && row.whatsapp_message_id.startsWith("wamid.") &&
+        row.delivery_status==null && row.whatsapp_customer_mutation==null &&
+        ["[unsupported sent from WhatsApp Business App]","🗑️ [Message deleted from WhatsApp Business App]"].includes(String(row.content||"").trim()) &&
+        row.has_media_attachment!==true && !row.media_url && !row.media_mime_type,
+      enumerable:false,
+    },
+    // A provider-confirmed bot send can bridge its own priced menu and
+    // matching configured promotion artwork. Never infer delivery from captions.
+    pricingDeliveredBotMessage: {
+      value: row?.role === "assistant" && !isVerifiedHumanStaffRow(row) &&
+        row.is_automated_follow_up !== true &&
+        row.whatsapp_customer_mutation == null &&
+        ["delivered","read"].includes(row.delivery_status),
+      enumerable:false,
+    },
+    // Trusted outbound image identity is not serialized into model prompts;
+    // it is used only to cross-check one-session results against the exact
+    // clinic-configured media item, avoiding caption-only assumptions.
+    verifiedOutboundImageUrl: {
+      value: row?.role === "assistant" && typeof row?.media_url === "string"
+        ? row.media_url : null,
+      enumerable: false,
+    },
   });
   return entry;
 }
@@ -154,19 +204,30 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     if (media) photoMedia.set(i, media);
   }
 
+  const byProviderId = new Map(rows.filter(r => r.whatsapp_message_id).map(r => [r.whatsapp_message_id, r]));
   return rows.map((r, i) => {
     const media = photoMedia.get(i);
     const contextText = isVerifiedHumanStaffRow(r)
       ? `${STAFF_HISTORY_PREFIX}${aiContextTextForRow(r)}`
       : aiContextTextForRow(r);
-    if (!media) return withPricingHistoryMetadata({ role: r.role, content: contextText }, r);
-    return withPricingHistoryMetadata({
-      role: r.role,
-      content: [
-        { type: "text", text: contextText },
-        { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
-      ],
-    }, r);
+    const entry = withPricingHistoryMetadata({ role: r.role, content: media ? [
+      { type: "text", text: contextText },
+      { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
+    ] : contextText }, r);
+    const quoted = r.role === "user" && byProviderId.get(r.reply_to_provider_message_id);
+    // Same-contact, earlier, readable text only. Never authorize using an
+    // edited/revoked/unsent target, an unknown quote, or the quoted media itself.
+    if (quoted && Number(quoted.id) < Number(r.id) &&
+        !quoted.whatsapp_customer_mutation && !quoted.media_mime_type &&
+        !quoted.has_media_attachment && !quoted.media_url &&
+        (quoted.role === "user" || (quoted.role === "assistant" &&
+          ["delivered","read"].includes(quoted.delivery_status))) &&
+        typeof quoted.content === "string" && quoted.content.trim()) {
+      Object.defineProperty(entry, "verifiedQuotedMessage", {enumerable:false,
+        value:Object.freeze({id:Number(quoted.id),role:quoted.role,
+          content:quoted.content.slice(0,600)})});
+    }
+    return entry;
   });
 }
 

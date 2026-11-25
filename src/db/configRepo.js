@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
+const { describeWeeklyHours } = require("../utils/appointmentHoursGuard");
 const {
   hydrateBusinessConfig,
 } = require("../config/industryProfiles");
@@ -36,6 +37,7 @@ const CONFIG_KEYS = [
   "trustAdminConfiguredContent",
   "aiPricingIntentMode",
   "aiPricingOfferEnquiriesEnabled",
+  "recoveryTreatmentOrder",
   "adFirstReply",
   "resultMedia",
   "services",
@@ -44,6 +46,7 @@ const CONFIG_KEYS = [
   "closingPlaybook",
   "tone",
   "messagingStyle",
+  "assessmentReplyTemplates",
   "sop",
   "escalation",
   "guardrails",
@@ -273,6 +276,20 @@ async function updateConfig(updates, database = pool) {
             : updates[key];
         changedKeys.push(key);
       }
+    }
+
+    // Weekly structured hours are the single source of truth when enabled.
+    // Regenerate the public text from the same validated hours used by the
+    // reply and booking guards so a Settings/API edit cannot create drift.
+    if (Object.prototype.hasOwnProperty.call(updates, "hours") &&
+        nextConfig.hours?.weekly) {
+      let summary;
+      try {
+        summary = describeWeeklyHours(nextConfig.hours);
+      } catch (error) {
+        throw conflict("INVALID_WEEKLY_HOURS", error.message);
+      }
+      nextConfig.hours = { ...nextConfig.hours, ...summary };
     }
 
     const hasBusinessName = Object.prototype.hasOwnProperty.call(updates, "businessName");

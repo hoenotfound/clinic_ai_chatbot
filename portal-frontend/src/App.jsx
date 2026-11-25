@@ -22,6 +22,7 @@ import GoLive from "./pages/GoLive";
 import ClientSetupWizard from "./pages/ClientSetupWizard";
 import AdvancedConfig from "./pages/AdvancedConfig";
 import Notifications from "./pages/Notifications";
+import Appearance from "./pages/Appearance";
 import {
   readClientSetupProgress,
   shouldAutoStartClientSetup,
@@ -148,6 +149,7 @@ export default function App() {
                 </ProtectedRoute>
               )}
             />
+            <Route path="/settings/appearance" element={<ProtectedRoute><SettingsSectionLayout><Appearance /></SettingsSectionLayout></ProtectedRoute>} />
             <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
             <Route path="/conversation-flow" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><ConversationFlow /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />

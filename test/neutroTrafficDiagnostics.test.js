@@ -27,11 +27,15 @@ test("48h/66h shortlist is narrower but preserves all due eligible inbound times
     /recent\.created_at > \$4::timestamptz - INTERVAL '5 days'/);
   assert.match(marketing.POTENTIAL_DUE_SQL,
     /recent\.created_at > \$4::timestamptz - INTERVAL '5 days'/);
-  // Longer Day4/Day6 paths keep their original nine-day window.
-  assert.match(marketing.EXTENDED_CANDIDATES_SQL,
-    /recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/);
-  assert.match(marketing.EXTENDED_RECHECK_SQL,
-    /recent\.created_at > \$4::timestamptz - INTERVAL '9 days'/);
+  // Day4/Day6 now seed only from verified ad origins. Their original
+  // seven-day reply proof still holds; the 8-day origin shortlist is wider
+  // than the maximum 167h session age + 24h reply interval.
+  assert.ok(167+24<8*24);
+  for(const sql of [marketing.EXTENDED_CANDIDATES_SQL,
+    marketing.EXTENDED_RECHECK_SQL,marketing.EXTENDED_POTENTIAL_DUE_SQL]){
+    assert.match(sql,/FROM whatsapp_free_entry_referrals seed_referral/);
+    assert.match(sql,/recent\.created_at > \$4::timestamptz - INTERVAL '8 days'/);
+  }
   assert.match(marketing.CANDIDATES_SQL,
     /consent_seed\.marketing_consent='opted_in'/);
   assert.match(marketing.CANDIDATES_SQL,

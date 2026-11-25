@@ -59,6 +59,42 @@ async function withAssessmentFirst(callback) {
   finally { clinicConfig.automatedFollowUp = old; }
 }
 
+test("Shadow: 价钱呢 after verified pelvic choice retains both approved package graphics", async () => {
+  const history = [
+    turn("user", "Hi～我对骨盆调理有兴趣", 60_000),
+    turn("assistant", "骨盆调理主要是徒手调理，可以安排1对1评估 😊", 45_000),
+    turn("user", "价钱呢？", 15_000),
+  ];
+  const options = parameters({
+    customerText: "价钱呢？", conversationHistory: history,
+    metaAdContext: null,
+  });
+  const decision = resolveShadowPriceException(options);
+  assert.equal(decision?.treatment, "骨盆调理");
+  assert.deepEqual(decision?.prices.map(p => p.name), ["Package A", "Package B"]);
+  const approval = resolveApprovedPricingAssessment({
+    mode: "shadow", shadowException: decision,
+    customerText: options.customerText,
+    conversationHistory: history,
+    services, serviceAliases, promotions,
+    flagged: false, bookingReady: false, keywordReason: null,
+    marketingStopQuestion: false,
+  });
+  assert.equal(approval.reason, "approved");
+  const bundle = await resolvePricePromotionForReply({
+    ...options, priceQuery: true, packageQuery: false,
+    aiPricingEnabled: true, pricingDecision: approval.decision,
+    treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+    verifiedShadowPriceService: "骨盆调理",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true, contactId: 47,
+    language: "zh",
+    wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+  });
+  assert.deepEqual(bundle?.packages.map(p => p.name), ["Package A", "Package B"]);
+});
+
 test("Shadow: recent verified 骨盆 ad plus short price question selects correct active packages", async () => {
   const decision = price();
   assert.equal(decision?.source, "meta_ad");
@@ -164,7 +200,7 @@ test("Shadow informational review is gated by staff/safety and live clinical-rev
   assert.match(source,/reviewEvidence\?\.pendingClinicalReview === false/u);
   assert.match(source,/!keywordReason && !urgentSafety && !isActiveSafetyConcern\(text\)/u);
   assert.match(source,/!isExplicitStaffRequest\(text\) && !marketingStopQuestion/u);
-  assert.match(source,/const shadowPriceException = aiPricingMode === "shadow"/u);
+  assert.match(source,/const shadowPriceException = \["shadow","enabled"\]\.includes\(aiPricingMode\)/u);
   assert.match(source,/verifiedShadowPriceService: pricingAuthorityRequired/u);
   assert.match(source,/approvedPricingDecision && shadowPriceException/u);
   assert.match(source,/priceOnlyResponse: pricingAuthorityRequired/u);

@@ -19,14 +19,15 @@ test("outbound readiness migration stores exact provider evidence per saved mess
 test("normal AI replies and system fallbacks are tagged separately without delaying send completion", () => {
   const server = read("src/server.js");
   assert.match(server, /outboundMessageEvidenceRepo\.recordOutcome/);
-  assert.match(server, /async function sendTrackedText\([\s\S]*origin = "ai_reply"[\s\S]*\{ canSend = null, processingJobId = null, latePreSendCheck = null,[\s\S]*interactiveButtons = null, reviewReplyToInboundMessageId = null \} = \{\}[\s\S]*\)/);
+  assert.match(server, /async function sendTrackedText\([\s\S]*origin = "ai_reply"[\s\S]*\{ canSend = null, processingJobId = null, latePreSendCheck = null,[\s\S]*interactiveButtons = null, recoveryContinuationButtons = null, reviewReplyToInboundMessageId = null \} = \{\}[\s\S]*\)/);
   assert.match(server, /sendResult\?\.wamid \|\| sendResult\?\.externalMessageId/);
   assert.match(server, /latePreSendCheck\(saved\.id\)/);
 
   assert.match(server, /"system_fallback"/);
   assert.match(server, /Readiness telemetry must never become a dependency of customer delivery/);
   assert.match(server, /recordReadinessSendEvidence\(saved, contact, sendResult, origin\);/);
-  assert.doesNotMatch(server, /await recordReadinessSendEvidence\(saved, contact, sendResult, origin\)/);
+  assert.match(server, /if \(recoveryAnchor != null\) \{\s*await recordReadinessSendEvidence\(saved, contact, sendResult, origin\);/);
+  assert.match(server, /else recordReadinessSendEvidence\(saved, contact, sendResult, origin\);/);
 });
 
 test("strict readiness query uses exact AI message evidence while operational health keeps old success metric", () => {

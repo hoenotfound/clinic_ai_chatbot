@@ -1,8 +1,10 @@
 "use strict";
 
 // Only bypass model generation for a new, clearly standard Meta-ad enquiry.
-// Ad metadata verifies the treatment; it never turns a substantive question
-// into a scripted reply. No model output or old CRM interest is trusted here.
+// A first-time, exact RM68 campaign enquiry can use the clinic-approved fixed
+// offer even when Meta omits referral metadata. This does not prove ad origin.
+// Other treatment replies still require ad verification, and substantive
+// questions never become generic scripted replies.
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPackageOptionsRequest,
@@ -11,7 +13,7 @@ const {
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
-const { CAMPAIGN_KEY, isNeutro, isExactPrefill, campaignCreativeMatches, firstReply } =
+const { CAMPAIGN_KEY, isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, firstReply } =
   require("./neutroBreastRm68Campaign");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -161,16 +163,26 @@ function resolveFixedAdFirstReply({
   const freshSavedAttribution = Number.isFinite(adTimestamp) &&
     adTimestamp <= now + 60_000 &&
     now - adTimestamp <= MAX_AD_CONTEXT_AGE_MS;
-  if (!freshSavedAttribution && !liveRm68Ad)
+  // A customer-initiated, exact first-turn enquiry is sufficient to answer
+  // with this independently approved campaign copy. Do not infer Meta ad
+  // attribution, and never accept missing evidence for other treatments,
+  // returning contacts, edited messages or a conflicting known referral.
+  const safeRm68Enquiry = isNeutro(businessName) &&
+    isSimpleRm68Enquiry(customerText) && !hasClinicalMediaRisk(customerText);
+  const unattributedRm68FirstTurn = firstTurn && safeRm68Enquiry &&
+    !metaAdContext && !currentAdReferral;
+  if (!freshSavedAttribution && !liveRm68Ad && !unattributedRm68FirstTurn)
     return skip("missing_or_stale_attribution");
-  // A current provider referral outranks any older saved lead attribution.
-  // Exact campaign prefills are allowed, but never edited medical questions.
-  if (!hasClinicalMediaRisk(customerText) && isNeutro(businessName) &&
-      isExactPrefill(customerText) &&
-      (liveMetaAd ? liveRm68Ad :
-        freshSavedAttribution && campaignCreativeMatches(metaAdContext))) {
+  // A current provider referral outranks older saved attribution. If one is
+  // present but points to a different campaign, do not send the RM68 offer.
+  if (safeRm68Enquiry &&
+      // Returning conversations still require the EXACT approved prefill
+      // and a new signed RM68 ad referral, never a fuzzy historical match.
+      (firstTurn || isExactPrefill(customerText)) &&
+      (unattributedRm68FirstTurn || (liveMetaAd ? liveRm68Ad :
+        freshSavedAttribution && campaignCreativeMatches(metaAdContext)))) {
     return {
-      reply: firstReply(now),
+      reply: firstReply(now, language),
       treatment: null,
       serviceQuery: false,
       serviceQuerySource: null,

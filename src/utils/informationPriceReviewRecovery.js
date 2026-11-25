@@ -7,6 +7,8 @@ const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { resolveVerifiedPriceFollowUpService } = require("./priceFollowUpContext");
 const { verifiedPricesForService, ensureVerifiedPriceReply } = require("./verifiedPriceReply");
+const { resolveModelLedPricingDecision, hasConflictingStaffPrice } = require("./aiPricingIntentDecision");
+const { resolveApprovedPricingAssessment } = require("./approvedPricingDecision");
 
 function planInformationPriceRecovery({
   flagged = false, reviewRequired = false, reviewType = null,
@@ -15,14 +17,45 @@ function planInformationPriceRecovery({
   hasKeywordAlert = false, urgentSafety = false, activeSafety = false,
   explicitStaffRequest = false, marketingStop = false,
   pendingClinicalReview = true, enabled = false,
+  modelIntent = null, allowOfferEnquiries = false,
+  complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
   if (enabled !== true || flagged !== true || reviewRequired !== true ||
       reviewType !== "information" || !text || hasKeywordAlert ||
       urgentSafety || activeSafety || explicitStaffRequest || marketingStop ||
       pendingClinicalReview !== false || hasClinicalMediaRisk(text) ||
-      !hasExplicitPriceRequest(text)) return null;
+      modelIntent?.pricingStage === "subsequent_session") return null;
 
+  // Reuse the same provider result and verified pricing decision. Only an
+  // explicitly informational review can enter this path; the outcome is
+  // projected to normal solely for validation, not granted send authority.
+  // Keep the full history, package identity, staff price and safety checks.
+  if (modelIntent?.structured === true && modelIntent.outcome === "review_required" &&
+      modelIntent.reviewType === "information" &&
+      (modelIntent.priceQuery === true || modelIntent.packageQuery === true)) {
+    const projected = {...modelIntent, outcome:"normal"};
+    const input = {customerText:text, conversationHistory, services, serviceAliases,
+      promotions, resultMedia, allowOfferEnquiries,
+      complimentaryAssessmentExperienceEnabled, now};
+    const candidate = resolveModelLedPricingDecision({...input,modelIntent:projected});
+    const approval = resolveApprovedPricingAssessment({...input,mode:"enabled",aiDecision:candidate});
+    if (approval.decision && !hasConflictingStaffPrice({...input,treatment:candidate.treatment})) {
+      const quoted = ensureVerifiedPriceReply({...input,reply:"好的 😊",
+        treatment:candidate.treatment,pricingDecision:approval.decision,
+        priceRequested:true,priceOnlyResponse:true,language});
+      if (quoted.restored && quoted.reply &&
+          candidate.prices.every(p=>quoted.reply.includes(p.price))) {
+        return Object.freeze({treatment:candidate.treatment,reply:quoted.reply,
+          modelIntent:projected,decision:approval.decision});
+      }
+    }
+    // A structured semantic package/price request that fails validation must
+    // not be widened by the legacy all-package recovery below.
+    return null;
+  }
+
+  if (!hasExplicitPriceRequest(text)) return null;
   const service = resolveVerifiedPriceFollowUpService({
     customerText: text, conversationHistory, services, serviceAliases, promotions,
     allowContinuedPriceContext: true,

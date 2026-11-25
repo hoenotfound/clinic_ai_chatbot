@@ -78,7 +78,19 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
   assert.equal(fixed?.campaignKey, "neutro_breast_rm68_2026");
   assert.equal(fixed?.serviceQuery, false, "mixed treatment ad cannot enable wrong results media");
   assert.equal(fixed?.treatment, null);
-  assert.equal(run({ metaAdContext: null }), null, "organic copy/paste is not a proven Meta ad");
+  const unattributed = run({ metaAdContext: null });
+  assert.equal(unattributed?.campaignKey, "neutro_breast_rm68_2026",
+    "an exact first-time RM68 enquiry should not be silenced by missing Meta referral");
+  assert.equal(unattributed?.reply, expected);
+  assert.equal(unattributed?.serviceQuery, false,
+    "missing ad attribution must not authorize results media or a treatment guess");
+  assert.equal(run({ metaAdContext: null, currentAdReferral: {
+    source: "meta_ads", sourceType: "ad", adId: "unrelated-ad",
+    headline: "骨盆 RM388", body: "骨盆调理优惠",
+  } }), null, "a conflicting live ad referral cannot authorize RM68");
+  assert.equal(run({ metaAdContext: { ...campaignAd,
+    headline: "骨盆 RM388", body: "骨盆调理",
+  } }), null, "a verified but unrelated saved ad cannot authorize RM68");
   assert.equal(run({ config: { ...config, enabled: false } }), null);
   assert.equal(run({ businessName: "Other Clinic" }), null);
   assert.equal(run({ isFirstMessage: false }), null);
@@ -97,7 +109,6 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
   for (const edited of [
     customerText + "我有乳房肿块怎么办？",
     customerText + "请问今天可以预约吗？",
-    "你好！我想了解【胸部专业检查 RM68体验优惠】",
     "你好！想了解你们家的【黄金脉冲技术】",
   ]) {
     assert.equal(run({
@@ -105,6 +116,89 @@ test("Neutro RM68 breast campaign sends exact first reply without changing treat
       conversationHistory: [{ role: "user", content: edited }],
     })?.campaignKey, undefined, "other or edited enquiries must not use the campaign: " + edited);
   }
+});
+
+test("Shirly shortened RM68 enquiry and clear paraphrases send campaign copy before AI", () => {
+  const campaignNow = Date.parse("2026-11-19T02:51:46Z");
+  const campaignAd = {
+    attributedAt: new Date(campaignNow).toISOString(),
+    headline: "由KKM认证中医师操作",
+    body: "Neutro Sense TCM 胸部护理限时体验，只需 RM68！",
+  };
+  const cases = [
+    "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】",
+    "你好！我想了解【胸部专业检查 RM68体验优惠】",
+    "请问 RM68 胸部护理体验还有吗？",
+    "我想了解 RM68 胸部专业检查",
+  ];
+  for (const customerText of cases) {
+    for (const metaAdContext of [campaignAd, null]) {
+      const result = attempt({
+        customerText, conversationHistory: [{ role: "user", content: customerText }],
+        metaAdContext, currentAdReferral: null, metaAdCreativeService: null, now: campaignNow,
+      });
+      assert.equal(result?.campaignKey, "neutro_breast_rm68_2026", customerText);
+      assert.match(result.reply, /首次体验只需 RM68/);
+      assert.match(result.reply, /全程约 1小时30分钟/);
+      assert.equal(result.serviceQuery, false, "ordinary RM388 media must not be selected");
+    }
+  }
+  const customerText = cases[0];
+  const run = (extra = {}) => attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: campaignAd, metaAdCreativeService: null, now: campaignNow, ...extra,
+  });
+  assert.equal(run({ isFirstMessage: false }), null);
+  assert.equal(run({ hasExistingBooking: true }), null);
+  assert.equal(run({ hasStaffHandoff: true }), null);
+  assert.equal(run({ metaAdContext: { ...campaignAd, body: "骨盆调理 RM388" } }), null);
+  assert.equal(run({ metaAdContext: { ...campaignAd,
+    attributedAt: new Date(campaignNow - 8 * 86400000).toISOString(),
+  } }), null);
+  for (const edited of [
+    customerText + " 我有乳房肿块怎么办？",
+    customerText + " 我明天要预约",
+    customerText + " 骨盆配套也有吗",
+    customerText + " 要取消预约",
+    "我想了解 RM688 胸部护理",
+    "我想了解 RM68 骨盆护理",
+  ]) {
+    assert.equal(run({
+      customerText: edited,
+      conversationHistory: [{ role: "user", content: edited }],
+    }), null, edited);
+  }
+});
+
+test("unattributed secondary WhatsApp RM68 opt-in prefill answers without staff review", () => {
+  const customerText = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
+  const campaignNow = Date.parse("2026-11-19T09:13:56Z");
+  const result = attempt({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    metaAdContext: null, metaAdCreativeService: null, currentAdReferral: null,
+    now: campaignNow,
+  });
+  assert.equal(result?.campaignKey, "neutro_breast_rm68_2026");
+  assert.match(result?.reply || "", /首次体验只需 RM68/);
+  assert.match(result?.reply || "", /具体名额需要由门店确认/);
+  assert.match(result?.reply || "", /12月5日.*12月6日/s);
+  assert.doesNotMatch(result?.reply || "", /RM388/);
+  assert.equal(result?.serviceQuery, false);
+  assert.equal(result?.treatment, null);
+  assert.equal(attempt({
+    customerText, conversationHistory: [
+      { role: "assistant", content: "prior conversation" },
+      { role: "user", content: customerText },
+    ],
+    metaAdContext: null, metaAdCreativeService: null, currentAdReferral: null,
+    isFirstMessage: false, now: campaignNow,
+  }), null, "a returning unattributed chat must not replay the campaign opener");
+  const medical = customerText + " 我有乳房肿块可以做吗？";
+  assert.equal(attempt({
+    customerText: medical, conversationHistory: [{ role: "user", content: medical }],
+    metaAdContext: null, metaAdCreativeService: null,
+    now: campaignNow,
+  }), null, "edited clinical questions still go through medical review");
 });
 
 test("returning RM68 Meta-ad enquiry uses THIS signed referral instead of old lead attribution", () => {
@@ -176,7 +270,8 @@ test("new Neutro RM68 opt-in-style CTWA prefill preserves campaign intro and gua
   assert.match(first?.reply || "", /12月5日 & 6日/);
   assert.doesNotMatch(first?.reply || "", /RM388/);
   assert.equal(first?.treatment, null, "do not confuse RM68 chest with regular Pulse Wave");
-  assert.equal(run({ metaAdContext: null }), null);
+  assert.equal(run({ metaAdContext: null })?.campaignKey, "neutro_breast_rm68_2026",
+    "exact opted-in first enquiry can receive the approved offer without Meta referral");
   assert.equal(run({ metaAdContext: { ...campaignAd,
     headline: "黄金脉冲技术 RM388", body: "一般脉冲波护理" } }), null);
   assert.equal(run({ hasStaffHandoff: true }), null);
@@ -497,6 +592,10 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const history = options.history || [{ role: "user", content: text }];
     const incoming = options.incoming || { attribution: null };
     const replyHistory = history;
+    const commercialHistory = history;
+    const recoveryPromptProof = null;
+    const recoveryOther = false;
+    const priorClinicalContext = [];
     const isFirstMessage = history.length === 1;
     const generateFirstIntro = false;
     const mediaLanguage = options.language || "zh";
@@ -508,6 +607,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const channel = "whatsapp";
     const contact = { id: 7 };
     const savedInbound = { id: 100 };
+    const aiPricingMode = resolveContactPricingMode({baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,env:{}});
     const keywordReason = null;
     const marketingStopQuestion = null;
     const numberedPricingSelection = null;
@@ -516,9 +616,11 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     let serviceQuery = false, serviceQuerySource = null;
     let details = null, flagged = false, reviewRequired = false, reviewType = null;
     let bookingReady = false, priceQuery = false, packageQuery = false;
+    let rm68ClinicalConcern = false;
     ${source}
     return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
   })`, {
+    resolveContactPricingMode: require("../src/utils/pricingTestContact").resolveContactPricingMode,
     // Pin the synthetic attribution clock so this test does not expire after 7 real days.
     resolveFixedAdFirstReply: options => resolveFixedAdFirstReply({ ...options, now }),
     clinicConfig: { adFirstReply: config, services, serviceAliases: aliases,
@@ -526,6 +628,11 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
     correctReplyLanguage: async draft => draft,
+    isRm68ClinicalConcern: () => false,
+    isExplicitRm68Interest: () => false,
+    hasCampaignConversation: () => false,
+    stillDiscussingCampaign: () => false,
+    isBreastLumpConcern: () => false,
     ...require("../src/utils/chatLanguage"),
     console: { info: (...parts) => logs.push(parts.join(" ")) },
   });

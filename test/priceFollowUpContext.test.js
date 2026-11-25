@@ -142,17 +142,40 @@ test("latest explicit service wins, but a B package from another treatment canno
   assert.equal(resolved("这个多少钱？",price),"3D 小颜术");
 });
 
-test("conditional voucher price is not promised to be unconditional or stackable",()=>{
+test("voucher pricing uses a short factual note, with no unnecessary coupon disclaimers",()=>{
   const turns=history(["user","我想了解骨盆调理"],["assistant","好的"],
     ["user","A配套多少钱？"]);
   const quote=textReply("A配套多少钱？",turns);
   assert.match(quote.reply,/Package A.*RM388/su);
-  assert.match(quote.reply,/优惠券后的价格/u);
-  assert.match(quote.reply,/须符合领取及使用条件/u);
-  assert.doesNotMatch(quote.reply,/RM288|自动享有|肯定叠加/u);
+  assert.match(quote.reply,/Package A 的上述价格为使用优惠券后的价格 😊/u);
+  assert.doesNotMatch(quote.reply,/RM288|须符合|使用条件|名额|叠加|门店确认|自动享有|肯定叠加/u);
+
   const bTurns=history(["user","骨盆调理"],["assistant","好的"],
     ["user","B配套多少钱？"]);
-  assert.doesNotMatch(textReply("B配套多少钱？",bTurns).reply,/优惠券后的价格/u);
+  const bQuote=textReply("B配套多少钱？",bTurns);
+  assert.match(bQuote.reply,/Package B.*RM288/su);
+  assert.doesNotMatch(bQuote.reply,/优惠券后的价格|Package A/u);
+
+  const bothTurns=history(["user","我想了解骨盆调理"],["assistant","好的"],
+    ["user","价钱？"]);
+  const bothQuote=textReply("价钱？",bothTurns);
+  assert.match(bothQuote.reply,/Package A.*RM388/su);
+  assert.match(bothQuote.reply,/Package B.*RM288/su);
+  assert.match(bothQuote.reply,/Package A 的上述价格为使用优惠券后的价格 😊/u);
+  assert.doesNotMatch(bothQuote.reply,/Package B 的上述价格为使用优惠券后的价格|须符合|名额|叠加/u);
+
+  for (const [language, expected] of [
+    ["en", /The listed price for Package A is after applying the voucher 😊/u],
+    ["ms", /Harga Package A adalah selepas baucar 😊/u],
+  ]) {
+    const localized=ensureVerifiedPriceReply({
+      customerText:"A配套多少钱？",reply:"我们有 RM999 的配套",treatment:"骨盆调理",
+      language,services,serviceAliases,promotions,resultMedia:[],conversationHistory:turns,
+    });
+    assert.match(localized.reply,/Package A.*RM388/su);
+    assert.match(localized.reply,expected);
+    assert.doesNotMatch(localized.reply,/eligibility|availability|discounts are not guaranteed|kelayakan|pengesahan pusat/iu);
+  }
 });
 
 

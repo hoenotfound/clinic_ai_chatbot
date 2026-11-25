@@ -1,4 +1,4 @@
-const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion, hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 const {
   hasCustomerRefusedPriceQuote, resolveIndependentRefusalPriceRequest,
 } = require("./independentRefusalPriceRequest");
@@ -90,6 +90,7 @@ async function resolvePricePromotionForReply({
     if (typeof onSkip === "function") onSkip(reason);
     return null;
   };
+  if (hasFuturePromotionPermissionWithoutPrice(customerText)) return skip("future_offer_permission_only");
   // The caller has already verified a CURRENT, explicit repeat-session
   // question and its single treatment. Normal price/First Trial requests
   // never set this field and retain every existing promotion rule.
@@ -218,6 +219,15 @@ async function resolvePricePromotionForReply({
     // The decision was verified before the text reply. Do not parse prices or
     // choose package options a second time for the image path.
     const approved = new Set(pricingDecision.prices.map(option => option.name));
+    if (pricingDecision.source === "model_led_customer_context") {
+      // Settings may change while the accepted reply is in flight. Do not
+      // attach artwork with different configured amounts to the text quote.
+      const currentPrices=verifiedPricesForService(treatment,promotions,"",[],
+        {allowTextOnlyOffers:true});
+      if (!currentPrices?.length || pricingDecision.prices.some(item =>
+        !currentPrices.some(p=>p.name===item.name && p.price===item.price)))
+        return skip("approved_package_price_changed");
+    }
     const selected = genericBundle.packages.filter(option => approved.has(option.name));
     if (selected.length !== approved.size) return skip("approved_package_media_mismatch");
     // An explicit comparison of multiple named packages should receive text

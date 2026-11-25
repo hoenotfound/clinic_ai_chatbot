@@ -1,9 +1,9 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { verifiedPricesForService } = require("../src/utils/verifiedPriceReply");
+const { verifiedPricesForService, ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolveEstablishedTreatmentPrice } = require("../src/utils/priceConversationRecovery");
-const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision } = require("../src/utils/aiPricingIntentDecision");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
 const clinicConfig = require("../src/config/clinicConfig");
@@ -424,7 +424,7 @@ const fixture = {
   "promotions": [
     {
       "name": "脉冲波调理 Promotion",
-      "caption": "你可以上门来做个简查，我们的资深中医师会让你知道怎样去解决问题喔！\n\n\n【脉冲能量波】\n1次只需要\nRM388❗\n做完全身❗️\n不止改善偏头痛，\n还可以调理身体质，\n瘦身减肥！\n\n\n1 次 有明显效果🧨\n\n🎁 线上预约再送\n【艾灸桶疗程】加速新陈代谢，血液循环\n\n⏰ 整套体验约2小时15分钟（包含线上预约赠送的艾灸桶护理）～\n⭐️ 并且会针对性加强解决指定部位\n\n请问你平日还是周末比较方便呢？😊\n\n我们可以先预约日期和时间喔❤️",
+      "caption": "✨【脉冲波调理｜首次体验 RM388（原价 RM688）】😊\n\n结合中医调理理念与现代设备辅助护理，可咨询身体线条管理、肌肉紧绷疲劳舒缓、产后身体护理及日常养生需求，由中医师评估适合的护理方式。\n\n🎁 线上预约赠送【艾灸桶护理】\n⏰ 整套首次体验约2小时15分钟（已包含赠送护理）\n\n实际体验与变化因人而异，不保证减脂或医疗效果。",
       "pricing": {
         "offer": 388,
         "normal": 688,
@@ -595,4 +595,77 @@ test("verified Pulse Wave continuation selects only the unsent RM388 promotional
   } finally {
     clinicConfig.trustAdminConfiguredContent = originalTrust;
   }
+});
+
+
+test("Winnie-style anonymized Pulse Wave enquiry retains customer context after explanations and result images", async () => {
+  const now = Date.now();
+  const treatment = "脉冲波调理";
+  const customerText = "每一次什么收费";
+  const services = fixture.services;
+  const serviceAliases = [...fixture.aliases, {alias:"黄金脉冲技术",officialService:treatment}];
+  const promotions = fixture.promotions.map(p => ({...p, name:"脉冲波调理 First Trial"}));
+  const turn = (role,content,age) => ({role,content,pricingCreatedAtMs:now-age,pricingStaffAuthored:false});
+  const conversationHistory = [
+    turn("user","Hi～我对 Neutro Sense TCM 黄金脉冲技术有兴趣，可以跟进我，有优惠也发我看看 😊",2271000),
+    turn("assistant",`您好亲爱的 😊
+
+我们 Neutro Sense TCM 的脉冲波调理，结合了中医针灸、拔罐、推拿等传统调理理念，并融合现代脉冲技术，帮助身体进行深层放松与调理。
+
+✨ 主要针对：
+* 局部塑形及身体线条管理
+* 中医智能减脂调理
+* 产后身体及骨盆调理
+* 肌肉深层紧绷、僵硬及疲劳舒缓
+* 经络疏通、改善水肿及身体循环.
+
+脉冲波可深入身体组织，设备标示的作用深度可达约15cm，配合不同部位及个人身体状况进行调理。
+
+我们不只是表面按摩，而是结合科技与中医调理理念，针对不同身体需求进行护理 😊
+
+亲爱的，您目前最想改善的是肚子、腰部、臀部、腿部线条，还是身体紧绷,妇科疾病,养生调理或产后调理呢？
+
+我可以帮您进一步介绍适合的调理方式💕`,2269000),
+    turn("assistant","这是 Neutro Sense 脉冲波调理顾客的 Before & After 参考图 😊\n这是个别护理案例，实际变化因人而异，无法保证每个人都有相同效果。",2266000),
+    turn("assistant","再分享一组 Neutro Sense 脉冲波调理的顾客 Before & After 参考图 😊\n图片仅供个别案例参考，是否适合调理及实际变化需由中医师评估。",2260000),
+    turn("user","这个是几次的效果",26000),
+    turn("assistant","图片里的案例仅供参考哦，每个人的体态基础和吸收情况不同，所以实际变化和所需次数都会不一样☺️\n\n具体适合做几次，一般会建议先让中医师了解你目前想改善的部位（比如腹部或腰臀线条），再评估后续的调理安排。你目前主要是想针对哪一部分呢？",20000),
+    turn("user",customerText,0),
+  ];
+  const modelIntent = {structured:true,outcome:"normal",priceQuery:true,packageQuery:false,treatment,pricingStage:null,promotionOption:null};
+  const base = {now,customerText,conversationHistory,services,serviceAliases,promotions,
+    modelIntent,allowOfferEnquiries:true,complimentaryAssessmentExperienceEnabled:true,resultMedia:[]};
+  const decision = resolveModelLedPricingDecision(base);
+  assert.equal(decision?.source,"model_led_customer_context");
+  assert.equal(decision?.treatment,treatment);
+  assert.deepEqual(decision.prices.map(p=>p.price),["RM388"]);
+  const approved = resolveApprovedPricingAssessment({...base,mode:"enabled",aiDecision:decision});
+  assert.equal(approved.reason,"approved");
+  const reply=ensureVerifiedPriceReply({...base,treatment,pricingDecision:approved.decision,
+    reply:"需要向门店确认每次收费。",priceRequested:true,priceOnlyResponse:true,language:"zh"}).reply;
+  assert.match(reply,/First Trial|首次体验/u);
+  assert.match(reply,/RM388/u);
+  assert.doesNotMatch(reply,/RM688|每次[^。]*RM388/u);
+  const priorTrust=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
+  try {
+    const media=await resolvePricePromotionForReply({...base,now:new Date(now),treatment,
+      aiPricingEnabled:true,pricingDecision:approved.decision,verifiedServiceFromText:treatment,
+      textSendSucceeded:true,contactId:1,language:"zh",wasPromoRecentlySent:async()=>false,
+      hasUnconfirmedMediaDelivery:async()=>false});
+    assert.equal(media?.packages?.length,1);
+    assert.equal(media.packages[0].imageUrl,promotions[0].imageUrl);
+  } finally {clinicConfig.trustAdminConfiguredContent=priorTrust;}
+  // Do not reinterpret a genuine subsequent-session question as a trial quote.
+  assert.equal(resolveModelLedPricingDecision({...base,modelIntent:{...modelIntent,pricingStage:"subsequent_session"}}),null);
+  // Genuine customer clinical concerns and newer competing services still veto.
+  const withTurn=t=>[...conversationHistory.slice(0,-1),t,conversationHistory.at(-1)];
+  for(const t of [
+    turn("user","我现在怀孕了",1000),
+    turn("user","我想了解骨盆调理",1000),
+    turn("assistant","另外我们也有骨盆调理，你想问哪一个？",1000),
+  ]) assert.equal(resolveModelLedPricingDecision({...base,conversationHistory:withTurn(t)}),null,t.content);
+  const clinicalStaff={...turn("assistant","[Verified STAFF message] 请先确认是否怀孕",1000),
+    pricingStaffAuthored:true,pricingVerifiedStaffText:true};
+  assert.equal(resolveModelLedPricingDecision({...base,conversationHistory:withTurn(clinicalStaff)}),null);
 });

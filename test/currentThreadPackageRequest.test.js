@@ -183,7 +183,7 @@ test("server routes this proof through existing Shadow approval, text and promo 
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   const verify=server.indexOf("scopedPackagePrice = resolveCurrentThreadPackageRequest(");
   const review=server.indexOf("if (scopedPackagePrice && scopedReviewCandidate)",verify);
-  const approval=server.indexOf("const pricingApproval = resolveApprovedPricingAssessment(",verify);
+  const approval=server.indexOf("const legacyPricingApproval = resolveApprovedPricingAssessment(",verify);
   const media=server.indexOf("const promoBundle =",approval);
   assert.ok(verify>0 && verify<review && review<approval && approval<media);
   assert.match(server,/exceptionalPricingCandidate = Boolean\([\s\S]{0,200}scopedPackagePrice/);

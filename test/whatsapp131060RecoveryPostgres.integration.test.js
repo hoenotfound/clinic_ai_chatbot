@@ -5,12 +5,14 @@ const { Client } = require("pg");
 const { runMigrations } = require("../src/db/migrationRunner");
 const {
   canSend131060Recovery, build131060RecoveryReply,
-  getVerifiedRecoveryHistoryProof, readableHistoryForRecoverySelection,
+  getVerifiedRecoveryHistoryProof, readableHistoryForRecoverySelection, recoveryTreatmentGroups, RECOVERY_SECOND_TEXT,
 } = require("../src/services/whatsapp131060Recovery");
 const {
   recordVerifiedFirstAd, getVerifiedFirstAdMessage,
 } = require("../src/db/whatsapp131060FirstAdRepo");
 
+const {reserveOutboundAttempt}=require("../src/db/inboundProcessingRepo");
+const {runOnce}=require("../src/services/whatsapp131060ContinuationQueue");
 const cs = process.env.TEST_DATABASE_URL;
 test("131060 recovery remains one-shot and keeps subsequent verified ad attribution", { skip: !cs }, async () => {
   const db = new Client({connectionString:cs});
@@ -76,25 +78,52 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
       contactId:contact,inboundMessageId:initial,database:db,env,
     });
     assert.equal(await eligible(),true);
-    const recoveryMessage=(await db.query(
-      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) " +
-      "VALUES($1,'assistant',$2,'wamid.recovery-out') RETURNING id",
-      [contact,build131060RecoveryReply({unsupportedType:"unsupported"})]
-    )).rows[0].id;
-    await db.query(
-      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
-      [recoveryMessage,conv]
-    );
-    await db.query(
-      "INSERT INTO inbound_outbound_attempts(processing_job_id,inbound_message_id,assistant_message_id,contact_id,origin,outcome,provider_message_id) " +
-      "VALUES($1,$2,$3,$4,'system_fallback','accepted','wamid.recovery-out')",
-      [job,initial,recoveryMessage,contact]
-    );
+    const [firstButtons,secondButtons]=recoveryTreatmentGroups();
+    const reserved=await reserveOutboundAttempt({processingJobId:job,contactId:contact,
+      content:build131060RecoveryReply({unsupportedType:"unsupported"},{},true),
+      origin:"system_fallback",interactiveButtons:firstButtons,recoveryContinuationButtons:secondButtons},db);
+    const recoveryMessage=reserved.message.id;
+    await db.query("UPDATE messages SET whatsapp_message_id='wamid.recovery-out' WHERE id=$1",[recoveryMessage]);
+    await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[recoveryMessage,conv]);
+    await db.query("UPDATE inbound_outbound_attempts SET outcome='accepted',provider_message_id='wamid.recovery-out' WHERE processing_job_id=$1",[job]);
     assert.equal(await eligible(),false,"a reserved outbound must be explicitly excluded at last send check");
     assert.equal(await canSend131060Recovery({
       contactId:contact,inboundMessageId:initial,ignoreOutboundMessageId:recoveryMessage,
       database:db,env,
     }),true);
+    // Pending work survives a process restart; no provider call while the
+    // prior send has no settled billing gate. Simulate the later receipt.
+    let sends=0;
+    const deps={database:db,env,contacts:{getContactById:async()=>({id:contact,channel:"whatsapp",whatsapp_number:phone,whatsapp_sender_key:"neutro_secondary"}),
+      setDeliveryAttention:async()=>{throw Error("must not flag a successful continuation");}},
+      send:async(input)=>{
+        assert.deepEqual(input.interactiveButtons,secondButtons);
+        assert.equal(input.text,RECOVERY_SECOND_TEXT);
+        assert.equal(await input.preSendCheck(),true);
+        sends++;
+        await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[input.messageId,conv]);
+        return {success:true,wamid:"wamid.recovery-second"};
+      },
+      messages:{setWhatsappMessageId:async(mid,wamid)=>db.query("UPDATE messages SET whatsapp_message_id=$2,delivery_status='delivered' WHERE id=$1",[mid,wamid])}
+    };
+    await runOnce(deps);
+    assert.equal(sends,0);
+    assert.equal((await db.query("SELECT state FROM whatsapp_131060_continuations WHERE first_message_id=$1",[recoveryMessage])).rows[0].state,"pending");
+    // A fresh readable turn OR a human reply blocks the second menu even
+    // if Meta has not yet settled the first one. No earlier text is inferred.
+    for(const role of ["user","assistant"]){
+      const intervening=(await db.query("INSERT INTO messages(contact_id,role,content) VALUES($1,$2,$3) RETURNING id",[contact,role,role==="user"?"脉冲波调理":"Staff reply"])).rows[0].id;
+      assert.equal(await canSend131060Recovery({contactId:contact,inboundMessageId:initial,firstRecoveryMessageId:recoveryMessage,database:db,env}),false);
+      await db.query("DELETE FROM messages WHERE id=$1",[intervening]);
+    }
+    await db.query("INSERT INTO whatsapp_sender_billing_gates(sender_id,owner_contact_id) VALUES($1,$2)",[sender,contact]);
+    await db.query("INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-out',NOW())",[recoveryMessage,contact]);
+    await runOnce(deps);
+    await runOnce(deps);
+    assert.equal(sends,1,"second message is sent once only");
+    const continuation=(await db.query("SELECT state,second_message_id FROM whatsapp_131060_continuations WHERE first_message_id=$1",[recoveryMessage])).rows[0];
+    assert.equal(continuation.state,"sent");
+    assert.ok(continuation.second_message_id);
     const adId="120123456789012345";
     const ad=(await db.query(
       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) " +
@@ -152,7 +181,7 @@ test("131060 recovery remains one-shot and keeps subsequent verified ad attribut
     // must still support prompt-only cleanup, never inferred ad attribution.
     await db.query(
       "INSERT INTO outbound_message_evidence(message_id,contact_id,channel,origin,accepted,provider_message_id,accepted_at) " +
-      "VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-out',NOW())",
+      "VALUES($1,$2,'whatsapp','system_fallback',TRUE,'wamid.recovery-out',NOW()) ON CONFLICT(message_id) DO NOTHING",
       [recoveryMessage,contact]
     );
     await db.query(

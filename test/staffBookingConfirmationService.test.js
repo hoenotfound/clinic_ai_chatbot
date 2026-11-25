@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const {
   parseStaffConfirmedSlot,
   parseTerseStaffConfirmedSlot,
+  parseNaturalStaffConfirmedSlot,
+  isContextualStaffBookingConfirmed,
   isTerseBookingCorroborated,
   isStaffVisitAcknowledgement,
   isProactiveAppointmentReminder,
@@ -283,4 +285,57 @@ test("a failed reminder hold propagates and can be retried using the SAME provid
   await assert.rejects(service(1005,message,{providerAccepted:true,messageId:17279}),/transient postgres error/);
   assert.equal(await service(1005,message,{providerAccepted:true,messageId:17279}),null);
   assert.equal(calls,2);
+});
+
+
+test("real Neutro staff booking formats resolve only verified calendar slots",()=>{
+ const now=new Date("2026-11-23T05:00:00Z");
+ assert.equal(parseNaturalStaffConfirmedSlot(
+  "Regarding your appointment on nxt Thursday 26/11-1230pm is confirm ya ☺️",now),
+  "2026-11-26T04:30:00.000Z");
+ for(const text of [
+  "Regarding your appointment on next Thursday 25/11-1230pm is confirm ya",
+  "Regarding your appointment 26/11-1230pm is not confirmed",
+  "Can you confirm appointment 26/11-1230pm?",
+  "Regarding your appointment 31/11-1230pm is confirm ya",
+  "Appointment confirmed 26/11-1230pm maybe",
+ ])assert.equal(parseNaturalStaffConfirmedSlot(text,now),null,text);
+});
+
+test("real Neutro short staff confirmation needs recent customer slot and matching prior staff proposal",async()=>{
+ const now=new Date("2026-11-23T05:00:00Z");
+ const turns=[
+  {role:"assistant",sent_by_username:"WhatsApp Business App",
+   content:"24/11-12pm 可以吗？",created_at:"2026-11-22T01:01:00Z"},
+  {role:"user",content:"好的。。麻烦帮我安排12pm,24/11..",
+   created_at:"2026-11-22T03:32:16Z"},
+ ];
+ const finalAt="2026-11-22T03:33:29Z";
+ const text="好的☺️ confirm appointment ya 💚☺️";
+ assert.equal(isContextualStaffBookingConfirmed(text,turns,finalAt,now),
+   "2026-11-24T04:00:00.000Z");
+ assert.equal(isContextualStaffBookingConfirmed(text,
+  turns.filter(t=>t.role==="user"),finalAt,now),null);
+ assert.equal(isContextualStaffBookingConfirmed(text,[
+  turns[0],{...turns[1],content:"帮我安排25/11 12pm"}],finalAt,now),null);
+ assert.equal(isContextualStaffBookingConfirmed(text,[
+  ...turns,{role:"user",content:"不要了，取消",created_at:"2026-11-22T03:33:00Z"}],
+  finalAt,now),null);
+ const updates=[];
+ const service=createStaffBookingConfirmationService({
+  config:{businessType:"tcm_clinic"},now:()=>now,
+  database:{query:async()=>({rows:[{
+   id:22780,created_at:finalAt,prior_turns:turns,
+  }]})},
+  markPendingBooking:async()=>{throw Error("Verified booking must not go to review");},
+  pipeline:{
+   getActiveLeadForContact:async()=>({id:1687,appointment_status:"none",is_closed:false}),
+   updateLead:async(id,patch)=>{updates.push({id,patch});return patch;},
+  },
+ });
+ assert.equal(await service(9248,text,{providerAccepted:false,messageId:22780}),null);
+ assert.equal((await service(9248,text,{providerAccepted:true,messageId:22780})).appointmentStatus,"set");
+ assert.deepEqual(updates,[{id:1687,patch:{
+   appointmentStatus:"set",appointmentAt:"2026-11-24T04:00:00.000Z",
+ }}]);
 });

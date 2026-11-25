@@ -207,7 +207,14 @@ function listReusableMedia({ config = clinicConfig, now = Date.now() } = {}) {
     }
     addImage(promo.imageUrl, promo.name || "Promotion");
     for (const pkg of promo.packages || []) {
-      addImage(pkg.followUpImageUrl || pkg.imageUrl, (promo.name || "Promotion") + " — " + (pkg.name || pkg.title || "Package"), pkg.name || pkg.title);
+      const label = (promo.name || "Promotion") + " — " + (pkg.name || pkg.title || "Package");
+      // A newer customer-facing promotional graphic can differ from the
+      // original follow-up picture. Both may be used by an approved template,
+      // but the past-lead campaign must select the current imageUrl exactly.
+      addImage(pkg.imageUrl, label, pkg.name || pkg.title);
+      if (pkg.followUpImageUrl && pkg.followUpImageUrl !== pkg.imageUrl) {
+        addImage(pkg.followUpImageUrl, label + " (follow-up)", pkg.name || pkg.title);
+      }
     }
   }
   return result;

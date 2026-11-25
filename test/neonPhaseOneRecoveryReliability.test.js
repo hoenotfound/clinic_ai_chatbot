@@ -190,7 +190,7 @@ test("failed R2 deletion is stored for retry, wakes cleanup and later completes"
     repository: repo,
     storage,
     createWorkerTimer(options) {
-      cleanupOptions ||= options;
+      cleanupOptions = options;
       return {
         start() {},
         wake(ms) { wakeDelays.push(ms); return true; },

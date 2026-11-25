@@ -3,20 +3,24 @@
 // Existing AI intent flags classify the customer's request. Treatment identity
 // must come from customer evidence or an unambiguous verified Meta acquisition
 // context; all quoted prices must come from active configured offers.
-const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { safeServiceFromCustomer, hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
+const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService,
   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
+  isRecentPricingThread, isVerifiedStaffTurn, pricingMessageText,
+  assistantIntroducesCompetingPaidService,
 } = require("./priceFollowUpContext");
-const { verifiedPricesForService } = require("./verifiedPriceReply");
-const { getActivePromotions } = require("./activePromotion");
+const { verifiedPricesForService, staffQuoteMatchesConfiguredPrice } = require("./verifiedPriceReply");
+const { getActivePromotions, promotionPackages, findMentionedPromotionPackages } = require("./activePromotion");
 const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
-const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
+const { resolveIndependentRefusalPriceRequest, hasCustomerRefusedPriceQuote, hasScopedServiceCorrection } = require("./independentRefusalPriceRequest");
 const { resolveEstablishedTreatmentPrice } = require("./priceConversationRecovery");
+const { resolveStaffResultPriceContext } = require("./neutroStaffResultPriceContext");
 const { resolveCurrentOfferService, isCurrentOfferEnquiry, currentOfferRequestText } = require("./currentOfferEnquiry");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
@@ -26,7 +30,7 @@ const UNRELATED = /(?:停车|停車|营业|營業|开门|開門|几点|幾點|�
 // Obvious non-monetary questions must not become a price enquiry just
 // because a provider mistakenly sets priceQuery=true. A separate monetary
 // question in the same message still qualifies.
-const NON_MONETARY_ONLY = /(?:多久|多長|多长|幾分鐘|几分钟|幾小時|几小时|多少(?:时间|時間|次|回|疗程|療程)|幾次|几次|要做幾次|要做几次|\b(?:how\s+long|how\s+much\s+time|how\s+many\s+(?:sessions?|times?|treatments?)|berapa\s+(?:lama|masa|kali|sesi|jam|minit))\b)/iu;
+const NON_MONETARY_ONLY = /(?:多久|多長|多长|幾分鐘|几分钟|幾小時|几小时|多少(?:时间|時間|次|回|疗程|療程|人|(?:个|個)?部位|(?:个|個)?人)|(?:什么|什麼)价值|(?:什么|什麼)價值|幾次|几次|要做幾次|要做几次|\b(?:how\s+long|how\s+much\s+time|how\s+many\s+(?:sessions?|times?|treatments?|people|areas?)|berapa\s+(?:lama|masa|kali|sesi|jam|minit|orang))\b)/iu;
 const DEFINITE_MONEY = /(?:多少[钱錢]|[价價](?:格|钱|錢|位)|费[用]?|費用|幾[钱錢]|几[钱錢]|\b(?:price|pricing|cost|fee|harga|bayaran|rm|myr|ringgit)\b)/iu;
 const STALE_SERVICE_PRICE = /(?:\b(?:old|former|previous|expired|past|promotion|promo|special|offer|discount|trial|sale|campaign|voucher)\b|旧|舊|原价|原價|優惠|优惠|折扣|特价|特價|促销|促銷|限时|限時|过期|過期|活动|活動|曾经|曾經)/iu;
 const SINGLE_STANDING_PRICE = /^(?:(?:normal|regular|standard)\s+(?:price\s*)?[:：]?\s*)?(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?(?:\s*(?:per\s+(?:session|treatment)|\/\s*(?:session|treatment)|每次|一次))?$/iu;
@@ -377,7 +381,7 @@ function resolveAiPricingDecision({
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
-  allowVerifiedAdPricing = false, now = Date.now(),
+  allowVerifiedAdPricing = false, allowStaffResultPriceContext = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
   // A different treatment's refused quotation cannot veto a clearly
@@ -385,6 +389,9 @@ function resolveAiPricingDecision({
   const independentRequest = resolveIndependentRefusalPriceRequest({
     customerText: original, services, serviceAliases,
   });
+  if (!independentRequest && hasScopedServiceCorrection({
+    customerText: original, services, serviceAliases,
+  })) return null;
   const current = independentRequest?.priceText || original;
   if (independentRequest && hasClinicalMediaRisk(original)) return null;
   const explicitAmount = hasCurrentPriceAmountRequest(current);
@@ -404,6 +411,7 @@ function resolveAiPricingDecision({
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
+      hasFuturePromotionPermissionWithoutPrice(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current) &&
         !(allowOfferEnquiries && isCurrentOfferEnquiry(current,
           { modelOfferQuery: packageQuery === true }))) ||
@@ -411,6 +419,22 @@ function resolveAiPricingDecision({
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
 
+  // Same independently verified customer-selection rule in Enabled and
+  // Shadow. Neither a model flag nor the human image alone grants authority.
+  if (allowStaffResultPriceContext === true && !independentRequest) {
+    const selected = resolveStaffResultPriceContext({
+      customerText: current, conversationHistory, services, serviceAliases, now,
+    });
+    if (selected) {
+      const prices = verifiedPricesForService(selected.name, promotions, selected.priceText,
+        conversationHistory, { clarifiedPriceService: selected.name });
+      if (prices?.length) return Object.freeze({
+        type:"price", treatment:selected.name, source:"customer_staff_result_price",
+        clarifiedPriceService:selected.name, prices, servicePrice:null,
+      });
+      return null;
+    }
+  }
   const concernContinuation = resolveAnsweredConcernPriceService({
     customerText: current, conversationHistory, services, serviceAliases, now,
   });
@@ -418,7 +442,7 @@ function resolveAiPricingDecision({
     customerText: current, conversationHistory, services, serviceAliases, now,
   });
   const clarifiedPriceService = resolveClarifiedPriceService({
-    customerText: current, conversationHistory, services, serviceAliases,
+    customerText: current, conversationHistory, services, serviceAliases, now,
   });
   // Model intent alone must never turn a normal treatment question into an
   // unsolicited graphic. Clear keywords retain deterministic recovery if
@@ -465,6 +489,8 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
+    : clarifiedPriceService && conversationHistory.at(-1)?.verifiedQuotedMessage
+      ? { treatment: clarifiedPriceService, source: "customer_price_clarification" }
     : (() => {
         const customer = verifiedServiceAnchor({
           customerText: current, conversationHistory, services, serviceAliases,
@@ -517,6 +543,423 @@ function resolveAiPricingDecision({
   });
 }
 
+// Gemini classifies the current intent. Verify factual service/package evidence,
+// rather than requiring another affirmative price-keyword match.
+// Existing price-relative phrases are negative validation evidence only;
+// they cannot independently authorize a quote or override a model selection.
+function relativePackageReference(current) {
+  const cheaper=/(?:较便宜|較便宜|比较便宜|比較便宜|最便宜|更便宜|\b(?:cheaper|cheapest|lowest priced|lebih murah|paling murah)\b)/iu.test(current);
+  const dearer=/(?:较贵|較貴|比较贵|比較貴|最贵|最貴|更贵|更貴|\b(?:more expensive|most expensive|highest priced|lebih mahal|paling mahal)\b)/iu.test(current);
+  return {cheaper,dearer};
+}
+
+// Negative evidence only: a complete, ordinary introduction to a configured
+// service is not an amount request. Match the whole message around the
+// configured name/alias, not individual positive pricing keywords. Any
+// additional question remains for the model and existing validators.
+function isPlainNamedTreatmentInterest(current, candidate) {
+  if (!candidate || hasExplicitPriceRequest(current) ||
+      hasExplicitPackageOptionsRequest(current)) return false;
+  const key=value=>String(value||"").normalize("NFKC").toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu,"");
+  const text=key(current);
+  for (const term of candidate.terms) {
+    const name=key(term.value);
+    if (!name) continue;
+    const at=text.indexOf(name);
+    if(at<0) continue;
+    const before=text.slice(0,at), after=text.slice(at+name.length);
+    if (/^(?:(?:你好|您好|hi|hello))?(?:我)?(?:也|还|還|现在|現在|这次|這次)?(?:想|要|希望)(?:了解|知道|咨询|諮詢|问问|問問|看看|做|试试|試試)$/u.test(before) &&
+        /^(?:疗程|療程|护理|護理|治疗|治療|的资料|的資料|的介绍|的介紹|一下)?$/u.test(after)) return true;
+    if (/^(?:(?:hi|hello))?(?:im|iam|idlike|iwouldlike|iwant)(?:also)?(?:interestedin|toknowmoreabout|tolearnmoreabout|toknowabout|tolearnabout|tofindoutabout|totry|toaskabout)(?:the|your)?$/u.test(before) &&
+        /^(?:facial)?(?:treatment|care|service)?(?:please)?$/u.test(after)) return true;
+    if (/^(?:(?:hi|hello))?(?:saya)?(?:juga)?(?:berminat(?:dengan|tentang|untuk)?|nak(?:tahu(?:tentang)?|cuba)|mahu(?:tahu(?:tentang)?|cuba))(?:rawatan)?$/u.test(before) &&
+        /^(?:rawatan|care)?$/u.test(after)) return true;
+  }
+  return false;
+}
+
+// A delivered recommendation can establish a service only after the customer
+// participates in that particular treatment discussion. This is not a service
+// inference from symptoms, an ad, a CRM field or an isolated assistant name.
+function engagedRecommendationAnchor({turns, treatment, candidates, current, now}) {
+  const end=turns.length-1;
+  // The structured current price intent has already passed the outer
+  // negative gates. Do not require another positive price keyword.
+  // Reject ordinary concern/benefit statements and unscoped admin turns
+  // independently of the provider's pricing classification.
+  if (/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada|ok|okay|好的)[\s.!！。😊]*$/iu.test(current)) return -1;
+  if (/(?:有什么作用|有什麼作用|有什么好处|有什麼好處|怎么做|怎麼做|如何做|效果如何|会有效吗|會有效嗎|\b(?:what are the benefits|how does it work|what does it do|what is it|how is it done|what are the results|can it help|apa manfaat|bagaimana ia berfungsi)\b)/iu.test(current)) return -1;
+  const key=value=>String(value||"").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+  const stopWords=new Set("the and for with that this you your i me my we our it to a an is are was be am of in on at as what which where when would could can will how do does did have had want need like about please also saya awak anda yang dan untuk nak mahu ini itu boleh ada apa mana macam".split(" "));
+  const terms=value=>String(value||"").normalize("NFKC").toLowerCase()
+    .split(/[\s,，、。.!！?？;；:：/]+/u).map(key)
+    .filter(s=>s.length>=2&&!stopWords.has(s));
+  const overlaps=(answer,question)=>{
+    const normalized=String(question||"").normalize("NFKC").toLowerCase();
+    const words=new Set(normalized.match(/[a-z0-9]+/gu)||[]);
+    return terms(answer).some(s=>/^[a-z0-9]+$/u.test(s)
+      ? words.has(s) : key(normalized).includes(s));
+  };
+  const affirmative=/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada)[\s.!！。😊]*$/iu;
+  const polar=/(?:会不会|會不會|有没有|有沒有|是否|会经常|會經常|是不是|(?:吗|嗎)[?？]|\b(?:do you|are you|have you|is it|does it|adakah|ada tak|awak ada)\b)/iu;
+  const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
+    t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
+    !RESET.test(t.content) && !REFUSAL.test(t.content) &&
+    !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
+    !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
+    !hasExplicitPriceRequest(t.content) &&
+    !/^\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\s.!！。]*$/iu.test(t.content);
+  const engaged=(answer,question)=>meaningful(answer) &&
+    !/[?？]/u.test(answer.content) && /[?？]/u.test(question) &&
+    (overlaps(answer.content,question) || (affirmative.test(answer.content)&&polar.test(question)));
+  // A literal answer to the preceding concern question is not a new
+  // pricing enquiry even if the model mistakenly marks it commercial.
+  if (!hasExplicitPriceRequest(current) &&
+      engaged({role:"user",content:current},pricingMessageText(turns[end-1]))) return -1;
+  for (let i=end-2;i>=Math.max(1,end-8);i--) {
+    const t=turns[i], copy=pricingMessageText(t).trim();
+    if (t?.role!=="assistant" || t.pricingDeliveredBotMessage!==true ||
+        isVerifiedStaffTurn(t) || t.verifiedOutboundImageUrl ||
+        !findServicesInText(copy,candidates).includes(treatment) ||
+        assistantIntroducesCompetingPaidService(t,treatment,candidates) ||
+        !/[?？]/u.test(copy) || !isRecentPricingThread(turns,i-1,now)) continue;
+    const before=turns[i-1], answer=turns[i+1];
+    // Two independent conversational links: the bot reflects the customer's
+    // concern, and the customer answers a question about that recommendation.
+    // A generic yes/no answer alone, or a random nonempty message, is not proof.
+    if (!meaningful(before) || !engaged(answer,copy) ||
+        !overlaps(before.content,copy) ||
+        findServicesInText(before.content,candidates).some(name=>name!==treatment) ||
+        /\b(?:RM|MYR)\s*\d/iu.test(copy)) continue;
+    const safe=turns.slice(i+1,end).every((t,offset)=>{
+      const value=pricingMessageText(t);
+      if(t?.role==="user") {
+        const preceding=turns[i+offset];
+        return engaged(t,pricingMessageText(preceding)) &&
+          findServicesInText(value,candidates).every(name=>name===treatment);
+      }
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+          t.pricingDeliveredBotMessage!==true || t.verifiedOutboundImageUrl ||
+          /\b(?:RM|MYR)\s*\d/iu.test(value)) return false;
+      const names=findServicesInText(value,candidates);
+      if(names.length && names.every(name=>name==="1对1体态评估") &&
+          /(?:免费|免費|complimentary|free|percuma)/iu.test(value)) return true;
+      return !assistantIntroducesCompetingPaidService(t,treatment,candidates);
+    });
+    if(safe) return i;
+  }
+  return -1;
+}
+
+function resolveModelLedPricingDecision({
+  modelIntent, customerText, conversationHistory = [], services = [],
+  serviceAliases = [], promotions = [], allowOfferEnquiries = false,
+  complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
+} = {}) {
+  const original = String(customerText || "").trim();
+  const intent = modelIntent;
+  if (!intent || intent.structured !== true || intent.outcome !== "normal" ||
+      intent.pricingStage === "subsequent_session" ||
+      (intent.priceQuery !== true &&
+        !(allowOfferEnquiries && intent.packageQuery === true)) ||
+      !original || original.length > 600 || !Number.isFinite(now) ||
+      !services.some(s => s?.name === intent.treatment)) return null;
+  const independent = resolveIndependentRefusalPriceRequest({
+    customerText:original,services,serviceAliases,
+  });
+  if (independent && independent.treatment!==intent.treatment) return null;
+  if (!independent && (hasCustomerRefusedPriceQuote(original) ||
+      hasScopedServiceCorrection({customerText:original,services,serviceAliases}))) return null;
+  const current=independent?.priceText || original;
+  // Negative safety/permission gates remain independent of model output.
+  // The existing refusal resolver permits a distinctly requested NEW service.
+  if (isGreetingOrLanguageOnly(current) || hasClinicalMediaRisk(original) ||
+      SPECIFIC_ADMIN_FEE.test(original) || REFUSAL.test(current) ||
+      AD_NEGATED_TOPIC.test(current) || AD_BROAD_TOPIC.test(current) ||
+      /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(original) ||
+      isPurePriceObjection(current) || hasFuturePromotionPermissionWithoutPrice(current) ||
+      isContextualAdServiceEnquiry(current) ||
+      /^(?:谢谢(?:你|您)?|多谢|thanks?|thank you|terima kasih|tq|ok(?:ay)?|好的|好啊|明白了|了解了)[\s。.!！😊🙏]*$/iu.test(current) ||
+      /^(?:一次(?:就)?(?:有)?效(?:果)?(?:吗|嗎|么|呢)?|(?:how effective|does it work|will it work|berkesan(?: ke| tak)?)\b)[\s?？。.!！]*$/iu.test(current) ||
+      (UNRELATED.test(current) && !hasExplicitPriceRequest(current)) ||
+      (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
+      isComplimentaryAssessmentFeeQuestion(current,
+        complimentaryAssessmentExperienceEnabled, conversationHistory)) return null;
+
+  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const last = turns.at(-1);
+  if (last?.role !== "user" || typeof last.content !== "string" ||
+      last.content.trim() !== original ||
+      !isRecentPricingThread(turns, turns.length - 1, now)) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  const clarified = resolveClarifiedPriceService({customerText:original,conversationHistory:turns,services,serviceAliases,now});
+  if (clarified && clarified !== intent.treatment) return null;
+  const direct = safeServiceFromCustomer(current, services, serviceAliases);
+  const names = [...new Set(findServicesInText(current, candidates))];
+  const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();
+  // A bare service name is interest, not a price request, unless a preceding
+  // verified pricing clarification actually asked the customer to select it.
+  const namedCandidate=direct && candidates.find(c=>c.name===direct.name);
+  if (namedCandidate) {
+    const bare=namedCandidate.terms.some(t=>bareKey(t.value)===bareKey(current));
+    const introduction=isPlainNamedTreatmentInterest(current,namedCandidate);
+    if (bare || introduction) {
+      const clarified=resolveClarifiedPriceService({customerText:current,conversationHistory:turns,services,serviceAliases});
+      // A plain interest statement can inherit only an unanswered price
+      // clarification, not a price menu that already answered the question.
+      if (!clarified || (introduction && hasTreatmentPriceContent(pricingMessageText(turns.at(-2))))) return null;
+    }
+  }
+  if (names.length > 1 || (names.length && direct?.name !== intent.treatment) ||
+      (direct && direct.name !== intent.treatment) ||
+      (RESET.test(current) && !direct)) return null;
+  let anchorIndex=turns.length-1;
+  if (!direct) {
+    // Search the bounded recent conversation for the latest genuine
+    // customer-named service, allowing ordinary intermediate questions.
+    // An intervening contradictory selection or an unknown topic reset
+    // invalidates the older anchor. Never infer treatment solely from an ad,
+    // CRM label, isolated assistant recommendation or model guess.
+    anchorIndex=-1;
+    for (let i=turns.length-2;i>=0;i--) {
+      const turn=turns[i], at=turn?.pricingCreatedAtMs;
+      if (!Number.isFinite(at) || at>now+60_000) return null;
+      if (at<now-24*3600000) break;
+      if (turn.role!=="user") continue;
+      if (typeof turn.content!=="string") return null;
+      const prior=pricingMessageText(turn).trim();
+      if (!prior || RESET.test(prior) || REFUSAL.test(prior) ||
+          AD_NEGATED_TOPIC.test(prior) || AD_BROAD_TOPIC.test(prior) ||
+          hasClinicalMediaRisk(prior)) return null;
+      const mentioned=[...new Set(findServicesInText(prior,candidates))];
+      if (!mentioned.length) continue;
+      if (mentioned.length!==1 || mentioned[0]!==intent.treatment ||
+          safeServiceFromCustomer(prior,services,serviceAliases)?.name!==intent.treatment) return null;
+      anchorIndex=i;
+      break;
+    }
+    const recommendationOnly=anchorIndex<0;
+    if (recommendationOnly) anchorIndex=engagedRecommendationAnchor({turns,treatment:intent.treatment,candidates,current,now});
+    if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
+    const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
+    // Assistant explanations and generic safety disclaimers are not customer
+    // symptoms. An older bot introduction may name several applications;
+    // use the most recent explicitly named service context, while retaining
+    // independent customer, staff, and current clinical/safety vetoes.
+    const latestNamedResponse=responses.findLast(t=>
+      findServicesInText(pricingMessageText(t),candidates).length>0);
+    if (!recommendationOnly && (!latestNamedResponse ||
+        !findServicesInText(pricingMessageText(latestNamedResponse),candidates)
+          .includes(intent.treatment) ||
+        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates))) return null;
+  }
+  // Known readable staff assistance is conversation evidence, not a
+  // takeover. Unknown/deleted echoes and unverified/conflicting staff prices
+  // cannot supply a new price authorization. Live ownership is checked by
+  // the existing send boundary; clinical context remains a hard veto.
+  for (let i=turns.length-2;i>=0;i--) {
+    const t=turns[i], at=t?.pricingCreatedAtMs;
+    if (!Number.isFinite(at) || at>now+60_000) return null;
+    if (at<now-24*3600000) break;
+    const content=pricingMessageText(t);
+    if (hasClinicalMediaRisk(content) &&
+        (t.role==="user" || (i>=anchorIndex && isVerifiedStaffTurn(t)))) return null;
+    if (isVerifiedStaffTurn(t) && i>=anchorIndex &&
+        (!(t.pricingDeliveredStaffImage===true || t.pricingVerifiedStaffText===true) ||
+         t.pricingBusinessAppPlaceholder===true || /\[unsupported|message deleted/iu.test(content) ||
+         /\b(?:RM|MYR)\s*\d|[价價][钱錢格位]|\b(?:price|cost|harga)\b/iu.test(content) ||
+         assistantIntroducesCompetingPaidService(t,intent.treatment,candidates))) return null;
+  }
+
+  // Verify all configured options first, then honor Gemini's single package
+  // only when supported by a customer mention or a verified preceding menu.
+  const active=getActivePromotions(promotions,new Date(now))
+    .filter(p=>p.linkedService===intent.treatment && p.sendOnPriceQuery===true);
+  if (active.length!==1) return null;
+  const options=promotionPackages(active[0]);
+  const all=verifiedPricesForService(intent.treatment,promotions,"",[],
+    {allowTextOnlyOffers:true});
+  if (!all?.length || all.length!==options.length) return null;
+  const mentioned=findMentionedPromotionPackages(options,current);
+  let prices=all;
+  if (intent.promotionOption != null) {
+    const selected=all.find(p=>p.name===intent.promotionOption);
+    if (!selected || mentioned.length>1 ||
+        (mentioned.length===1 && mentioned[0].name!==selected.name)) return null;
+    // For an indirect reference, only accept a choice grounded in the same
+    // customer's explicit package selection or the latest bot menu showing
+    // verified current amounts. A bounded run of delivered, exact matching
+    // package artwork can follow the menu without erasing its context.
+    let menuIndex=turns.length-2;
+    const matchingImages=new Set(options.map(p=>p.imageUrl).filter(Boolean));
+    let skipped=0;
+    while(menuIndex>anchorIndex && skipped<options.length){
+      const t=turns[menuIndex];
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+         t.pricingDeliveredBotMessage!==true ||
+         !matchingImages.has(t.verifiedOutboundImageUrl)) break;
+      menuIndex--;skipped++;
+    }
+    const previous=turns[menuIndex];
+    const previousText=pricingMessageText(previous);
+    const priorCustomer=turns.slice(anchorIndex,-1).findLast(t=>t.role==="user");
+    const priorChoice=findMentionedPromotionPackages(options,pricingMessageText(priorCustomer));
+    const listed=findMentionedPromotionPackages(options,previousText);
+    const menuSupports=previous?.role==="assistant" && !isVerifiedStaffTurn(previous) &&
+      (!skipped || (previous.pricingDeliveredBotMessage===true &&
+        !previous.verifiedOutboundImageUrl)) &&
+      !assistantIntroducesCompetingPaidService(previous,intent.treatment,candidates) &&
+      findServicesInText(previousText,candidates).includes(intent.treatment) &&
+      listed.length>1 && all.every(p=>{
+        // Non-monetary voucher explanations may repeat the package label.
+        // Only price-bearing rows supply amounts, and conflicting amounts
+        // on any additional labelled monetary row still invalidate the menu.
+        const lines=previousText.split(/\n+/u).filter(line=>
+          /\b(?:RM|MYR)\s*[0-9]/iu.test(line) &&
+          findMentionedPromotionPackages(options,line).some(o=>o.name===p.name));
+        return lines.length===1 && lines.every(line=>{
+          const named=findMentionedPromotionPackages(options,line);
+          const amounts=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?!\d)/giu)];
+          return named.length===1 && amounts.length===1 &&
+            "RM"+amounts[0][1]===p.price;
+        });
+      });
+    if (!mentioned.length && !(priorChoice.length===1 && priorChoice[0].name===selected.name) &&
+        !menuSupports && options.length!==1) return null;
+    // Price-relative references must agree with the actual uniquely cheapest
+    // or highest-priced option. Other semantic references rely on a grounded
+    // menu and the model; do not treat ambiguous price ties as a selection.
+    if (!mentioned.length && options.length>1) {
+      const {cheaper,dearer}=relativePackageReference(current);
+      if (cheaper || dearer) {
+        if (!menuSupports || (cheaper && dearer)) return null;
+        const amount=p=>Number(p.price.slice(2));
+        const target=(cheaper?Math.min:Math.max)(...all.map(amount));
+        const matching=all.filter(p=>amount(p)===target);
+        if (matching.length!==1 || matching[0].name!==selected.name) return null;
+      }
+    }
+    prices=[selected];
+  } else if (mentioned.length===0 && options.length>1 &&
+      Object.values(relativePackageReference(current)).some(Boolean)) {
+    // A missing model selection is not authorization to quote every package.
+    return null;
+  } else if (mentioned.length===1) {
+    // A specific customer choice cannot be silently widened to all packages.
+    return null;
+  } else if (mentioned.length>1) {
+    // Explicit comparisons retain the existing text-only graphic policy.
+    prices=all.filter(p=>mentioned.some(o=>o.name===p.name));
+  }
+  return Object.freeze({
+    type:intent.priceQuery===true ? "price" : "package_options",
+    treatment:intent.treatment,source:independent?"current_customer":"model_led_customer_context",
+    clarifiedPriceService:intent.treatment,prices,servicePrice:null,
+    ...(independent?{scopedPriceText:independent.priceText,scopedRefusedTreatment:independent.refusedTreatment}:{}),
+  });
+}
+
+// A recent, conflicting staff quote is a commercial veto, not a reason
+// to fall back to an older keyword-based decision. Only inspect staff
+// prices relevant to the currently established treatment.
+function hasConflictingStaffPrice({treatment,conversationHistory=[],services=[],
+  serviceAliases=[],promotions=[],now=Date.now()}={}){
+  if (!treatment || !Array.isArray(conversationHistory)) return false;
+  const candidates=serviceCandidates(services,serviceAliases);
+  const verified=verifiedPricesForService(treatment,promotions,"",[],{allowTextOnlyOffers:true});
+  for(let i=conversationHistory.length-2;i>=0;i--){
+    const turn=conversationHistory[i],at=turn?.pricingCreatedAtMs;
+    if(!Number.isFinite(at)||at<now-24*3600000||at>now+60_000) break;
+    const content=pricingMessageText(turn);
+    const names=findServicesInText(content,candidates);
+    if(turn.role==="user" && names.length && !names.includes(treatment)) break;
+    if(!isVerifiedStaffTurn(turn) || (names.length && !names.includes(treatment))) continue;
+    if (!/\b(?:RM|MYR)\s*\d/iu.test(content.normalize("NFKC"))) continue;
+    const active=getActivePromotions(promotions,new Date(now))
+      .filter(p=>p.linkedService===treatment && p.sendOnPriceQuery===true);
+    if (!verified?.length || active.length!==1 || names.length>1) return true;
+    const options=promotionPackages(active[0]);
+    const matches=(copy,option)=>{
+      const price=verified.find(p=>p.name===option.name);
+      return Boolean(price && staffQuoteMatchesConfiguredPrice(copy,option.pricing,price));
+    };
+    if (options.length===1) {
+      if (!matches(content,options[0])) return true;
+      continue;
+    }
+    // Associate labelled package blocks, including continuation lines with
+    // original prices and voucher terms, before checking payable amounts.
+    const groups=[];
+    let group=null;
+    for (const line of content.split(/\n+/u)) {
+      const named=findMentionedPromotionPackages(options,line);
+      if(named.length>1) return true;
+      if(named.length===1) {
+        if(group?.option.name!==named[0].name){
+          group={option:named[0],lines:[]};groups.push(group);
+        }
+      }
+      if(group)group.lines.push(line);
+      else if(/\b(?:RM|MYR)\s*\d/iu.test(line))return true;
+    }
+    if(!groups.length || groups.some(g=>!matches(g.lines.join("\n"),g.option)))return true;
+  }
+  return false;
+}
+
+// A failed semantic package selection must not widen into an unrelated
+// legacy menu. Preserve independently established special cases and direct
+// customer package selections that exactly match a verified legacy quote.
+function shouldBlockRejectedModelPricing({mode,modelIntent,semanticCandidate,
+  semanticApproval,legacyApproval,hasSpecialDecision=false,customerText,
+  promotions=[]}={}){
+  // Returning-treatment recovery proves the treatment, not permission to
+  // widen a verified or requested package. Other protected paths stay intact.
+  const returning=legacyApproval?.decision?.source==="customer_returning_treatment_price";
+  const requestedPackageScope=modelIntent?.promotionOption!=null ||
+    Object.values(relativePackageReference(String(customerText||""))).some(Boolean);
+  if(mode!=="enabled" || (hasSpecialDecision && !(returning && requestedPackageScope)) || semanticApproval?.decision ||
+    !modelIntent?.structured || modelIntent.outcome!=="normal" ||
+    !(modelIntent.priceQuery===true || modelIntent.packageQuery===true))return false;
+  const legacy=legacyApproval?.decision;
+  if(semanticCandidate)return true; // final commercial rejection
+  if(modelIntent.promotionOption!=null){
+    const active=getActivePromotions(promotions)
+      .filter(p=>p.linkedService===modelIntent.treatment && p.sendOnPriceQuery===true);
+    const named=active.length===1
+      ? findMentionedPromotionPackages(promotionPackages(active[0]),customerText):[];
+    return !(named.length===1 && named[0].name===modelIntent.promotionOption &&
+      legacy?.treatment===modelIntent.treatment && legacy.prices?.length===1 &&
+      legacy.prices[0].name===named[0].name);
+  }
+  if (Object.values(relativePackageReference(String(customerText||""))).some(Boolean)) {
+    const active=getActivePromotions(promotions)
+      .filter(p=>p.linkedService===modelIntent.treatment && p.sendOnPriceQuery===true);
+    if(active.length===1 && promotionPackages(active[0]).length>1) return true;
+  }
+  return Boolean(legacy && modelIntent.treatment && legacy.treatment!==modelIntent.treatment);
+}
+
+// Enabled prioritizes a validated Gemini decision. Final legacy rejection
+// and distinct special-case authorities remain protected. A broader verified
+// returning-treatment quote can yield only to an exact approved subset.
+function shouldApplyModelLedPricing({mode,legacyCandidate,
+  legacyApproval,semanticApproval,hasSpecialDecision=false}={}){
+  const legacy=legacyApproval?.decision, semantic=semanticApproval?.decision;
+  if(mode!=="enabled" || !semantic || (legacyCandidate && !legacy)) return false;
+  if(!hasSpecialDecision) return true;
+  // Only this broad returning-customer fallback may yield to a narrower
+  // independently approved package scope. Do not change treatment, amounts,
+  // or override other protected special decisions or a final rejection.
+  return legacy?.source==="customer_returning_treatment_price" &&
+    legacy.type==="price" && semantic.type==="price" &&
+    legacy.treatment===semantic.treatment &&
+    Array.isArray(legacy.prices) && Array.isArray(semantic.prices) &&
+    semantic.prices.length>0 && semantic.prices.length<legacy.prices.length &&
+    semantic.prices.every(p=>legacy.prices.some(old=>old.name===p.name && old.price===p.price));
+}
+
 // Use the same customer-authored evidence at the outbound text boundary as
 // at the optional promotion decision. Never ask for pricing clarification just
 // because a model wrongly returned priceQuery=true on a service question.
@@ -535,4 +978,4 @@ function hasCustomerRequestedPriceReply({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };

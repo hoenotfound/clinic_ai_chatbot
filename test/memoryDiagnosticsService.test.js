@@ -100,7 +100,14 @@ test("Render memory sampling uses an unref'd interval and never throws on loggin
   // The existing once-per-minute timer emits a separate, single-line
   // diagnostic string every fifth sample, without a second timer.
   for (let i = 0; i < 3; i++) assert.doesNotThrow(callback);
-  assert.equal(reports, 7);
+  assert.equal(reports, 8);
+  const dueLogs = entries.filter(([message]) =>
+    String(message).startsWith("[Secondary due scheduling] "));
+  assert.equal(dueLogs.length, 1,
+    "secondary due counters reuse the existing five-minute tick");
+  assert.equal(dueLogs[0].length, 1);
+  assert.ok(Array.isArray(JSON.parse(dueLogs[0][0].slice(
+    "[Secondary due scheduling] ".length)).counters));
   const diagnosticLogs = entries.filter(([message]) =>
     String(message).startsWith("[Refresh/wake diagnostics] "));
   assert.equal(diagnosticLogs.length, 1);

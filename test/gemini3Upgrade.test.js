@@ -109,14 +109,14 @@ test("Setup Status checks the same 3.8 primary when no model env override exists
   assert.equal(result.model, "gemini-3.8-flash");
 });
 
-test("both Gemini 3 reply models use low thinking by default", () => {
+test("Gemini reply models use model-specific thinking defaults", () => {
   assert.deepEqual(
     geminiService.buildThinkingConfig("gemini-3.8-flash", {}),
     { thinkingLevel: "low" }
   );
   assert.deepEqual(
     geminiService.buildThinkingConfig("gemini-3.5-flash-lite", {}),
-    { thinkingLevel: "low" }
+    { thinkingLevel: "minimal" }
   );
   assert.deepEqual(
     geminiService.buildThinkingConfig("gemini-3.8-flash", {
@@ -188,4 +188,99 @@ test("default 3.8 capacity failure switches directly to 3.5 Flash-Lite", async (
     resetGeminiKeyPoolState();
     resetGeminiModelHealth();
   }
+});
+
+test("Flash-Lite uses a larger output allowance and the correct structured schema for each reply surface", () => {
+  const messages = [{ role: "user", content: "多少钱？" }];
+  for (const surface of ["conversation", "follow_up"]) {
+    const { request } = geminiService.buildGeminiRequest(messages, { surface }, "gemini-3.5-flash-lite");
+    assert.equal(request.config.maxOutputTokens, 2048);
+    assert.equal(request.config.responseMimeType, "application/json");
+    assert.ok(request.config.responseJsonSchema);
+    if (surface === "conversation") {
+      for (const field of ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "businessLocationOnly", "projectLocation", "projectSummary", "nextStep", "staffSummary"]) {
+        assert.ok(request.config.responseJsonSchema.required.includes(field), field);
+      }
+    } else {
+      assert.deepEqual(request.config.responseJsonSchema.required, ["action", "message", "reason", "topic"]);
+    }
+  }
+  const { request } = geminiService.buildGeminiRequest(messages, {}, "gemini-3.8-flash");
+  assert.equal(request.config.maxOutputTokens, 1200);
+  assert.equal(request.config.responseJsonSchema, undefined);
+  assert.deepEqual(geminiService.buildThinkingConfig("gemini-3.5-flash-lite", { GEMINI_FLASH_LITE_THINKING_LEVEL: "low" }), { thinkingLevel: "low" });
+  assert.deepEqual(geminiService.buildThinkingConfig("gemini-3.5-flash-lite", { GEMINI_FLASH_LITE_THINKING_LEVEL: "bad" }), { thinkingLevel: "minimal" });
+});
+
+test("Flash-Lite invalid JSON is not retried or rotated across credentials", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const original = geminiService.getReply;
+  const calls = [];
+  geminiService.getReply = async (_messages, _options, apiKey, model) => {
+    calls.push({ apiKey, model });
+    if (model === "gemini-3.8-flash") {
+      const err = new Error("This model is currently experiencing high demand.");
+      err.status = 503;
+      throw err;
+    }
+    return '{"reply":';
+  };
+  try {
+    await assert.rejects(() => runGeminiReply([{ role: "user", content: "Hi" }],
+      { channel: "whatsapp", privateSetupCheck: true }, { GEMINI_API_KEYS: "key-a,key-b", GEMINI_REPLY_5XX_RETRY_COUNT: "1" },
+      { hasLaterProvider: true }));
+    assert.deepEqual(calls, [
+      { apiKey: "key-a", model: "gemini-3.8-flash" },
+      { apiKey: "key-a", model: "gemini-3.5-flash-lite" },
+    ]);
+  } finally {
+    geminiService.getReply = original;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
+test("when another provider is available, a final Gemini capacity failure does not retry or rotate keys", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const original = geminiService.getReply;
+  const calls = [];
+  geminiService.getReply = async (_messages, _options, apiKey, model) => {
+    calls.push({ apiKey, model });
+    const err = new Error("This model is currently experiencing high demand.");
+    err.status = 503;
+    throw err;
+  };
+  try {
+    await assert.rejects(() => runGeminiReply([{ role: "user", content: "Hi" }],
+      { channel: "whatsapp", privateSetupCheck: true }, { GEMINI_API_KEYS: "key-a,key-b", GEMINI_REPLY_5XX_RETRY_COUNT: "1" },
+      { hasLaterProvider: true }));
+    assert.deepEqual(calls, [
+      { apiKey: "key-a", model: "gemini-3.8-flash" },
+      { apiKey: "key-a", model: "gemini-3.5-flash-lite" },
+    ]);
+  } finally {
+    geminiService.getReply = original;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
+test("corrective Flash-Lite request adjusts generation without dropping business rules or schema", () => {
+  const messages = [{ role: "user", content: "多少钱？" }];
+  for (const surface of ["conversation", "follow_up"]) {
+    const first = geminiService.buildGeminiRequest(messages, { surface }, "gemini-3.5-flash-lite").request;
+    const retry = geminiService.buildGeminiRequest(messages, { surface }, "gemini-3.5-flash-lite", { correctiveRetry: true }).request;
+    assert.equal(first.config.maxOutputTokens, 2048);
+    assert.equal(retry.config.maxOutputTokens, 3072);
+    assert.deepEqual(retry.config.thinkingConfig, { thinkingLevel: "minimal" });
+    assert.deepEqual(retry.config.responseJsonSchema, first.config.responseJsonSchema);
+    assert.deepEqual(retry.contents, first.contents);
+    assert.ok(retry.config.systemInstruction.startsWith(first.config.systemInstruction));
+    assert.match(retry.config.systemInstruction, /OUTPUT RECOVERY/);
+  }
+  const primary = geminiService.buildGeminiRequest(messages, { surface: "conversation" }, "gemini-3.8-flash", { correctiveRetry: true }).request;
+  assert.equal(primary.config.maxOutputTokens, 1200);
+  assert.doesNotMatch(primary.config.systemInstruction, /OUTPUT RECOVERY/);
 });

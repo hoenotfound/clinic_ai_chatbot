@@ -21,6 +21,7 @@ const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require(
 const { isSimpleVisitTimingQuestion, safeVisitTimingReply } = require("../src/utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("../src/utils/appointmentCancellationSafety");
 const { scopeForPersistedContact } = require("../src/utils/verifiedWhatsAppEventScope");
+const { needsUnverifiedPulseDepthReview } = require("../src/utils/neutroUnverifiedPulseDepth");
 
 // Execute the actual production handler and tracked text-sending functions,
 // not a reimplementation of the handler's control flow. Only external
@@ -80,7 +81,9 @@ function harness({ failDelivery = false } = {}) {
   const context = {
     console: { error: (...args) => state.errors.push(args.join(" ")), log: () => {}, warn: () => {}, info: () => {} },
     process, setTimeout, clearTimeout, Buffer,
+    resolveContactPricingMode: args => require("../src/utils/pricingTestContact").resolveContactPricingMode({...args,env:{}}),
     scopeForPersistedContact,
+    needsUnverifiedPulseDepthReview,
     aiReplyCancellation: {
       keyForWhatsAppNumber: () => "whatsapp:test", snapshot: () => 0,
       safeToSend: () => state.allowSend,
@@ -139,6 +142,12 @@ function harness({ failDelivery = false } = {}) {
     categorizeAiReview,
     hasClinicalMediaRisk,
     isUrinaryLeakageConcern,
+    isBreastLumpConcern: () => false,
+    isRm68ClinicalConcern: () => false,
+    isExplicitRm68Interest: () => false,
+    hasCampaignConversation: () => false,
+    stillDiscussingCampaign: () => false,
+    sanitizeRm68BookingReadyDetails: ({ details }) => details,
     planNeutroReviewContinuation,
     nonUrgentUrinaryAcknowledgement,
     isComplimentaryAssessmentFeeQuestion,

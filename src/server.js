@@ -3,6 +3,7 @@ require("dotenv").config();
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
 const channelMessaging = require("./services/channelMessagingService");
+const {resolveContactPricingMode}=require("./utils/pricingTestContact");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
@@ -25,10 +26,11 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
+const { guardAppointmentReply, guardAiAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -38,16 +40,22 @@ const { clarifyFreeAssessmentAndPaidTrial } = require("./utils/returningTrialPri
 const { resolveTwoTreatmentPriceReply, resolveFacialCategoryPriceReply,
   resolveVerifiedStaffFacialPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartumBudgetQuote");
-const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
+const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
+const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPulseDepth");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
-const { appendRequestedBusinessFacts,correctUnsupportedBranchReply } = require("./utils/verifiedPricingBusinessFacts");
+const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
+  confirmedSingleBranchLocationAnswer, verifyLocationDraft, isBusinessLocationQuestion } =
+  require("./utils/verifiedPricingBusinessFacts");
+const { administrativeReviewReply,
+  isStandalonePriceQuestion: isStandaloneNeutroPriceQuestion } =
+  require("./utils/neutroAdministrativeReviewReply");
 const {isSimpleVisitTimingQuestion,safeVisitTimingReply}=require("./utils/plainVisitSchedulingReply");
 const {isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement}=require("./utils/appointmentCancellationSafety");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -63,9 +71,14 @@ const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const secondaryFollowUpTreatmentRepo = require("./db/whatsappSecondaryFollowUpTreatmentRepo");
+const neutroRm68InterestRepo = require("./db/neutroRm68InterestRepo");
+const {isRm68ClinicalConcern,isExplicitRm68Interest}=
+  require("./utils/neutroRm68InterestEvidence");
+const {sanitizeRm68BookingReadyDetails}=require("./utils/neutroRm68BookingSafety");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
-const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern } =
+const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
+  isBreastLumpConcern } =
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
@@ -79,12 +92,15 @@ const {
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
-const { campaignContextReply, guardCampaignPriceConflicts,
-  configuredFirstReplyImage, isCampaignAvailabilityQuestion } =
+const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
+const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement, alternativeDateRequest, campaignDateScope, campaignDay,
+  recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
+  configuredFirstReplyImage, isCampaignAvailabilityQuestion,
+  hasCampaignConversation,stillDiscussingCampaign,campaignContinuationPolicy,campaignHasVerifiedNewService } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
+const { correctReplyLanguage, clearReplyLanguageMismatch } = require("./utils/replyLanguageGuard");
 const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -103,12 +119,15 @@ const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { isSecondaryAiReplyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
 const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsappSecondarySupervisedAiTextTest");
+const { manualOnlySecondaryAttention } = require("./utils/manualOnlySecondaryAttention");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   build131060RecoveryReply, canSend131060Recovery,
-  recoveryTreatmentButtons, validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
+  recoveryTreatmentGroups, isOtherRecoverySelection, scopeRecoveryCommercialHistory,
+  priorRecoveryClinicalContext,
+  validRecoveryTreatmentButtons, readableHistoryForRecoverySelection,
   getVerifiedRecoveryHistoryProof,
 } = require("./services/whatsapp131060Recovery");
 const {
@@ -118,6 +137,7 @@ const {
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
+const { isProvenPreProviderBlock } = require("./services/whatsappSecondaryPreSendDeferral");
 const { sendSecondaryStaffText } = require("./services/whatsappSecondaryStaffDispatch");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
@@ -221,7 +241,7 @@ async function sendTrackedText(
   text,
   origin = "ai_reply",
   { canSend = null, processingJobId = null, latePreSendCheck = null,
-    interactiveButtons = null, reviewReplyToInboundMessageId = null } = {}
+    interactiveButtons = null, recoveryContinuationButtons = null, reviewReplyToInboundMessageId = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -291,7 +311,7 @@ async function sendTrackedText(
       contactId: contact.id,
       content: text,
       origin,
-      interactiveButtons,
+      interactiveButtons, recoveryContinuationButtons,
     });
     if (reservation.alreadyStarted) {
       const err = new Error(
@@ -325,6 +345,7 @@ async function sendTrackedText(
     );
   }
 
+  if (recoveryContinuationButtons && processingJobId) recoveryContinuationQueue.wake();
   const socialProviderRecorder = messagesRepo.socialProviderAliasRecorder(
     saved.id,
     contact.channel
@@ -446,7 +467,15 @@ async function sendTrackedText(
   if (!sendResult.success) {
     let retryQueued = false;
 
+    // This exact secondary billing-gate refusal happened before any Meta
+    // request or billing reservation. Reuse the durable outbound retry queue,
+    // but never admit unknown/ambiguous outcomes or recovery-button messages.
+    const provenSecondaryPreProviderBlock =
+      secondaryAutomatedText && origin === "ai_reply" &&
+      interactiveButtons == null && isProvenPreProviderBlock(sendResult);
+
     if (
+      provenSecondaryPreProviderBlock || (
       contact.channel === "whatsapp" &&
       // Generic retries use primary Cloud API credentials. A secondary
       // sender must never enter that queue, even on a transient failure.
@@ -457,6 +486,7 @@ async function sendTrackedText(
       sendResult.retryable === true &&
       sendResult.ambiguous !== true &&
       ["ai_reply", "system_fallback"].includes(origin)
+      )
     ) {
       try {
         const queued = await whatsappOutboundRetry.queueTextRetry({
@@ -465,6 +495,8 @@ async function sendTrackedText(
           recipient: contact.whatsapp_number,
           origin,
           sendResult,
+          secondaryPreProviderCode: provenSecondaryPreProviderBlock
+            ? sendResult.code : null,
         });
         retryQueued = Boolean(queued);
         if (retryQueued) {
@@ -496,7 +528,11 @@ async function sendTrackedText(
       recordReadinessSendEvidence(saved, contact, sendResult, origin);
     }
   } else {
-    recordReadinessSendEvidence(saved, contact, sendResult, origin);
+    if (recoveryAnchor != null) {
+      await recordReadinessSendEvidence(saved, contact, sendResult, origin);
+      if (recoveryContinuationButtons) recoveryContinuationQueue.wake();
+    }
+    else recordReadinessSendEvidence(saved, contact, sendResult, origin);
   }
 
   return { finalMessage, sendResult };
@@ -757,10 +793,46 @@ async function processIncomingMessage(
         aiReplyCancellation.inboundMessageCanSend(savedInbound.id)
       : null;
 
+    // A customer's own explicit RM68 enquiry may classify the lead even
+    // when secondary conversation AI is disabled. No outbound action or
+    // permission is implied. Clinical and sender safety gates stay intact.
+    if(channel==="whatsapp" && !mediaType && !unsupportedType &&
+       typeof incoming.text==="string" && incoming.text.trim()){
+      try {
+        await neutroRm68InterestRepo.recordRm68CustomerInterest({
+          contactId:contact.id,messageId:savedInbound.id,
+          text:incoming.text,clinicConfig,
+        });
+      } catch(error){
+        console.warn("[RM68 lead interest] categorization unavailable:",error?.message);
+      }
+    }
+
     // Skip ordinary excluded text before lead scoring, model generation,
     // pricing/media selection and assistant draft creation. The inbound
     // remains saved and unread for staff in the secondary Inbox.
     if (secondaryInboxOnly && !mediaType && !unsupportedType) {
+      // An imported/old secondary contact is intentionally staff-managed.
+      // Do not start AI, but do not silently lose urgent scheduling or
+      // health questions either. Do not overwrite an existing staff review,
+      // or alert after staff has already answered this exact inbound turn.
+      const actionable=manualOnlySecondaryAttention(incoming.text);
+      if(actionable &&
+         !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
+        try {
+          if(actionable.kind==="health" && contact.mode==="ai"){
+            // Manual-only does not imply AI eligibility. Record the original
+            // clinical question for staff without sending any AI reply.
+            await contactsRepo.setAiReviewAttention(
+              contact.id,savedInbound.id,
+              String(incoming.text||"").trim().slice(0,350),"clinical");
+          } else if(!contact.needs_attention){
+            await contactsRepo.setAttention(contact.id,true,actionable.reason);
+          }
+        } catch(err){
+          console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
+        }
+      }
       return { wasFirstMessage, keywordReason };
     }
 
@@ -796,13 +868,15 @@ async function processIncomingMessage(
           });
           if (recoveryAllowed && (!canSendAutomatedReply ||
               canSendAutomatedReply() === true)) {
+            const [firstButtons,secondButtons]=recoveryTreatmentGroups(clinicConfig);
             await sendTrackedText(
-              contact, build131060RecoveryReply(incoming, clinicConfig),
+              contact, build131060RecoveryReply(incoming, clinicConfig, true),
               "system_fallback",
               {
                 canSend: canSendAutomatedReply,
                 processingJobId,
-                interactiveButtons: recoveryTreatmentButtons(),
+                interactiveButtons: firstButtons,
+                recoveryContinuationButtons: secondButtons,
                 reviewReplyToInboundMessageId: savedInbound.id,
                 latePreSendCheck: (reservedMessageId) =>
                   canSend131060Recovery({
@@ -1245,6 +1319,21 @@ async function processIncomingMessage(
     const readableRecoveryHistory = readableHistoryForRecoverySelection(
       history, recoveryPromptProof
     );
+    // Resolve only the recovered informational review, never a clinical,
+    // booking, opt-out, or delivery review. Accept configured bare service names
+    // and ordinary unambiguous enquiries as well as the exact menu titles.
+    if (recoveryPromptProof && !keywordReason && !urgentSafety &&
+      (isOtherRecoverySelection(text) || bareServiceName(text,clinicConfig.services,clinicConfig.serviceAliases) ||
+       recoveryTreatmentGroups(clinicConfig).flat().filter(button=>button.id!=="neutro_131060_other").some(button =>
+        button.title.normalize("NFKC").replace(/\s+/g,"").toLowerCase() ===
+        String(text||"").normalize("NFKC").replace(/\s+/g,"").toLowerCase()))) {
+      try {
+        await contactsRepo.resolveRecovered131060Review(
+          contact.id,recoveryPromptProof.unavailable_message_id);
+      } catch (err) {
+        console.warn("[Meta 131060 recovery] Review resolution unavailable:",err?.message);
+      }
+    }
     const mediaLanguage = detectReplyConversationLanguage(
       readableRecoveryHistory
         .slice()
@@ -1253,14 +1342,19 @@ async function processIncomingMessage(
         .map((message) => message.content)
     );
     const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
+    const commercialHistory = secondaryAiConversation ? scopeRecoveryCommercialHistory(history) : history;
+    const recoveryOther = Boolean(recoveryPromptProof && isOtherRecoverySelection(text));
+    const recoveryTopicReset = commercialHistory !== history;
     // Keep the actual customer message intact in Neon. Only the model's
     // current-turn context is narrowed to the separately asked service question
     // so it cannot interpret the marketing refusal as a request for a deal.
+    const modelContextHistory = recoveryTopicReset ? scopeRecoveryCommercialHistory(readableRecoveryHistory) : readableRecoveryHistory;
+    const priorClinicalContext = recoveryTopicReset ? priorRecoveryClinicalContext(readableRecoveryHistory,hasClinicalMediaRisk) : [];
     const replyHistory = marketingStopQuestion
-      ? readableRecoveryHistory.map((entry, index) =>
-          index === readableRecoveryHistory.length - 1 && entry?.role === "user"
+      ? modelContextHistory.map((entry, index) =>
+          index === modelContextHistory.length - 1 && entry?.role === "user"
             ? { ...entry, content: marketingStopQuestion } : entry)
-      : readableRecoveryHistory;
+      : modelContextHistory;
     const isFirstMessage = forceFirstMessage || history.length === 1 ||
       verifiedFirstReadableAd;
     const customerMessages = readableRecoveryHistory.filter((message) => message?.role === "user");
@@ -1273,19 +1367,34 @@ async function processIncomingMessage(
     // High-confidence urgent safety phrases must not depend on an AI provider.
     // Bypass model generation completely so outages/capacity failures cannot
     // replace immediate-care guidance with the generic processing-error reply.
+    // Snapshot the operator-approved pricing mode once for this inbound.
+    // Use exactly the same mode in prompt construction, language correction
+    // and the final text/media authorization; never mutate clinicConfig.
+    const aiPricingMode=resolveContactPricingMode({
+      baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,
+    });
+    if(aiPricingMode==="enabled" && clinicConfig.aiPricingIntentMode==="shadow"){
+      console.info("[Pricing test contact] contact="+contact.id+" inbound="+savedInbound.id+" mode=enabled");
+    }
     let aiReply;
+    let originalModelReply = null;
+    let modelLocationOnly = false;
     let flagged = false;
     let reviewRequired = false;
     let reviewType = null;
     let clinicalAcknowledgement = null;
+    let rm68ClinicalConcern = false;
     let reviewContinuationTextOnly = false;
     let bookingReady = false;
+    let verifiedBookingForHours = null;
     let serviceQuery = false;
     let serviceQuerySource = null;
     let metaAdContext = null;
     let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
+    let modelPricingStage = null;
+    let modelPricingIntent = null;
     let details = null;
     let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
@@ -1294,7 +1403,7 @@ async function processIncomingMessage(
     const numberedPricingSelection = !keywordReason && !marketingStopQuestion &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNumberedPricingMenuSelection({
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         }) : null;
 
@@ -1314,7 +1423,7 @@ async function processIncomingMessage(
         // fire-and-forget, so a Graph API delay/failure can never block the
         // customer reply. Creative copy takes priority. Internal ad names may
         // contribute only a canonical configured service, not raw metadata.
-        metaAdContext = await loadMetaAdReplyContext(contact.id, {
+        metaAdContext = recoveryTopicReset ? null : await loadMetaAdReplyContext(contact.id, {
           services: clinicConfig.services,
           aliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1343,6 +1452,7 @@ async function processIncomingMessage(
             appointmentAt: lead.appointment_at,
             ...(acceptedStaffOffer ? { acceptedStaffOffer: acceptedStaffOffer.agreedTimeText } : {}),
           };
+          verifiedBookingForHours = bookingContext;
         }
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
@@ -1377,7 +1487,15 @@ async function processIncomingMessage(
               );
             },
           }) : null;
-      if (numberedPricingSelection) {
+      if (!fixedAdFirstReply && recoveryPromptProof && !keywordReason && !marketingStopQuestion &&
+          !hasClinicalMediaRisk(text) && !isRm68ClinicalConcern(text) &&
+          !acceptedStaffOffer && !bookingContext?.appointmentAt &&
+          !/^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))) {
+        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig,language:mediaLanguage});
+      }
+      if (recoveryOther && !keywordReason && !marketingStopQuestion) {
+        aiReply = "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。";
+      } else if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
         aiReply = priceCheckingReply("latest_package", mediaLanguage);
@@ -1406,15 +1524,22 @@ async function processIncomingMessage(
           ? replyHistory.slice(-1) : replyHistory;
         const replyOptions = {
           bookingContext,
+          ...(priorClinicalContext.length ? {priorClinicalContext} : {}),
           contactId: contact.id,
+          pricingIntentMode: aiPricingMode,
           isFirstMessage,
           generateFirstIntro,
           channel,
           metaAdContext,
           replyLanguage: mediaLanguage,
+          rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" &&
+            /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+            hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory,text) &&
+            !campaignHasVerifiedNewService({history:commercialHistory,customerText:text,services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer}) ? campaignDay() : null,
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        originalModelReply = parsedReply.text; // Before language, pricing, location or other rewrites.
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -1427,6 +1552,24 @@ async function processIncomingMessage(
             ),
           }
         );
+        // Only the accepted response may provide intent. A language
+        // fallback explicitly clears pricing authority, not just its text.
+        modelLocationOnly = !languageCheckedReply.languageCorrectionFailed &&
+          languageCheckedReply.structured === true && languageCheckedReply.outcome === "normal" &&
+          languageCheckedReply.details?.businessLocationOnly === true &&
+          !languageCheckedReply.serviceQuery && !languageCheckedReply.priceQuery && !languageCheckedReply.packageQuery &&
+          languageCheckedReply.details?.appointmentScheduling !== true;
+        modelPricingStage = languageCheckedReply.languageCorrectionFailed
+          ? null : languageCheckedReply.pricingStage || null;
+        modelPricingIntent = languageCheckedReply.languageCorrectionFailed
+          ? null : {
+            structured:languageCheckedReply.structured, outcome:languageCheckedReply.outcome,
+            reviewType:languageCheckedReply.reviewType,
+            priceQuery:languageCheckedReply.priceQuery, packageQuery:languageCheckedReply.packageQuery,
+            serviceQuery:languageCheckedReply.serviceQuery,
+            treatment:languageCheckedReply.details?.treatment || null,
+            pricingStage:modelPricingStage, promotionOption:languageCheckedReply.promotionOption || null,
+          };
         ({
           text: aiReply,
           flagged,
@@ -1439,6 +1582,33 @@ async function processIncomingMessage(
           packageQuery,
           details,
         } = languageCheckedReply);
+      }
+
+      // The RM68 thread itself can establish breast-health context even when
+      // the customer's next answer is only "硬块就不懂", pain or fever.
+      // Keep the clinical decision independent of model intent.
+      rm68ClinicalConcern=isRm68ClinicalConcern(text) &&
+        (isExplicitRm68Interest(text) ||
+         (hasCampaignConversation(history)&&stillDiscussingCampaign(history)));
+      // A model may mistakenly mark a combined RM68 price/clinical enquiry
+      // informational. A breast lump, nodule or tumor requires staff review.
+      if (clinicConfig.businessType === "tcm_clinic" &&
+          /^neutro\s+sense\b/iu.test(
+            String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+          (isBreastLumpConcern(text) || rm68ClinicalConcern) &&
+          !keywordReason && !urgentSafety &&
+          !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+          (!flagged || reviewRequired)) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "clinical";
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        details = null;
+        clinicalAcknowledgement = null;
       }
 
       // A confirmed urinary-leakage report needs staff clinical review even
@@ -1515,9 +1685,14 @@ async function processIncomingMessage(
             packageQuery = false;
             details = null;
           } else if (plan?.reply && !flagged && plan.alreadyInvited) {
-            // Do not send the same assessment invitation again when a patient
-            // lists several treatments in separate WhatsApp messages.
-            aiReply = plan.reply;
+            // The existing evidence lookup still protects clinical reviews.
+            // A correctly identified current service enquiry is conversational:
+            // let Gemini answer it instead of unconditionally replacing its draft.
+            // Preserve the legacy recovery for missing/conflicting model metadata.
+            const modelIdentifiedTreatment = plan.treatment &&
+              serviceQuery && serviceQuerySource === "customer_message" &&
+              details?.treatment === plan.treatment && !priceQuery && !packageQuery;
+            if (!modelIdentifiedTreatment) aiReply = plan.reply;
           }
         } else {
           // A failed clinical-review lookup must not permit recovery.
@@ -1535,7 +1710,7 @@ async function processIncomingMessage(
       const verifiedFreeIntroFee = isComplimentaryAssessmentFeeQuestion(
         text,
         clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
-        history
+        commercialHistory
       ) && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
       if (verifiedFreeIntroFee &&
@@ -1590,7 +1765,7 @@ async function processIncomingMessage(
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const deviceReview = resolveNeutroFacialDeviceReview({
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, language: mediaLanguage,
       });
       const deviceEvidence = deviceReview
@@ -1640,7 +1815,7 @@ async function processIncomingMessage(
     // Full multi-turn information-review recovery remains Enabled-only.
     // In Shadow, only a separate independently verified early-treatment or
     // current-Meta-ad pricing exception may use the legacy reply path.
-    const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
+
     const aiPricingEnabled = aiPricingMode === "enabled";
     // This explicit clinic opt-in lets a verified current Meta creative
     // anchor an asked-for treatment price. It never inherits unrelated ads,
@@ -1652,7 +1827,7 @@ async function processIncomingMessage(
     // Separate 7-day/100-turn pricing evidence read. The AI prompt remains
     // capped at 20 messages. Missing or truncated evidence fails closed.
     let returningPricingHistory = null;
-    if (aiPricingMode === "shadow" &&
+    if (["shadow","enabled"].includes(aiPricingMode) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(
           clinicConfig.businessName || clinicConfig.clinicName || ""
@@ -1662,16 +1837,21 @@ async function processIncomingMessage(
         returningPricingHistory = await conversationStore.getPricingHistoryForContact(
           contact.id, { throughMessageId: savedInbound.id }
         );
+        if (secondaryAiConversation && Array.isArray(returningPricingHistory)) {
+          const scoped = scopeRecoveryCommercialHistory(returningPricingHistory);
+          returningPricingHistory = recoveryTopicReset && scoped === returningPricingHistory ? null : scoped;
+        }
+        else if (recoveryTopicReset) returningPricingHistory = null;
       } catch (err) {
         console.warn("[Pricing] Returning-price evidence lookup unavailable:", err?.message);
       }
     }
-    const shadowPriceException = aiPricingMode === "shadow" &&
+    const shadowPriceException = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveShadowPriceException({
-          customerText: text, conversationHistory: history, metaAdContext,
+          customerText: text, conversationHistory: commercialHistory, metaAdContext,
           returningPricingHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1680,6 +1860,7 @@ async function processIncomingMessage(
           // is only a hint; customer request, treatment and price are still
           // independently verified before text or artwork is authorised.
           modelOfferQuery: packageQuery === true,
+          allowStaffResultPriceContext: allowVerifiedAdPricing,
           allowVerifiedAdPricing,
           // Only Neutro's Shadow client can carry a customer-confirmed
           // first-trial price across its own scheduled follow-ups.
@@ -1690,6 +1871,73 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
+    // Recover an unambiguous, customer-authored price question early enough
+    // for the EXISTING verified pricing decision and media selector to run.
+    // Do not derive treatment from Meta, AI guesses or CRM labels. A verified
+    // RM68 campaign keeps its dedicated campaign path instead.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !bookingReady && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        (aiPricingEnabled || aiPricingMode === "shadow") &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isStandaloneNeutroPriceQuestion(text) && hasExplicitPriceRequest(text) &&
+        categorizeAiReview(text, reviewType) === "information" &&
+        !campaignContextReply({ history:commercialHistory, customerText: text })) {
+      const selectedFromPricingContext = resolveVerifiedPriceFollowUpService({
+        customerText: text, conversationHistory: commercialHistory,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+        allowContinuedPriceContext: aiPricingEnabled,
+      });
+      const continuity = selectedFromPricingContext ? null
+        : planNeutroReviewContinuation({
+            customerText: text, conversationHistory: commercialHistory,
+            language: mediaLanguage, services: clinicConfig.services,
+            serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions,
+          });
+      const chosen = selectedFromPricingContext ||
+        (continuity?.kind === "verified_price"
+          ? (clinicConfig.services || []).find(item =>
+              item.name === continuity.treatment) : null);
+      const prices = chosen?.name
+        ? verifiedPricesForService(chosen.name, clinicConfig.promotions, text, commercialHistory)
+        : null;
+      if (prices?.length && prices.every(item =>
+          /^RM[1-9]\d{1,4}$/u.test(String(item.price || "")))) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (evidence?.pendingClinicalReview === false) {
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          priceQuery = true;
+          packageQuery = false;
+          details = { ...details, treatment: chosen.name };
+          aiReply = priceCheckingReply("treatment", mediaLanguage);
+          console.info("[Pricing] Recovered verified Neutro price question " +
+            "contact=" + contact.id + " inbound=" + savedInbound.id);
+        }
+      }
+    }
+
+    const verifiedQuotedPriceClarification = aiPricingEnabled &&
+      flagged && reviewRequired && !keywordReason && !urgentSafety &&
+      !bookingReady && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+      commercialHistory.at(-1)?.verifiedQuotedMessage
+      ? resolveClarifiedPriceService({customerText:text,conversationHistory:commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases}) : null;
+    // A quoted reply to a verified open monetary clarification is commercial
+    // information, not clinical suitability. Existing durable review evidence
+    // still decides whether recovery is permitted.
+    if (verifiedQuotedPriceClarification && shadowPriceException?.treatment === verifiedQuotedPriceClarification)
+      reviewType = "information";
+
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
@@ -1700,7 +1948,7 @@ async function processIncomingMessage(
       );
       const recovered = planInformationPriceRecovery({
         enabled: true, flagged, reviewRequired, reviewType,
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions, resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage, hasKeywordAlert: Boolean(keywordReason),
@@ -1708,15 +1956,25 @@ async function processIncomingMessage(
         explicitStaffRequest: isExplicitStaffRequest(text),
         marketingStop: Boolean(marketingStopQuestion),
         pendingClinicalReview: reviewEvidence?.pendingClinicalReview,
+        modelIntent: modelPricingIntent,
+        allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
+        complimentaryAssessmentExperienceEnabled:
+          clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
       });
       if (recovered) {
         aiReply = recovered.reply;
+        // The same verified semantic intent proceeds through the normal
+        // commercial boundary. It is not direct authorization to send.
+        if (recovered.modelIntent) {
+          modelPricingIntent = recovered.modelIntent;
+          modelPricingStage = recovered.modelIntent.pricingStage || null;
+        }
         flagged = false;
         reviewRequired = false;
         reviewType = null;
         bookingReady = false;
-        priceQuery = true;
-        packageQuery = false;
+        priceQuery = recovered.modelIntent ? recovered.modelIntent.priceQuery === true : true;
+        packageQuery = recovered.modelIntent?.packageQuery === true;
         details = { ...details, treatment: recovered.treatment };
         console.info(
           "[Pricing] Recovered verified informational review for " +
@@ -1755,7 +2013,7 @@ async function processIncomingMessage(
     // Keep clinical, staff, safety, consent and billing controls unchanged.
     const recoverableTwoPriceReview = flagged && reviewRequired &&
       reviewType === "information";
-    let twoTreatmentQuote = aiPricingMode === "shadow" &&
+    let twoTreatmentQuote = ["shadow","enabled"].includes(aiPricingMode) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       (!flagged || recoverableTwoPriceReview) &&
       !bookingReady && !keywordReason && !urgentSafety &&
@@ -1763,7 +2021,7 @@ async function processIncomingMessage(
       !marketingStopQuestion
       ? (resolveTwoTreatmentPriceReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1779,21 +2037,21 @@ async function processIncomingMessage(
               clinicConfig.serviceAliases)?.name === shadowPriceException.treatment)
           ? resolveNeutroPostpartumBudgetQuote({
               customerText: text,
-              session: recentVerifiedPricingSession(history, text),
+              session: recentVerifiedPricingSession(commercialHistory, text),
               services: clinicConfig.services,
               serviceAliases: clinicConfig.serviceAliases,
               promotions: clinicConfig.promotions,
               language: mediaLanguage,
             }) : null) || resolveFacialCategoryPriceReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           language: mediaLanguage,
         }) || resolveVerifiedStaffFacialPriceReply({
           customerText: text,
-          conversationHistory: history,
+          conversationHistory: commercialHistory,
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -1832,7 +2090,7 @@ async function processIncomingMessage(
       !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveScopedPackagePriceContinuation({
-          customerText: text, conversationHistory: history, metaAdContext,
+          customerText: text, conversationHistory: commercialHistory, metaAdContext,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
         }) : null;
@@ -1845,7 +2103,7 @@ async function processIncomingMessage(
         !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion) {
       scopedPackagePrice = resolveCurrentThreadPackageRequest({
-        customerText: text, conversationHistory: history,
+        customerText: text, conversationHistory: commercialHistory,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
       });
@@ -1884,7 +2142,7 @@ async function processIncomingMessage(
     const numberedPrices = numberedPricingSelection
       ? verifiedPricesForService(
           numberedPricingSelection.treatment, clinicConfig.promotions,
-          text, history, { clarifiedPriceService: numberedPricingSelection.treatment }
+          text, commercialHistory, { clarifiedPriceService: numberedPricingSelection.treatment }
         ) : null;
     const numberedPricingDecision = numberedPrices?.length
       ? {
@@ -1896,13 +2154,15 @@ async function processIncomingMessage(
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
       ? (numberedPricingSelection ? numberedPricingDecision : scopedPackagePrice || resolveAiPricingDecision({
           priceQuery, packageQuery, treatment: details?.treatment || null,
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
           allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
+          allowVerifiedAdPricing: aiPricingEnabled && allowVerifiedAdPricing,
+          allowStaffResultPriceContext: allowVerifiedAdPricing,
         }))
       : null;
     if (aiPricingMode === "shadow") {
@@ -1914,12 +2174,18 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
-    const pricingApproval = resolveApprovedPricingAssessment({
-      mode: aiPricingMode, aiDecision: pricingDecision,
+    const protectedLegacyPrice = Boolean(shadowPriceException &&
+      ["customer_returning_treatment_price","confirmed_prior_quote",
+        "customer_staff_result_price","customer_concern_both"].includes(shadowPriceException.source));
+    const legacyPricingCandidate = aiPricingEnabled
+      ? (protectedLegacyPrice ? shadowPriceException : pricingDecision || shadowPriceException)
+      : pricingDecision;
+    const legacyPricingApproval = resolveApprovedPricingAssessment({
+      mode: aiPricingMode, aiDecision: legacyPricingCandidate,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
       numberedMenuDecision: numberedPricingDecision,
-      customerText: text, conversationHistory: history,
+      customerText: text, conversationHistory: commercialHistory,
       services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
@@ -1927,6 +2193,88 @@ async function processIncomingMessage(
       allowVerifiedAdPricing, metaAdContext,
       promotions: clinicConfig.promotions,
     });
+    // Off leaves the current code path unchanged. Shadow compares the
+    // same existing provider result without altering a reply or sending media.
+    // Enabled prioritizes verified model decisions; independently proven
+    // special cases and final safety rejections keep precedence.
+    let semanticPricingApproval = null;
+    let rejectedModelPricing = false;
+    if (["shadow","enabled"].includes(aiPricingMode) &&
+        !flagged && !bookingReady && !keywordReason && !urgentSafety &&
+        !marketingStopQuestion && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
+        !fixedAdFirstReply && !twoTreatmentQuote &&
+        !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
+      try {
+        const semanticCandidate = resolveModelLedPricingDecision({
+          modelIntent:modelPricingIntent,customerText:text,conversationHistory: commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          allowOfferEnquiries:clinicConfig.aiPricingOfferEnquiriesEnabled===true,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+        });
+        const semanticApproval = resolveApprovedPricingAssessment({
+          mode:"enabled",aiDecision:semanticCandidate,customerText:text,
+          conversationHistory: commercialHistory,services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,resultMedia:clinicConfig.resultMedia,
+          promotions:clinicConfig.promotions,flagged,bookingReady,keywordReason,
+          marketingStopQuestion,
+        });
+        const old=legacyPricingApproval.decision, next=semanticApproval.decision;
+        const signature=d=>d ? JSON.stringify([d.type,d.treatment,
+          (d.prices||[]).map(p=>[p.name,p.price]),d.servicePrice||null]) : null;
+        // Compare exact treatment and package amounts, not only a boolean.
+        // No raw message content, extra provider calls or new DB writes.
+        const apply = shouldApplyModelLedPricing({
+          mode:aiPricingMode,legacyCandidate:legacyPricingCandidate,
+          legacyApproval:legacyPricingApproval,semanticApproval,
+          hasSpecialDecision:protectedLegacyPrice,
+        });
+        console.info("[Semantic pricing] "+JSON.stringify({
+          contact:contact.id,inbound:savedInbound.id,mode:aiPricingMode,
+          modelPriceQuery:modelPricingIntent.priceQuery===true,
+          modelPackageQuery:modelPricingIntent.packageQuery===true,
+          legacyApproved:Boolean(old),semanticApproved:Boolean(next),
+          agreement:signature(old)===signature(next),reason:semanticApproval.reason,
+          legacyTreatment:old?.treatment||null,semanticTreatment:next?.treatment||null,
+          legacyPackages:old?.prices?.map(p=>p.name)||[],
+          semanticPackages:next?.prices?.map(p=>p.name)||[],
+          applied:apply,
+        }));
+        if (apply) semanticPricingApproval=semanticApproval;
+        rejectedModelPricing = shouldBlockRejectedModelPricing({
+          mode:aiPricingMode,modelIntent:modelPricingIntent,semanticCandidate,
+          semanticApproval,legacyApproval:legacyPricingApproval,
+          hasSpecialDecision:protectedLegacyPrice,customerText:text,
+          promotions:clinicConfig.promotions,
+        });
+      } catch (error) {
+        // Shadow diagnostics must not disrupt customer replies; Enabled also
+        // retains the original decision if semantic evaluation fails.
+        console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
+      }
+    }
+    const selectedPricingApproval = rejectedModelPricing
+      ? {decision:null,reason:"model_price_scope_unverified"}
+      : semanticPricingApproval || legacyPricingApproval;
+    // Conflicting human quotes must not be overridden by either pricing path.
+    // Shadow remains observational; the existing special cases retain scope.
+    const conflictTreatment = selectedPricingApproval.decision?.treatment ||
+      (modelPricingIntent?.priceQuery || modelPricingIntent?.packageQuery
+        ? modelPricingIntent.treatment : null);
+    const staffPriceConflict = aiPricingEnabled && !flagged && !bookingReady &&
+      !keywordReason && !marketingStopQuestion && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !fixedAdFirstReply && !twoTreatmentQuote &&
+      !isExplicitStaffRequest(text) && modelPricingStage !== "subsequent_session" &&
+      Boolean(conflictTreatment) && hasConflictingStaffPrice({
+        treatment:conflictTreatment,conversationHistory: commercialHistory,
+        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+        promotions:clinicConfig.promotions,
+      });
+    const pricingApproval = staffPriceConflict
+      ? {decision:null,reason:"conflicting_staff_quote"} : selectedPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
     // A customer who ALREADY received both configured pelvic package prices
     // may ask for a comparison. This is information about an existing quote,
@@ -1939,7 +2287,7 @@ async function processIncomingMessage(
       !bookingReady && !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveNeutroPelvicPackageComparison({
-          customerText: text, conversationHistory: history,
+          customerText: text, conversationHistory: commercialHistory,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions, language: mediaLanguage,
         }) : null;
@@ -1993,7 +2341,7 @@ async function processIncomingMessage(
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
           resolveVerifiedPriceFollowUpService({
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
             allowContinuedPriceContext: false,
@@ -2005,7 +2353,7 @@ async function processIncomingMessage(
         numberedPricingSelection?.treatment ||
         (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
           ? resolveClarifiedPriceService({
-              customerText: text, conversationHistory: history,
+              customerText: text, conversationHistory: commercialHistory,
               services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             }) : null);
 
@@ -2050,7 +2398,7 @@ async function processIncomingMessage(
             clarifiedPriceService,
             verifiedPricingIntent: Boolean(approvedPricingDecision),
             requireVerifiedTreatment: true,
-            resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+            resultMedia: clinicConfig.resultMedia, conversationHistory: commercialHistory,
             promotions: clinicConfig.promotions,
             allowContinuedPriceContext: aiPricingEnabled,
             isFirstMessage,
@@ -2092,7 +2440,7 @@ async function processIncomingMessage(
           }),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
-        resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+        resultMedia: clinicConfig.resultMedia, conversationHistory: commercialHistory,
         language: mediaLanguage,
         allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
       });
@@ -2103,7 +2451,7 @@ async function processIncomingMessage(
       if (priced.restored && approvedPricingDecision?.source ===
           "customer_returning_treatment_price") {
         reply = clarifyFreeAssessmentAndPaidTrial({
-          customerText: text, conversationHistory: returningPricingHistory || history,
+          customerText: text, conversationHistory: returningPricingHistory || commercialHistory,
           treatment: approvedPricingDecision.treatment, reply,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
@@ -2136,7 +2484,7 @@ async function processIncomingMessage(
         !approvedPricingDecision?.prices?.length &&
         !pricingDecision?.prices?.length && !verifiedPriceService) {
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
-        text, history, mediaLanguage
+        text, commercialHistory, mediaLanguage
       );
       if (feeClarification) reply = feeClarification;
     }
@@ -2157,7 +2505,7 @@ async function processIncomingMessage(
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNeutroComboOfferReply({
           customerText: text,
-          session: recentVerifiedPricingSession(history, text),
+          session: recentVerifiedPricingSession(commercialHistory, text),
           services: clinicConfig.services,
           serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
@@ -2165,9 +2513,15 @@ async function processIncomingMessage(
           verifiedIndividualQuote: Boolean(twoTreatmentQuote) ||
             Boolean(approvedPricingDecision?.prices?.some(item =>
               item.price && reply.includes(item.price))),
+        }) || resolveContextualNeutroComboQuestion({
+          customerText:text,history:commercialHistory,
+          services:clinicConfig.services,
+          serviceAliases:clinicConfig.serviceAliases,
+          promotions:clinicConfig.promotions,
+          language:mediaLanguage,
         }) : null;
     if (comboOfferDecision) {
-      reply = comboOfferDecision.mode === "direct"
+      reply = ["direct","contextual"].includes(comboOfferDecision.mode)
         ? comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
       console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
@@ -2219,7 +2573,7 @@ async function processIncomingMessage(
     // authorization for a price or optional graphic.
     if (!flagged && !marketingStopQuestion && !twoTreatmentQuote) {
       const repeated = improveRepeatedPriceClarification({
-        customerText: text, reply, conversationHistory: history,
+        customerText: text, reply, conversationHistory: commercialHistory,
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
         language: mediaLanguage,
@@ -2246,23 +2600,39 @@ async function processIncomingMessage(
     // their later-session price request AFTER an accepted package suggestion,
     // staff takes over. This text-only path never licenses RM488 trial media
     // or the configured standing normal price as an automated reply.
-    const repeatVisitPriceReply = !pelvicPackageComparison && !flagged && !bookingReady &&
+    // The model can correctly report an unknown later-session rate as an
+    // INFORMATION review. Recover only the independently verified staff
+    // handoff, never a quote, trial graphic or a clinical/safety review.
+    const repeatVisitInfoReview = flagged && reviewRequired &&
+      reviewType === "information" && modelPricingStage === "subsequent_session";
+    let repeatVisitPriceReply = !pelvicPackageComparison &&
+      (!flagged || repeatVisitInfoReview) && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? channel === "whatsapp" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
         ? await resolveNeutroSubsequentPricing({
             contactId: contact.id, inboundMessageId: savedInbound.id,
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions, language: mediaLanguage,
+            modelPricingStage,
           })
         : resolveRepeatVisitPriceReply({
-            customerText: text, conversationHistory: history,
+            customerText: text, conversationHistory: commercialHistory,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            language: mediaLanguage,
+            language: mediaLanguage, modelPricingStage,
           })
       : null;
+    if (repeatVisitInfoReview && repeatVisitPriceReply) {
+      const evidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (repeatVisitPriceReply.mode !== "staff_handoff" ||
+          evidence?.pendingClinicalReview !== false) {
+        repeatVisitPriceReply = null;
+      }
+    }
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
       if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
@@ -2308,13 +2678,13 @@ async function processIncomingMessage(
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const continuity = planNeutroReviewContinuation({
-        customerText: text, conversationHistory: history, language: mediaLanguage,
+        customerText: text, conversationHistory: commercialHistory, language: mediaLanguage,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
         promotions: clinicConfig.promotions,
       });
       if (continuity) {
         const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
-        if (verified && typeof verified.pendingClinicalReview === "boolean") {
+        if (verified?.pendingClinicalReview === false) {
           reply = continuity.reply;
           flagged = false;
           reviewRequired = false;
@@ -2345,8 +2715,7 @@ async function processIncomingMessage(
         isCampaignAvailabilityQuestion(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      const rm68AvailabilityAnswer = campaignContextReply({
-        history, customerText: text,
+      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
@@ -2371,6 +2740,46 @@ async function processIncomingMessage(
       }
     }
 
+    // Recover routine location, verified campaign/date, and unscoped price
+    // questions. Verify there is no unresolved clinical review on this contact
+    // before bypassing an erroneous model review. This path sends text only,
+    // and does not clear staff reviews, override ownership or trigger media.
+    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const adminAnswer = administrativeReviewReply({
+        customerText: text, history: commercialHistory, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (adminAnswer) {
+        const evidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (evidence?.pendingClinicalReview === false) {
+          reply = adminAnswer.reply;
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          clinicalAcknowledgement = null;
+          priceQuery = false;
+          packageQuery = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          details = null;
+          reviewContinuationTextOnly = true;
+          console.info("[Neutro administrative review recovery] contact=" +
+            contact.id + " inbound=" + savedInbound.id +
+            " kind=" + adminAnswer.kind);
+        }
+      }
+    }
+
     // A non-urgent urinary symptom merits one staff review, not complete
     // silence. Use fixed non-diagnostic copy; never trust generated medical
     // reassurance or mark the clinical review as resolved.
@@ -2379,7 +2788,35 @@ async function processIncomingMessage(
         !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      clinicalAcknowledgement = nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+      clinicalAcknowledgement = (isBreastLumpConcern(text) || rm68ClinicalConcern)
+        ? (mediaLanguage === "ms"
+          ? "Jika ada ketulan atau nodul pada payudara, kesesuaian rawatan RM68 tidak boleh dipastikan melalui chat. Sila dapatkan pemeriksaan doktor dahulu. Kami akan minta staf semak pertanyaan anda. 💚"
+          : mediaLanguage === "en"
+            ? "For a breast lump or nodule, we cannot confirm whether the RM68 care is suitable through chat. Please seek a medical evaluation first. Our staff will review your enquiry. 💚"
+            : "关于乳房结节或肿块，我们不能仅通过聊天判断是否适合 RM68 护理。建议先由医生检查，我们也会请工作人员跟进您的咨询。💚")
+        : nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
+    }
+
+    // An unverified screening capability requires a staff answer. Send a
+    // non-diagnostic acknowledgement via the existing durable review path,
+    // not a silent review or a promotional reply. Never release a handoff.
+    if ((!flagged || reviewRequired) && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const screeningAnswer = screeningAcknowledgement({history:commercialHistory,customerText:text,language:mediaLanguage});
+      if (screeningAnswer && !clinicalAcknowledgement) {
+        if (!flagged) reviewType = "information";
+        flagged = true;
+        reviewRequired = true;
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        clinicalAcknowledgement = screeningAnswer;
+      }
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
@@ -2396,6 +2833,62 @@ async function processIncomingMessage(
         `Skipping AI reply for ${channel}:${from} — staff replied before the AI send.`
       );
       return { wasFirstMessage, keywordReason };
+    }
+
+    // An alternative date needs actual staff confirmation of ordinary charges
+    // and availability. Keep earlier clinical reviews intact, record this
+    // separate inbound as an information review, and acknowledge safely.
+    if ((!flagged || (reviewRequired && reviewType === "information")) &&
+        !clinicalAcknowledgement && !keywordReason && !urgentSafety && !marketingStopQuestion &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
+        !fixedAdFirstReply && !staffPriceConflict &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory,text) &&
+        !campaignHasVerifiedNewService({history:commercialHistory,customerText:text,services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer}) &&
+        campaignDateScope(commercialHistory,text,Date.parse(savedInbound.created_at)||Date.now())==="ordinary" &&
+        (alternativeDateRequest(text,Date.parse(savedInbound.created_at)||Date.now()) || hasExplicitPriceRequest(text) || bookingReady)) {
+      const ordinaryReply=campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage,now:Date.parse(savedInbound.created_at)||Date.now()});
+      if (ordinaryReply) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "information";
+        clinicalAcknowledgement = ordinaryReply;
+        bookingReady = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        priceQuery = false;
+        packageQuery = false;
+        details = null;
+      }
+    }
+
+    // Final clinical safety backstop: do not let a normal sales draft, price
+    // recovery, or optional media bypass an explicitly unverified technical fact.
+    // Preserve genuine urgent/human takeover outcomes.
+    if ((!flagged || reviewRequired) && needsUnverifiedPulseDepthReview(clinicConfig, text)) {
+      flagged = true;
+      reviewRequired = true;
+      reviewType = "clinical";
+      bookingReady = false;
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      clinicalAcknowledgement = null;
+      reply = "Staff review requested";
+    }
+
+    // Intent metadata is informational, never permission to send sales media
+    // during unresolved clinical review or human takeover. Apply only after
+    // existing narrow administrative review recoveries have completed.
+    if (flagged && (!reviewRequired || reviewType === "clinical")) {
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      bookingReady = false;
     }
 
     // AI generation can take long enough for staff to take over after the
@@ -2503,31 +2996,38 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // Only a verified prior RM68 first reply can authorize event-continuation
-    // facts. Keep genuine booking-ready, safety, opt-out and staff handoffs on
-    // their existing paths. This separate offer never enables standing RM388
-    // price media or overrides an explicitly switched treatment.
+    // Validate event scope even if the model classified this as booking-ready.
+    // Independent customer service evidence, not the old campaign or an AI
+    // label alone, permits an ordinary treatment to resume its own media path.
     let rm68CampaignContinuationTextOnly = false;
-    if (!flagged && !bookingReady && !marketingStopQuestion &&
-        !keywordReason && !urgentSafety && !isActiveSafetyConcern(text)) {
-      const campaignAnswer = campaignContextReply({
-        history, customerText: text,
+    let rm68BlocksBooking = false;
+    if (!flagged && !marketingStopQuestion && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
+        !fixedAdFirstReply && !staffPriceConflict &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const verifiedNewService = campaignHasVerifiedNewService({
+        history:commercialHistory,customerText:text,services:clinicConfig.services,
+        serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer,
       });
-      if (campaignAnswer) {
-        reply = campaignAnswer;
-        rm68CampaignContinuationTextOnly = true;
-        priceQuery = false;
-        packageQuery = false;
-        serviceQuery = false;
-        serviceQuerySource = null;
-      } else {
-        const replyBeforeCampaignGuard = reply;
-        reply = guardCampaignPriceConflicts({
-          history, customerText: text, reply,
-        });
-        // If any old Pulse Wave terms were corrected, do not attach media
-        // derived from the conflicting generic service offer.
-        rm68CampaignContinuationTextOnly = reply !== replyBeforeCampaignGuard;
+      const campaign = campaignContinuationPolicy({
+        history:commercialHistory,customerText:text,reply,verifiedNewService,language:mediaLanguage,
+      });
+      if (campaign) {
+        reply=campaign.reply;
+        rm68CampaignContinuationTextOnly=campaign.textOnly;
+        rm68BlocksBooking=campaign.blocksBooking;
+        if (rm68BlocksBooking) {
+          bookingReady=false;
+          if (details) details={...details,appointmentPreference:null};
+        }
+        if (rm68CampaignContinuationTextOnly) {
+          priceQuery=false;
+          packageQuery=false;
+          serviceQuery=false;
+          serviceQuerySource=null;
+        }
       }
     }
 
@@ -2538,6 +3038,190 @@ async function processIncomingMessage(
       reply = fixedAdFirstReply.reply;
     }
 
+    // A location-only enquiry must never depend on the model's invented
+    // branch or city. Both WhatsApp senders and social channels use the
+    // currently loaded single branch from Settings at the final text send.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !priceQuery && !packageQuery && !serviceQuery && !fixedAdFirstReply &&
+        !rm68CampaignContinuationTextOnly && !approvedPricingDecision && !rejectedModelPricing && !staffPriceConflict &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const verifiedLocation = confirmedSingleBranchLocationAnswer({
+        customerText: text, branches: clinicConfig.branches,
+        language: mediaLanguage,
+        resolvedLanguage: mediaLanguage,
+        modelLocationOnly,
+      });
+      if (verifiedLocation) {
+        const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
+        const finalStatus = verifyLocationDraft(reply, verifiedLocation);
+        // Preserve an independently verified final location answer, including
+        // a legitimate language correction. Original draft accuracy is logged separately.
+        const preserveModelLocation = finalStatus === "verified_address_only";
+        console.info("[Location facts] contact=" + contact.id +
+          " original=" + originalStatus + " final=" + finalStatus +
+          " decision=" + (preserveModelLocation ? "preserve" : "fallback"));
+        if (!preserveModelLocation) reply = verifiedLocation.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
+    }
+
+    // For mixed price + location enquiries without an approved ordinary
+    // pricing decision, reply with verified business facts and either the
+    // strictly verified campaign price or a treatment clarification. Keep
+    // normal approved prices on the original media-capable pricing path.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) &&
+        !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        isBusinessLocationQuestion(text) && hasExplicitPriceRequest(text) &&
+        !approvedPricingDecision) {
+      const verifiedMixed = administrativeReviewReply({
+        customerText: text, history: commercialHistory, branches: clinicConfig.branches,
+        language: mediaLanguage, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+      if (verifiedMixed &&
+          /(?:mixed_price_location_clarification|verified_rm68_campaign|explicit_verified_price|explicit_price_needs_confirmation)/u.test(verifiedMixed.kind)) {
+        reply = verifiedMixed.reply;
+        reviewContinuationTextOnly = true;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+      }
+    }
+
+    let bookingDurationMinutes = 0;
+    let appointmentCustomerHistory = [];
+    let appointmentStaffHistory = [];
+    const verifiedExistingBooking = Boolean(
+      verifiedBookingForHours?.acceptedStaffOffer ||
+      (verifiedBookingForHours?.appointmentAt &&
+       /^(?:set|visited|booked|confirmed|scheduled)$/iu.test(
+         String(verifiedBookingForHours.status || "")))
+    );
+    const explicitRescheduleForHours =
+      /(?:改期|改时间|改時間|换到|換到|重新预约|重新預約|reschedul|move my appointment|change my appointment)/iu
+        .test(String(text || ""));
+    // Correct an invalid day before the Meta send AND before booking_ready.
+    // Never contradict a provider/staff-verified appointment or override
+    // the staff's accepted offer unless the customer asks to reschedule.
+    if (!flagged && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        clinicConfig.hours?.weekly &&
+        (!verifiedExistingBooking || explicitRescheduleForHours)) {
+      // Reuse the bounded AI snapshot: no additional Neon read or model call.
+      const priorAppointmentHistory = (Array.isArray(history) ? history : [])
+        .filter(item => item?.contextMessageId !== Number(savedInbound.id));
+      appointmentCustomerHistory = priorAppointmentHistory
+        .filter(item => item?.role === "user")
+        .slice(-20)
+        .reverse()
+        .map(item => ({
+          content: typeof item.content === "string" ? item.content : "",
+          // conversationStore attaches this metadata from PostgreSQL
+          // non-enumerably; it never reaches the AI model.
+          createdAt: item.pricingCreatedAtMs ?? null,
+        }))
+        .filter(item => item.content && item.createdAt);
+      appointmentStaffHistory = priorAppointmentHistory
+        .filter(item => item?.role === "assistant" && item.pricingVerifiedStaffText === true)
+        .slice(-20).reverse().map(item => ({
+          content: String(item.content || "").replace(/^\[Verified STAFF message\] /u,""),
+          createdAt: item.pricingCreatedAtMs ?? null,
+        })).filter(item => item.content && item.createdAt);
+      bookingDurationMinutes = durationMinutesForPackage({
+        config: clinicConfig,
+        customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
+        treatment: details?.treatment || "",
+      });
+      const appointmentMode = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+      const checkAppointment = appointmentMode ? guardAiAppointmentReply : guardAppointmentReply;
+      const checked = checkAppointment({
+        hours: clinicConfig.hours, reply, customerText: text,
+        appointmentScheduling: details?.appointmentScheduling,
+        recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
+        appointmentPreference: details?.appointmentPreference || "",
+        receivedAt: savedInbound.created_at || new Date(),
+        now: new Date(), language: mediaLanguage,
+        durationMinutes: bookingDurationMinutes,
+        requireValidPreference: bookingReady,
+      });
+      // Always apply a corrected reply, even when the validated preference
+      // stays eligible for Booking Ready.
+      reply = checked.reply;
+      if (!checked.blocked && checked.repairedPreference && !bookingReady && !rm68BlocksBooking &&
+          ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType) &&
+          !contact.needs_attention && !priceQuery && !packageQuery && !serviceQuery &&
+          !isDefiniteAppointmentCancellation(text)) {
+        const previousAssistant = (Array.isArray(history) ? history : [])
+          .slice().reverse().find(item => item?.role === "assistant");
+        if (canRecoverBookingReady({customerText:text,
+          previousAssistantText:previousAssistant?.content,issue:checked.issue})) {
+          bookingReady = true;
+        }
+      }
+      if (checked.blocked) {
+        bookingReady = false;
+        if (details && ["closed","past","outside_hours","invalid_date","invalid_time","not_appointment","unverified_confirmation"].includes(checked.issue?.status)) {
+          details = {...details, appointmentPreference:null};
+        }
+        console.info("[Appointment hours] blocked invalid booking or confirmation contact=" +
+          contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
+      }
+    }
+
+    if ((staffPriceConflict || rejectedModelPricing) && !flagged && !bookingReady &&
+        !rm68CampaignContinuationTextOnly && !repeatVisitPriceReply &&
+        !marketingStopQuestion && !reviewContinuationTextOnly) {
+      reply = staffPriceConflict
+        ? (mediaLanguage === "ms"
+          ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
+          : mediaLanguage === "en"
+            ? "Let me check the price previously shared with our team so we don't give you the wrong amount 😊"
+            : "之前同事提供的价格需要再跟门店核对一下，避免给您不准确的报价哦 😊")
+        : (mediaLanguage === "ms"
+          ? "Pakej atau rawatan yang mana satu anda maksudkan ya? Saya boleh semak harga yang betul 😊"
+          : mediaLanguage === "en"
+            ? "Which package or treatment do you mean? I can check the correct price for you 😊"
+            : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
+      // No stale package/result image may accompany this clarification.
+      reviewContinuationTextOnly = true;
+    }
+
+    // A generic recovery choice is not a price request, campaign opt-in or
+    // consent. Keep the current turn neutral and do not attach old media.
+    if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
+        !urgentSafety && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text)) {
+      const breastInvitation = recoveryPromptProof && !fixedAdFirstReply
+        ? recoveryBreastOfferInvitation({customerText:text,config:clinicConfig}) : null;
+      if (recoveryOther || breastInvitation) {
+        reply = recoveryOther
+          ? "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。"
+          : breastInvitation;
+        reviewContinuationTextOnly=true;
+        priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
+      }
+    }
+    // Campaign-specific final language validation, including downstream overrides.
+    if (!flagged && !bookingReady && (rm68CampaignContinuationTextOnly || reviewContinuationTextOnly || fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") &&
+        clearReplyLanguageMismatch(reply,mediaLanguage)) {
+      reply = (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026" ? fixedAdFirstReply.reply : null) ||
+        campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
+        (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
+          mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
+    }
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
@@ -2599,9 +3283,16 @@ async function processIncomingMessage(
     if (bookingReady) {
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
-          details,
+          details:sanitizeRm68BookingReadyDetails({
+            details,customerText:text,history,channel,clinicConfig,
+          }),
           // A genuinely new request to move an existing booking must still
           // reach staff even when the CRM records the old slot as confirmed.
+          customerText: text,
+          receivedAt: savedInbound.created_at || new Date(),
+          durationMinutes: bookingDurationMinutes,
+          recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
@@ -2715,6 +3406,12 @@ async function processIncomingMessage(
       await auditResultMediaEarlyExit("review_continuation_text_only");
       return { wasFirstMessage, keywordReason };
     }
+    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
+      // A later-session question cannot re-enter ordinary First Trial graphics
+      // through an earlier approved promotional-pricing decision.
+      await auditResultMediaEarlyExit("subsequent_session_text_only");
+      return { wasFirstMessage, keywordReason };
+    }
     if (pelvicPackageComparison) {
       // Comparison answers are text-only, even if the model set packageQuery.
       // Never resend recently delivered Package A/B graphics or Before/After.
@@ -2742,7 +3439,7 @@ async function processIncomingMessage(
         comboOfferDecision,
         promotions: clinicConfig.promotions,
         customerText: text,
-        session: comboOfferDecision ? recentVerifiedPricingSession(history, text) : null,
+        session: comboOfferDecision ? recentVerifiedPricingSession(commercialHistory, text) : null,
         reply,
       });
       const comboMediaUnavailable = Boolean(comboOfferDecision && !comboMediaPricingDecision);
@@ -2754,8 +3451,12 @@ async function processIncomingMessage(
       // with independently verified First Trial context, not a second media
       // selector. The same safety, pause, language, duplicate and provider
       // rules therefore apply to ordinary and repeat-session promotions.
+      const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
+        !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
+          String(reply||"").replace(/\s+/gu,"").includes(p.price));
+      if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
-        comboMediaUnavailable ? null : await resolvePricePromotionForReply({
+        comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: comboMediaPricingDecision ||
@@ -2780,7 +3481,7 @@ async function processIncomingMessage(
               ? approvedPricingDecision.treatment : null)
           : shadowPriceException?.treatment || null,
         customerText: text,
-        conversationHistory: history,
+        conversationHistory: commercialHistory,
         flagged,
         bookingReady,
         keywordReason,
@@ -2877,7 +3578,7 @@ async function processIncomingMessage(
               // Only an independently approved customer price decision can
               // exempt this specific artwork from secondary quiet hours.
               solicitedPricing:Boolean(secondaryAiConversation &&
-                approvedPricingDecision?.type === "price" &&
+                ["price","package_options"].includes(approvedPricingDecision?.type) &&
                 Array.isArray(approvedPricingDecision.prices) &&
                 approvedPricingDecision.prices.length > 0),
               sequenceOffset:0,
@@ -3016,7 +3717,7 @@ async function processIncomingMessage(
         // rather than relying on an earlier stale/ad-name-only service hint.
         let resultMediaCreativeService = metaAdCreativeService;
         let verifiedPriorCustomerTexts = null;
-        if (sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
+        if (!recoveryTopicReset && sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
           try {
             // Query earliest persisted conversation messages, NOT the AI
             // snapshot. A fifth prior message is an ineligible sentinel,

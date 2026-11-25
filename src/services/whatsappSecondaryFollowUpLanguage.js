@@ -39,6 +39,7 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  const declined=/(?:\b(?:don't want|do not want|not interested|no longer interested|rather not|not for me|stop (?:the )?treatment|cancel (?:the )?treatment)\b|不想(?:做|要|考虑|考慮)|不要(?:做|安排|这个|這個|骨盆|3D|9D)|没兴趣|沒興趣|不考虑|不考慮|tak nak|tak mahu|bukan)/iu;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
+   if(msg.normalize("NFKC")==="其他护理")return null;
    if(isBarePostpartumConcernAnswer(msg))continue;
    const named=services.filter(service=>{
      const terms=[service,...aliases.filter(a=>normalize(a?.officialService)===normalize(service))
@@ -100,8 +101,36 @@ const NEUTRAL_20H_FALLBACK=Object.freeze({
  en:"Hi 😊 If you have questions about the first assessment at Neutro Sense TCM, feel free to reply here. There is no need to decide now.",
  ms:"Hai 😊 Jika ada soalan tentang penilaian pertama di Neutro Sense TCM, boleh balas di sini bila-bila masa. Tak perlu buat keputusan sekarang.",
 });
+
+// A staff-discussed treatment is not a verified patient selection.
+// Do not inherit "you asked for X" from confirmed-treatment templates.
+function staffDiscussedFollowUpText({slot,language,treatment}={}) {
+ const name=String(treatment||"").trim();
+ if(!name || ![2,6].includes(Number(slot)))return null;
+ if(language==="zh")return Number(slot)===2
+  ? "Hi～之前我们有跟你介绍"+name+"的护理方向 😊 若想了解过程或一对一评估方式，我可以再说明。是否适合需要中医师评估哦。"
+  : "关于之前介绍的"+name+"，还有什么想了解的地方吗？😊 可以先了解评估流程，不需要急着决定。";
+ if(language==="en")return Number(slot)===2
+  ? "Hi! Our team previously discussed "+name+" as a possible care option 😊 Would you like to know about the assessment or what the visit involves? Suitability is assessed individually."
+  : "Any questions about the "+name+" option our team discussed? 😊 We can explain the first assessment, with no need to decide now.";
+ if(language==="ms")return Number(slot)===2
+  ? "Hai! Pasukan kami ada terangkan "+name+" sebagai salah satu pilihan penjagaan 😊 Nak tahu tentang penilaian atau proses lawatan? Kesesuaian bergantung pada penilaian."
+  : "Ada soalan tentang pilihan "+name+" yang kami terangkan tadi? 😊 Kami boleh jelaskan penilaian pertama dahulu, tak perlu buat keputusan sekarang.";
+ return null;
+}
+
+// Used only when recent verified staff advice or a multi-service comparison
+// makes the old customer-selected treatment unsafe as a sales follow-up.
+function neutralTreatmentFollowUpText({slot,language}={}) {
+ const messages={
+  zh:"Hi～之前聊到的护理需要先由中医师了解情况，才能判断是否适合您 😊 如果还有想了解的地方，可以直接告诉我们，不需要急着决定。",
+  en:"Hi! Our practitioner would need to understand your situation before recommending any care 😊 If you have questions about the assessment, feel free to ask. There is no need to decide now.",
+  ms:"Hai! Pengamal kami perlu memahami keadaan anda sebelum cadangkan sebarang rawatan 😊 Kalau ada soalan tentang penilaian, boleh tanya kami. Tak perlu buat keputusan sekarang.",
+ };
+ return [2,6,20].includes(Number(slot)) ? messages[language]||null : null;
+}
 function neutral20hFallbackText(language){
  return Object.prototype.hasOwnProperty.call(NEUTRAL_20H_FALLBACK,language)
    ? NEUTRAL_20H_FALLBACK[language] : null;
 }
-module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,isBarePostpartumConcernAnswer};
+module.exports={localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,neutralTreatmentFollowUpText,staffDiscussedFollowUpText,isBarePostpartumConcernAnswer};

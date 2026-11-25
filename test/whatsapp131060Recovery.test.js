@@ -7,6 +7,7 @@ const {
   RECOVERY_DELAY_MS, is131060Message, recoveryActivation,
   verifiedAdTreatment, build131060RecoveryReply, canSend131060Recovery,
   recoveryTreatmentButtons, validRecoveryTreatmentButtons,
+  recoveryTreatmentGroups, validRecoveryOrder, reserveRecoveryContinuation,
   readableHistoryForRecoverySelection, getVerifiedRecoveryHistoryProof,
 } = require("../src/services/whatsapp131060Recovery");
 
@@ -117,9 +118,9 @@ test("runtime reserves the reply through existing guarded secondary billing and 
   assert.match(server,/if \(secondaryAiConversation && is131060Message\(incoming\)/);
   assert.match(server,/recoveryActivation\(process\.env\)/);
   assert.match(server,/await canSend131060Recovery\(/);
-  assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig\)/);
+  assert.match(server,/build131060RecoveryReply\(incoming, clinicConfig, true\)/);
   assert.match(server,/"system_fallback"/);
-  assert.match(server,/processingJobId,\s*interactiveButtons: recoveryTreatmentButtons\(\),\s*reviewReplyToInboundMessageId: savedInbound\.id,\s*latePreSendCheck:/);
+  assert.match(server,/processingJobId,\s*interactiveButtons: firstButtons,\s*recoveryContinuationButtons: secondButtons,\s*reviewReplyToInboundMessageId: savedInbound\.id,\s*latePreSendCheck:/);
   assert.match(server,/latePreSendCheck\(saved.id\)/);
   assert.match(server,/sendSecondaryStaffText\(/);
 });
@@ -136,7 +137,8 @@ test("buttons are three fixed genuine treatments with a typed other-service esca
   assert.equal(validRecoveryTreatmentButtons(buttons.slice(0,2)),false);
   assert.equal(validRecoveryTreatmentButtons([...buttons.slice(0,2),
     {id:"neutro_131060_9d",title:"脉冲波"}]),false);
-  assert.equal(validRecoveryTreatmentButtons([...buttons].reverse()),false);
+  assert.equal(validRecoveryTreatmentButtons([...buttons].reverse()),true);
+  assert.equal(validRecoveryTreatmentButtons([buttons[0],buttons[0],buttons[1]]),false);
   buttons[0].title="tampered";
   assert.equal(validRecoveryTreatmentButtons(buttons),false);
   assert.match(build131060RecoveryReply(unavailable,services),/其他护理（例如脉冲波）也可以直接告诉我们/);
@@ -273,4 +275,122 @@ test("first-ad neutral recovery marker requires accepted provider proof after pr
   assert.match(sql,/initial\.content LIKE/);
   assert.match(sql,/prior\.content LIKE/);
   assert.throws(()=>is131060RecoveryAssistantSql("prior; DROP TABLE contacts","initial"),TypeError);
+});
+
+
+test("two native button groups reflect recent demand, preserve IDs and permit order changes",()=>{
+ const groups=recoveryTreatmentGroups();
+ assert.deepEqual(groups.map(g=>g.map(b=>b.title)),[["骨盆调理","脉冲波调理","3D 小颜术"],["9D 逆龄抗衰","胸部护理","其他护理"]]);
+ assert.ok(groups.every(validRecoveryTreatmentButtons));
+ const order=groups.flat().map(b=>b.id);
+ assert.equal(validRecoveryOrder(order),true);
+ assert.equal(validRecoveryOrder([...order.slice(0,5),order[0]]),false);
+ assert.deepEqual(recoveryTreatmentGroups({recoveryTreatmentOrder:[...order].reverse()}).flat().map(b=>b.id),[...order].reverse());
+});
+test("continuation eligibility requires accepted same-job first menu and excludes only it and the reserved second row",async()=>{
+ const database={query:async(sql,params)=>{
+  assert.match(sql,/a\.processing_job_id=job\.id/);
+  assert.match(sql,/a\.outcome='accepted'/);
+  assert.match(sql,/prior_menu\.id<>\$7/);
+  assert.match(sql,/newer\.id<>\$7/);
+  assert.deepEqual(params.slice(-1),[35]);
+  return {rows:[{eligible:true}]};
+ }};
+ assert.equal(await canSend131060Recovery({contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,ignoreOutboundMessageId:36,database,env}),true);
+ assert.equal(await canSend131060Recovery({contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,ignoreOutboundMessageId:35,database,env}),false);
+});
+test("second group reservation is locked, one-shot and rejects overlapping buttons",async()=>{
+ const [first,second]=recoveryTreatmentGroups();
+ const calls=[];
+ let eligible=true;
+ const database={query:async(sql,params)=>{
+  calls.push(sql);
+  if(sql.includes("FOR UPDATE OF a"))return {rows:[{whatsapp_interactive:{buttons:first}}]};
+  if(sql.includes("AS eligible"))return {rows:[{eligible}]};
+  if(sql.includes("INSERT INTO messages"))return {rows:[{id:36}]};
+  return {rows:[]};
+ }};
+ const args={contactId:10,inboundMessageId:34,firstRecoveryMessageId:35,buttons:second,database,env};
+ assert.equal((await reserveRecoveryContinuation(args)).id,36);
+ assert.ok(calls.some(sql=>sql.includes("FOR UPDATE OF a")));
+ eligible=false;
+ assert.equal(await reserveRecoveryContinuation(args),null);
+ assert.equal(await reserveRecoveryContinuation({...args,buttons:first}),null);
+ assert.equal(calls.filter(sql=>sql.includes("INSERT INTO messages")).length,1);
+});
+
+
+test("all six signed reply labels map to configured services or a neutral selection",()=>{
+ const {parseIncomingMessages}=require("../src/services/whatsappService");
+ const {classifyVerifiedTreatmentTurn,chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches}=require("../src/services/whatsappSecondaryFollowUpDecision");
+ const {scopeRecoveryCommercialHistory}=require("../src/services/whatsapp131060Recovery");
+ const config={services:[...services.services,{name:"脉冲波调理"},{name:"草药胸部疏通乳腺护理"}],
+   serviceAliases:[{alias:"胸部护理",officialService:"草药胸部疏通乳腺护理"}]};
+ for(const button of recoveryTreatmentGroups().flat()){
+  const [incoming]=parseIncomingMessages({entry:[{id:"1852014482431209",changes:[{
+    field:"messages",value:{metadata:{phone_number_id:"1318355951360575"},
+      messages:[{id:"wamid.button",from:"60123123456",timestamp:"1794217329",type:"interactive",interactive:{type:"button_reply",button_reply:button}}]}
+  }]}]});
+  assert.equal(incoming.text,button.title);
+  const expected=button.title==="其他护理"?{status:"ambiguous",treatment:null}:
+    {status:"selected",treatment:button.title==="胸部护理"?"草药胸部疏通乳腺护理":button.title};
+  assert.deepEqual(classifyVerifiedTreatmentTurn({text:incoming.text,clinicConfig:config}),expected);
+ }
+ const candidate={customer_texts:["多少钱","其他护理","骨盆调理"],verified_treatment_status:"selected",verified_treatment_name:"骨盆调理",treatment_interest:"骨盆调理"};
+ assert.equal(chooseSecondaryFollowUpTreatment({candidate,clinicConfig:config,adFollowUpPolicy:{treatment:"骨盆调理"}}).generalOnly,true);
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"骨盆调理",clinicConfig:config}),false);
+ const history=[{role:"user",content:"骨盆调理"},{role:"assistant",content:"RM388"},{role:"user",content:"其他护理"},{role:"user",content:"多少钱"}];
+ assert.deepEqual(scopeRecoveryCommercialHistory(history),history.slice(2));
+});
+test("breast care selection invites a separate RM68 choice and never assumes consent or an expired promotion",()=>{
+ const {recoveryBreastOfferInvitation,recoveryBreastCampaignOpening,hasCampaignConversation}=require("../src/utils/neutroBreastRm68Campaign");
+ const config={businessName:"Neutro Sense TCM Centre",adFirstReply:{enabled:true}};
+ const now=Date.parse("2026-11-24T10:00:00Z");
+ const invitation=recoveryBreastOfferInvitation({customerText:"胸部护理",config,now});
+ assert.match(invitation,/RM68/);
+ assert.match(invitation,/还是平日/);
+ const history=[{role:"user",content:"胸部护理"},{role:"assistant",content:invitation}];
+ for(const choice of ["RM68","想了解活动","你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？"]){
+  const selected=[...history,{role:"user",content:choice}];
+  const reply=recoveryBreastCampaignOpening({history:selected,customerText:choice,config,now});
+  assert.equal(reply.campaignKey,"neutro_breast_rm68_2026");
+  assert.equal(hasCampaignConversation([...selected,{role:"assistant",content:reply.reply}]),true);
+ }
+ for(const choice of ["好的","平日护理","骨盆调理"]){
+  assert.equal(recoveryBreastCampaignOpening({history:[...history,{role:"user",content:choice}],customerText:choice,config,now}),null);
+ }
+ assert.equal(recoveryBreastOfferInvitation({customerText:"胸部护理",config,now:Date.parse("2026-12-07T00:00:00Z")}),null);
+});
+
+test("newest treatment after Other overrides a stale CRM and marketing snapshot",()=>{
+ const {chooseSecondaryFollowUpTreatment,latestMarketingIntentMatches,recoveryTopicDecision}=require("../src/services/whatsappSecondaryFollowUpDecision");
+ const config={services:[...services.services,{name:"脉冲波调理"}],serviceAliases:services.serviceAliases};
+ const candidate={customer_texts:["多少钱？","脉冲波调理","其他护理","骨盆调理"],verified_treatment_status:"selected",verified_treatment_name:"骨盆调理",treatment_interest:"骨盆调理"};
+ const choice=()=>chooseSecondaryFollowUpTreatment({candidate,clinicConfig:config,adFollowUpPolicy:{treatment:"骨盆调理"}});
+ assert.deepEqual(choice(),{treatment:"脉冲波调理",generalOnly:false,customerSelected:true});
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"骨盆调理",clinicConfig:config}),false);
+ assert.equal(latestMarketingIntentMatches({customerMessages:candidate.customer_texts,treatmentInterest:"脉冲波调理",clinicConfig:config}),true);
+ candidate.customer_texts.unshift("3D 和 9D 有什么分别","好的");
+ assert.equal(choice().generalOnly,true);
+ candidate.customer_texts=["好的","其他护理","脉冲波调理","其他护理","骨盆调理"];
+ assert.equal(choice().generalOnly,true);
+ candidate.customer_texts=["好的","不感兴趣","脉冲波调理","其他护理"];
+ assert.equal(recoveryTopicDecision(candidate.customer_texts,config).status,"declined");
+});
+test("topic reset separates old clinical evidence from pricing and preserves original appointment history",()=>{
+ const {scopeRecoveryCommercialHistory,priorRecoveryClinicalContext}=require("../src/services/whatsapp131060Recovery");
+ const {normalizeReplyOptions}=require("../src/services/aiService");
+ const {normalizeOptions,buildSystemPrompt}=require("../src/utils/systemPrompt");
+ const history=[{role:"user",content:"骨盆调理多少钱"},{role:"assistant",content:"RM388"},{role:"user",content:"剖腹产后两周"},{role:"assistant",content:"周六下午可以吗"},{role:"user",content:"其他护理"},{role:"user",content:"脉冲波调理"}];
+ assert.deepEqual(scopeRecoveryCommercialHistory(history),history.slice(4));
+ const priorClinicalContext=priorRecoveryClinicalContext(history,value=>value.includes("剖腹产"));
+ assert.deepEqual(priorClinicalContext,["剖腹产后两周"]);
+ assert.equal(history.length,6);
+ const options=normalizeOptions(normalizeReplyOptions({priorClinicalContext,bookingContext:{status:"set"}}));
+ assert.deepEqual(options.priorClinicalContext,priorClinicalContext);
+ assert.equal(options.bookingContext.status,"set");
+ const prompt=buildSystemPrompt(options);
+ assert.match(prompt,/PREVIOUS TOPIC SAFETY CONTEXT/);
+ assert.match(prompt,/剖腹产后两周/);
+ assert.match(prompt,/never use them to infer current treatment, pricing/);
 });

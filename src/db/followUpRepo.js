@@ -100,6 +100,14 @@ function customerFollowUpIntentGuardSql(contactAlias = "c") {
         '(health[[:space:]]+professional[[:space:]]+program|business[[:space:]]+(collaboration|partnership)|医疗专业人员|醫療專業人員|商务合作|商業合作|邀请.{0,50}zoom|邀請.{0,50}zoom)'
       OR COALESCE(terminal_inbound.content,'') ~*
         '^(谢谢|謝謝|多谢|多謝|thanks|thank you|thank u|tq|terima kasih)[[:space:].!！。🙏😊]*$'
+      -- A customer who will contact us later should not receive a sales
+      -- follow-up. A new direct price/booking question remains answerable.
+      OR (
+        COALESCE(terminal_inbound.content,'') ~*
+          '(有需要.{0,12}再.{0,8}(预约|預約|联系|聯繫|安排)|((我|先)?(再)?(考虑考虑|考慮考慮))|(先解决|先解決).{0,35}(之后|之後).{0,25}(再来|再來)|我[[:space:]]*在[[:space:]]*(jb|johor|新山|柔佛)(的|哦|啊)?)'
+        AND COALESCE(terminal_inbound.content,'') !~*
+          '(价[格钱錢]|費用|费用|多少[钱錢]|[?？].{0,35}(价格|價錢|price|cost)|你们有|你們有|请问|請問|有没有|有沒有|能否|能不能|(?:book|booking|预约|預約).{0,15}(今天|明天|tomorrow|today))'
+      )
       OR (
         COALESCE(terminal_inbound.content,'') ~*
           '(penang|槟城|檳城|johor|jb).{0,35}(branch|分行|分店)'
@@ -296,6 +304,15 @@ async function findCandidates({
            LIMIT 5
          ) AS recent_inbound_messages,
          ARRAY(
+           SELECT recent_inbound.created_at
+           FROM messages recent_inbound
+           WHERE recent_inbound.contact_id = c.id
+             AND recent_inbound.role = 'user'
+             AND recent_inbound.id <= latest_inbound.id
+             AND (previous_outbound.id IS NULL OR recent_inbound.id > previous_outbound.id)
+           ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC LIMIT 5
+         ) AS recent_inbound_times,
+         ARRAY(
            SELECT service_inbound.content
            FROM messages service_inbound
            WHERE service_inbound.contact_id = c.id
@@ -305,7 +322,28 @@ async function findCandidates({
                  latest_inbound.created_at - interval '24 hours'
            ORDER BY service_inbound.created_at DESC, service_inbound.id DESC
            LIMIT 10
-         ) AS recent_service_messages
+         ) AS recent_service_messages,
+         -- Follow-up-only context, separate from verified treatment, pricing
+         -- triggers, Before & After selection and AI reply history.
+         CASE WHEN c.channel='whatsapp' AND
+           ${process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==='true' ? 'TRUE' : 'FALSE'} THEN ARRAY(
+           SELECT jsonb_build_object(
+             'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
+             'created_at',topic.created_at)
+           FROM messages topic
+           WHERE topic.contact_id=c.id
+             AND topic.created_at>=latest_inbound.created_at-INTERVAL '24 hours'
+             AND topic.created_at<=now()
+             AND topic.whatsapp_message_id IS NOT NULL
+             AND topic.delivery_status IS DISTINCT FROM 'failed'
+             AND COALESCE((to_jsonb(topic)->>'is_forwarded')::boolean,FALSE)=FALSE
+             AND COALESCE(to_jsonb(topic)->>'whatsapp_customer_mutation','')=''
+             AND (topic.role='user' OR
+               (topic.role='assistant' AND topic.sent_by_username IS NOT NULL
+               AND topic.sent_by_username<>'Follow-up automation'
+               AND COALESCE((to_jsonb(topic)->>'is_automated_follow_up')::boolean,FALSE)=FALSE))
+           ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
+         ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
        FROM recent_inbound_contacts recent
        JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
@@ -456,7 +494,9 @@ async function findCandidates({
        trigger_message_id,
        trigger_message_content,
        recent_inbound_messages,
+       recent_inbound_times,
        recent_service_messages,
+       followup_topic_turns,
        treatment_interest,
        ad_followup_source,
        ad_followup_headline,

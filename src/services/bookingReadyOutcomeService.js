@@ -1,5 +1,6 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
+const { evaluateAppointmentHours, verifiedAppointmentPreference, appointmentCustomerContext } = require("../utils/appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
@@ -84,7 +85,28 @@ function normalizeOptions(reasonOrOptions) {
     activityDescription: safeText(options.activityDescription, 1000) || defaults.activityDescription,
     details: normalizeBookingDetails(options.details || options),
     allowReschedule: options.allowReschedule === true,
+    customerText: safeText(options.customerText, 1000) || "",
+    receivedAt: options.receivedAt || new Date(),
+    durationMinutes: Number(options.durationMinutes) || 0,
+    recentCustomerMessages: Array.isArray(options.recentCustomerMessages)
+      ? options.recentCustomerMessages.slice(0, 20) : [],
+    recentStaffMessages: Array.isArray(options.recentStaffMessages)
+      ? options.recentStaffMessages.slice(0, 20) : [],
   };
+}
+
+// Both duplicate suppression and re-open eligibility use the same reset
+// evidence. Merely writing the same appointment status is not a new attempt.
+function unresolvedBookingSql(activityAlias, leadAlias) {
+  return `NOT EXISTS (
+    SELECT 1 FROM lead_activities reset
+    WHERE reset.lead_id = ${leadAlias}.id
+      AND reset.id > ${activityAlias}.id
+      AND (reset.metadata->>'outcome' = 'booking_hold_resolved'
+        OR (reset.metadata ? 'previousAppointmentStatus'
+          AND reset.metadata->>'appointmentStatus' IN ('none','cancelled','reschedule','set','visited')
+          AND reset.metadata->>'previousAppointmentStatus' IS DISTINCT FROM reset.metadata->>'appointmentStatus'))
+  )`;
 }
 
 function createBookingReadyOutcomeService({
@@ -92,6 +114,7 @@ function createBookingReadyOutcomeService({
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
+  now = () => new Date(),
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -99,7 +122,50 @@ function createBookingReadyOutcomeService({
     reasonOrOptions = null
   ) {
     const capturedMessageId = safeMessageId(messageId);
-    const { reason, activityDescription, details, allowReschedule = false } = normalizeOptions(reasonOrOptions);
+    const { reason, activityDescription, details, allowReschedule = false,
+      customerText = "", receivedAt, durationMinutes = 0,
+      recentCustomerMessages = [], recentStaffMessages = [] } = normalizeOptions(reasonOrOptions);
+    // Second independent guard: no CRM attention, activity or Telegram alert
+    // may be created for a closed/past/out-of-hours AI booking preference.
+    // This also protects callers other than the normal inbound send path.
+    if (getConversionProfile(clinicConfig).mode === "appointment" &&
+        clinicConfig.hours?.weekly) {
+      const evaluationTime = now();
+      const hoursCheck = evaluateAppointmentHours({
+        hours: clinicConfig.hours, customerText,
+        appointmentPreference: details.appointmentPreference || "",
+        recentCustomerMessages, recentStaffMessages,
+        receivedAt, now: evaluationTime, durationMinutes,
+      });
+      const verifiedPreference = verifiedAppointmentPreference(hoursCheck);
+      if (!verifiedPreference) {
+        console.warn("[Appointment hours] refused booking_ready contact=" + contactId +
+          " reason=" + hoursCheck.status);
+        return {
+          contactUpdated: false, leadId: null, leadChanged: false,
+          details, blockedReason: hoursCheck.status,
+        };
+      }
+      // Never persist or notify staff with an unverified model-written time.
+      // The same canonical date and time is used by CRM and alert delivery.
+      details.appointmentPreference = verifiedPreference;
+      if (!details.branch && clinicConfig.branches?.length === 1)
+        details.branch = canonicalConfiguredValue(clinicConfig.branches[0]?.name, clinicConfig.branches);
+      // Keep actual customer concerns separate from the canonical appointment
+      // field. Use excerpts rather than trusting model-generated timing claims.
+      const context = appointmentCustomerContext({customerText,recentCustomerMessages,receivedAt,now:evaluationTime});
+      const formatClock = t => String(Math.floor(t/60)).padStart(2,"0")+":"+String(t%60).padStart(2,"0");
+      const feasibleWindow = hoursCheck.validWindows?.length
+        ? hoursCheck.validWindows.map(range=>range.map(formatClock).join("–")).join(" or ") : null;
+      details.staffSummary = [
+        details.treatment ? "Treatment: " + details.treatment : null,
+        details.branch ? "Location: " + details.branch : null,
+        "Customer preference: " + verifiedPreference,
+        feasibleWindow ? "Feasible start window within clinic hours (availability not checked): " + feasibleWindow : null,
+        "Staff to confirm availability.",
+        context.length ? "Customer context (quoted; not scheduling details): " + context.map(value=>JSON.stringify(value)).join("; ") : null,
+      ].filter(Boolean).join(". ").slice(0,600);
+    }
     const client = await database.connect();
     let contactUpdated = false;
     let leadId = null;
@@ -139,6 +205,28 @@ function createBookingReadyOutcomeService({
                  AND l.appointment_status IN ('set', 'visited')
              )
            )
+           -- A pending request is durable even if Inbox attention was
+           -- dismissed or replaced. Compare only the latest active-lead request.
+           -- A later staff release or appointment-state change resets it.
+           AND NOT (
+             $9::boolean = true AND $5::text IS NOT NULL AND EXISTS (
+               SELECT 1 FROM LATERAL (
+                 SELECT l.id FROM leads l
+                 WHERE l.contact_id = c.id AND l.is_closed = false
+                 ORDER BY l.created_at DESC, l.id DESC LIMIT 1
+               ) active_lead
+               JOIN LATERAL (
+                 SELECT a.id, a.metadata FROM lead_activities a
+                 WHERE a.lead_id = active_lead.id
+                   AND a.metadata->>'outcome' = 'booking_ready'
+                 ORDER BY a.created_at DESC, a.id DESC LIMIT 1
+               ) previous_request ON true
+               WHERE previous_request.metadata->>'appointmentPreference' = $5::text
+                 AND ($3::text IS NULL OR previous_request.metadata->>'branch' = $3::text)
+                 AND ($4::text IS NULL OR previous_request.metadata->>'treatment' = $4::text)
+                 AND ${unresolvedBookingSql("previous_request","active_lead")}
+             )
+           )
            AND (
              c.needs_attention = false
              OR c.attention_reason IS NULL
@@ -162,6 +250,7 @@ function createBookingReadyOutcomeService({
                    FROM lead_activities a
                    WHERE a.lead_id = current_lead.id
                      AND a.metadata->>'outcome' = 'booking_ready'
+                     AND ($9::boolean = false OR ${unresolvedBookingSql("a","current_lead")})
                    ORDER BY a.created_at DESC, a.id DESC
                    LIMIT 1
                  ) latest_booking ON true

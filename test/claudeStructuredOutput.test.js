@@ -32,10 +32,13 @@ function validConversationReply() {
     serviceQuerySource: null,
     priceQuery: false,
     packageQuery: false,
+    pricingStage: null,
     promotionOption: null,
     treatment: null,
     branch: null,
     appointmentPreference: null,
+    appointmentScheduling: false,
+    businessLocationOnly: false,
     projectLocation: null,
     projectSummary: null,
     nextStep: null,
@@ -84,10 +87,13 @@ test("Claude customer replies use native structured outputs and the workspace he
       "serviceQuerySource",
       "priceQuery",
       "packageQuery",
+      "pricingStage",
       "promotionOption",
       "treatment",
       "branch",
       "appointmentPreference",
+      "appointmentScheduling",
+      "businessLocationOnly",
       "projectLocation",
       "projectSummary",
       "nextStep",
@@ -100,6 +106,8 @@ test("Claude customer replies use native structured outputs and the workspace he
   assert.equal(parsed.outcome, "normal");
   assert.equal(parsed.text, structured.reply);
   assert.equal(parsed.details.treatment, null);
+  assert.equal(parsed.details.appointmentScheduling, false);
+  assert.equal(parsed.details.businessLocationOnly, false);
 });
 
 test("Claude comment automation gets the comment-specific structured schema", () => {

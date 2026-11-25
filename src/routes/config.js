@@ -195,6 +195,7 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
+  recoveryTreatmentOrder: (v) => require("../services/whatsapp131060Recovery").validRecoveryOrder(v),
   adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
     (v.rm68ImageUrl === undefined ||
       (typeof v.rm68ImageUrl === "string" &&
@@ -1368,6 +1369,23 @@ router.post("/automated-follow-up/translations", async (req, res) => {
       error: "The translations could not be generated. Please try again.",
     });
   }
+});
+
+// Administrator review records evidence, never sends or resets a gate.
+router.get("/automated-follow-up/secondary-inbox-review/:contactId", async (req,res)=>{
+  try {
+    res.json(await require("../services/whatsappSecondaryInboxReviewService").inspect({contactId:req.params.contactId}));
+  } catch(error){res.status(error.status||503).json({error:error.status?error.message:"Billing review unavailable."});}
+});
+router.post("/automated-follow-up/secondary-inbox-review/:contactId", async (req,res)=>{
+  try {
+    res.json(await require("../services/whatsappSecondaryInboxReviewService").approve({
+      contactId:req.params.contactId,actor:req.user?.username,
+      reservationId:req.body?.reservationId,reason:req.body?.reason,
+      nonDeliveryChecked:req.body?.nonDeliveryChecked===true,
+      billingNoChargeChecked:req.body?.billingNoChargeChecked===true,
+    }));
+  } catch(error){res.status(error.status||503).json({error:error.status?error.message:"Billing review unavailable."});}
 });
 
 // Operational override; it does not change Meta pricing evidence or waive billing.

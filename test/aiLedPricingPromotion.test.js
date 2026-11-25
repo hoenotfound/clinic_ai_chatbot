@@ -550,12 +550,31 @@ test("topic reset still never resurrects an old treatment, a refusal, or an ad-o
       treatment:"9D 逆龄抗衰",promotions:promos,
     }),null,customerText);
   }
+  // A precisely negated old service and an independent price request for
+  // a different configured service are now independently resolved.
   const both="不要3D，换个9D多少钱？";
-  assert.equal(decide({
+  const corrected=decide({
     customerText:both, treatment:"9D 逆龄抗衰",
     conversationHistory:[{role:"user",content:both}],
     promotions:promos,
-  }),null,"two named service mentions fail closed unless their context is independently resolved");
+  });
+  assert.equal(corrected?.treatment,"9D 逆龄抗衰");
+  assert.equal(corrected?.scopedRefusedTreatment,"3D 小颜术");
+  assert.deepEqual(corrected?.prices.map(p=>p.price),["RM488"]);
+  // Two affirmative service mentions, an unspecified replacement, or
+  // contradictory refusal cannot be treated as this exact correction.
+  for(const customerText of [
+    "3D和9D多少钱？",
+    "不要3D，换个疗程多少钱？",
+    "不要3D，3D多少钱？",
+    "不要3D，换个9D多少钱？停止联系我",
+  ]) {
+    assert.equal(decide({
+      customerText,treatment:"9D 逆龄抗衰",
+      conversationHistory:[{role:"user",content:customerText}],
+      promotions:promos,
+    }),null,customerText);
+  }
 });
 
 test("opted-in package questions work but package details alone never trigger graphics", () => {
@@ -850,7 +869,7 @@ test("one refused treatment does not override an independent price request for a
   }
 });
 
-test("session quantity and benefit questions never expose compact prices to the AI prompt",()=>{
+test("compact price knowledge does not authorize quotes or media for quantity and benefit questions",async()=>{
   const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
   const {buildSystemPrompt}=require("../src/utils/systemPrompt");
   const original={
@@ -868,7 +887,25 @@ test("session quantity and benefit questions never expose compact prices to the 
       const context=buildConversationPromptContext([{role:"user",content:customerText}],
         {services,aliases,promotions:[trial]});
       const prompt=buildSystemPrompt({conversationContext:context});
-      assert.doesNotMatch(prompt,/VERIFIED PRICE REFERENCE/u,customerText);
+      assert.match(prompt,/VERIFIED PRICE REFERENCE \(internal only\): quote ONLY when the CURRENT customer requests this price or package/u,customerText);
+      const {resolveModelLedPricingDecision}=require("../src/utils/aiPricingIntentDecision");
+      const modelIntent={structured:true,outcome:"normal",priceQuery:false,packageQuery:false,treatment:trial.linkedService};
+      const history=[{role:"user",content:customerText,pricingCreatedAtMs:Date.now()}];
+      const decision=resolveModelLedPricingDecision({modelIntent,customerText,conversationHistory:history,
+        services,serviceAliases:aliases,promotions:[trial]});
+      assert.equal(decision,null,customerText);
+      assert.equal(resolveModelLedPricingDecision({
+        modelIntent:{...modelIntent,priceQuery:true},customerText,conversationHistory:history,
+        services,serviceAliases:aliases,promotions:[trial],
+      }),null,"Incorrect model intent must not quote for "+customerText);
+      const result=ensureVerifiedPriceReply({customerText,reply:"Here is the treatment price RM488.",treatment:trial.linkedService,
+        pricingDecision:decision,priceRequested:false,services,serviceAliases:aliases,promotions:[trial],language:"en"});
+      assert.doesNotMatch(result.reply,/RM\s*488/u,customerText);
+      const media=await resolvePricePromotionForReply({customerText,conversationHistory:history,
+        aiPricingEnabled:true,pricingDecision:decision,treatment:trial.linkedService,
+        textSendSucceeded:true,services,serviceAliases:aliases,promotions:[trial],
+        wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false});
+      assert.equal(media,null,customerText);
     }
     const text="请问,做一次多少";
     const context=buildConversationPromptContext([

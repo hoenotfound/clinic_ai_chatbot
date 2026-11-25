@@ -14,13 +14,22 @@ function isProvenPreProviderBlock(result){
    result?.ambiguous!==true &&
    !result?.wamid;
 }
+// The unknown-gate refusal is also conclusively pre-reservation for THIS
+// draft. Keep the stricter AI text retry predicate unchanged.
+function isDeferrableFollowUpBlock(result){
+ return isProvenPreProviderBlock(result) ||
+   (["secondary_billing_unknown_hold_not_reviewed","secondary_billing_sender_alarm"].includes(result?.code) &&
+    isProvenPreProviderBlock({...result,code:PRE_PROVIDER_CODE})) ||
+   (result?.preProviderCancelled===true && result?.success===false &&
+    result?.unknown!==true && result?.ambiguous!==true && !result?.wamid);
+}
 // This single SQL statement atomically marks an unsent Inbox draft cancelled
 // and retains the unique attempt row as deferred. No delete or blind replay.
 // Reject if any provider/billing evidence exists, including a saved WAMID.
 async function deferProvenUnsent({
  database,table,attemptId,messageId,contactId,result,
 }){
- if(!TABLES.has(table) || !isProvenPreProviderBlock(result) ||
+ if(!TABLES.has(table) || !isDeferrableFollowUpBlock(result) ||
     !Number.isSafeInteger(Number(attemptId)) ||
     !Number.isSafeInteger(Number(messageId)) ||
     !Number.isSafeInteger(Number(contactId)))return false;
@@ -29,14 +38,20 @@ async function deferProvenUnsent({
    SELECT a.id FROM ${table} a
    JOIN messages m ON m.id=a.message_id
    WHERE a.id=$1 AND a.message_id=$2 AND a.contact_id=$3
-     AND a.status='claimed' AND a.defer_count<8
+     AND a.status='claimed'
      AND m.contact_id=$3 AND m.role='assistant'
      AND m.delivery_status='unknown'
      AND m.whatsapp_message_id IS NULL
      AND m.whatsapp_accepted_at IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM whatsapp_sender_billing_attempts billing
-       WHERE billing.message_id=m.id)
+       WHERE billing.message_id=m.id
+         AND (NOT $4::boolean OR billing.state<>'rejected' OR billing.wamid IS NOT NULL
+           OR billing.contact_id<>a.contact_id OR billing.sender_id<>a.sender_id))
+     AND NOT EXISTS (
+       SELECT 1 FROM whatsapp_sender_status_receipts receipt
+       JOIN whatsapp_sender_billing_attempts b ON b.reservation_id=receipt.reservation_id
+       WHERE b.message_id=m.id)
      AND NOT EXISTS (
        SELECT 1 FROM outbound_message_evidence evidence
        WHERE evidence.message_id=m.id)
@@ -44,7 +59,7 @@ async function deferProvenUnsent({
   ), cancelled AS (
    UPDATE messages m
    SET delivery_status='cancelled',
-     delivery_error='Secondary follow-up deferred before provider send; no billing reservation.'
+     delivery_error='Secondary follow-up deferred before provider send; no accepted or unresolved billing reservation.'
    WHERE m.id=$2 AND EXISTS(SELECT 1 FROM eligible)
    RETURNING m.id
   ), deferred AS (
@@ -52,14 +67,14 @@ async function deferProvenUnsent({
    SET status='deferred',message_id=NULL,wamid=NULL,
        error_code='pre_provider_billing_deferred',
        retry_after=NOW()+
-          LEAST(180,30*POWER(2,a.defer_count))*INTERVAL '1 second',
-       defer_count=a.defer_count+1,completed_at=NULL
+          LEAST(900,30*POWER(2,LEAST(a.defer_count,5)))*INTERVAL '1 second',
+       defer_count=LEAST(8,a.defer_count+1),completed_at=NULL
    WHERE a.id=$1 AND a.status='claimed'
      AND EXISTS(SELECT 1 FROM cancelled)
    RETURNING a.id
   )
   SELECT id FROM deferred`;
- const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId)]);
+ const rows=await database.query(sql,[Number(attemptId),Number(messageId),Number(contactId),result?.preProviderCancelled===true && result?.noReservation!==true]);
  return rows.rows?.length===1;
 }
 // The caller must retain the current contact, slot, consent and 24h
@@ -75,4 +90,15 @@ function reclaimClause(table){
  if(!TABLES.has(table))throw Error("Invalid secondary follow-up ledger");
  return RECLAIM_SQL.replaceAll("TABLE",table);
 }
-module.exports={isProvenPreProviderBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE};
+// Candidate scans skip slots before their durable deadline. The read-only
+// scheduling hint looks ahead to that same deadline, without changing expiry.
+const DEFERRED_READY_PREDICATE="attempted.status<>'deferred' OR attempted.retry_after IS NULL OR attempted.retry_after>$4::timestamptz";
+function deferredRetryAtSql(table,anchor){
+ if(!TABLES.has(table) || !["inbound.id","qualified_session.origin_id"].includes(anchor))
+   throw Error("Invalid secondary follow-up deadline scope");
+ return `(SELECT pending.retry_after FROM ${table} pending
+   WHERE pending.sender_id=sa.id AND pending.contact_id=c.id
+     AND pending.anchor_message_id=${anchor} AND pending.slot_hours=rule.slot_hours
+     AND pending.status='deferred')`;
+}
+module.exports={isProvenPreProviderBlock,isDeferrableFollowUpBlock,deferProvenUnsent,reclaimClause,PRE_PROVIDER_CODE,DEFERRED_READY_PREDICATE,deferredRetryAtSql};

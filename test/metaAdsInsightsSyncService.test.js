@@ -294,6 +294,7 @@ test("worker remains idle unless both a Marketing API token and ad account are c
   });
 });
 
+
 test('scheduled Insights runs retain their first boundary after real work and long runs',async()=>{
  let clock=Date.parse('2026-11-19T00:02:00Z'),duration=1000;
  const scheduled=[];

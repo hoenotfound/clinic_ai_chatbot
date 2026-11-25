@@ -28,10 +28,12 @@ function buildContents(messages) {
 function buildThinkingConfig(model = MODEL, env = process.env) {
   const normalized = String(model || "").trim().toLowerCase();
 
-  // Gemini 3.x uses thinkingLevel. Low is the production default for this
-  // latency-sensitive front-desk chatbot. It is supported by both the primary
-  // Gemini 3.8 Flash and fallback Gemini 3.5 Flash-Lite models. We deliberately
-  // do not allow "minimal" globally because Gemini 3.8 Flash does not support it.
+  // Flash-Lite supports minimal thinking; 3.8 Flash does not. Keep the
+  // primary model's existing tuning independent of the fallback.
+  if (normalized === "gemini-3.5-flash-lite") {
+    const requested = String(env.GEMINI_FLASH_LITE_THINKING_LEVEL || "minimal").trim().toLowerCase();
+    return { thinkingLevel: ["minimal", "low", "medium", "high"].includes(requested) ? requested : "minimal" };
+  }
   if (normalized.startsWith("gemini-3")) {
     const requested = String(env.GEMINI_THINKING_LEVEL || "low").trim().toLowerCase();
     const thinkingLevel = ["low", "medium", "high"].includes(requested)
@@ -49,7 +51,47 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
   return null;
 }
 
-function buildGeminiRequest(messages, options, resolvedModel) {
+// Use an explicit shape only for the Flash-Lite reply surfaces. The existing
+// parser and all downstream business/clinical checks remain authoritative.
+const nullableString = { type: ["string", "null"] };
+const conversationReplySchema = {
+  type: "object",
+  properties: {
+    reply: { type: "string" },
+    outcome: { type: "string", enum: ["normal", "review_required", "needs_human", "booking_ready"] },
+    serviceQuery: { type: "boolean" },
+    serviceQuerySource: nullableString,
+    priceQuery: { type: "boolean" },
+    packageQuery: { type: "boolean" },
+    pricingStage: nullableString,
+    reviewType: nullableString,
+    promotionOption: nullableString,
+    treatment: nullableString,
+    branch: nullableString,
+    appointmentPreference: nullableString,
+    appointmentScheduling: { type: "boolean" },
+    businessLocationOnly: { type: "boolean" },
+    projectLocation: nullableString,
+    projectSummary: nullableString,
+    nextStep: nullableString,
+    staffSummary: nullableString,
+  },
+  required: ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery",
+    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "businessLocationOnly",
+    "projectLocation", "projectSummary", "nextStep", "staffSummary"],
+};
+const followUpReplySchema = {
+  type: "object",
+  properties: {
+    action: { type: "string", enum: ["send", "skip", "stop_sequence", "human_review"] },
+    message: { type: "string" },
+    reason: { type: "string" },
+    topic: { type: "string" },
+  },
+  required: ["action", "message", "reason", "topic"],
+};
+
+function buildGeminiRequest(messages, options, resolvedModel, requestControl = {}) {
   const promptOptions = options.surface === "conversation"
     ? {
         ...options,
@@ -58,16 +100,25 @@ function buildGeminiRequest(messages, options, resolvedModel) {
         }),
       }
     : options;
-  const thinkingConfig = buildThinkingConfig(resolvedModel);
+  const isFlashLite = String(resolvedModel || "").trim().toLowerCase() === "gemini-3.5-flash-lite";
+  const correctiveRetry = isFlashLite && requestControl.correctiveRetry === true;
+  const thinkingConfig = correctiveRetry ? { thinkingLevel: "minimal" } : buildThinkingConfig(resolvedModel);
+  const schema = isFlashLite
+    ? options.surface === "follow_up" ? followUpReplySchema
+      : !options.surface || options.surface === "conversation" ? conversationReplySchema : null
+    : null;
   return {
     purpose: options.surface === "follow_up" ? "follow_up_generation" : "customer_reply",
     request: {
       model: resolvedModel,
       contents: buildContents(messages),
       config: {
-        systemInstruction: buildSystemPrompt(promptOptions),
-        maxOutputTokens: 1200,
+        systemInstruction: buildSystemPrompt(promptOptions) + (correctiveRetry
+          ? "\n\nOUTPUT RECOVERY: Return one complete valid JSON object matching the existing contract. Keep the customer-facing text concise; use null or empty fields only where allowed. Do not omit required fields or weaken any business, safety or handoff rule."
+          : ""),
+        maxOutputTokens: isFlashLite ? (correctiveRetry ? 3072 : 2048) : 1200,
         responseMimeType: "application/json",
+        ...(schema ? { responseJsonSchema: schema } : {}),
         ...(thinkingConfig ? { thinkingConfig } : {}),
       },
     },
@@ -96,7 +147,7 @@ async function getReply(
     throw err;
   }
 
-  const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel);
+  const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel, requestControl);
   const ai = new GoogleGenAI({ apiKey: resolvedKey });
   const response = await generateGeminiContent(ai, request, {
     purpose,

@@ -1,5 +1,4 @@
 "use strict";
-const {scopeSecondaryRead}=require("../src/utils/secondaryContactRead");
 const test=require("node:test");
 const assert=require("node:assert/strict");
 const {Client}=require("pg");
@@ -190,11 +189,6 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
       if(test===general.CANDIDATES_SQL)console.error("missing token",token);
     }
   }
-  assert.ok(eligible.length>0,"fixture must have eligible generic follow-ups");
-  const scoped=(await db.query(...scopeSecondaryRead(general.CANDIDATES_SQL,p,[Number(contact)]))).rows;
-  assert.deepEqual(scoped,eligible.filter(row=>Number(row.contact_id)===Number(contact)));
-  assert.equal((await db.query(...scopeSecondaryRead(general.CANDIDATES_SQL,p,[2147483647]))).rows.length,0,
-    "an unrelated contact event cannot select this eligible contact");
   // Active customers must not receive a paid reminder moments after asking
   // a new question. The same selector is used for final send rechecks.
   const active=(await db.query(

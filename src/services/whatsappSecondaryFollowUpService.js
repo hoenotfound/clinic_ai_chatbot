@@ -1,5 +1,4 @@
 "use strict";
-const { scopeSecondaryRead } = require("../utils/secondaryContactRead");
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
 // Neutro's follow-up queue, template billing or retry worker.
@@ -17,25 +16,31 @@ const mediaStorage=require("./mediaStorageService");
 const {secondaryVideoCacheEligible,dispatchSecondaryFollowUpVideo}=require("./whatsappSecondaryVideoCache");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
-const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText}=require("./whatsappSecondaryFollowUpLanguage");
+const {localizedFollowUpText,resolveFollowUpTreatment,neutral20hFallbackText,neutralTreatmentFollowUpText,staffDiscussedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
 const {classifyVerifiedTreatmentTurn,isStoppedDecision,
-  chooseSecondaryFollowUpTreatment,DISTANCE_OBJECTION_SQL}=
+  chooseSecondaryFollowUpTreatment,recoveryTopicDecision,DISTANCE_OBJECTION_SQL}=
   require("./whatsappSecondaryFollowUpDecision");
 const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
   require("../utils/adFollowUpTreatment");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
+const {adaptNeutroAppointmentInvitation}=require("../utils/appointmentInviteContinuity");
+const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFeatureEnabled}=
+  require("../utils/followUpCurrentTopic");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {deferProvenUnsent,reclaimClause}=require("./whatsappSecondaryPreSendDeferral");
+const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
+const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
+const {configuredVideoTreatment}=require("./followUpAiService");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const { runFollowUpRead } = require("../utils/namedFollowUpRead");
-const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
+  hasSecondaryClinicQuietHoursGuard}=
   require("../utils/secondaryDueTimeScheduler");
 
 // Primary-parity 24h service follow-ups are separate from opted-in marketing.
@@ -244,30 +249,50 @@ const PREVIOUS_STEP_SQL=`
 // No accepted/ambiguous/blocked step may use this exception. A 20h step may
 // also pass a never-claimed 6h slot ONLY when its 2h antecedent was safely
 // deferred and both earlier due windows have elapsed.
-const STALE_PRE_PROVIDER_STEP_SQL=`(
+// A never-claimed or proven unsent older slot may be passed ONLY once its
+// original catch-up window has expired. A live claim or genuine failure is
+// not evidence of an unsent message. Include late accepted earlier steps
+// when computing a previous 6h slot's deadline.
+const EXPIRED_UNSENT_PREDECESSORS_SQL=`(
   previous_step.completed_at IS NULL
   AND rule.slot_hours IN (6,20)
-  AND EXISTS (
-    SELECT 1 FROM whatsapp_sender_followup_attempts earlier_deferred
-    WHERE earlier_deferred.sender_id=sa.id
-      AND earlier_deferred.contact_id=c.id
-      AND earlier_deferred.anchor_message_id=inbound.id
-      AND earlier_deferred.status='deferred'
-      AND earlier_deferred.message_id IS NULL
-      AND earlier_deferred.error_code='pre_provider_billing_deferred'
-      AND earlier_deferred.defer_count>0
-      AND earlier_deferred.claimed_at <= NOW()-INTERVAL '8 hours'
+  AND NOT EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_rules earlier_rule
+    WHERE earlier_rule.sender_id=sa.id AND earlier_rule.enabled=TRUE
+      AND earlier_rule.slot_hours IN (2,6)
+      AND earlier_rule.slot_hours<rule.slot_hours
+      AND NOT EXISTS (
+        SELECT 1 FROM whatsapp_sender_followup_attempts earlier_sent
+        WHERE earlier_sent.sender_id=sa.id AND earlier_sent.contact_id=c.id
+          AND earlier_sent.anchor_message_id=inbound.id
+          AND earlier_sent.slot_hours=earlier_rule.slot_hours
+          AND earlier_sent.status='accepted' AND earlier_sent.completed_at IS NOT NULL
+      )
       AND (
-        earlier_deferred.slot_hours=previous_step.slot_hours
-        OR (rule.slot_hours=20 AND earlier_deferred.slot_hours=2
-            AND previous_step.slot_hours=6
-            AND first_reply.at+INTERVAL '14 hours'<NOW()
-            AND NOT EXISTS (
-              SELECT 1 FROM whatsapp_sender_followup_attempts any_six
-              WHERE any_six.sender_id=sa.id AND any_six.contact_id=c.id
-                AND any_six.anchor_message_id=inbound.id
-                AND any_six.slot_hours=6
-            ))
+        GREATEST(
+          (CASE WHEN ${RECOVERY_NO_SELECTION_SQL} THEN recovery_menu.at
+            WHEN earlier_rule.slot_hours=2 AND first_reply.staff_question
+              THEN first_reply.at+INTERVAL '4 hours'
+            ELSE first_reply.at END)+earlier_rule.slot_hours*INTERVAL '1 hour',
+          COALESCE((SELECT MAX(older.completed_at+
+                    (earlier_rule.slot_hours-older.slot_hours)*INTERVAL '1 hour')
+            FROM whatsapp_sender_followup_attempts older
+            WHERE older.sender_id=sa.id AND older.contact_id=c.id
+              AND older.slot_hours<earlier_rule.slot_hours
+              AND older.status='accepted' AND older.completed_at IS NOT NULL
+              AND older.completed_at>=inbound.created_at-INTERVAL '24 hours'
+          ),'-infinity'::timestamptz)
+        ) > NOW()-INTERVAL '8 hours'
+        OR EXISTS (
+          SELECT 1 FROM whatsapp_sender_followup_attempts earlier_attempt
+          WHERE earlier_attempt.sender_id=sa.id AND earlier_attempt.contact_id=c.id
+            AND earlier_attempt.anchor_message_id=inbound.id
+            AND earlier_attempt.slot_hours=earlier_rule.slot_hours
+            AND NOT (earlier_attempt.status='deferred'
+              AND earlier_attempt.message_id IS NULL AND earlier_attempt.wamid IS NULL
+              AND earlier_attempt.error_code='pre_provider_billing_deferred'
+              AND earlier_attempt.defer_count>0)
+        )
       )
   )
 )`;
@@ -449,7 +474,83 @@ function deliveredStaffVideoSql(contactSql,conversationSql,afterSql){
      AND staff_video.created_at>=${afterSql}
  )`;
 }
-const RECENT_STAFF_VIDEO_SQL=`SELECT NOT ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} AS allowed`;
+const RECENT_STAFF_VIDEO_SQL=`SELECT NOT (
+  ${deliveredStaffVideoSql("$1","$2","$3::timestamptz")} OR
+  ${staffVideoPlaceholderSql("$1","$2","$3::timestamptz")}
+) AS allowed`;
+// A signed Business App echo is not a delivery receipt. Only a distinctive
+// caption for the 2h introduction or 6h customer example suppresses its
+// matching automated step. Generic video mentions are insufficient.
+function deliveredStaffVideoCaptionSql(contactSql,conversationSql,afterSql,slotSql){
+ return `EXISTS (
+   SELECT 1 FROM messages staff_caption
+   JOIN whatsapp_sender_message_context staff_caption_ctx
+     ON staff_caption_ctx.message_id=staff_caption.id
+    AND staff_caption_ctx.conversation_id=${conversationSql}
+   WHERE staff_caption.contact_id=${contactSql}
+     AND staff_caption.role='assistant'
+     AND staff_caption.sent_by_username IS NOT NULL
+     AND staff_caption.sent_by_username NOT IN
+       ('Follow-up automation','Consent request automation')
+     AND staff_caption.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff_caption.whatsapp_message_id LIKE 'wamid.%'
+     AND staff_caption.delivery_status IS DISTINCT FROM 'failed'
+     AND staff_caption.media_mime_type IS NULL
+     AND staff_caption.created_at>=${afterSql}
+     AND (
+       (${slotSql}=2 AND COALESCE(staff_caption.content,'') ~*
+         '^[[:space:]]*(🎥|📹)[[:space:]]*(Hi[[:space:]～~]*)?(这段影片简单介绍|這段影片簡單介紹|这段视频简单介绍|這段視頻簡單介紹|intro[[:space:]]+video|video[[:space:]]+introduction)')
+       OR (${slotSql}=6 AND COALESCE(staff_caption.content,'') ~*
+         '^[[:space:]]*(🎥|📹)[[:space:]]*(跟你分享一位顾客|跟你分享一位顧客|分享一位顾客|分享一位顧客|customer[[:space:]]+testimonial|testimonial[[:space:]]+video)')
+     )
+ )`;
+}
+// An explicit provider-signed video placeholder shows that staff sent a
+// video but not which one. Keep future media text-only when ambiguous.
+function staffVideoPlaceholderSql(contactSql,conversationSql,afterSql){
+ return `EXISTS (
+   SELECT 1 FROM messages staff_video_placeholder
+   JOIN whatsapp_sender_message_context sent_ctx
+     ON sent_ctx.message_id=staff_video_placeholder.id
+    AND sent_ctx.conversation_id=${conversationSql}
+   WHERE staff_video_placeholder.contact_id=${contactSql}
+     AND staff_video_placeholder.role='assistant'
+     AND staff_video_placeholder.sent_by_username IS NOT NULL
+     AND staff_video_placeholder.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND staff_video_placeholder.whatsapp_message_id LIKE 'wamid.%'
+     AND staff_video_placeholder.delivery_status IS DISTINCT FROM 'failed'
+     AND staff_video_placeholder.created_at>=${afterSql}
+     AND BTRIM(COALESCE(staff_video_placeholder.content,'')) =
+       '🎥 [Video sent from WhatsApp Business App]'
+ )`;
+}
+// One optional, gentle booking-question nudge after the 2h reminder was
+// accepted BEFORE staff asked about availability. Never unlocks 20h or media.
+// Only fresh questions after a configured UTC rollout time are eligible.
+function bookingQuestionNudgeSql(nowSql,env=process.env) {
+ const raw=String(env.NEUTRO_FOLLOWUP_STAFF_QUESTION_NUDGE_AFTER||"").trim();
+ if(!staffTopicFeatureEnabled(env) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(raw))
+  return "FALSE";
+ const ms=Date.parse(raw);
+ if(!Number.isFinite(ms))return "FALSE";
+ const activation=new Date(ms).toISOString();
+ return `(
+   rule.slot_hours=6 AND first_reply.staff_reply AND first_reply.staff_question
+   AND first_reply.at >= '${activation}'::timestamptz
+   AND first_reply.at <= ${nowSql} - INTERVAL '2 hours'
+   AND first_reply.text ~* '(平日|周末|週末|星期|礼拜|禮拜|哪天|什麼時間|什么时间|方便过来|方便過來|weekday|weekend|what day|which day|when.*(come|visit)|hari.*(datang|sesuai)|masa.*datang)'
+   AND date_part('hour', (${nowSql} AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 8 AND 20
+   AND EXISTS (
+    SELECT 1 FROM whatsapp_sender_followup_attempts previous_nudge
+    WHERE previous_nudge.sender_id=sa.id
+      AND previous_nudge.contact_id=c.id
+      AND previous_nudge.anchor_message_id=inbound.id
+      AND previous_nudge.slot_hours=2 AND previous_nudge.status='accepted'
+      AND previous_nudge.completed_at < first_reply.at
+   )
+  )`;
+}
 
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
@@ -468,6 +569,8 @@ const CANDIDATES_SQL=`
    lead.treatment_interest,
    lead.marketing_consent AS lead_marketing_consent,
    ${deliveredStaffVideoSql('c.id','sc.id','inbound.created_at')} AS staff_video_sent,
+    ${deliveredStaffVideoCaptionSql('c.id','sc.id','inbound.created_at','rule.slot_hours')} AS staff_video_caption_sent,
+   ${staffVideoPlaceholderSql('c.id','sc.id','inbound.created_at')} AS staff_video_placeholder_sent,
    EXISTS (
      SELECT 1 FROM whatsapp_free_entry_referrals r
      JOIN messages ad ON ad.id=r.origin_message_id
@@ -487,6 +590,7 @@ const CANDIDATES_SQL=`
    ) AS verified_meta_ad,
    treatment_state.status AS verified_treatment_status,
    treatment_state.treatment_name AS verified_treatment_name,
+   treatment_state.source_message_id AS verified_treatment_source_message_id,
    ad_followup.source AS ad_followup_source,
    ad_followup.headline AS ad_followup_headline,
    ad_followup.body AS ad_followup_body,
@@ -508,7 +612,32 @@ const CANDIDATES_SQL=`
        AND (language_turn.created_at,language_turn.id)
            <= (inbound.created_at,inbound.id)
      ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 20
-   ) AS customer_texts
+   ) AS customer_texts,
+   -- Read-only, sender-bound staff/customer turns for optional service-window
+   -- follow-up topic selection. Not marketing consent or customer selection.
+   CASE WHEN ${process.env.NEUTRO_FOLLOWUP_STAFF_TOPIC_ENABLED==='true' ? 'TRUE' : 'FALSE'} THEN ARRAY(SELECT jsonb_build_object(
+       'id',topic.id,'role',topic.role,'content',LEFT(topic.content,850),
+       'created_at',topic.created_at)
+     FROM messages topic
+     JOIN whatsapp_sender_message_context topic_context
+       ON topic_context.message_id=topic.id AND topic_context.conversation_id=sc.id
+     WHERE topic.contact_id=c.id
+       AND topic.created_at>=inbound.created_at-INTERVAL '24 hours'
+       AND topic.created_at<=$4::timestamptz
+       AND topic.whatsapp_message_id IS NOT NULL
+       AND topic.delivery_status IS DISTINCT FROM 'failed'
+       AND topic.is_forwarded IS DISTINCT FROM TRUE
+       AND COALESCE(topic.whatsapp_customer_mutation,'')=''
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.sender_id=sa.id AND historical.message_id=topic.id
+       )
+       AND (topic.role='user' OR
+         (topic.role='assistant' AND topic.sent_by_username IS NOT NULL
+         AND topic.sent_by_username<>'Follow-up automation'
+         AND topic.is_automated_follow_up IS DISTINCT FROM TRUE))
+     ORDER BY topic.created_at DESC,topic.id DESC LIMIT 32
+   ) ELSE ARRAY[]::jsonb[] END AS followup_topic_turns
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
@@ -613,7 +742,7 @@ const CANDIDATES_SQL=`
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
-      OR ${RECOVERY_NO_SELECTION_SQL})
+      OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('$4::timestamptz')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -646,7 +775,7 @@ const CANDIDATES_SQL=`
    -- Follow-ups run in order. A later step needs its preceding enabled
    -- sender-specific step to have been accepted, not merely scheduled.
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
-     OR ${STALE_PRE_PROVIDER_STEP_SQL})
+     OR ${EXPIRED_UNSENT_PREDECESSORS_SQL})
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
    -- Routine staff information and forwards do not cancel AI-owned follow-ups.
    -- Staff questions, pending bookings and explicit takeover remain gated above.
@@ -661,8 +790,15 @@ const CANDIDATES_SQL=`
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
-       AND attempted.status<>'deferred'
+       AND (${DEFERRED_READY_PREDICATE})
    )
+   -- Discovery only: do not generate a new draft while billing cannot settle.
+   AND ${reviewedUnknownGateCandidateSql("c","sa")}
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
+     WHERE preflight.sender_id=sa.id AND preflight.owner_contact_id=c.id
+       AND preflight.state IN ('reserved','awaiting_pricing'))
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
+     WHERE alarm.sender_id=sa.id)
  ORDER BY inbound.created_at,c.id,rule.slot_hours
  LIMIT $5
 `;
@@ -670,6 +806,8 @@ const CANDIDATES_SQL=`
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_followup_rules",
   dueExpression:SEQUENCE_DUE_SQL,
+  retryAtExpression:deferredRetryAtSql("whatsapp_sender_followup_attempts","inbound.id"),
+  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
   quietWindowEndMarker:"   -- Follow-ups run in order.",
 });
 
@@ -729,8 +867,10 @@ const RECHECK_SQL=`
    AND c.mode='ai' AND c.takeover_by IS NULL
    AND NOT first_reply.staff_pending_action
    AND (NOT first_reply.staff_question OR rule.slot_hours=2
-      OR ${RECOVERY_NO_SELECTION_SQL})
+      OR ${RECOVERY_NO_SELECTION_SQL} OR ${bookingQuestionNudgeSql('NOW()')})
    AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
+   AND (rule.slot_hours NOT IN (2,6) OR NOT
+     ${deliveredStaffVideoCaptionSql("c.id","sc.id","inbound.created_at","rule.slot_hours")})
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (
@@ -767,7 +907,7 @@ const RECHECK_SQL=`
    AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
    AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL
-     OR ${STALE_PRE_PROVIDER_STEP_SQL})
+     OR ${EXPIRED_UNSENT_PREDECESSORS_SQL})
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts prior_problem
      WHERE prior_problem.sender_id=sa.id AND prior_problem.contact_id=c.id
@@ -780,7 +920,7 @@ const RECHECK_SQL=`
 
 async function runOnce({
   database=pool,env=process.env,
-  now=new Date(),limit=10,contactIds,
+  now=new Date(),limit=10,
   sendText=sendSecondaryStaffText,
   store=messagesRepo,storage=mediaStorage,contacts=contactsRepo,
  getConfig=()=>configRepo.getConfig(),
@@ -794,14 +934,14 @@ async function runOnce({
   const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
-  const items=(await monitoredFollowUpRead(database,...scopeSecondaryRead(CANDIDATES_SQL,[
+  const items=(await monitoredFollowUpRead(database,CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
     serviceFollowupParityActivation(env),
-  ],contactIds),"candidate",env)).rows||[];
+  ],"candidate",env)).rows||[];
   let attempted=0,accepted=0;
   for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
@@ -817,36 +957,77 @@ async function runOnce({
       text:candidate.customer_texts?.[0],clinicConfig,
     });
     // Reject the entire reminder after an explicit withdrawal or deferral.
-    if(isStoppedDecision(latestDecision?.status) ||
+    const resetDecision=recoveryTopicDecision(candidate.customer_texts,clinicConfig);
+    if(isStoppedDecision(latestDecision?.status) || isStoppedDecision(resetDecision?.status) ||
        isStoppedDecision(candidate.verified_treatment_status))continue;
     const choice=chooseSecondaryFollowUpTreatment({
       candidate,clinicConfig,adFollowUpPolicy,latestDecision,
     });
-    // Without readable patient intent, even an old CRM/ad treatment is
-    // not evidence of what this 131060 customer wants.
-    const generalOnly=candidate.recovery_no_selection?true:choice.generalOnly;
+    // Any signed staff caution or unresolved comparison must block an
+    // obsolete named reminder, EVEN if an older customer selection is valid.
+    // This is service-window copy safety, not a CRM or consent mutation.
+    const safety=staffTopicFeatureEnabled(env) && !candidate.recovery_no_selection
+      ? assessFollowUpTopicSafety({
+          turns:candidate.followup_topic_turns,clinicConfig,
+          lastConfirmedMessageId:candidate.verified_treatment_source_message_id,
+          originalTreatment:choice.treatment,
+        }) : {unsafe:false};
+    const unsafeTopic=safety.unsafe===true;
+    const staffTopic=staffTopicFeatureEnabled(env) && !unsafeTopic && !resetDecision &&
+      !candidate.recovery_no_selection &&
+      latestDecision?.status!=="ambiguous" &&
+      candidate.verified_treatment_status!=="ambiguous"
+      ? resolveStaffDiscussedFollowUpTopic({
+          turns:candidate.followup_topic_turns,clinicConfig,
+          lastConfirmedMessageId:candidate.verified_treatment_source_message_id,
+        }) : null;
+    // Keep the verified customer selection distinct from a staff-led topic.
+    // Existing follow-up snapshots and cross-step checks still use ONLY this.
     const confirmedTreatment=candidate.recovery_no_selection?null:choice.treatment;
-    // The 20h AI invitation must not reuse a stale CRM/ad treatment either.
-    const effectivePolicy=confirmedTreatment
-      ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
-      : adFollowUpPolicy;
-    candidate={...candidate,adFollowUpPolicy:effectivePolicy};
+    // A neutral message must NEVER inherit old treatment-specific media.
+    const generalOnly=unsafeTopic || candidate.recovery_no_selection ||
+      (staffTopic?false:choice.generalOnly);
+    const followupTreatment=generalOnly?null:
+      staffTopic?.treatment||confirmedTreatment;
+    const effectivePolicy=unsafeTopic
+      ? {ambiguous:true,treatment:null,source:"unsafe_conversation_topic"}
+      : confirmedTreatment
+        ? {ambiguous:false,treatment:confirmedTreatment,source:"resolved_followup"}
+        : adFollowUpPolicy;
+    // Staff discussion is only the in-window copy/media topic. Keep the
+    // customer-verified policy and the persisted snapshot unchanged.
+    const discussionPolicy=staffTopic
+      ? {ambiguous:false,treatment:staffTopic.treatment,
+          source:"staff_discussed_followup"}
+      : effectivePolicy;
+    candidate={...candidate,adFollowUpPolicy:discussionPolicy,
+      ...(resetDecision ? {recovery_topic_reset:true} : {}),
+      staff_discussed_followup_topic:staffTopic?.treatment||null,
+      unsafe_followup_topic:unsafeTopic};
     const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
+    const commercialCustomerTexts=resetDecision ? (candidate.customer_texts||[]).slice(0,(candidate.customer_texts||[]).findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理")+1) : candidate.customer_texts;
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.
     const replyLanguage=customerLanguage ||
       detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
-    const localized=neutralMixedAdFollowUp({
-      policy:generalOnly?adFollowUpPolicy:null,language:replyLanguage,slot,
-    }) || localizedFollowUpText({
-      slot,originalText:candidate.message_text,
-      customerTexts:candidate.customer_texts,
-      languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
-      treatmentInterest:confirmedTreatment,
-      selectedTreatment:confirmedTreatment,
-      clinicConfig,
-      forceGeneral:generalOnly,
-    });
+    // Customer-selected and staff-discussed treatments have different copy:
+    // never imply a patient selected a service recommended only by staff.
+    const localized=unsafeTopic
+      ? neutralTreatmentFollowUpText({slot,language:replyLanguage})
+      : staffTopic && !generalOnly && slot!==20
+        ? staffDiscussedFollowUpText({slot,language:replyLanguage,
+            treatment:staffTopic.treatment})
+        : neutralMixedAdFollowUp({
+          policy:generalOnly&&!resetDecision?adFollowUpPolicy:null,language:replyLanguage,slot,
+        }) || localizedFollowUpText({
+          slot,originalText:candidate.message_text,
+          customerTexts:commercialCustomerTexts,
+          languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
+          treatmentInterest:followupTreatment,
+          selectedTreatment:followupTreatment,
+          clinicConfig,
+          forceGeneral:generalOnly,
+        });
     // A question from staff gets one low-pressure nudge, not a treatment ad.
     const safeText=candidate.recovery_no_selection
       ? recoveryNoSelectionReminderText(slot,replyLanguage)
@@ -854,7 +1035,8 @@ async function runOnce({
         ? gentleStaffQuestionNudge(replyLanguage) : localized;
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!safeText)continue;
-    const staffVideoSent=candidate.staff_video_sent===true;
+    const staffVideoSent=candidate.staff_video_sent===true ||
+      candidate.staff_video_placeholder_sent===true;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
     if(candidate.media_key && !staffVideoSent && !generalOnly && !candidate.staff_reply &&
@@ -905,13 +1087,21 @@ async function runOnce({
       return evidence.rows?.[0]?.allowed===true;
     };
     try {
+      // One-shot deterministic block. Do not keep reconsidering the same
+      // captioned 2-hour video after staff has already introduced it.
+      if((slot===2 || slot===6) && candidate.staff_video_caption_sent===true){
+        await fail(slot===2
+          ? "staff_already_sent_video_introduction"
+          : "staff_already_sent_customer_example_video");
+        continue;
+      }
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       phase="media_selection";
       const selectedVideo=!staffVideoSent && !candidate.recovery_no_selection &&
         !candidate.staff_reply && !generalOnly &&
         !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
-          slot,treatmentInterest:confirmedTreatment,
+          slot,treatmentInterest:followupTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
       let key=(staffVideoSent || generalOnly || candidate.staff_reply ||
@@ -972,12 +1162,41 @@ async function runOnce({
         ?textWithoutVideo(replyLanguage):safeText;
       let aiMode=null;
       phase="ai_generation";
-      if(slot===20 && !candidate.recovery_no_selection && !generalOnly &&
-         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
-        const personalized=await personalize20h({candidate,database,env});
+      const contextualAiEnabled = !candidate.recovery_no_selection && !generalOnly &&
+        (slot===20
+          ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
+          : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
+      if(contextualAiEnabled){
+        const mediaTreatment=key ? configuredVideoTreatment(key,clinicConfig,followupTreatment) : null;
+        const personalized=await personalize20h({candidate,database,env,mediaTreatment,mediaAttached:Boolean(key)});
         if(!personalized?.ok){
-          const code=personalized?.code||"secondary_20h_ai_unavailable";
-          const fallback=SAFE_20H_FALLBACK_CODES.has(code)
+          const code=personalized?.code||"secondary_contextual_ai_unavailable";
+          if(["skip","stop_sequence","human_review"].includes(personalized?.action)){
+            // Never replace a do-not-send decision with generic sales copy.
+            // A clinical/staff review must also be visible in Inbox: silently
+            // blocking one slot would otherwise leave the patient unassisted.
+            if(personalized.action==="human_review"){
+              try {
+                if(await preSendCheck()){
+                  const reviewOwner=await contacts.getContactById(candidate.contact_id);
+                  if(reviewOwner?.mode==="ai" &&
+                     reviewOwner.whatsapp_sender_key===env.WHATSAPP_SECONDARY_SENDER_KEY &&
+                     String(reviewOwner.whatsapp_sender_id)===String(candidate.sender_id)){
+                    await contacts.setAttention(candidate.contact_id,true,
+                      "Secondary WhatsApp AI follow-up needs staff review. Check the latest customer request before contacting them.");
+                  }
+                }
+              } catch(error){
+                console.error("[Secondary follow-up] Could not alert staff after AI review:",
+                  error?.message||error);
+              }
+            }
+            await fail(code);
+            continue;
+          }
+          // Preserve the pre-existing 20h neutral fallback for transient errors.
+          // A failed early-stage review must not fall back to an unreviewed send.
+          const fallback=slot===20 && SAFE_20H_FALLBACK_CODES.has(code)
             ? neutral20hFallbackText(replyLanguage):null;
           if(!fallback){await fail(code);continue;}
           outboundText=fallback;
@@ -986,6 +1205,13 @@ async function runOnce({
           outboundText=personalized.message;
           aiMode=personalized.mode;
         }
+      }
+      if(slot===20){
+        outboundText=adaptNeutroAppointmentInvitation({
+          // Appointment continuity uses the full recent timing history, not the pricing topic.
+          message:outboundText,customerTexts:[...(candidate.customer_texts||[])].reverse(),
+          language:replyLanguage,businessConfig:clinicConfig,
+        });
       }
       // Keep service-window reminders focused on the customer's enquiry.
       // The marketing sender must still verify consent separately.
@@ -1006,6 +1232,7 @@ async function runOnce({
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             slotHours:slot,anchorMessageId:candidate.inbound_id,
             treatmentInterest:confirmedTreatment||null,
+            discussionTreatment:staffTopic?.treatment||null,
             recoveryNoSelection:candidate.recovery_no_selection===true},
           isAutomatedFollowUp:true,mediaKey:key||null,
           mediaFilename:key?mediaFilename:null,
@@ -1087,23 +1314,27 @@ async function runOnce({
       const safePhase=safePhases.has(phase)?phase:"unknown";
       try{onUnexpectedFailure({phase:safePhase,slot});}catch{}
       const prefix=messageId?"sender_followup_after_save_":"sender_followup_before_save_";
+      if(messageId!==null && safePhase==="message_save"){
+        const deferred=await deferProvenUnsent({database,table:"whatsapp_sender_followup_attempts",attemptId:id,messageId,contactId:candidate.contact_id,result:{success:false,preProviderCancelled:true,noReservation:true}}).catch(()=>false);
+        if(deferred)continue;
+      }
       await fail(prefix+safePhase).catch(()=>{});
     }
   }
   return {disabled:false,attempted,accepted};
 }
 
-async function nextPotentialDueAt({database=pool,env=process.env,now=new Date(),contactIds}={}){
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
  const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
- const result=await monitoredFollowUpRead(database,...scopeSecondaryRead(POTENTIAL_DUE_SQL,[
+ const result=await monitoredFollowUpRead(database,POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
    serviceFollowupParityActivation(env),
- ],contactIds),"due-time hint",env);
+ ],"due-time hint",env);
  return result.rows?.[0]||null;
 }
 
@@ -1114,12 +1345,18 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
  scheduler=createSecondaryDueScheduler({
    label:"Secondary WhatsApp service followup scheduler",
    run,readNextDue,database,env,events,createTimer,now,
+   // Keep full send guards; skip only when the fresh hint proves no due slot.
+   preflightDueHint:true,
+   // The service RECHECK_SQL binds $4 to sender key, not wall-clock time.
+   // Candidate discovery alone gates new sends and hard-blocks 00:00-06:59.
+   // Do not treat the differently bound recheck SQL as a time predicate.
+   quietHoursPreflight:hasSecondaryClinicQuietHoursGuard(CANDIDATES_SQL),
  });
  return scheduler.start();
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  CANDIDATES_SQL,RECHECK_SQL,RECENT_STAFF_VIDEO_SQL,POTENTIAL_DUE_SQL,PREVIOUS_STEP_SQL,enabled,
- serviceFollowupParityActivation,runOnce,
+ serviceFollowupParityActivation,bookingQuestionNudgeSql,runOnce,
  nextPotentialDueAt,start,stop,
 };

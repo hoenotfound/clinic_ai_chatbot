@@ -6,8 +6,6 @@ const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
 const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const service=require("../src/services/whatsappSecondaryFollowUpService");
-const general=require("../src/services/neutroSecondaryGeneralMarketingSql");
-const {scopeSecondaryRead}=require("../src/utils/secondaryContactRead");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -41,8 +39,16 @@ test("approved secondary marketing billing requires one claimed attempt for each
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    },query:(...args)=>db.query(...args),
   };
-  assert.ok(loadMigrations().at(-1).version>=118);
+  assert.ok(loadMigrations().at(-1).version>=135);
   await runMigrations(pool,{quiet:true});
+  // The sender-owned Meta receipt lookup must have a real index on both
+  // dimensions used by Day4/Day6 session proof and billing conflict checks.
+  // This test uses only the disposable migrated PostgreSQL schema.
+  const receiptIndex=(await db.query(
+    "SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() " +
+      "AND indexname='idx_whatsapp_sender_receipts_sender_wamid'"
+  )).rows?.[0]?.indexdef;
+  assert.match(receiptIndex||"",/ON .*whatsapp_sender_status_receipts USING btree \(sender_id, wamid\)/);
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
    "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
@@ -122,20 +128,20 @@ test("approved secondary marketing billing requires one claimed attempt for each
     new Date(),"2026-11-01T00:00:00Z","ads_only",
     "2026-11-01T00:00:00Z",
   ]);
-  // Compile every contact-scoped selector against the same migrated schema.
-  const prefix=["ariel","100000000000002","200000000000002",new Date()];
-  const tail=["2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z"];
-  for(const [sql,params] of [
-    [service.CANDIDATES_SQL,[...prefix,10,...tail,null]],
-    [service.POTENTIAL_DUE_SQL,[...prefix,...tail,null]],
-    [marketing.CANDIDATES_SQL,[...prefix,10,...tail]],
-    [marketing.POTENTIAL_DUE_SQL,[...prefix,...tail]],
-    [marketing.EXTENDED_CANDIDATES_SQL,[...prefix,10,...tail]],
-    [marketing.EXTENDED_POTENTIAL_DUE_SQL,[...prefix,...tail]],
-    [general.CANDIDATES_SQL,[...prefix,10,...tail,null]],
-    [general.POTENTIAL_DUE_SQL,[...prefix,...tail,null]],
-  ]) await db.query(...scopeSecondaryRead("EXPLAIN "+sql,params,[Number(contact)]));
-
+  // Compile each batching configuration against real PostgreSQL,
+  // including the general lane's eighth timestamp parameter. This remains
+  // read-only and cannot reserve or send any WhatsApp message.
+  for(const flags of [
+    {extended:false,general:false},{extended:true,general:false},
+    {extended:false,general:true},{extended:true,general:true},
+  ]){
+   const params=[
+    "ariel","100000000000002","200000000000002",new Date(),
+    "2026-11-01T00:00:00Z","ads_only","2026-11-01T00:00:00Z",
+   ];
+   if(flags.general)params.push("2026-11-01T00:00:00Z");
+   await db.query("EXPLAIN "+marketing.combinedPotentialDueSql(flags),params);
+  }
   // Real PostgreSQL timestamp arithmetic for the 9D contact's delayed 6h
   // example; no historical attempts are opened or replayed.
   const due=await db.query(

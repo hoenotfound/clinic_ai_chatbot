@@ -70,6 +70,7 @@ export default function Settings() {
   const { toasts, showToast, dismissToast } = useToasts();
 
   const notificationsItem = { id: "notifications", label: "Notifications", to: "/settings/notifications" };
+  const appearanceItem = { id: "appearance", label: "Appearance", to: "/settings/appearance" };
   const teamItem = permissions.manage_users
     ? { id: "team", label: "Team & Access", to: "/settings/team" }
     : null;
@@ -85,7 +86,7 @@ export default function Settings() {
   const advancedConfigItem = user?.role === "admin"
     ? { id: "advanced-config", label: "Advanced Config", to: "/settings/advanced-config" }
     : null;
-  const destinationItems = [notificationsItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
+  const destinationItems = [notificationsItem, appearanceItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +212,10 @@ export default function Settings() {
             >
               {notificationsItem.label}
             </button>
+            <button type="button" onClick={() => navigate(appearanceItem.to)}
+              className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]">
+              {appearanceItem.label}
+            </button>
           </div>
 
           {teamItem && (
@@ -265,6 +270,7 @@ export default function Settings() {
               </optgroup>
               <optgroup label="Preferences">
                 <option value={notificationsItem.id}>{notificationsItem.label}</option>
+                <option value={appearanceItem.id}>{appearanceItem.label}</option>
               </optgroup>
               {teamItem && (
                 <optgroup label="Administration">
@@ -1179,6 +1185,11 @@ function BranchesTab({ config, onSaved, onError }) {
 }
 
 function HoursContactTab({ config, onSaved, onError }) {
+  const weekdayLabels = [
+    ["monday", "Monday"], ["tuesday", "Tuesday"], ["wednesday", "Wednesday"],
+    ["thursday", "Thursday"], ["friday", "Friday"], ["saturday", "Saturday"],
+    ["sunday", "Sunday"],
+  ];
   const [form, setForm] = useState({
     hours: { ...config.hours },
     contact: { ...config.contact },
@@ -1191,11 +1202,37 @@ function HoursContactTab({ config, onSaved, onError }) {
   function setContact(key, value) {
     setForm((prev) => ({ ...prev, contact: { ...prev.contact, [key]: value } }));
   }
+  function setWeeklyDay(day, nextValue) {
+    setForm((prev) => ({
+      ...prev, hours: {
+        ...prev.hours, weekly: { ...prev.hours.weekly, [day]: nextValue },
+      },
+    }));
+  }
+  const weekly = form.hours.weekly && typeof form.hours.weekly === "object" &&
+    !Array.isArray(form.hours.weekly) ? form.hours.weekly : null;
 
   async function handleSave() {
     if (!form.hours.general.trim()) {
       onError("Opening hours can't be empty.");
       return;
+    }
+    if (weekly) {
+      const minute = (value) => {
+        if (!/^\d{1,2}:\d{2}$/.test(value || "")) return null;
+        const [hour, minutes] = value.split(":").map(Number);
+        return hour < 24 && minutes < 60 ? hour * 60 + minutes : null;
+      };
+      for (const [day, label] of weekdayLabels) {
+        const slot = weekly[day];
+        if (slot == null) continue;
+        const start = minute(slot.open);
+        const end = minute(slot.close);
+        if (start === null || end === null || start >= end) {
+          onError(label + ": please enter valid opening and closing times.");
+          return;
+        }
+      }
     }
     if (!isValidWhatsapp(form.contact.whatsapp)) {
       onError("Enter a valid WhatsApp number or WhatsApp link.");
@@ -1216,11 +1253,53 @@ function HoursContactTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading title="Hours & Contact" description="Opening hours and social/contact links the AI can share." />
       <Field label="Opening hours">
-        <input className={inputClass} value={form.hours.general} onChange={(e) => setHours("general", e.target.value)} />
+        <input className={inputClass} value={form.hours.general}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("general", e.target.value)} />
       </Field>
       <Field label="Closed days / note">
-        <input className={inputClass} value={form.hours.closed} onChange={(e) => setHours("closed", e.target.value)} />
+        <input className={inputClass} value={form.hours.closed}
+          readOnly={Boolean(weekly)}
+          onChange={(e) => setHours("closed", e.target.value)} />
       </Field>
+      {weekly && (
+        <div className="mb-5 rounded-xl border border-slate-200 p-4">
+          <div className="mb-2 text-sm font-semibold">Weekly appointment hours</div>
+          <p className="mb-3 text-xs text-slate-500">
+            These hours control which days the AI can offer for appointments.
+            The weekly schedule is the source of truth. On save, the descriptions
+            above are regenerated automatically from these times. Changes apply
+            to both WhatsApp numbers and social channels.
+          </p>
+          <div className="space-y-2">
+            {weekdayLabels.map(([day, label]) => {
+              const value = weekly[day];
+              const closed = value == null || value.closed === true;
+              return (
+                <div key={day} className="flex flex-wrap items-center gap-3 text-sm">
+                  <label className="flex w-28 items-center gap-2">
+                    <input type="checkbox" checked={!closed}
+                      onChange={(e) => setWeeklyDay(day,
+                        e.target.checked ? { open: "10:00", close: "18:00" } : null)} />
+                    {label}
+                  </label>
+                  {!closed ? (
+                    <>
+                      <input type="time" className={inputClass}
+                        aria-label={label + " opens"} value={value.open || ""}
+                        onChange={(e) => setWeeklyDay(day, { ...value, open: e.target.value })} />
+                      <span>to</span>
+                      <input type="time" className={inputClass}
+                        aria-label={label + " closes"} value={value.close || ""}
+                        onChange={(e) => setWeeklyDay(day, { ...value, close: e.target.value })} />
+                    </>
+                  ) : <span className="text-slate-500">Closed</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <Field label="Main WhatsApp number" hint="Phone number or wa.me / WhatsApp link.">
         <input className={inputClass} value={form.contact.whatsapp} onChange={(e) => setContact("whatsapp", e.target.value)} />
       </Field>
@@ -2807,6 +2886,11 @@ function suggestedAdReply(service, businessName) {
   };
 }
 
+const RECOVERY_BUTTON_OPTIONS = [
+  ["neutro_131060_pelvic","骨盆调理"],["neutro_131060_pulse","脉冲波调理"],["neutro_131060_3d","3D 小颜术"],
+  ["neutro_131060_9d","9D 逆龄抗衰"],["neutro_131060_breast","胸部护理"],["neutro_131060_other","其他护理"],
+];
+
 function AiBehaviorTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
@@ -2815,6 +2899,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     sop: config.sop || "",
     aiPricingIntentMode: config.aiPricingIntentMode || "off",
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
+    ...(config.services?.some(s=>s.name==="脉冲波调理") ? {recoveryTreatmentOrder: config.recoveryTreatmentOrder || RECOVERY_BUTTON_OPTIONS.map(([id])=>id)} : {}),
     adFirstReply: {
       enabled: config.adFirstReply?.enabled === true,
       rm68ImageUrl: config.adFirstReply?.rm68ImageUrl || "",
@@ -2869,6 +2954,17 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           Staff takeover, duplicate, verified offer and channel billing checks always apply.
         </p>
       </Field>
+      {form.recoveryTreatmentOrder && <Field label="Meta 131060 recovery buttons" hint="Two consecutive sets of three visible WhatsApp buttons. Reorder the six options; ordinary ad replies are unchanged.">
+        {form.recoveryTreatmentOrder.map((id,index)=><label key={index} className="mb-2 flex items-center gap-2 text-sm">
+          <span>Message {index<3?1:2}, option {index%3+1}</span>
+          <select className={inputClass} value={id} onChange={event=>{
+            const next=[...form.recoveryTreatmentOrder];
+            const oldIndex=next.indexOf(event.target.value);
+            [next[index],next[oldIndex]]=[next[oldIndex],next[index]];
+            setForm({...form,recoveryTreatmentOrder:next});
+          }}>{RECOVERY_BUTTON_OPTIONS.map(([value,title])=><option key={value} value={value}>{title}</option>)}</select>
+        </label>)}
+      </Field>}
       <Field label="Fixed first reply for Meta ad leads" hint="Save a Gemini reply-generation call when a new ad lead sends a standard prefilled enquiry.">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.adFirstReply.enabled}
