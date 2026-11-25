@@ -709,6 +709,7 @@ async function processIncomingMessage(
   // Track the sender's verified manual-only ownership across the outer
   // handler catch. A failed R2 upload must not become an AI-review alert.
   let secondaryInboxOnly = false;
+  let persistingManualAttention = false;
   let wasFirstMessage = Boolean(preclaimed?.wasFirstMessage);
   let keywordReason = inheritedKeywordReason;
 
@@ -815,6 +816,7 @@ async function processIncomingMessage(
       // Keep the legacy/manual audience unchanged. Every actionable question
       // gets a durable staff task or an existing attention episode, including
       // questions expressed without a known treatment/appointment keyword.
+      persistingManualAttention=true;
       const actionable=manualOnlySecondaryAttention(incoming.text,{receivedAt:savedInbound.created_at||Date.now()});
       let staffDisposition="no_actionable_enquiry";
       if(actionable){
@@ -842,7 +844,8 @@ async function processIncomingMessage(
       // Do not log customer content or phone numbers. A failed durable write
       // must propagate to inbound processing retry rather than silently mark
       // an unanswered actionable turn completed.
-      console.info("[Secondary manual-only inbound] contact="+contact.id+
+      persistingManualAttention=false;
+      console.log("[Secondary manual-only inbound] contact="+contact.id+
         " inbound="+savedInbound.id+" reason=ai_audience_excluded"+
         " kind="+(actionable?.kind||"none")+" staff="+staffDisposition);
       return { wasFirstMessage, keywordReason };
@@ -4007,6 +4010,7 @@ async function processIncomingMessage(
     // including voice, image, video or an unexpected persistence error.
     // It was durably stored and marked unread by the inbound claim. Never
     // turn those storage failures into AI review/Telegram notifications.
+    if (secondaryInboxOnly && persistingManualAttention && processingJobId) throw err;
     if (secondaryInboxOnly) return { wasFirstMessage, keywordReason };
 
     if (contact && savedInbound) {
