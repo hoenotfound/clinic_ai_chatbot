@@ -11,7 +11,7 @@ const candidate = {...original,messagingStyle:"Use concise replies."};
 
 test("offline benchmark renders real request builder without provider calls or global config mutation",async()=>{
   const previous = structuredClone(config);
-  assert.equal(cases.length,38);
+  assert.equal(cases.length,44);
   assert.equal(new Set(cases.map(c=>c.id)).size,cases.length);
   assert.ok(cases.some(c=>c.surface==="follow_up"));
   const rows=await runBenchmark(original,candidate,cases);
@@ -79,4 +79,13 @@ test("matched-pair totals visible even if a different pair failed",async()=>{
   });
   assert.equal(summarize(rows,"B").promptTokens,null);
   assert.match(renderReport(rows,true),/Matched pair input tokens/);
+});
+
+test("live benchmark distinguishes a verified raw location answer from one with contradictory extra text",()=>{
+  const data={...original,branches:[{name:"Petaling Jaya (PJ)",address:"12 Jalan 19, Petaling Jaya, Selangor"}]};
+  const scenario=cases.find(c=>c.id==="stage2-location-zh");
+  for(const [reply,expected] of [["地址：12 Jalan 19, Petaling Jaya, Selangor 😊",true],["我们在 Puchong。地址：12 Jalan 19, Petaling Jaya, Selangor",false]]){
+    const result=checksFor(data,scenario,JSON.stringify({reply,outcome:"normal",priceQuery:false}));
+    assert.equal(result.checks.find(c=>c.field==="locationDraftStatus").pass,expected);
+  }
 });

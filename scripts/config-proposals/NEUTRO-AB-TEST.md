@@ -51,3 +51,13 @@ if ($LASTEXITCODE -eq 0) { Invoke-Item "..\live-retest.html" }
 ```
 
 The live test evaluates raw model/parser decisions, not the server's downstream safety guards. The focused retest uses 26 application-level calls. Provider error reports expose HTTP status where available, not raw response bodies. Matched-successful-pair totals are reported independently of incomplete full-run totals.
+
+### Stage 2: location, language and availability regression cases
+
+Run against the current single-branch Neutro Sense configuration with the existing explicit live-test key. The command does not send WhatsApp messages or write to Neon. It makes one provider request per scenario per arm (12 requests for six cases).
+
+```sh
+node scripts/neutro-ab.js --live --cases=stage2-location-zh,stage2-location-ms,stage2-location-stale,stage2-location-treatment,stage2-language-switch,stage2-slot-preference < config.json > stage2-report.html
+```
+
+Review the raw replies in both arms, not the production fallback. Address-only cases require the configured full address and no unverified extra claims under the conservative draft contract. A failure may also mean valid prose falls outside that contract; inspect the reply manually. For mixed treatment and location questions, check that both parts are answered. For appointment preferences, check that the practitioner is not presented as available and that confirmation is still pending. Explicit language switches must be followed without translating the address. This is a provider/prompt test, not a WhatsApp delivery or CRM integration test.
