@@ -3064,6 +3064,7 @@ async function processIncomingMessage(
 
     let bookingDurationMinutes = 0;
     let appointmentCustomerHistory = [];
+    let appointmentStaffHistory = [];
     const verifiedExistingBooking = Boolean(
       verifiedBookingForHours?.acceptedStaffOffer ||
       (verifiedBookingForHours?.appointmentAt &&
@@ -3081,9 +3082,12 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         clinicConfig.hours?.weekly &&
         (!verifiedExistingBooking || explicitRescheduleForHours)) {
-      appointmentCustomerHistory = (Array.isArray(history) ? history : [])
+      // Reuse the bounded AI snapshot: no additional Neon read or model call.
+      const priorAppointmentHistory = (Array.isArray(history) ? history : [])
+        .filter(item => item?.contextMessageId !== Number(savedInbound.id));
+      appointmentCustomerHistory = priorAppointmentHistory
         .filter(item => item?.role === "user")
-        .slice(-8)
+        .slice(-20)
         .reverse()
         .map(item => ({
           content: typeof item.content === "string" ? item.content : "",
@@ -3092,6 +3096,12 @@ async function processIncomingMessage(
           createdAt: item.pricingCreatedAtMs ?? null,
         }))
         .filter(item => item.content && item.createdAt);
+      appointmentStaffHistory = priorAppointmentHistory
+        .filter(item => item?.role === "assistant" && item.pricingVerifiedStaffText === true)
+        .slice(-20).reverse().map(item => ({
+          content: String(item.content || "").replace(/^\[Verified STAFF message\] /u,""),
+          createdAt: item.pricingCreatedAtMs ?? null,
+        })).filter(item => item.content && item.createdAt);
       bookingDurationMinutes = durationMinutesForPackage({
         config: clinicConfig,
         customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
@@ -3100,6 +3110,7 @@ async function processIncomingMessage(
       const checked = guardAppointmentReply({
         hours: clinicConfig.hours, reply, customerText: text,
         recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
         appointmentPreference: details?.appointmentPreference || "",
         receivedAt: savedInbound.created_at || new Date(),
         now: new Date(), language: mediaLanguage,
@@ -3240,6 +3251,7 @@ async function processIncomingMessage(
           receivedAt: savedInbound.created_at || new Date(),
           durationMinutes: bookingDurationMinutes,
           recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
