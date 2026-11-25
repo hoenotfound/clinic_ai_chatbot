@@ -7,6 +7,7 @@ import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
+import InboxMascot from "../components/InboxMascot";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
 import WhatsAppTemplateModal from "../components/WhatsAppTemplateModal";
 import LeadAssignmentBadge, {
@@ -626,6 +627,7 @@ export default function Inbox() {
   const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [mascotActivity, setMascotActivity] = useState({ kind: "idle", sequence: 0 });
   const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
@@ -1228,6 +1230,13 @@ export default function Inbox() {
                 : message
             )
           );
+        }
+        // Cosmetic reaction only for identifiable activity in the open conversation.
+        // Do not infer AI generation, bookings or customer activity from redacted events.
+        if (payload.contactId != null && Number(payload.contactId) === Number(selectedIdRef.current)) {
+          const kind = payload.deliveryStatus === "failed" ? "alert"
+            : payload.reason === "message" && payload.messageId != null ? "activity" : null;
+          if (kind) setMascotActivity(previous => ({ kind, sequence: previous.sequence + 1 }));
         }
         if (payload.reason === "message_mutation") pendingMessageMutation = true;
         scheduleRefresh(payload.contactId ?? null, "unknown_conversation_event", {
@@ -1911,6 +1920,7 @@ export default function Inbox() {
         canViewAllLeads={canViewAllLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         customerPlural={ui.customerPlural}
+        mascotActivity={mascotActivity}
       />
       {selectedContactIsFilteredOut ? (
         <section
@@ -2130,6 +2140,7 @@ function ConversationList({
   canViewAllLeads,
   showUnassignedAssignment,
   customerPlural,
+  mascotActivity,
 }) {
   const [filters, setFilters] = useState({
     status: "all",
@@ -2377,6 +2388,7 @@ function ConversationList({
       <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
         <div className="flex items-baseline justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
+          <InboxMascot activity={mascotActivity} />
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {!conversations
               ? "Loading…"

@@ -1,0 +1,52 @@
+/* A small, reserved header area, never an overlay over staff controls. */
+.da-inbox-mascot {
+  width: 80px; height: 56px; flex: 0 0 80px;
+  display: inline-flex; align-items: center; justify-content: center;
+  align-self: center; border: 0; padding: 0; border-radius: 10px;
+  background: transparent; cursor: pointer;
+}
+.da-inbox-mascot:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.da-inbox-mascot-off { font-size: 10px; color: var(--color-text-muted); }
+.da-inbox-mascot-stage {
+  position: relative; display: block; width: 66px; height: 48px;
+  pointer-events: none;
+}
+.da-inbox-mascot-hover, .da-inbox-mascot-pose {
+  position: absolute; inset: 0; display: block;
+}
+.da-inbox-mascot-hover { animation: da-mascot-hover 4.4s ease-in-out infinite; }
+.da-inbox-mascot-part {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: fill; user-select: none; pointer-events: none;
+}
+.da-inbox-mascot-head { clip-path: inset(0 19% 30% 25%); }
+.da-inbox-mascot-left { clip-path: inset(20% 75% 42% 0); transform-origin: 19% 48%; }
+.da-inbox-mascot-right { clip-path: inset(31% 0 39% 81%); transform-origin: 85% 49%; }
+.da-inbox-mascot-rings { clip-path: inset(70% 0 0 0); transform-origin: 54% 78%; animation: da-mascot-thrust 1.8s ease-in-out infinite; }
+.da-inbox-mascot-spark { clip-path: inset(11% 0 72% 81%); animation: da-mascot-spark 4.4s ease-in-out infinite; }
+.da-inbox-mascot:hover .da-inbox-mascot-left,
+.da-inbox-mascot-stage[data-reaction="activity"] .da-inbox-mascot-left {
+  animation: da-mascot-wave .55s ease-in-out 3;
+}
+.da-inbox-mascot-stage[data-reaction="activity"] .da-inbox-mascot-pose {
+  animation: da-mascot-hop .6s ease-in-out 2;
+}
+.da-inbox-mascot-stage[data-reaction="alert"] .da-inbox-mascot-pose {
+  animation: da-mascot-alert .35s ease-in-out 3;
+}
+@keyframes da-mascot-hover {
+  0%, 100% { transform: translate(-3px, 1px); }
+  50% { transform: translate(3px, -3px); }
+}
+@keyframes da-mascot-thrust {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(.87); }
+}
+@keyframes da-mascot-spark { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+@keyframes da-mascot-wave { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-20deg); } }
+@keyframes da-mascot-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes da-mascot-alert { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+.da-inbox-mascot-stage[data-paused="true"] * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .da-inbox-mascot-stage * { animation: none !important; transform: none !important; }
+}
