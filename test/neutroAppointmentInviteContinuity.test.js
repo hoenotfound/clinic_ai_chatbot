@@ -172,3 +172,12 @@ test("both sender paths perform date-continuity rewrite after AI/fallback select
   assert.match(primary, /recent_inbound_messages \|\| \[\]\)\]\.reverse\(\)/u);
   assert.match(secondary, /customer_texts\|\|\[\]\)\]\.reverse\(\)/u);
 });
+
+test("single-line natural explanation survives a separate booking question", () => {
+  const message = "Our practitioner will first understand your concerns through a 1-on-1 assessment. Which day next week suits you? I'll check with the clinic.";
+  const revised = adaptNeutroAppointmentInvitation({message, customerTexts:["Next Wednesday"], language:"en",businessConfig:neutro});
+  assert.match(revised,/Our practitioner will first understand your concerns through a 1-on-1 assessment\./u);
+  assert.match(revised,/What time on the day you mentioned/u);
+  const inseparable = "We can arrange an assessment, which day suits you?";
+  assert.equal(adaptNeutroAppointmentInvitation({message:inseparable,customerTexts:["Next Wednesday"],language:"en",businessConfig:neutro}),inseparable);
+});
