@@ -1378,6 +1378,7 @@ async function processIncomingMessage(
     }
     let aiReply;
     let originalModelReply = null;
+    let modelLocationOnly = false;
     let flagged = false;
     let reviewRequired = false;
     let reviewType = null;
@@ -1553,6 +1554,11 @@ async function processIncomingMessage(
         );
         // Only the accepted response may provide intent. A language
         // fallback explicitly clears pricing authority, not just its text.
+        modelLocationOnly = !languageCheckedReply.languageCorrectionFailed &&
+          languageCheckedReply.structured === true && languageCheckedReply.outcome === "normal" &&
+          languageCheckedReply.details?.businessLocationOnly === true &&
+          !languageCheckedReply.serviceQuery && !languageCheckedReply.priceQuery && !languageCheckedReply.packageQuery &&
+          languageCheckedReply.details?.appointmentScheduling !== true;
         modelPricingStage = languageCheckedReply.languageCorrectionFailed
           ? null : languageCheckedReply.pricingStage || null;
         modelPricingIntent = languageCheckedReply.languageCorrectionFailed
@@ -3025,6 +3031,8 @@ async function processIncomingMessage(
       const verifiedLocation = confirmedSingleBranchLocationAnswer({
         customerText: text, branches: clinicConfig.branches,
         language: mediaLanguage,
+        modelLocationOnly: modelLocationOnly && !priceQuery && !packageQuery && !serviceQuery &&
+          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly,
       });
       if (verifiedLocation) {
         const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);

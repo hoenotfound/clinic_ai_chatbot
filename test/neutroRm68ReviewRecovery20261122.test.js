@@ -196,7 +196,7 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
       staffPriceConflict:false, rejectedModelPricing:false,
       marketingStopQuestion:null, urgentSafety:false,
       text:"你们的店是在哪？", reply:"我们的店在 Puchong。",
-      originalModelReply:"我们的店在 Puchong。", verifyLocationDraft,
+      originalModelReply:"我们的店在 Puchong。", verifyLocationDraft, modelLocationOnly:false,
       channel:"whatsapp", mediaLanguage:"zh", reviewContinuationTextOnly:false,
       rm68CampaignContinuationTextOnly:false, fixedAdFirstReply:null,
       clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
@@ -397,7 +397,7 @@ test("actual final boundary retains an unchanged verified AI reply and measures 
       const context={
         flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,
         staffPriceConflict:false,rejectedModelPricing:false,marketingStopQuestion:null,urgentSafety:false,
-        text:"你们的店是在哪？",reply:final,originalModelReply:original,
+        text:"你们的店是在哪？",reply:final,originalModelReply:original,modelLocationOnly:false,
         channel:"whatsapp",mediaLanguage:"zh",reviewContinuationTextOnly:false,
         rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,
         clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
@@ -415,4 +415,17 @@ test("actual final boundary retains an unchanged verified AI reply and measures 
       assert.ok(result.reply.includes(PJ[0].address));
     }
   }
+});
+
+test("AI-led standalone location correction uses current facts without a new city keyword rule",()=>{
+  const address=PJ[0].address;
+  const facts=confirmedSingleBranchLocationAnswer({customerText:"你们不是在 Puchong 吗？",branches:PJ,language:"zh",modelLocationOnly:true});
+  assert.ok(facts);
+  assert.equal(verifyLocationDraft("我们只有一间店在 Petaling Jaya (PJ) 😊 地址："+address,facts),"verified_address_only");
+  assert.equal(verifyLocationDraft("地址："+address+" 从蒲种过来走 LDP 很顺",facts),"extra_or_unverified_text");
+  assert.equal(confirmedSingleBranchLocationAnswer({customerText:"哪里痛？",branches:PJ,modelLocationOnly:true}),null);
+  const en=confirmedSingleBranchLocationAnswer({customerText:"Please reply in English. Where are you located?",branches:PJ,language:"en",modelLocationOnly:true});
+  assert.equal(verifyLocationDraft("We're located in Petaling Jaya (PJ) 😊 Address: "+address,en),"verified_address_only");
+  const ms=confirmedSingleBranchLocationAnswer({customerText:"Boleh share alamat clinic?",branches:PJ,language:"ms",modelLocationOnly:true});
+  assert.equal(verifyLocationDraft("Kami terletak di Petaling Jaya (PJ) 😊 Alamat: "+address,ms),"verified_address_only");
 });

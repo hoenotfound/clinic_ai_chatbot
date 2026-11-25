@@ -27,10 +27,10 @@ function isBusinessLocationQuestion(customerText) {
 // When a question also asks for a package price, leave the combined answer to
 // the normal verified pricing path.
 function confirmedSingleBranchLocationAnswer({
-  customerText = "", branches = [], language = "zh",
+  customerText = "", branches = [], language = "zh", modelLocationOnly = false,
 } = {}) {
   const question = String(customerText || "").trim();
-  if (!question || question.length > 130 || !isBusinessLocationQuestion(question) ||
+  if (!question || question.length > 130 || (!modelLocationOnly && !isBusinessLocationQuestion(question)) ||
       /(?:疼|痛|不舒服|症状|症狀|部位|身体|身體|[价價][钱錢格]|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|活动|活動|[预預]约|[病癌]|(?:\b(?:price|cost|fee|promo|package|treatment|pain|symptom|booking|appointment|rawatan|harga)\b))/iu.test(question)) return null;
   const valid = (Array.isArray(branches) ? branches : [])
     .filter(b => b && typeof b.address === "string" && b.address.trim());
@@ -43,8 +43,8 @@ function confirmedSingleBranchLocationAnswer({
   const chineseQuestion = /[\u3400-\u9FFF]/u.test(question);
   const explicitMalay = /\b(?:alamat|lokasi|klinik|cawangan|kedai|dimana|di mana|kat mana)\b/iu.test(question);
   const explicitEnglish = /\b(?:where|address|location|shop|store|clinic|centre|center|branch|outlet)\b/iu.test(question);
-  const ms = !chineseQuestion && (explicitMalay || (!explicitEnglish && locale.startsWith("ms")));
-  const en = !chineseQuestion && !ms &&
+  const ms = modelLocationOnly ? locale.startsWith("ms") : !chineseQuestion && (explicitMalay || (!explicitEnglish && locale.startsWith("ms")));
+  const en = modelLocationOnly ? locale.startsWith("en") : !chineseQuestion && !ms &&
     (explicitEnglish || locale.startsWith("en"));
   return {
     kind: "verified_location",
@@ -84,9 +84,9 @@ function verifyLocationDraft(reply, facts) {
   const endings={zh:["哦","呀","呢","啦"],en:[""],ms:["ya"]};
   if (suffix && !(endings[facts.language]||[]).includes(suffix)) return "extra_or_unverified_text";
   const wrappers={
-    zh:["","地址","我们的地址","门店地址","我们在","我们位于","我们坐落在","我们的门店在","门店位于","亲爱的 我们在","您好 我们在","你好 我们在"],
-    en:["","address","our address","clinic address","we re located at","we are located at","we re at","we are at","our clinic is at","you can find us at","here is our address","hi here is our address"],
-    ms:["","alamat","alamat kami","alamat klinik","kami berada di","lokasi kami di","klinik kami di","ini alamat kami"],
+    zh:["","地址","我们的地址","门店地址","我们在","我们位于","我们只有一间店在","我们目前在","我们坐落在","我们的门店在","门店位于","亲爱的 我们在","您好 我们在","你好 我们在"],
+    en:["","address","our address","clinic address","we re located at","we are located at","we re located in","we are located in","our clinic is located in","our clinic is located at","we re based in","we are based in","we re at","we are at","our clinic is at","you can find us at","here is our address","hi here is our address"],
+    ms:["","alamat","alamat kami","alamat klinik","kami berada di","kami terletak di","klinik kami terletak di","lokasi kami di","klinik kami di","ini alamat kami"],
   };
   const allowed=wrappers[facts.language]||[];
   if (allowed.includes(prefix)) return "verified_address_only";

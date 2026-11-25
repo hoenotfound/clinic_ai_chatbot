@@ -198,7 +198,7 @@ test("Flash-Lite uses a larger output allowance and the correct structured schem
     assert.equal(request.config.responseMimeType, "application/json");
     assert.ok(request.config.responseJsonSchema);
     if (surface === "conversation") {
-      for (const field of ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "projectLocation", "projectSummary", "nextStep", "staffSummary"]) {
+      for (const field of ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "businessLocationOnly", "projectLocation", "projectSummary", "nextStep", "staffSummary"]) {
         assert.ok(request.config.responseJsonSchema.required.includes(field), field);
       }
     } else {
