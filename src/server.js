@@ -1685,9 +1685,14 @@ async function processIncomingMessage(
             packageQuery = false;
             details = null;
           } else if (plan?.reply && !flagged && plan.alreadyInvited) {
-            // Do not send the same assessment invitation again when a patient
-            // lists several treatments in separate WhatsApp messages.
-            aiReply = plan.reply;
+            // The existing evidence lookup still protects clinical reviews.
+            // A correctly identified current service enquiry is conversational:
+            // let Gemini answer it instead of unconditionally replacing its draft.
+            // Preserve the legacy recovery for missing/conflicting model metadata.
+            const modelIdentifiedTreatment = plan.treatment &&
+              serviceQuery && serviceQuerySource === "customer_message" &&
+              details?.treatment === plan.treatment && !priceQuery && !packageQuery;
+            if (!modelIdentifiedTreatment) aiReply = plan.reply;
           }
         } else {
           // A failed clinical-review lookup must not permit recovery.
