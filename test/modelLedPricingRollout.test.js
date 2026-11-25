@@ -438,6 +438,15 @@ test("delivered AI recommendation plus customer engagement grounds the real Puls
    treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,
    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
  assert.equal(media?.packages?.length,1);
+ // The actual live thread also contained introduction/result records without
+ // delivery receipts before the later delivered treatment-specific question.
+ // They cannot be anchors, but must not invalidate the newer engagement.
+ const liveHistory=a.conversationHistory.map(t=>({...t}));
+ liveHistory.splice(2,0,
+   turn("assistant","脉冲波调理介绍：产后身体及骨盆调理",7900),
+   turn("assistant","脉冲波调理顾客 Before & After 参考图",7800),
+   turn("assistant","再分享一组个别案例参考图",7700));
+ assert.deepEqual(resolveModelLedPricingDecision({...a,conversationHistory:liveHistory})?.prices?.map(p=>p.price),["RM388"]);
  for (const wording of ["一般是怎么算?", "What would I be paying", "Berapa perlu saya sediakan"]) {
    const b={...a,customerText:wording,conversationHistory:a.conversationHistory.map(t=>({...t}))};
    b.conversationHistory.at(-1).content=wording;
