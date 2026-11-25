@@ -541,20 +541,26 @@ function renderFollowUpService(service) {
 
 function followUpServiceContext(serviceInterest, recentServiceNames = []) {
   const resolved = resolveFollowUpService(serviceInterest);
-  if (resolved) {
-    return {
-      resolved,
-      resolvedServices: [resolved],
-      text: renderFollowUpService(resolved),
-    };
-  }
-
   const hinted = [];
   for (const value of Array.isArray(recentServiceNames) ? recentServiceNames : []) {
     const service = resolveFollowUpService(value);
     if (!service || hinted.some((item) => item.name === service.name)) continue;
     hinted.push(service);
     if (hinted.length >= 2) break;
+  }
+  // An older CRM label is useful background, not a reason to hide recent
+  // customer topics. Keep the same two-service detail budget. With conflicting
+  // hints, do not select a single promotion; let the existing model reconcile
+  // the actual conversation. Media and consent remain independently verified.
+  if (resolved && !hinted.length) {
+    return {
+      resolved,
+      resolvedServices: [resolved],
+      text: renderFollowUpService(resolved),
+    };
+  }
+  if (resolved && hinted.length === 1 && hinted[0].name !== resolved.name) {
+    hinted.push(resolved);
   }
   if (hinted.length) {
     return {
@@ -1169,7 +1175,7 @@ RELEVANT SALES GUIDANCE:
 ${relevantGuidance}
 
 FOLLOW-UP SALES RULES:
-- Continue the customer's unresolved topic. Do not introduce a different service just to have something to say.
+- Continue the customer's unresolved topic. Recent customer and authenticated staff conversation takes priority over an older CRM service label. A mention is not necessarily a selection: distinguish comparisons, rejected treatments, package inclusions and new concerns. Treat supplied service details as context, not a decision to sell that service. If the conversation is ambiguous, use a neutral follow-up or skip. Do not introduce a different service just to have something to say.
 - Answer or continue from the most useful open point instead of sending a generic "just checking in".
 - Assume the customer remembers their own enquiry. If the exact treatment or concern is already established from the customer or authenticated ad context, do NOT ask which service they want again or send them an unrelated service menu.
 - If the customer last asked about pricing, number of sessions, recovery, process, location, or how to book, resolve that open concern from verified CURRENT business facts before suggesting a visit. Do not dodge a known question by immediately asking about their availability. Follow all existing pricing rules below: an unsolicited follow-up must NEVER quote a price when assessment-first is enabled; in that case offer to clarify the current price if the original reply left it unresolved, without inventing amounts.
