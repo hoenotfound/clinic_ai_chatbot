@@ -505,6 +505,7 @@ function buildConversationPromptContext(
     serviceSource,
     currentCustomerText,
     assessmentInvitationPreviouslyDelivered,
+    verifiedQuotedMessage: customerMessages.at(-1)?.verifiedQuotedMessage || null,
     verifiedResultMediaExample: relevantServiceNames.length <= 1
       ? verifiedResultExampleForConversation({
           messages,

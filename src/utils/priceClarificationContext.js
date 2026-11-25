@@ -48,7 +48,29 @@ function resolveClarifiedPriceService({
   }
 
   const service = safeServiceFromCustomer(currentText, services, serviceAliases);
-  return service?.name || null;
+  if (service) return service.name;
+  // A provider-verified reply to an earlier customer concern may complete
+  // this exact unanswered price clarification. The original monetary request
+  // and the treatment must already have independent customer-led evidence.
+  // Do not treat the quote itself as new consent or trust an arbitrary string.
+  const quote=current.verifiedQuotedMessage;
+  if (!quote || quote.role !== "user" || clarification.pricingDeliveredBotMessage!==true ||
+      !Number.isSafeInteger(quote.id)) return null;
+  const quotedIndex=turns.findIndex(t=>t.role==="user" &&
+    t.contextMessageId===quote.id && t.content===quote.content);
+  const priceIndex=turns.length-3;
+  if (quotedIndex<0 || quotedIndex>=priceIndex ||
+      !Number.isFinite(current.pricingCreatedAtMs) ||
+      current.pricingCreatedAtMs- earlier.pricingCreatedAtMs>10*60*1000 ||
+      current.pricingCreatedAtMs<earlier.pricingCreatedAtMs) return null;
+  const {hasClinicalMediaRisk}=require("./aiReviewPolicy");
+  const {isRecentPricingThread}=require("./priceFollowUpContext");
+  if (!isRecentPricingThread(turns,quotedIndex) ||
+      hasClinicalMediaRisk(currentText) || hasClinicalMediaRisk(quote.content)) return null;
+  const established=require("./priceConversationRecovery").resolveEstablishedTreatmentPrice({
+    customerText:earlier.content,session:turns.slice(0,priceIndex+1),services,serviceAliases,
+  });
+  return established?.name || null;
 }
 
 module.exports = { resolveClarifiedPriceService };

@@ -1925,6 +1925,19 @@ async function processIncomingMessage(
       }
     }
 
+    const verifiedQuotedPriceClarification = aiPricingEnabled &&
+      flagged && reviewRequired && !keywordReason && !urgentSafety &&
+      !bookingReady && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+      commercialHistory.at(-1)?.verifiedQuotedMessage
+      ? resolveClarifiedPriceService({customerText:text,conversationHistory:commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases}) : null;
+    // A quoted reply to a verified open monetary clarification is commercial
+    // information, not clinical suitability. Existing durable review evidence
+    // still decides whether recovery is permitted.
+    if (verifiedQuotedPriceClarification && shadowPriceException?.treatment === verifiedQuotedPriceClarification)
+      reviewType = "information";
+
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&

@@ -489,6 +489,8 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
+    : clarifiedPriceService
+      ? { treatment: clarifiedPriceService, source: "customer_price_clarification" }
     : (() => {
         const customer = verifiedServiceAnchor({
           customerText: current, conversationHistory, services, serviceAliases,
@@ -691,6 +693,8 @@ function resolveModelLedPricingDecision({
       last.content.trim() !== original ||
       !isRecentPricingThread(turns, turns.length - 1, now)) return null;
   const candidates = serviceCandidates(services, serviceAliases);
+  const clarified = resolveClarifiedPriceService({customerText:original,conversationHistory:turns,services,serviceAliases});
+  if (clarified && clarified !== intent.treatment) return null;
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
   const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();
