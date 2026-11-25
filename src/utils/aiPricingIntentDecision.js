@@ -650,53 +650,37 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
   return -1;
 }
 
-// Treatment continuity does not authorize a new commercial request. In a
-// recent pricing exchange, separate a new question from a concern fragment
-// even when the provider has copied its commercial flags from an earlier
-// turn. This also covers a burst of customer messages before the first bot
-// reply: each inbound is processed with its own current intent.
+// Narrow duplicate-intent safeguard for a burst of separate customer
+// messages. A recent customer-authored commercial request is required;
+// old quotes, ad copy and automated reminders cannot activate this gate.
+// Outside the burst, the ordinary model-led resolver remains unchanged.
+const RAPID_PRICE_BURST_MS = 15_000;
 function staleCommercialIntent({customerText,conversationHistory=[],services=[],
   serviceAliases=[],allowOfferEnquiries=false,modelIntent,now=Date.now()}={}) {
-  const current=String(customerText||"").normalize("NFKC").trim();
-  if (!current || (!modelIntent?.priceQuery && !modelIntent?.packageQuery)) return false;
+  if (!modelIntent?.priceQuery && !modelIntent?.packageQuery) return false;
+  const current=String(customerText||"").trim();
   const turns=Array.isArray(conversationHistory)?conversationHistory:[];
-  const last=turns.at(-1);
-  if (last?.role!=="user" || pricingMessageText(last).normalize("NFKC").trim()!==current ||
-      !isRecentPricingThread(turns,turns.length-1,now)) return false;
-  // Explicit current monetary/offer questions are never stale solely because
-  // the same price was previously quoted. Existing scope checks still apply.
-  if (hasExplicitPriceRequest(current) || hasExplicitPackageOptionsRequest(current) ||
-      isStandalonePriceQuestion(current) ||
-      (allowOfferEnquiries && isCurrentOfferEnquiry(current,
-        {modelOfferQuery:modelIntent.packageQuery===true}))) return false;
-  // Preserve a real answer to the immediately preceding price clarification,
-  // not an answer to a treatment/concern question or an older priced menu.
+  const last=turns.at(-1), at=last?.pricingCreatedAtMs;
+  if (!current || last?.role!=="user" || pricingMessageText(last).trim()!==current ||
+      !Number.isFinite(at) || !isRecentPricingThread(turns,turns.length-1,now)) return false;
+  const requested=value=>hasExplicitPriceRequest(value) ||
+    isStandalonePriceQuestion(value) || hasExplicitPackageOptionsRequest(value) ||
+    (allowOfferEnquiries && isCurrentOfferEnquiry(value,
+      {modelOfferQuery:modelIntent.packageQuery===true}));
+  if (requested(current)) return false;
+  // Existing independently verified price clarifications and selected
+  // relative package options still go through their original validators.
   if (resolveClarifiedPriceService({customerText,conversationHistory:turns,services,serviceAliases}) &&
       !hasTreatmentPriceContent(pricingMessageText(turns.at(-2)))) return false;
-  const relative=relativePackageReference(current);
-  if (relative.cheaper || relative.dearer) return false; // exact menu is checked below
-  let recentCommercial=false;
-  for(let i=turns.length-2;i>=Math.max(0,turns.length-12);i--){
-    const t=turns[i],at=t?.pricingCreatedAtMs;
-    if(!Number.isFinite(at)||at>now+60_000||at<now-24*3600000)break;
-    const prior=pricingMessageText(t);
-    if(t.role==="user" &&
-        (hasExplicitPriceRequest(prior)||hasExplicitPackageOptionsRequest(prior)||
-          isStandalonePriceQuestion(prior)||isCurrentOfferEnquiry(prior))) {
-      recentCommercial=true;break;
-    }
-    if(t.role==="assistant" && hasTreatmentPriceContent(prior)) {
-      recentCommercial=true;break;
-    }
+  if (modelIntent.promotionOption!=null &&
+      Object.values(relativePackageReference(current)).some(Boolean)) return false;
+  for(let i=turns.length-2;i>=Math.max(0,turns.length-9);i--){
+    const t=turns[i], priorAt=t?.pricingCreatedAtMs;
+    if(!Number.isFinite(priorAt)||priorAt>at||at-priorAt>RAPID_PRICE_BURST_MS ||
+        isVerifiedStaffTurn(t)) break;
+    if(t.role==="user" && requested(pricingMessageText(t))) return true;
   }
-  if(!recentCommercial)return false;
-  // The model remains responsible for interpreting natural-language monetary
-  // questions, including unseen paraphrases. Require a current question or
-  // request shape only in this carryover-risk case; a bare symptom, body area,
-  // goal, or affirmative answer supplies treatment context, not a new quote.
-  // These are grammatical markers, not a list of treatments or concerns.
-  const requestShape=/(?:[?？]|(?:吗|嗎|呢|么|麼)\s*[。!！]*$|(?:怎么|怎麼|如何|怎样|怎樣|多少|几多|幾多|什么|什麼|哪些|哪种|哪種|请问|請問|想知道|想了解|想问|想問|麻烦|麻煩|给我|給我|发我|發我)|^(?:what|which|how|would|could|can|may|do|does|is|are|tell|show|send|please|i (?:want|need|would like) to (?:know|see|ask)|berapa|apa|macam mana|bagaimana|boleh|nak tahu|mahu tahu)\b)/iu;
-  return !requestShape.test(current);
+  return false;
 }
 
 function resolveModelLedPricingDecision({
