@@ -2386,7 +2386,7 @@ function ConversationList({
       aria-label="Conversation inbox"
     >
       <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
           <InboxMascot activity={mascotActivity} />
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">

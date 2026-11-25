@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Inbox mascot is optional, loads original art and respects reduced motion", async ({ page }) => {
+test("Dashy preserves Inbox controls and offers personal appearance modes", async ({ page }) => {
   await page.addInitScript(() => {
     class StubEventSource {
       constructor() { setTimeout(() => this.onopen?.(), 0); }
@@ -21,27 +21,29 @@ test("Inbox mascot is optional, loads original art and respects reduced motion",
       : path === "/api/conversations" ? [] : {};
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
   });
-
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/inbox");
-  const toggle = page.getByTestId("inbox-mascot-toggle");
-  await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await expect.poll(() => toggle.locator("img").first().evaluate(img => img.naturalWidth)).toBe(110);
-  await expect(toggle.locator(".da-inbox-mascot-hover")).toHaveCSS("animation-name", "none");
+  const mascot = page.getByTestId("inbox-mascot");
+  await expect(mascot).toBeVisible();
+  await expect.poll(() => mascot.locator("img").first().evaluate(img => img.naturalWidth)).toBe(220);
+  await expect(mascot.locator(".da-mascot-drift")).toHaveCSS("animation-name", "none");
   const search = page.getByRole("searchbox", { name: /Search by name/ });
-  await expect(search).toBeVisible();
   await search.fill("test");
   await expect(search).toHaveValue("test");
-
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await expect(toggle.locator("img")).toHaveCount(0);
+  await page.goto("/settings/appearance");
+  await page.getByRole("radio", { name: /Stationary/ }).check();
+  await page.goto("/inbox");
+  await expect(mascot.locator(".da-mascot-stage")).toHaveAttribute("data-mode", "stationary");
+  await page.goto("/settings/appearance");
+  await page.getByRole("radio", { name: /Hidden/ }).check();
+  await page.goto("/inbox");
+  await expect(mascot).toHaveCount(0);
   await page.reload();
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await expect(toggle.locator("img")).toHaveCount(5);
+  await expect(mascot).toHaveCount(0);
+  await page.goto("/settings/appearance");
+  await page.getByRole("radio", { name: /Animated/ }).check();
+  await page.goto("/inbox");
+  await expect(mascot).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     width: document.documentElement.scrollWidth, viewport: innerWidth,
   }));
