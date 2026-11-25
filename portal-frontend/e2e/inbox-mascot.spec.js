@@ -97,6 +97,44 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
 });
 
 
+test("Dashy gently hovers on desktop and touch screens and pauses for typing", async ({ page }) => {
+  await mockEmptyDashyInbox(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/inbox");
+  const mascot = page.getByTestId("inbox-mascot");
+  const stage = mascot.locator(".da-mascot-stage");
+  const drift = mascot.locator(".da-mascot-drift");
+  await expect(mascot).toBeVisible();
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+  const compact = await page.evaluate(() => matchMedia("(max-width: 1023px), (pointer: coarse)").matches);
+  await expect(drift).toHaveCSS("animation-duration", compact ? "4s" : "3.8s");
+  const displacement = await drift.evaluate(el => {
+    const animation = el.getAnimations().find(a => a.animationName === "da-mascot-idle");
+    const duration = animation.effect.getTiming().duration;
+    animation.pause();
+    animation.currentTime = 0;
+    const start = new DOMMatrix(getComputedStyle(el).transform);
+    animation.currentTime = duration / 2;
+    const middle = new DOMMatrix(getComputedStyle(el).transform);
+    animation.play();
+    return Math.abs(middle.m42 - start.m42);
+  });
+  expect(displacement).toBeCloseTo(compact ? 4 : 6, 1);
+  const search = page.getByRole("searchbox", { name: /Search by name/ });
+  await search.focus();
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+  // Dispatch a real editable-input key without starting a search request.
+  await search.press("Shift");
+  await expect(stage).toHaveAttribute("data-mode", "stationary");
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle", { timeout: 6000 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(drift).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(drift).toHaveCSS("animation-name", "da-mascot-idle");
+});
+
 test("Dashy controls use the local theme palette", async ({ page }) => {
   await mockEmptyDashyInbox(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -212,12 +250,12 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   await expect(stage).toHaveAttribute("data-pose", "success");
   await expect(stage).toHaveAttribute("data-pose", "idle");
   await page.evaluate(() => document.activeElement?.blur());
-  await page.clock.fastForward(65000);
+  await page.clock.fastForward(50000);
   await page.evaluate(() => document.dispatchEvent(new Event("keydown")));
   await page.clock.fastForward(20000);
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  await page.clock.fastForward(56000);
-  const desktop = await page.evaluate(() => matchMedia("(min-width: 1024px)").matches);
+  await page.clock.fastForward(41000);
+  const desktop = await page.evaluate(() => matchMedia("(min-width: 1024px) and (hover: hover) and (pointer: fine)").matches);
   await expect(stage).toHaveAttribute("data-pose", desktop ? "roaming" : "idle");
   await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
   await expect(stage).toHaveAttribute("data-pose", "idle");
