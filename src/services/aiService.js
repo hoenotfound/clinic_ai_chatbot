@@ -89,6 +89,7 @@ async function runCandidate(
   {
     globalBudgetMs = 0,
     clock = () => Date.now(),
+    minAttemptWindowMs = 0,
   } = {}
 ) {
   let lastError = null;
@@ -101,8 +102,8 @@ async function runCandidate(
       : Number.POSITIVE_INFINITY;
 
     const attemptLabel = candidate.logLabel || candidate.label;
-    if (remainingBudgetMs <= 0) {
-      const err = new Error(`${attemptLabel} exhausted its provider time budget.`);
+    if (remainingBudgetMs <= 0 || remainingBudgetMs < minAttemptWindowMs) {
+      const err = new Error(`${attemptLabel} has insufficient provider time budget.`);
       err.code = "AI_GLOBAL_BUDGET_EXCEEDED";
       throw err;
     }
@@ -642,6 +643,7 @@ async function runClaudeReply(
   {
     globalBudgetMs = 0,
     clock = () => Date.now(),
+    minAttemptWindowMs = 0,
   } = {}
 ) {
   const candidate = buildCandidates(env).find((item) => item.provider === "claude");
@@ -665,7 +667,7 @@ async function runClaudeReply(
     options,
     timeoutMs,
     retryCount,
-    { globalBudgetMs, clock }
+    { globalBudgetMs, clock, minAttemptWindowMs }
   );
 }
 
@@ -788,7 +790,7 @@ async function getReplyWithEnv(
         timeoutMs,
         retryCount,
         env,
-        { globalBudgetMs: providerBudgetMs, clock }
+        { globalBudgetMs: providerBudgetMs, clock, minAttemptWindowMs: providerIndex > 0 ? fallbackWindow : 0 }
       );
       if (preferredProvider === "gemini" && failures.some((item) => item.provider === "gemini")) {
         recordRoutingEvent({
