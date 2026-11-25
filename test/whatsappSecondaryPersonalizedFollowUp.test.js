@@ -72,7 +72,8 @@ test("verified recovery reset restricts AI treatment retrieval without discardin
    assert.equal(payload.restrictTreatmentContext,true);
    assert.equal(payload.treatmentInterest,"3D 小颜术");
    assert.equal(payload.conversation.length,2);
-   assert.match(payload.instruction,/Earlier conversation is available only for clinical safety/u);
+   assert.equal(payload.verifiedTreatment,"3D 小颜术");
+   assert.equal(payload.staffDiscussedTreatment,false);
    return {action:"skip",message:""};
   }});
  assert.equal(result.action,"skip");
