@@ -153,7 +153,7 @@ const AMOUNT_QUESTION =
 const DURATION_QUESTION =
   /(?:多久|多长|多長|时间|時間|小时|小時|\b(?:duration|how long|hour|hours|lama)\b)/iu;
 const INCLUDES_QUESTION =
-  /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist)\b)/iu;
+  /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist|termasuk|merangkumi|apa yang termasuk)\b)/iu;
 const DATE_QUESTION =
   /(?:只有这两天|只有這兩天|只有两天|只有兩天|就这两天|就這兩天|只有这两日|只有這兩日|日期|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 
@@ -226,13 +226,15 @@ function alternativeDateReply(language, now=Date.now()) {
   if(language==="ms") return (expired?"Acara RM68 sudah tamat.":"Promosi RM68 hanya pada "+dates+".")+
     " 😊 Untuk tarikh lain, pihak pusat perlu mengesahkan ketersediaan penilaian dan penjagaan serta caj yang berkenaan.";
   return (expired?"RM68体验活动已经结束。":"RM68体验优惠仅限"+dates+"。")+
-    " 😊 如果想安排其他日期，需要由门店确认是否能进行评估和护理，以及当天的收费哦。";
+    " 😊 如果想安排其他日期，评估和护理的安排及收费需要先请门店确认哦。";
 }
 function campaignContextReply({ history, customerText, now = Date.now(), language } = {}) {
   if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
       (!CAMPAIGN_QUERY.test(String(customerText || "")) && !AMOUNT_QUESTION.test(String(customerText || "")) && !DURATION_QUESTION.test(String(customerText || "")) && !INCLUDES_QUESTION.test(String(customerText || "")) && !isCampaignAvailabilityQuestion(customerText) && !alternativeDateRequest(customerText,now)) ||
       isOtherTreatmentQuery(customerText)) return null;
   const locale=localeFor(history,customerText,language);
+  // Result-timing questions belong to the normal clinical/conversational path, not event availability.
+  if (RESULT_TIMING.test(String(customerText||"")) && !isCampaignAvailabilityQuestion(customerText) && !AMOUNT_QUESTION.test(String(customerText||""))) return null;
   if (alternativeDateRequest(customerText,now)) return alternativeDateReply(locale,now);
   if (AMOUNT_QUESTION.test(String(customerText||"")) && alternativeDateContext(history,customerText,now))
     return alternativeDateReply(locale,now);
@@ -329,13 +331,15 @@ function campaignClaimsSafe(value, now=Date.now()) {
   if(/\b20\d{2}\b/u.test(text)&&/\b20(?!26)\d{2}\b/u.test(text))return false;
   // Unverified slot, clinical equipment, guarantees and unrelated prices
   // cannot be authorised by a fluent answer.
-  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia)\b/iu.test(text))return false;
-  if(amounts.length && (!dates.length||/\b(?:any day|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
+  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(text))return false;
+  if(amounts.length && (!dates.length||/\b(?:any day|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|also (?:available|valid)|anytime|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
   const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
   for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
     const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
     if(![45,90].includes(mins))return false;
   }
+  // Prices must be explicitly event-scoped, not just coexist with a valid date.
+  if(amounts.length && !/(?:\bevent\b|\bpromotion\b|\btrial\b|\bonly\b|\bpromo\b|活动|活動|体验|體驗|限时|限時|优惠|優惠|\bacara\b|\bpromosi\b|\bpercubaan\b)/iu.test(text))return false;
   return true;
 }
 function selectCampaignReply({reply, fallback, history, customerText, language, now=Date.now()}={}) {
