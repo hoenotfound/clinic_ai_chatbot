@@ -385,6 +385,7 @@ async function runWithGeminiKeys(
     confirmModelUnavailableAcrossKeys = true,
     stopKeyRotationOnTimeout = false,
     stopKeyRotationOnInvalidResponse = false,
+    allowInvalidResponseRecovery = false,
     minAttemptWindowMs = 0,
     smartRetryDelayMinMs = 500,
     smartRetryDelayMaxMs = 1000,
@@ -422,11 +423,13 @@ async function runWithGeminiKeys(
   const boundedRetryCount = Math.max(0, Math.min(Number(retryCount) || 0, 3));
   const startedAtMs = clock();
   let confirmingModelUnavailable = false;
+  let invalidRecoveryUsed = false;
 
   for (let candidatePosition = 0; candidatePosition < available.length; candidatePosition += 1) {
     const candidate = available[candidatePosition];
     const isModelConfirmationAttempt = confirmingModelUnavailable;
     let lastError = null;
+    let correctiveRetry = false;
 
     for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
       const elapsedMs = Math.max(0, clock() - startedAtMs);
@@ -454,7 +457,7 @@ async function runWithGeminiKeys(
       try {
         const controller = new AbortController();
         const result = await withTimeout(
-          operation(candidate.apiKey, candidate, { signal: controller.signal }),
+          operation(candidate.apiKey, candidate, { signal: controller.signal, ...(correctiveRetry ? { correctiveRetry: true } : {}) }),
           attemptTimeoutMs,
           candidate.label,
           { onTimeout: () => controller.abort() }
@@ -481,6 +484,7 @@ async function runWithGeminiKeys(
             && confirmModelUnavailableAcrossKeys
             && isModelCapacityFailure
             && !confirmingModelUnavailable
+            && !correctiveRetry
             && nextCandidate
           ) {
             confirmingModelUnavailable = true;
@@ -494,6 +498,7 @@ async function runWithGeminiKeys(
           }
 
           if (isModelCapacityFailure && confirmingModelUnavailable) {
+            err.modelCapacityConfirmed = true;
             console.warn(
               `${candidate.label} confirmed ${err.model || "Gemini model"} capacity failure; stopping key rotation:`,
               providerError
@@ -510,9 +515,23 @@ async function runWithGeminiKeys(
         // Malformed model output is not a credential fault. On the bounded
         // Flash-Lite reply path do not repeat the same generation on other keys.
         if (stopKeyRotationOnInvalidResponse && outcome.failureKind === "invalid_response") {
+          const remaining = globalBudgetMs > 0
+            ? globalBudgetMs - Math.max(0, clock() - startedAtMs)
+            : Number.POSITIVE_INFINITY;
+          if (allowInvalidResponseRecovery && !invalidRecoveryUsed &&
+              !isModelConfirmationAttempt && attempt < boundedRetryCount &&
+              remaining > 0 && remaining >= minAttemptWindowMs) {
+            invalidRecoveryUsed = true;
+            correctiveRetry = true;
+            console.warn(`${candidate.label} produced invalid model output; attempting one corrective generation.`);
+            continue;
+          }
           console.warn(`${candidate.label} produced invalid model output; stopping key rotation:`, err?.message || err);
           throw err;
         }
+        // A corrective attempt is the final recovery generation, not the start
+        // of another credential sweep.
+        if (correctiveRetry) throw err;
 
         // A customer-reply timeout says the generation path was too slow, not
         // that this API key is unhealthy. Never poison key health for it. When
