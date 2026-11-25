@@ -3032,7 +3032,8 @@ async function processIncomingMessage(
         customerText: text, branches: clinicConfig.branches,
         language: mediaLanguage,
         modelLocationOnly: modelLocationOnly && !priceQuery && !packageQuery && !serviceQuery &&
-          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly,
+          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly &&
+          !approvedPricingDecision && !rejectedModelPricing && !staffPriceConflict,
       });
       if (verifiedLocation) {
         const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);

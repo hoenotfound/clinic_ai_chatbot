@@ -421,6 +421,8 @@ test("AI-led standalone location correction uses current facts without a new cit
   const address=PJ[0].address;
   const facts=confirmedSingleBranchLocationAnswer({customerText:"你们不是在 Puchong 吗？",branches:PJ,language:"zh",modelLocationOnly:true});
   assert.ok(facts);
+  assert.doesNotMatch(facts.reply,/预约|哪一天/);
+  assert.equal(confirmedSingleBranchLocationAnswer({customerText:"你们不是在 Puchong 吗？",branches:[...PJ,{name:"Other branch"}],language:"zh",modelLocationOnly:true}),null);
   assert.equal(verifyLocationDraft("我们只有一间店在 Petaling Jaya (PJ) 😊 地址："+address,facts),"verified_address_only");
   assert.equal(verifyLocationDraft("地址："+address+" 从蒲种过来走 LDP 很顺",facts),"extra_or_unverified_text");
   assert.equal(confirmedSingleBranchLocationAnswer({customerText:"哪里痛？",branches:PJ,modelLocationOnly:true}),null);

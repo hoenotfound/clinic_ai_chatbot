@@ -34,7 +34,7 @@ function confirmedSingleBranchLocationAnswer({
       /(?:疼|痛|不舒服|症状|症狀|部位|身体|身體|[价價][钱錢格]|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|活动|活動|[预預]约|[病癌]|(?:\b(?:price|cost|fee|promo|package|treatment|pain|symptom|booking|appointment|rawatan|harga)\b))/iu.test(question)) return null;
   const valid = (Array.isArray(branches) ? branches : [])
     .filter(b => b && typeof b.address === "string" && b.address.trim());
-  if (valid.length !== 1) return null;
+  if (valid.length !== 1 || branches.length !== 1) return null;
   const name = String(valid[0].name || "").trim();
   const address = valid[0].address.trim();
   const locale = String(language || "").toLowerCase();
@@ -53,12 +53,12 @@ function confirmedSingleBranchLocationAnswer({
     language: ms ? "ms" : en ? "en" : "zh",
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
-        + "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji."
+        + (modelLocationOnly ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
       : en
         ? "We're located in " + (name || "our clinic") + " 😊\n📍 " + address
-          + "\nWhich day would be convenient for you? We can help check appointment arrangements."
+          + (modelLocationOnly ? "" : "\nWhich day would be convenient for you? We can help check appointment arrangements.")
         : "我们位于 " + (name || "门店") + " 😊\n📍 " + address
-          + "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️",
+          + (modelLocationOnly ? "" : "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️"),
   };
 }
 
