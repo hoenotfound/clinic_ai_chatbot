@@ -300,3 +300,87 @@ test("RM68 localized opening, continuation and reminders retain campaign evidenc
   assert.match(campaignFollowUp({candidate,now:early}).message,/friendly reminder/);
   assert.doesNotMatch(campaignFollowUp({candidate,now:early}).message,/[\u3400-\u9fff]/);
 });
+
+
+test("campaign claims validate prices, calendar dates and duration in context",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const invalid of [
+    "The event is RM68 on December 12.",
+    "The trial is RM90 on December 5 and 6.",
+    "The event is on November 5 and 6.",
+    "The trial is RM68 on December 5 and 6, also available anytime.",
+    "The trial is RM68 on December 5 and 6, every day.",
+    "The event is RM68 on 12/12/2026.",
+    "The RM68 event on December 5 and 6 takes 5 hours.",
+    "Promosi RM68 pada 12 Disember.",
+    "RM68 活动日期12月12日。",
+    "The RM68 event on December 5 has confirmed slots.",
+  ]) assert.equal(campaignClaimsSafe(invalid,early),false,invalid);
+  assert.equal(campaignClaimsSafe("The first trial is RM68 for the December 5 and 6 event 😊",early),true);
+  assert.equal(campaignClaimsSafe("The RM68 trial is on December 6 and takes 1 hour 30 minutes.",dec6),true);
+  assert.equal(campaignClaimsSafe("The RM68 trial is on December 5.",dec6),false);
+  assert.equal(campaignClaimsSafe("The RM68 trial is on December 6.",expired),false);
+});
+
+test("relative scheduling uses the original message timestamp and never mistakes results for bookings",()=>{
+  const {alternativeDateRequest,alternativeDateContext}=require("../src/utils/neutroBreastRm68Campaign");
+  assert.equal(alternativeDateRequest("Will I see results today?",early),false);
+  assert.equal(isCampaignAvailabilityQuestion("Will I see results today?"),false);
+  assert.equal(run("Can I see breast treatment results today?"),null);
+  assert.equal(alternativeDateRequest("Can I come on December 12?",early),true);
+  const oldEventVisit=[...history,{role:"user",content:"Can I come today?",pricingCreatedAtMs:Date.parse("2026-12-05T01:00:00Z")}];
+  assert.equal(alternativeDateContext(oldEventVisit,"How much?",dec6),false);
+  const priorOutside=[...history,{role:"user",content:"Can I come today?",pricingCreatedAtMs:early}];
+  assert.equal(alternativeDateContext(priorOutside,"How much?",dec6),true);
+  assert.equal(alternativeDateContext(priorOutside,"Can I book December 6?",dec6),false);
+  assert.equal(alternativeDateContext([...history,{role:"user",content:"Can I come today?"}],"How much?",early),false);
+});
+
+test("alternative-date follow-up stops the sequence rather than sending repeated reminders",()=>{
+  const candidate={trigger_message_content:firstReply(early),recent_inbound_messages:["Can I come today?",PREFILL],
+    recent_inbound_times:[new Date(early).toISOString(),new Date(early-1000).toISOString()],
+    ad_followup_source:"meta_ads",ad_followup_headline:creative.headline,ad_followup_body:creative.body};
+  assert.deepEqual(campaignFollowUp({candidate,now:early}),{expired:false,stop:true,message:null});
+  const visitOnEvent={...candidate,recent_inbound_times:[new Date(dec6).toISOString(),new Date(early).toISOString()]};
+  assert.equal(campaignFollowUp({candidate:visitOnEvent,now:dec6}).stop,undefined);
+});
+
+test("localized fallbacks distinguish amount, duration and inclusions",()=>{
+  const local=(q,language)=>campaignContextReply({history,customerText:q,language,now:early});
+  for(const [lang,price,duration,inclusions] of [["en","How much?","How long?","What is included?"],["ms","Berapa harga?","Berapa lama?","Apa yang termasuk?"]]){
+    const a=local(price,lang),b=local(duration,lang),c=local(inclusions,lang);
+    assert.ok(a&&b&&c,lang);
+    assert.match(a,/RM68/);
+    assert.match(b,/45/);
+    assert.match(c,/moxibustion|moksibusi/);
+    assert.notEqual(a,b);assert.notEqual(b,c);assert.notEqual(a,c);
+  }
+});
+
+test("actual server review boundary routes Hui's alternative date for staff even if model says booking-ready",async()=>{
+  const helpers=require("../src/utils/neutroBreastRm68Campaign");
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const a=source.indexOf("    // An alternative date needs actual staff confirmation");
+  const b=source.indexOf("    // Final clinical safety backstop",a);
+  assert.ok(a>0&&b>a);
+  const text="December 5 and 6, I am not available\nIs that possible to do the treatment and checking today";
+  const commercialHistory=[...history,{role:"user",content:"Any ultrasound screening"},{role:"user",content:text}];
+  for(const bookingReady of [true,false]){
+    const context={...helpers,text,commercialHistory,bookingReady,flagged:false,reviewRequired:false,reviewType:null,
+      keywordReason:null,urgentSafety:false,marketingStopQuestion:null,mediaLanguage:"en",
+      clinicalAcknowledgement:null,serviceQuery:true,serviceQuerySource:"model",priceQuery:true,packageQuery:true,details:{treatment:"pulse wave"},
+      savedInbound:{id:24036,created_at:new Date(early).toISOString()},
+      clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
+      isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,isDefiniteAppointmentCancellation:()=>false,hasExplicitPriceRequest:()=>false,
+    };
+    const result=vm.runInNewContext("(function(){"+source.slice(a,b)+";return {flagged,reviewRequired,reviewType,bookingReady,priceQuery,serviceQuery,clinicalAcknowledgement};})()",context);
+    assert.equal(result.flagged,true);
+    assert.equal(result.reviewRequired,true);
+    assert.equal(result.reviewType,"information");
+    assert.equal(result.bookingReady,false);
+    assert.equal(result.priceQuery,false);
+    assert.equal(result.serviceQuery,false);
+    assert.match(result.clinicalAcknowledgement,/applicable charges/);
+    assert.doesNotMatch(result.clinicalAcknowledgement,/[\u3400-\u9fff]/);
+  }
+});
