@@ -84,10 +84,16 @@ function adaptNeutroAppointmentInvitation({
   // consultation facts, links, or a question that is not about booking.
   const lastIndex = lines.length - 1;
   const line = lines[lastIndex].trim();
-  if (!FINAL_BOOKING_LINE.test(line) || !/(?:[?？]|确认|確認|check|semak)/iu.test(line)) {
+  const bookingMatch = FINAL_BOOKING_LINE.exec(line);
+  if (!bookingMatch || !/(?:[?？]|确认|確認|check|semak)/iu.test(line)) {
     return original;
   }
-  lines[lastIndex] = replacement;
+  // A natural AI response may combine an explanation and its booking
+  // question on one line. Only change a clearly separable question suffix;
+  // never replace treatment facts or a whole mixed sentence.
+  const prefix = line.slice(0, bookingMatch.index);
+  if (prefix && !/[。.!！?？;；]\s*$/u.test(prefix)) return original;
+  lines[lastIndex] = prefix ? prefix + replacement : replacement;
   return lines.join("\n");
 }
 
