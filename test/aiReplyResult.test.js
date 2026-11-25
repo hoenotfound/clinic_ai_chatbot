@@ -393,3 +393,25 @@ test("legacy replies never claim a service enquiry", () => {
   assert.equal(result.serviceQuery, false);
   assert.equal(result.serviceQuerySource, null);
 });
+
+test("appointment scheduling intent remains internal and preserves false", () => {
+  for (const appointmentScheduling of [false, true]) {
+    const result = parseAiReplyResult(JSON.stringify({
+      reply: "每星期一次哦😊", outcome: "normal", appointmentScheduling,
+    }));
+    assert.equal(result.details.appointmentScheduling, appointmentScheduling);
+    assert.equal(result.text, "每星期一次哦😊");
+    assert.equal(result.bookingReady, false);
+  }
+  const old = parseAiReplyResult(JSON.stringify({reply:"Hello",outcome:"normal"}));
+  assert.equal(Object.hasOwn(old.details,"appointmentScheduling"),false);
+});
+
+test("business location-only intent is internal and optional for older provider responses",()=>{
+  for(const businessLocationOnly of [true,false]){
+    const result=parseAiReplyResult(JSON.stringify({reply:"地址",outcome:"normal",businessLocationOnly}));
+    assert.equal(result.details.businessLocationOnly,businessLocationOnly);
+    assert.equal(result.text,"地址");
+  }
+  assert.equal(Object.hasOwn(parseAiReplyResult(JSON.stringify({reply:"Hi",outcome:"normal"})).details,"businessLocationOnly"),false);
+});

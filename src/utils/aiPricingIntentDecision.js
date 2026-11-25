@@ -442,7 +442,7 @@ function resolveAiPricingDecision({
     customerText: current, conversationHistory, services, serviceAliases, now,
   });
   const clarifiedPriceService = resolveClarifiedPriceService({
-    customerText: current, conversationHistory, services, serviceAliases,
+    customerText: current, conversationHistory, services, serviceAliases, now,
   });
   // Model intent alone must never turn a normal treatment question into an
   // unsolicited graphic. Clear keywords retain deterministic recovery if
@@ -489,6 +489,8 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
+    : clarifiedPriceService && conversationHistory.at(-1)?.verifiedQuotedMessage
+      ? { treatment: clarifiedPriceService, source: "customer_price_clarification" }
     : (() => {
         const customer = verifiedServiceAnchor({
           customerText: current, conversationHistory, services, serviceAliases,
@@ -691,6 +693,8 @@ function resolveModelLedPricingDecision({
       last.content.trim() !== original ||
       !isRecentPricingThread(turns, turns.length - 1, now)) return null;
   const candidates = serviceCandidates(services, serviceAliases);
+  const clarified = resolveClarifiedPriceService({customerText:original,conversationHistory:turns,services,serviceAliases,now});
+  if (clarified && clarified !== intent.treatment) return null;
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
   const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();

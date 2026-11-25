@@ -37,7 +37,7 @@ test("campaign does not inherit price after treatment switch", () => {
 });
 
 
-const { confirmedSingleBranchLocationAnswer } =
+const { confirmedSingleBranchLocationAnswer, verifyLocationDraft } =
   require("../src/utils/verifiedPricingBusinessFacts");
 const { administrativeReviewReply } =
   require("../src/utils/neutroAdministrativeReviewReply");
@@ -59,6 +59,7 @@ test("address is sourced from clinic settings, not an old Puchong location", () 
     });
     assert.ok(result, question);
     assert.ok(result.reply.includes(PJ[0].address));
+    assert.equal(result.verifiedAddress,PJ[0].address);
     assert.ok(result.reply.includes(part));
     assert.ok(!result.reply.includes("Puchong"));
   }
@@ -192,15 +193,17 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
   for (const sender of [1, 2]) {
     const context = {
       flagged:false, bookingReady:false, verifiedBookingForHours:null, keywordReason:null,
-      staffPriceConflict:false, rejectedModelPricing:false,
+      staffPriceConflict:false, rejectedModelPricing:false, approvedPricingDecision:null,
       marketingStopQuestion:null, urgentSafety:false,
       text:"你们的店是在哪？", reply:"我们的店在 Puchong。",
+      originalModelReply:"我们的店在 Puchong。", verifyLocationDraft, modelLocationOnly:false,
       channel:"whatsapp", mediaLanguage:"zh", reviewContinuationTextOnly:false,
       rm68CampaignContinuationTextOnly:false, fixedAdFirstReply:null,
       clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
       priceQuery:false, packageQuery:false, serviceQuery:false,
       serviceQuerySource:null,
       contact:{id:24,whatsapp_sender_id:sender},
+      console:{info:()=>{}},
       clinicConfig:{businessType:"tcm_clinic",
         businessName:"Neutro Sense TCM Centre",branches:PJ},
       isActiveSafetyConcern:()=>false, hasClinicalMediaRisk:()=>false,
@@ -368,4 +371,88 @@ test("natural price helper accepts 价钱呢 but rejects unrelated text", () => 
   assert.equal(isStandalonePriceQuestion("价钱呢？"), true);
   assert.equal(isStandalonePriceQuestion("价钱？"), true);
   assert.equal(isStandalonePriceQuestion("有没有疼痛？"), false);
+});
+
+test("location draft contract preserves accurate answers and rejects contradictory claims in all three languages", () => {
+  const address=PJ[0].address;
+  for (const [question,lang,good,bad] of [
+    ["你们店在哪里？","zh","我们的地址：","我们在 Puchong，地址："],
+    ["Where are you located?","en","Here is our address: ","We are in Puchong. Address: "],
+    ["alamat klinik?","ms","Alamat kami: ","Kami di Puchong. Alamat: "],
+  ]) {
+    const facts=confirmedSingleBranchLocationAnswer({customerText:question,language:lang,branches:PJ});
+    assert.equal(verifyLocationDraft(good+address+" 😊",facts),"verified_address_only");
+    assert.equal(verifyLocationDraft(bad+address,facts),"extra_or_unverified_text");
+    assert.equal(verifyLocationDraft(good+address+" RM388",facts),"extra_or_unverified_text");
+    assert.equal(verifyLocationDraft(good+address+" see you Monday",facts),"extra_or_unverified_text");
+    assert.equal(verifyLocationDraft("Puchong",facts),"address_missing");
+    assert.equal(verifyLocationDraft(null,facts),"no_draft");
+  }
+});
+test("actual final boundary retains an unchanged verified AI reply and measures pre-guard drafts separately", async()=>{
+  for(const sender of [1,2]){
+    const good="我们的地址："+PJ[0].address+" 😊";
+    for(const [original,final,expectedDecision] of [[good,good,"preserve"],["我们有多个分行。",good,"preserve"],["我们在 Puchong。"+PJ[0].address,good,"preserve"]]){
+      const logs=[];
+      const context={
+        flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,
+        staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,
+        text:"你们的店是在哪？",reply:final,originalModelReply:original,modelLocationOnly:false,
+        channel:"whatsapp",mediaLanguage:"zh",reviewContinuationTextOnly:false,
+        rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,
+        clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
+        priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,
+        contact:{id:24,whatsapp_sender_id:sender},console:{info:(line)=>logs.push(line)},
+        clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},
+        isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,
+        confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,
+        recoveryPromptProof:null,recoveryOther:false,
+      };
+      const result=await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\nreturn {reply,reviewContinuationTextOnly};\n})()",context);
+      assert.equal(result.reply,final);
+      assert.ok(logs.some(x=>x.includes("decision="+expectedDecision)));
+      if(original!==good)assert.ok(logs.some(x=>!x.includes("original=verified_address_only")));
+      assert.ok(result.reply.includes(PJ[0].address));
+    }
+  }
+});
+
+test("AI-led standalone location correction uses current facts without a new city keyword rule",()=>{
+  const address=PJ[0].address;
+  const facts=confirmedSingleBranchLocationAnswer({customerText:"你们不是在 Puchong 吗？",branches:PJ,language:"zh",modelLocationOnly:true});
+  assert.ok(facts);
+  assert.doesNotMatch(facts.reply,/预约|哪一天/);
+  assert.equal(confirmedSingleBranchLocationAnswer({customerText:"你们不是在 Puchong 吗？",branches:[...PJ,{name:"Other branch"}],language:"zh",modelLocationOnly:true}),null);
+  assert.equal(verifyLocationDraft("我们只有一间店在 Petaling Jaya (PJ) 😊 地址："+address,facts),"verified_address_only");
+  assert.equal(verifyLocationDraft("地址："+address+" 从蒲种过来走 LDP 很顺",facts),"extra_or_unverified_text");
+  assert.equal(confirmedSingleBranchLocationAnswer({customerText:"哪里痛？",branches:PJ,modelLocationOnly:true}),null);
+  const en=confirmedSingleBranchLocationAnswer({customerText:"Please reply in English. Where are you located?",branches:PJ,language:"en",modelLocationOnly:true});
+  assert.equal(verifyLocationDraft("We're located in Petaling Jaya (PJ) 😊 Address: "+address,en),"verified_address_only");
+  const ms=confirmedSingleBranchLocationAnswer({customerText:"Boleh share alamat clinic?",branches:PJ,language:"ms",modelLocationOnly:true});
+  assert.equal(verifyLocationDraft("Kami terletak di Petaling Jaya (PJ) 😊 Alamat: "+address,ms),"verified_address_only");
+});
+
+test("location-only fallback requires independent whole-question evidence and respects selected language",()=>{
+  for(const question of ["How many sessions do I need?","Can I come Tuesday at 3pm?","Where are you located and what are your opening hours?","你们店在哪里？一次需要多久？","你们店在哪里？我想了解骨盆调理"]){
+    for(const modelLocationOnly of [true,false]){
+      assert.equal(confirmedSingleBranchLocationAnswer({customerText:question,branches:PJ,language:"en",modelLocationOnly}),null,question);
+    }
+  }
+  const explicit=confirmedSingleBranchLocationAnswer({customerText:"Please reply in English. 你们在哪里？",branches:PJ,language:"zh",modelLocationOnly:false});
+  assert.equal(explicit?.language,"en");
+  const resolved=confirmedSingleBranchLocationAnswer({customerText:"你们在哪里？",branches:PJ,resolvedLanguage:"en"});
+  assert.equal(resolved?.language,"en");
+});
+test("actual final boundary preserves mixed and unrelated answers even with erroneous location classification",async()=>{
+  for(const sender of [1,2]) for(const [text,reply,modelLocationOnly] of [
+    ["How many sessions do I need?","Usually 4–6 sessions.",true],
+    ["Where are you located and what are your opening hours?","Our address is "+PJ[0].address+". We open Tuesday to Sunday.",false],
+    ["你们店在哪里？一次需要多久？","我们在 PJ。一次约40分钟。",true],
+    ["Can I come Tuesday at 3pm?","We can check your preferred time with the team.",true],
+  ]){
+    const context={flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
+    const result=await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\nreturn {reply,reviewContinuationTextOnly};\n})()",context);
+    assert.equal(result.reply,reply);
+    assert.equal(result.reviewContinuationTextOnly,false);
+  }
 });

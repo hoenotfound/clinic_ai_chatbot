@@ -67,6 +67,8 @@ function buildConversationOutputSchema() {
       treatment: nullableString(),
       branch: nullableString(),
       appointmentPreference: nullableString(),
+      appointmentScheduling: { type: "boolean" },
+      businessLocationOnly: { type: "boolean" },
       projectLocation: nullableString(),
       projectSummary: nullableString(),
       nextStep: {
@@ -86,6 +88,8 @@ function buildConversationOutputSchema() {
       "treatment",
       "branch",
       "appointmentPreference",
+      "appointmentScheduling",
+      "businessLocationOnly",
       "projectLocation",
       "projectSummary",
       "nextStep",

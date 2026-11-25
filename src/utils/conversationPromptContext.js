@@ -493,10 +493,19 @@ function buildConversationPromptContext(
     !topicChangeIntent &&
     configuredPromotionReference(previousCustomerText, promotions);
 
+  // Reuse the existing invitation matcher and the already-loaded delivery
+  // metadata. Unknown or unsent drafts cannot establish a delivered invitation.
+  const recentDeliveredInvitations = (Array.isArray(messages) ? messages : [])
+    .filter(m => m?.role === "assistant" && m.pricingDeliveredBotMessage === true)
+    .slice(-8).map(messageText);
+  const assessmentInvitationPreviouslyDelivered = recentDeliveredInvitations.length > 0 &&
+    require("./tcmServiceReviewReply").hasAssessmentInvitation(recentDeliveredInvitations);
   return {
     relevantServiceNames,
     serviceSource,
     currentCustomerText,
+    assessmentInvitationPreviouslyDelivered,
+    verifiedQuotedMessage: customerMessages.at(-1)?.verifiedQuotedMessage || null,
     verifiedResultMediaExample: relevantServiceNames.length <= 1
       ? verifiedResultExampleForConversation({
           messages,

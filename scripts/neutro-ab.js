@@ -13,6 +13,7 @@ const cases = require("./config-proposals/neutro-ab-cases.json");
 const stage2Plan = require("./config-proposals/neutro-prompt-consolidation-stage2.json");
 const { resolveCompactConversationPolicy } = require("../src/utils/compactConversationPolicy");
 const { claimsMediaWasOrWillBeSent } = require("../src/utils/unconfirmedMediaPromiseGuard");
+const { singleBranchLocationFacts, verifyLocationDraft } = require("../src/utils/verifiedPricingBusinessFacts");
 const MODEL = "gemini-3.8-flash";
 
 function withConfig(data, fn) {
@@ -53,6 +54,13 @@ function checksFor(data, scenario, raw) {
       pricingStage: result.pricingStage, promotionOption: result.promotionOption,
       reviewType: result.reviewType, appointmentPreference: result.details?.appointmentPreference,
       mediaPromise: claimsMediaWasOrWillBeSent(result.text ?? result.message ?? "") };
+    if (Object.hasOwn(scenario.expect || {}, "locationDraftStatus")) {
+      // The scenario explicitly opts into factual draft verification. Do
+      // not confuse the runtime's conservative rewrite eligibility with
+      // whether a raw model reply contains the verified location.
+      const facts = singleBranchLocationFacts(config.branches, scenario.lang);
+      actual.locationDraftStatus = verifyLocationDraft(result.text,facts);
+    }
     const checks = Object.entries(scenario.expect || {}).map(([field, expected]) => {
       const wanted = field === "treatment" ? canonicalConfiguredService(expected) || expected : expected;
       return { field, expected: wanted, actual: actual[field],

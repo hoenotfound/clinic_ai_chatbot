@@ -791,7 +791,8 @@ test("scoped normal prompt keeps relevant treatment detail and global safety whi
     assert.match(prompt, /- KL/);
     assert.doesNotMatch(prompt, /PJ_ADDRESS_SENTINEL/);
     assert.doesNotMatch(prompt, /KL_ADDRESS_SENTINEL/);
-    assert.doesNotMatch(prompt, /HOURS_SENTINEL/);
+    assert.match(prompt, /HOURS_SENTINEL/); // Gemini needs clinic hours even on treatment-only turns.
+    assert.match(prompt, /appointmentScheduling/);
     assert.doesNotMatch(prompt, /WHATSAPP_SENTINEL/);
     assert.doesNotMatch(prompt, /INSTAGRAM_SENTINEL/);
   });
@@ -1352,5 +1353,54 @@ test("uterus repositioning comparison after pelvic explanation keeps verified pa
     assert.doesNotMatch(prompt, /NEUTRO SENSE CLINIC TERMINOLOGY/);
     assert.doesNotMatch(prompt, /uses 子宫复位 as its customer-facing name/);
     assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, ["子宫调理"]);
+  });
+});
+
+test("single configured business address is available even when the context classifier sees no location enquiry", () => {
+  const fixture = scopedConfig();
+  withConfig({...fixture, branches:[fixture.branches[0]]}, () => {
+    const prompt = buildSystemPrompt({channel:"whatsapp", conversationContext:{
+      currentCustomerText:"可以吗？", relevantServiceNames:["骨盆调理"],
+      schedulingIntent:false,contactIntent:false,promotionIntent:false,
+    }});
+    assert.match(prompt,/PJ_ADDRESS_SENTINEL/);
+    assert.match(prompt,/HOURS_SENTINEL/);
+    assert.doesNotMatch(prompt,/KL_ADDRESS_SENTINEL/);
+    assert.doesNotMatch(prompt,/INSTAGRAM_SENTINEL/);
+    assert.match(prompt,/never say it is available, can be arranged, or accepted by the practitioner/);
+    assert.equal((prompt.match(/APPOINTMENT AVAILABILITY POLICY:/g)||[]).length,1);
+    assert.match(prompt,/Use the current configured business location\/address/);
+  });
+});
+
+test("assessment-first treatment context exposes alternative canonical names without unrelated pricing or details", () => {
+  const overrides = scopedConfig();
+  overrides.automatedFollowUp = { assessmentFirstPricingEnabled: true };
+  withConfig(overrides, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "3D 小颜术需要多久？" },
+    ]);
+    assert.deepEqual(context.relevantServiceNames, ["3D 小颜术"]);
+    const prompt = buildSystemPrompt({ conversationContext: context });
+    assert.match(prompt, /THREED_FULL_DETAILS/u);
+    assert.match(prompt, /Other configured treatments \(compact descriptions; detailed offer facts not supplied\)/u);
+    assert.match(prompt, /NINED_FULL_DETAILS/u);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/u);
+    assert.match(prompt, /"9D \/ 逆龄" → 9D 逆龄抗衰/u);
+    assert.doesNotMatch(prompt, /NINED_PRICE|PELVIS_PRICE/u);
+    assert.match(prompt, /retrieval context, not a decision/u);
+    assert.match(prompt, /A previous assessment invitation is not a reason to repeat it/u);
+  });
+});
+
+test("only delivered assessment invitation evidence enters the conversation prompt", () => {
+  withConfig(scopedConfig(), () => {
+    const invitation = {role:"assistant",content:"Would you like to arrange a 1-to-1 assessment?"};
+    const current = {role:"user",content:"3D 小颜术"};
+    const ordinary = buildConversationPromptContext([invitation,current]);
+    assert.equal(ordinary.assessmentInvitationPreviouslyDelivered,false);
+    const verified = buildConversationPromptContext([{...invitation,pricingDeliveredBotMessage:true},current]);
+    assert.equal(verified.assessmentInvitationPreviouslyDelivered,true);
+    assert.match(buildSystemPrompt({conversationContext:verified}),/prior assessment invitation was verified as delivered/u);
   });
 });

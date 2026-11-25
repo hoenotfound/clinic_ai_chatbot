@@ -16,7 +16,7 @@ const DECLINED_OR_NEW_TOPIC =
   /(?:不(?:想|要|用|需要|必).{0,16}(?:价|價|钱|錢|配套|优惠|優惠)|(?:别|別).{0,16}(?:报|報|价|價)|\b(?:no|don't|do not|tak nak|tidak mahu)\b.{0,40}\b(?:price|cost|harga|pakej)\b|(?:换个|換個|改聊|另外想|\binstead\b|\brather\b|\bswitch\b))/iu;
 
 function resolveClarifiedPriceService({
-  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  customerText, conversationHistory = [], services = [], serviceAliases = [], now = Date.now(),
 } = {}) {
   const currentText = String(customerText || "").trim();
   if (!currentText || currentText.length > 90 ||
@@ -48,7 +48,42 @@ function resolveClarifiedPriceService({
   }
 
   const service = safeServiceFromCustomer(currentText, services, serviceAliases);
-  return service?.name || null;
+  if (service) return service.name;
+  // A provider-verified reply to an earlier customer concern may complete
+  // this exact unanswered price clarification. The original monetary request
+  // and the treatment must already have independent customer-led evidence.
+  // Do not treat the quote itself as new consent or trust an arbitrary string.
+  const quote=current.verifiedQuotedMessage;
+  // Reuse the existing narrow selection grammar; arbitrary new questions,
+  // acknowledgements, refusals or clinical statements quoting an old message
+  // are not a selection of the price being clarified.
+  const {isStandaloneQuotedSelection}=require("./neutroStaffResultPriceContext");
+  if (!isStandaloneQuotedSelection(currentText) ||
+      !quote || quote.role !== "user" || clarification.pricingDeliveredBotMessage!==true ||
+      !Number.isSafeInteger(quote.id)) return null;
+  const quotedIndex=turns.findIndex(t=>t.role==="user" &&
+    t.contextMessageId===quote.id && t.content===quote.content);
+  const priceIndex=turns.length-3;
+  if (quotedIndex<0 || quotedIndex>=priceIndex ||
+      !Number.isFinite(current.pricingCreatedAtMs) ||
+      current.pricingCreatedAtMs- earlier.pricingCreatedAtMs>10*60*1000 ||
+      current.pricingCreatedAtMs<earlier.pricingCreatedAtMs) return null;
+  const {hasClinicalMediaRisk}=require("./aiReviewPolicy");
+  const {isRecentPricingThread}=require("./priceFollowUpContext");
+  if (!Number.isFinite(earlier.pricingCreatedAtMs) || !isRecentPricingThread(turns,quotedIndex,now) ||
+      hasClinicalMediaRisk(currentText) || hasClinicalMediaRisk(quote.content)) return null;
+  const established=require("./priceConversationRecovery").resolveEstablishedTreatmentPrice({
+    customerText:earlier.content,session:turns.slice(0,priceIndex+1),services,serviceAliases,now,
+  });
+  if (!established) return null;
+  // The cited message must belong to the same established discussion; a
+  // later selection of another treatment cannot retroactively reinterpret it.
+  const {serviceCandidates,findServicesInText}=require("./conversationPromptContext");
+  const candidates=serviceCandidates(services,serviceAliases);
+  const prior=turns.slice(0,quotedIndex+1).filter(t=>t.role==="user")
+    .findLast(t=>findServicesInText(t.content,candidates).length>0);
+  const names=prior ? findServicesInText(prior.content,candidates) : [];
+  return names.length===1 && names[0]===established.name ? established.name : null;
 }
 
 module.exports = { resolveClarifiedPriceService };

@@ -51,6 +51,11 @@ function isStandaloneSpinalConcern(text) {
   return value.length <= 75 && STANDALONE_SPINE.test(value);
 }
 
+function hasAssessmentInvitation(texts) {
+  return (Array.isArray(texts) ? texts : []).some((m) =>
+    ASSESSMENT.test(m) && ASSESSMENT_INVITE.test(m));
+}
+
 function recentConversationContext(history, recentCustomerTexts, recentAcceptedAssistantTexts) {
   // Live webhook decisions use database-verified clinical boundaries and
   // accepted outbound messages. Model history is only used by isolated tests
@@ -70,9 +75,7 @@ function recentConversationContext(history, recentCustomerTexts, recentAcceptedA
       SPINAL_CONCERN.test(m) || hasClinicalMediaRisk(m)
     ),
     urgentContext: priorCustomers.some((m) => isUrgentSafetyMessage(m)),
-    alreadyInvited: priorAssistants.some((m) =>
-      ASSESSMENT.test(m) && ASSESSMENT_INVITE.test(m)
-    ),
+    alreadyInvited: hasAssessmentInvitation(priorAssistants),
   };
 }
 
@@ -133,7 +136,7 @@ function planTcmReviewReply({
   // All outputs are static, non-diagnostic and unpriced. A staff-edited service
   // name must not introduce unauthorized promotions or prices.
   if (hasCommercialReplyContent(reply)) return null;
-  return { reply, preserveReview: Boolean(medicalContext), alreadyInvited: context.alreadyInvited };
+  return { reply, preserveReview: Boolean(medicalContext), alreadyInvited: context.alreadyInvited, treatment: matched?.service?.name || null };
 }
 
 // Compatibility helper for simple isolated service reviews.
@@ -149,6 +152,7 @@ function recoverTcmServiceReviewReply(options = {}) {
 
 module.exports = {
   bareServiceName,
+  hasAssessmentInvitation,
   isStandaloneSpinalConcern,
   planTcmReviewReply,
   recoverTcmServiceReviewReply,
