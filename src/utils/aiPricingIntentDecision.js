@@ -586,15 +586,7 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
   // negative gates. Do not require another positive price keyword.
   // Reject ordinary concern/benefit statements and unscoped admin turns
   // independently of the provider's pricing classification.
-  if (!/[?？]/u.test(current) &&
-      !hasExplicitPriceRequest(current) &&
-      !isStandalonePriceQuestion(current) &&
-      !isContinuedTreatmentPriceQuestion(current) &&
-      !/\b(?:would|could|how|what|berapa|macam mana)\b/iu.test(current)) {
-    // An unpunctuated natural question may still be genuine; require a
-    // conversational interrogative rather than a bare concern/affirmation.
-    if (!/(?:多少|几多|幾多|怎么算|怎麼算|怎么|怎麼|如何|哪|呢|吗|嗎)/u.test(current)) return -1;
-  }
+  if (/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada|ok|okay|好的)[\s.!！。😊]*$/iu.test(current)) return -1;
   if (/(?:有什么作用|有什麼作用|有什么好处|有什麼好處|怎么做|怎麼做|如何做|效果如何|会有效吗|會有效嗎|\b(?:what are the benefits|how does it work|what does it do|what is it|how is it done|what are the results|can it help|apa manfaat|bagaimana ia berfungsi)\b)/iu.test(current)) return -1;
   const key=value=>String(value||"").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
   const terms=value=>String(value||"").normalize("NFKC").toLowerCase()
