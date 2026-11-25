@@ -5706,6 +5706,7 @@ function MessageBubble({
               {!policyFailureExplanationText && !isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled && (
                 <button
                   type="button"
+                  data-dashy-priority="true"
                   onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
                   disabled={message._retrying}
                   className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"

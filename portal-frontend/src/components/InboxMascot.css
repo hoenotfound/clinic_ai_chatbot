@@ -1,6 +1,10 @@
 /* A single transparent overlay. The surrounding layer never captures input.
    Existing thread headers, composer menus and modal dialogs stack above it. */
 .da-mascot-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+/* Critical delivery actions always win hit testing, even before the next
+   geometry measurement or while Dashy is being dragged across a message.
+   The message bubble is already a stacking context (z-10). */
+.wa-message-bubble:has([data-dashy-priority]) { z-index: 21; }
 .da-mascot-control {
   position: absolute; display: block; border: 0; padding: 0; background: transparent;
   cursor: grab; user-select: none; pointer-events: none;

@@ -75,6 +75,9 @@ export function MascotArtwork({ mode = "animated", pose = "idle", paused = false
 }
 
 const PROTECTED = ".wa-inbox-list-header, .wa-thread-header, .wa-thread-composer";
+const SCROLL_AREAS = ".wa-thread-messages, .wa-inbox-rows";
+const THREAD_ACTIONS = "button, a, summary, audio[controls], video[controls], [role=button], img.cursor-zoom-in, input, select, textarea";
+const LIST_ACTIONS = "button:not(.wa-inbox-row), a[href], [role=button]:not(.wa-inbox-row)";
 const ACTIVITY_EVENTS = ["pointerdown", "pointermove", "keydown", "input", "wheel", "touchstart", "scroll"];
 const EMPTY = { left: 0, top: 0, width: 0, height: 0, obstacles: [] };
 const HINT_KEY = "da.inbox.dashy.hint.v1";
@@ -91,21 +94,39 @@ function useWorkspace(hostRef, layoutKey, enabled) {
     let nodes = [];
     function measure() {
       const box = host.getBoundingClientRect();
-      const obstacles = nodes.filter(node => node.getClientRects().length).map(node => {
+      const obstacles = [];
+      function addRect(node, clip = box) {
+        if (!node.getClientRects().length) return;
         const r = node.getBoundingClientRect();
-        return { left: r.left - box.left, right: r.right - box.left, top: r.top - box.top, bottom: r.bottom - box.top };
-      }).filter(r => r.right > r.left && r.bottom > r.top);
+        const rect = { left: Math.max(r.left, clip.left, box.left) - box.left,
+          right: Math.min(r.right, clip.right, box.right) - box.left,
+          top: Math.max(r.top, clip.top, box.top) - box.top,
+          bottom: Math.min(r.bottom, clip.bottom, box.bottom) - box.top };
+        if (rect.right > rect.left && rect.bottom > rect.top) obstacles.push(rect);
+      }
+      for (const node of nodes) if (node.matches(PROTECTED)) addRect(node);
+      // Protect actual message controls as well as headers. Clip to the
+      // scroll container so offscreen messages do not reserve workspace.
+      for (const panel of nodes.filter(node => node.matches(SCROLL_AREAS))) {
+        if (!panel.getClientRects().length) continue;
+        const clip = panel.getBoundingClientRect();
+        const selector = panel.matches(".wa-thread-messages") ? THREAD_ACTIONS : LIST_ACTIONS;
+        for (const control of panel.querySelectorAll(selector)) addRect(control, clip);
+      }
       const viewport = window.visualViewport;
       const area = dashyVisibleArea({ left: box.left, top: box.top, width: host.clientWidth, height: host.clientHeight },
         viewport || { offsetLeft: 0, offsetTop: 0, width: window.innerWidth, height: window.innerHeight });
       const next = { ...area, obstacles };
       setSpace(old => JSON.stringify(old) === JSON.stringify(next) ? old : next);
     }
-    function schedule() { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); }
+    function schedule(event) {
+      if (event?.target instanceof Element && event.target.closest(".da-mascot-layer")) return;
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure(); });
+    }
     const observer = new ResizeObserver(schedule);
     function syncNodes() {
       observer.disconnect();
-      nodes = Array.from(host.querySelectorAll(PROTECTED));
+      nodes = Array.from(host.querySelectorAll(PROTECTED + ", " + SCROLL_AREAS));
       observer.observe(host);
       for (const node of nodes) observer.observe(node);
       measure();
@@ -114,15 +135,24 @@ function useWorkspace(hostRef, layoutKey, enabled) {
     // Layout changes can replace the composer/header; observe only structure
     // and avoid observing the mascot's own animated attributes.
     const mutation = new MutationObserver(records => {
-      if (records.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
-        node.nodeType === 1 && (node.matches(PROTECTED) || node.querySelector(PROTECTED))))) syncNodes();
+      const relevant = records.filter(record => record.target instanceof Element && !record.target.closest(".da-mascot-layer"));
+      if (relevant.some(record => [...record.addedNodes, ...record.removedNodes].some(node =>
+        node.nodeType === 1 && (node.matches(PROTECTED + ", " + SCROLL_AREAS) || node.querySelector(PROTECTED + ", " + SCROLL_AREAS))))) {
+        syncNodes();
+      } else if (relevant.some(record => record.target.closest(SCROLL_AREAS))) schedule();
     });
     mutation.observe(host, { childList: true, subtree: true });
+    host.addEventListener("scroll", schedule, { capture: true, passive: true });
+    host.addEventListener("load", schedule, true);
+    host.addEventListener("transitionend", schedule, true);
     window.addEventListener("resize", schedule);
     observedViewport?.addEventListener("resize", schedule);
     observedViewport?.addEventListener("scroll", schedule);
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); mutation.disconnect();
+      host.removeEventListener("scroll", schedule, true);
+      host.removeEventListener("load", schedule, true);
+      host.removeEventListener("transitionend", schedule, true);
       window.removeEventListener("resize", schedule);
       observedViewport?.removeEventListener("resize", schedule);
       observedViewport?.removeEventListener("scroll", schedule);

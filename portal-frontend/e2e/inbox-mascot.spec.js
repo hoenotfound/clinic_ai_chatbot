@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Dashy preserves Inbox controls and offers personal appearance modes", async ({ page }) => {
+async function mockEmptyDashyInbox(page) {
   await page.addInitScript(() => {
     class StubEventSource {
       constructor() { setTimeout(() => this.onopen?.(), 0); }
@@ -21,6 +21,10 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
       : path === "/api/conversations" ? [] : {};
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
   });
+}
+
+test("Dashy preserves Inbox controls and offers personal appearance modes", async ({ page }) => {
+  await mockEmptyDashyInbox(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/inbox");
   const mascot = page.getByTestId("inbox-mascot");
@@ -66,41 +70,6 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await page.getByRole("button", { name: "Restore Dashy" }).press("Enter");
   await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
   await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - savedPosition.x)).toBeLessThan(2);
-  // Validate the menu against the existing light palette and a simulated dark palette.
-  await mascot.press("Enter");
-  const controls = page.getByRole("group", { name: "Dashy controls" });
-  await expect(controls).toBeVisible();
-  await page.evaluate(() => { const s = document.documentElement.style; s.setProperty("--color-surface", "#182521"); s.setProperty("--color-text", "#f1f5f3"); s.setProperty("--color-text-muted", "#c2d0c9"); s.setProperty("--color-bg", "#101a17"); s.setProperty("--color-border", "#40534b"); s.setProperty("--color-primary", "#84c5b2"); });
-  await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
-  await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
-  await page.getByRole("button", { name: "Close Dashy controls" }).click();
-  await page.evaluate(() => { for (const name of ["surface","text","text-muted","bg","border","primary"]) document.documentElement.style.removeProperty("--color-" + name); });
-  // Chromium touch events are real browser-dispatched pointer events, not synthetic React calls.
-  if (await page.evaluate(() => navigator.maxTouchPoints > 0)) {
-    const original = await mascot.boundingBox();
-    const client = await page.context().newCDPSession(page);
-    try {
-      const x = Math.round(original.x + original.width / 2), y = Math.round(original.y + original.height / 2);
-      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
-      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 60, y: y - 20 }] });
-      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - original.x)).toBeGreaterThan(20);
-      await expect(page.getByRole("group", { name: "Dashy controls" })).toHaveCount(0);
-    } finally { await client.detach(); }
-    const viewport = page.viewportSize();
-    await page.setViewportSize({ width: viewport.height, height: viewport.width });
-    await expect(mascot).toBeVisible();
-    await expect.poll(async () => { const r = await mascot.boundingBox(); return r.x >= 0 && r.y >= 0 && r.x + r.width <= viewport.height + 1 && r.y + r.height <= viewport.width + 1; }).toBe(true);
-    await page.setViewportSize(viewport);
-    // Model a software keyboard reducing visualViewport without resizing the layout viewport.
-    await page.evaluate(() => {
-      const fake = new EventTarget(); Object.assign(fake, { offsetLeft: 0, offsetTop: 0, width: innerWidth, height: Math.floor(innerHeight * .6) });
-      Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
-      window.dispatchEvent(new Event("resize"));
-    });
-    await expect.poll(async () => { const r = await mascot.boundingBox(); return !r || r.y + r.height <= await page.evaluate(() => visualViewport.height + 1); }).toBe(true);
-    await page.evaluate(() => { delete window.visualViewport; window.dispatchEvent(new Event("resize")); });
-  }
   await page.goto("/settings/appearance");
   const preview = page.getByLabel("Preview Dashy expression");
   for (const pose of ["greeting", "roaming", "searching", "thinking", "success", "alert", "welcome", "blocked", "confident", "idle"]) {
@@ -125,6 +94,61 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
     width: document.documentElement.scrollWidth, viewport: innerWidth,
   }));
   expect(dimensions.width).toBeLessThanOrEqual(dimensions.viewport + 1);
+});
+
+
+test("Dashy controls use the local theme palette", async ({ page }) => {
+  await mockEmptyDashyInbox(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/inbox");
+  const mascot = page.getByTestId("inbox-mascot");
+  await expect(mascot).toBeVisible();
+  await mascot.press("Enter");
+  const controls = page.getByRole("group", { name: "Dashy controls" });
+  await expect(controls).toBeVisible();
+  await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  // Apply the simulated palette to the Inbox ancestor, not the entire app.
+  // This tests inheritance without changing native browser state.
+  const palette = await page.addStyleTag({ content: ".wa-inbox-shell { --color-surface: #182521; --color-text: #f1f5f3; --color-text-muted: #c2d0c9; --color-bg: #101a17; --color-border: #40534b; --color-primary: #84c5b2; }" });
+  await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
+  await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
+  await palette.evaluate(el => el.remove());
+  await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.getByRole("button", { name: "Close Dashy controls" }).click();
+});
+
+test("Dashy touch dragging and viewport changes keep controls reachable", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "CDP touch input requires Chromium");
+  await mockEmptyDashyInbox(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/inbox");
+  test.skip(!(await page.evaluate(() => navigator.maxTouchPoints > 0)), "Touch device");
+  const mascot = page.getByTestId("inbox-mascot");
+  await expect(mascot).toBeVisible();
+  const original = await mascot.boundingBox();
+  const client = await page.context().newCDPSession(page);
+  try {
+    const x = Math.round(original.x + original.width / 2), y = Math.round(original.y + original.height / 2);
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 60, y: y - 20 }] });
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - original.x)).toBeGreaterThan(20);
+    await expect(page.getByRole("group", { name: "Dashy controls" })).toHaveCount(0);
+  } finally { await client.detach(); }
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: viewport.height, height: viewport.width });
+  await expect(mascot).toBeVisible();
+  await expect.poll(async () => { const r = await mascot.boundingBox(); return !!r && r.x >= 0 && r.y >= 0 && r.x + r.width <= viewport.height + 1 && r.y + r.height <= viewport.width + 1; }).toBe(true);
+  await page.setViewportSize(viewport);
+  await expect(mascot).toBeVisible();
+  // Exercise the reduced visible viewport without replacing a native browser
+  // object mid-session. The pure geometry unit test also covers a visual
+  // viewport that changes independently of the layout viewport.
+  const height = Math.floor(viewport.height * .6);
+  await page.setViewportSize({ width: viewport.width, height });
+  await expect.poll(async () => { const r = await mascot.boundingBox(); return !r || r.y + r.height <= height + 1; }).toBe(true);
+  await page.setViewportSize(viewport);
+  await expect(mascot).toBeVisible();
 });
 
 test("Dashy reacts to selected-thread messages, failures and verified booking sends", async ({ page }) => {
