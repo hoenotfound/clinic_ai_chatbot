@@ -420,9 +420,9 @@ test("delivered AI recommendation plus customer engagement grounds the real Puls
    promotions:[...promotions,promo(name,388)],
    conversationHistory:[
      turn("user","瘦身",9000),
-     bot("脉冲波调理可以用于局部身体塑形。你主要想改善哪个部位呢？",8000),
+     bot("了解，如果是想整体瘦身，我们的脉冲波调理会用在局部身体塑形方面。你主要是想瘦哪个部位呢？比如肚子、腰、臀还是腿这些？",8000),
      turn("user","肚子，腿",7000),
-     bot("脉冲波调理主要针对局部身体线条和肌肉紧绷放松。你平时会经常久坐吗？",6000),
+     bot("收到，肚子和大腿是很多人想针对的部位。脉冲波调理主要针对局部身体线条和肌肉紧绷放松。你平时会经常久坐吗？",6000),
      turn("user","会",5000),
      bot("可以先安排免费的1对1体态评估 + 入门体验。你下星期哪一天比较方便？",4000),
      turn("user",current,0),
@@ -438,12 +438,20 @@ test("delivered AI recommendation plus customer engagement grounds the real Puls
    treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,
    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
  assert.equal(media?.packages?.length,1);
- for (const kind of ["unverified","competing","staff","no_engagement","stale","nonprice","clinical","later_session"]) {
+ for (const wording of ["一般是怎么算?", "What would I be paying", "Berapa perlu saya sediakan"]) {
+   const b={...a,customerText:wording,conversationHistory:a.conversationHistory.map(t=>({...t}))};
+   b.conversationHistory.at(-1).content=wording;
+   assert.equal(resolveModelLedPricingDecision(b)?.treatment,name,wording);
+ }
+ for (const kind of ["unverified","competing","staff","no_engagement","unrelated_answer","unrelated_concern","stale","nonprice","benefits","clinical","later_session"]) {
    const b={...a,modelIntent:{...a.modelIntent},conversationHistory:a.conversationHistory.map(t=>({...t}))};
    if(kind==="unverified") b.conversationHistory.filter(t=>t.role==="assistant").forEach(t=>t.pricingDeliveredBotMessage=false);
    if(kind==="competing") b.conversationHistory[5].content="也可以选择3D 小颜术。";
    if(kind==="staff") b.conversationHistory[5].pricingStaffAuthored=true;
    if(kind==="no_engagement") b.conversationHistory[4].content="谢谢";
+   if(kind==="unrelated_answer") b.conversationHistory[4].content="我要买鞋";
+   if(kind==="unrelated_concern") {b.conversationHistory[0].content="买鞋";b.conversationHistory[2].content="我要买鞋";}
+   if(kind==="benefits"){b.customerText="有什么作用？";b.conversationHistory.at(-1).content=b.customerText;}
    if(kind==="stale") b.conversationHistory.slice(0,-1).forEach(t=>t.pricingCreatedAtMs-=25*3600000);
    if(kind==="nonprice"){b.customerText="多久？";b.conversationHistory.at(-1).content=b.customerText;}
    if(kind==="clinical") b.conversationHistory[2].content="我怀孕了";
