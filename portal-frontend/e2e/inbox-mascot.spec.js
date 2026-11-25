@@ -57,6 +57,12 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await expect.poll(async () => (await mascot.boundingBox()).x).toBeLessThan(moved.x - 5);
   await mascot.press("Enter");
   await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
+  // Verify the real close button independently of dynamic theme mutations.
+  await page.getByRole("button", { name: "Close Dashy controls" }).click();
+  await expect(page.getByRole("group", { name: "Dashy controls" })).toHaveCount(0);
+  await expect(mascot).toBeFocused();
+  await mascot.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
   await page.getByRole("radio", { name: "Dashy size small" }).check();
   await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
   await page.getByRole("button", { name: "Reset position" }).click();
@@ -206,12 +212,15 @@ test("Dashy controls use the local theme palette", async ({ page }) => {
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
   // Apply the simulated palette to the Inbox ancestor, not the entire app.
   // This tests inheritance without changing native browser state.
+  // Keep the stylesheet attached until fixture teardown. Switch its values
+  // instead of removing a live stylesheet during a pointer interaction.
   const palette = await page.addStyleTag({ content: ".wa-inbox-shell { --color-surface: #182521; --color-text: #f1f5f3; --color-text-muted: #c2d0c9; --color-bg: #101a17; --color-border: #40534b; --color-primary: #84c5b2; }" });
   await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
   await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
-  await palette.evaluate(el => el.remove());
+  await palette.evaluate(el => { el.disabled = true; });
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await page.getByRole("button", { name: "Close Dashy controls" }).click();
+  // Menu dismissal and focus restoration are covered by the interaction test.
+  // Avoid an unrelated pointer action immediately after a theme mutation.
 });
 
 test("Dashy touch dragging and viewport changes keep controls reachable", async ({ page, browserName }) => {
