@@ -266,3 +266,21 @@ test("when another provider is available, a final Gemini capacity failure does n
     resetGeminiModelHealth();
   }
 });
+
+test("corrective Flash-Lite request adjusts generation without dropping business rules or schema", () => {
+  const messages = [{ role: "user", content: "多少钱？" }];
+  for (const surface of ["conversation", "follow_up"]) {
+    const first = geminiService.buildGeminiRequest(messages, { surface }, "gemini-3.5-flash-lite").request;
+    const retry = geminiService.buildGeminiRequest(messages, { surface }, "gemini-3.5-flash-lite", { correctiveRetry: true }).request;
+    assert.equal(first.config.maxOutputTokens, 2048);
+    assert.equal(retry.config.maxOutputTokens, 3072);
+    assert.deepEqual(retry.config.thinkingConfig, { thinkingLevel: "minimal" });
+    assert.deepEqual(retry.config.responseJsonSchema, first.config.responseJsonSchema);
+    assert.deepEqual(retry.contents, first.contents);
+    assert.ok(retry.config.systemInstruction.startsWith(first.config.systemInstruction));
+    assert.match(retry.config.systemInstruction, /OUTPUT RECOVERY/);
+  }
+  const primary = geminiService.buildGeminiRequest(messages, { surface: "conversation" }, "gemini-3.8-flash", { correctiveRetry: true }).request;
+  assert.equal(primary.config.maxOutputTokens, 1200);
+  assert.doesNotMatch(primary.config.systemInstruction, /OUTPUT RECOVERY/);
+});
