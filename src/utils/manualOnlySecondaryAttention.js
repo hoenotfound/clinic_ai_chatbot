@@ -15,7 +15,7 @@ const SCHEDULE_ACTION=/(?:\b(?:confirm(?:ed|ation)?|change|move|come|visit|avail
 const PACKAGE=/(?:配套|套餐|疗程|療程|会员|會員|余额|餘額|\b(?:packages?|sessions?|credits?|membership|balance|treatments?|pakej|sesi|baki|keahlian)\b)/iu;
 const EXISTING=/(?:之前|上次|已经|已經|买过|買過|购买|購買|还剩|還剩|剩[余餘下几幾多少]|剩|有效期|到期|退款|转让|轉讓|\b(?:remaining|left|unused|purchased|bought|paid|already|previous|last|my|expiry|expire|refund|transfer|baki|tinggal|dah beli|sudah beli|masih ada)\b)/iu;
 const REQUEST=/(?:[?？]|请问|請問|想问|想問|想知道|想了解|可以帮|可以幫|麻烦|麻煩|帮我|幫我|请帮|請幫|我要|需要|怎么办|怎麼辦|如何|哪里|哪裡|多少|几时|幾時|几次|幾次|\b(?:please|can|could|would|may|how|what|where|when|which|why|check|help|need|want to|looking for|boleh|tolong|nak tahu|berapa|bila|mana|macam mana|kenapa|semak)\b)/iu;
-const ACK=/^(?:(?:ok(?:ay)?|kk|noted|sure|yes|yeah|yep|no|nope|fine|later|got it|received|i am considering|i['’]m considering|i will think about it|thanks?(?:\s+(?:you|dear|ya))?|thank you(?:\s+dear)?|tq|thx|好的|好|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|再考虑|再考慮|考虑看看|考慮看看|baik|terima kasih|faham|boleh|ya|tak)[\s.!！。~👍🙏😊🙂❤️]*)+$/iu;
+const ACK=/^(?:ok(?:ay)?|kk|noted|sure|yes|yeah|yep|no|nope|fine|later|got it|received|i am considering|i['’]m considering|i will think about it|thanks?(?:\s+(?:you|dear|ya))?|thank you(?:\s+dear)?|tq|thx|好的|好|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|再考虑|再考慮|考虑看看|考慮看看|baik|terima kasih|faham|boleh|ya|tak)[\s.!！。~👍🙏😊🙂❤️]*$/iu;
 const REFUSAL=/^(?:stop|unsubscribe|not interested|no thanks|no thank you|不要了|不需要了|不用了|停止|退订|退訂|tak nak|tidak berminat)[\s.!！。~]*$/iu;
 const healthReason="Manual-only secondary WhatsApp: customer mentioned a health concern. Staff should review the latest message before discussing treatment.";
 const appointmentReason="Manual-only secondary WhatsApp: customer asked about an appointment. Staff should check the latest message and availability.";
@@ -37,7 +37,7 @@ function manualOnlySecondaryAttention(text,{receivedAt=Date.now()}={}){
  const date=local&&detectDate(value,local.date);
  const clock=parseClockPreference(value);
  const scheduleEvidence=Boolean(date?.date || date?.ambiguous || clock?.times?.length ||
-   clock?.time || clock?.tokens?.length);
+   clock?.hasClock);
  if(APPOINTMENT.test(value)||isDefiniteAppointmentCancellation(value)||isSimpleVisitTimingQuestion(value)||
     (scheduleEvidence&&(SCHEDULE_ACTION.test(value)||REQUEST.test(value)))||
     (scheduleEvidence && /^[\p{N}\s/:.,-]+(?:am|pm)?[\s?？]*$/iu.test(value)))
@@ -50,7 +50,7 @@ function manualOnlySecondaryAttention(text,{receivedAt=Date.now()}={}){
  const requestText=String(consent.text||"").trim();
  if(consent.hasFuturePermission&&!REQUEST.test(requestText)&&
     !/(?:[?？]|\b(?:check|how much|price|cost|remaining)\b|价钱|价格|收费|剩几次)/iu.test(requestText))return null;
- if(hasExplicitMarketingRefusal(value)&&!REQUEST.test(value))return null;
+ if(hasExplicitMarketingRefusal(value)&&!/(?:[?？]|(?:but|但是|不过|不過).{0,80}(?:check|help|price|预约|預約|查|价钱|價格))/iu.test(value))return null;
  // Broad fallback for direct questions/requests (including admin questions
  // and unfamiliar wording) rather than a treatment-specific keyword list.
  // This raises staff attention only; it does not trigger Gemini or a send.
