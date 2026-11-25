@@ -93,7 +93,7 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, selectCampaignReply,
+const { campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateReply, selectCampaignReply, campaignDay,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign } =
@@ -1530,7 +1530,7 @@ async function processIncomingMessage(
           channel,
           metaAdContext,
           replyLanguage: mediaLanguage,
-          rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) && hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory) ? require("./utils/neutroBreastRm68Campaign").campaignDay() : null,
+          rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) && hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory) ? campaignDay() : null,
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
@@ -2782,6 +2782,29 @@ async function processIncomingMessage(
         `Skipping AI reply for ${channel}:${from} — staff replied before the AI send.`
       );
       return { wasFirstMessage, keywordReason };
+    }
+
+    // An alternative date needs actual staff confirmation of ordinary charges
+    // and availability. Keep earlier clinical reviews intact, record this
+    // separate inbound as an information review, and acknowledge safely.
+    if ((!flagged || (reviewRequired && reviewType === "information")) &&
+        !bookingReady && !keywordReason && !urgentSafety && !marketingStopQuestion &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory) &&
+        alternativeDateRequest(text) && campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage})) {
+      flagged = true;
+      reviewRequired = true;
+      reviewType = "information";
+      clinicalAcknowledgement = alternativeDateReply(mediaLanguage);
+      bookingReady = false;
+      serviceQuery = false;
+      serviceQuerySource = null;
+      priceQuery = false;
+      packageQuery = false;
+      details = null;
     }
 
     // Final clinical safety backstop: do not let a normal sales draft, price
