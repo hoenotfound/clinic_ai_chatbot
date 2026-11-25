@@ -194,11 +194,12 @@ function conversationServicesList(conversationContext, terms) {
         config.automatedFollowUp?.assessmentFirstPricingEnabled !== true) return detailed;
     // Scoped retrieval is only a cost-saving hint. Give the model the other
     // canonical choices without copying unrelated prices, descriptions or offers.
-    const otherNames = (config.services || [])
+    const otherServices = (config.services || [])
       .filter((service) => !selected.some((item) => item.name === service?.name))
-      .map((service) => promptContextText(service?.name, 160)).filter(Boolean).slice(0, 30);
-    return [detailed, otherNames.length
-      ? "Other configured treatment names (details not supplied): " + otherNames.join(", ")
+      .slice(0, 30);
+    return [detailed, otherServices.length
+      ? "Other configured treatments (compact descriptions; detailed offer facts not supplied):\n" +
+        otherServices.map(renderCompactService).join("\n")
       : null].filter(Boolean).join("\n");
   }
 
@@ -226,13 +227,19 @@ function conversationServicesList(conversationContext, terms) {
 
 function conversationAliasList(conversationContext) {
   const selected = conversationSelectedServices(conversationContext);
-  if (!selected.length) {
+  const compactCatalog = config.businessType === "tcm_clinic" &&
+    config.automatedFollowUp?.assessmentFirstPricingEnabled === true;
+  if (!selected.length && !compactCatalog) {
     return "- Full alias catalog omitted because no single configured service is established. The application has already used configured aliases to select any unambiguous relevant service.";
   }
 
   const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const configuredKeys = new Set((config.services || []).map(service => followUpLookupKey(service?.name)));
   const aliases = (config.serviceAliases || [])
-    .filter((alias) => selectedKeys.has(followUpLookupKey(alias?.officialService)))
+    .filter((alias) => compactCatalog ? configuredKeys.has(followUpLookupKey(alias?.officialService)) :
+      selectedKeys.has(followUpLookupKey(alias?.officialService)))
+    .sort((a,b) => Number(selectedKeys.has(followUpLookupKey(b?.officialService))) -
+      Number(selectedKeys.has(followUpLookupKey(a?.officialService))))
     .map((alias) => {
       const aliasText = promptContextText(alias?.alias, 240);
       const official = promptContextText(alias?.officialService, 240);
@@ -540,11 +547,13 @@ function renderFollowUpService(service) {
   return `- ${service.name}: ${description}${price} | Duration: ${duration}`;
 }
 
-function followUpServiceContext(serviceInterest, recentServiceNames = []) {
+function followUpServiceContext(serviceInterest, recentServiceNames = [], verifiedTreatment = null) {
+  const verified = resolveFollowUpService(verifiedTreatment);
   const resolved = resolveFollowUpService(serviceInterest);
-  const hinted = [];
+  const hinted = verified ? [verified] : [];
   for (const value of Array.isArray(recentServiceNames) ? recentServiceNames : []) {
     const service = resolveFollowUpService(value);
+    if (hinted.length >= 2) break;
     if (!service || hinted.some((item) => item.name === service.name)) continue;
     hinted.push(service);
     if (hinted.length >= 2) break;
@@ -560,7 +569,7 @@ function followUpServiceContext(serviceInterest, recentServiceNames = []) {
       text: renderFollowUpService(resolved),
     };
   }
-  if (resolved && hinted.length === 1 && hinted[0].name !== resolved.name) {
+  if (!verified && resolved && hinted.length === 1 && hinted[0].name !== resolved.name) {
     hinted.push(resolved);
   }
   if (hinted.length) {
@@ -1109,8 +1118,9 @@ function buildFollowUpPrompt(options = {}) {
       : "Make one short final, low-pressure check-in. Do not hard-sell. Make it easy for the customer to reply later.";
 
   const serviceContext = followUpServiceContext(
-    followUp.treatmentInterest,
-    followUp.recentServiceNames
+    followUp.restrictTreatmentContext ? followUp.verifiedTreatment : followUp.treatmentInterest,
+    followUp.restrictTreatmentContext ? [] : followUp.recentServiceNames,
+    followUp.verifiedTreatment
   );
   const aliasContext = followUpAliasContext(serviceContext.resolvedServices);
   const promotionContext = followUpPromotionContext(
@@ -1138,12 +1148,28 @@ function buildFollowUpPrompt(options = {}) {
     : [];
   const avoidMessage = promptContextText(followUp.avoidMessage, 700);
   const staffInstruction = promptContextText(followUp.instruction, 700);
+  const verifiedTreatment = resolveFollowUpService(followUp.verifiedTreatment)?.name;
+  const mediaTreatment = resolveFollowUpService(followUp.mediaTreatment)?.name;
+  const runtimeFacts = [
+    followUp.restrictTreatmentContext === true
+      ? "The customer reset treatment selection. Earlier conversation is available only for clinical safety, booking and stop/skip decisions; do not infer treatment, price or promotions from it."
+      : null,
+    verifiedTreatment ? "Verified current discussion: " + verifiedTreatment +
+      (followUp.staffDiscussedTreatment === true
+        ? " (staff recommended it; do not claim the customer selected it)."
+        : " (current verified context, not merely an old CRM label).") : null,
+    mediaTreatment ? "Configured attachment treatment: " + mediaTreatment +
+      ". Return its exact canonical name in topic only if the current conversation still supports sending it; otherwise skip or human_review." : null,
+    followUp.mediaAttached === true
+      ? "An approved attachment may accompany this message, but delivery is separate and not yet confirmed. Keep text useful on its own and never claim to have sent or attached media."
+      : "No attachment is planned; never claim to be sharing a video, photo or recording.",
+  ].filter(Boolean).join("\n- ");
   const messagingStyle = promptContextText(
     config.messagingStyle || config.tone || "Warm, natural, concise, and conversational.",
     2_400
   );
   const crmFacts = [
-    ["Service interest", promptContextText(followUp.treatmentInterest, 240)],
+    ["Service interest", followUp.restrictTreatmentContext ? null : promptContextText(followUp.treatmentInterest, 240)],
     ["Pipeline stage", promptContextText(followUp.stageName, 120)],
     ["Location", promptContextText(followUp.branchName, 240)],
     ["Appointment status", promptContextText(followUp.appointmentStatus, 120)],
@@ -1210,6 +1236,8 @@ FOLLOW-UP STEP:
 - Channel: ${channelLabel(options.channel)}
 - Step: ${stepNumber}
 - Goal: ${stepGoal}
+- Verified runtime context:
+- ${runtimeFacts}
 ${crmFacts.length ? `- Current CRM facts:\n${crmFacts.map(([label, value]) => `  - ${label}: ${value}`).join("\n")}` : "- Current CRM facts: none captured."}
 ${staffInstruction ? `- Trusted staff instruction for this step: ${staffInstruction}` : "- Trusted staff instruction for this step: none."}
 ${previousFollowUps.length ? `- Earlier automated follow-ups already sent:\n${previousFollowUps.map((value) => `  - ${value}`).join("\n")}` : "- Earlier automated follow-ups already sent: none."}
@@ -1226,7 +1254,7 @@ RETURN ONLY ONE VALID JSON OBJECT:
   "action": "send | skip | stop_sequence | human_review",
   "message": "customer-facing message when action is send, otherwise empty string",
   "reason": "short internal reason for the decision",
-  "topic": "short current topic/service when clearly known, otherwise empty string"
+  "topic": "exact canonical configured treatment when clearly known, otherwise short current topic or empty string"
 }
 
 The reason and topic are internal metadata and must never be copied into message.`;
