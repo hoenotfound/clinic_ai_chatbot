@@ -26,7 +26,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
-const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
+const { guardAppointmentReply, guardAiAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -3107,8 +3107,11 @@ async function processIncomingMessage(
         customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
         treatment: details?.treatment || "",
       });
-      const checked = guardAppointmentReply({
+      const appointmentMode = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+      const checkAppointment = appointmentMode ? guardAiAppointmentReply : guardAppointmentReply;
+      const checked = checkAppointment({
         hours: clinicConfig.hours, reply, customerText: text,
+        appointmentScheduling: details?.appointmentScheduling,
         recentCustomerMessages: appointmentCustomerHistory,
           recentStaffMessages: appointmentStaffHistory,
         appointmentPreference: details?.appointmentPreference || "",
@@ -3133,10 +3136,10 @@ async function processIncomingMessage(
       }
       if (checked.blocked) {
         bookingReady = false;
-        if (details && ["closed","past","outside_hours","invalid_date","invalid_time"].includes(checked.issue?.status)) {
+        if (details && ["closed","past","outside_hours","invalid_date","invalid_time","not_appointment","unverified_confirmation"].includes(checked.issue?.status)) {
           details = {...details, appointmentPreference:null};
         }
-        console.info("[Appointment hours] corrected invalid booking preference contact=" +
+        console.info("[Appointment hours] blocked invalid booking or confirmation contact=" +
           contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
       }
     }

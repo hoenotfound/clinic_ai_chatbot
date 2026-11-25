@@ -86,7 +86,7 @@ function sameBookingFacts(original, replacement) {
   if (original.bookingReady !== replacement.bookingReady) return false;
   const a = original.details || {};
   const b = replacement.details || {};
-  const keys = ["branch", "treatment", "appointmentPreference", "projectLocation", "projectSummary", "nextStep"];
+  const keys = ["branch", "treatment", "appointmentPreference", "appointmentScheduling", "projectLocation", "projectSummary", "nextStep"];
   return keys.every(key => (a[key] ?? null) === (b[key] ?? null));
 }
 

@@ -145,7 +145,7 @@ function parseCalendar(text,anchorDate){
     [/(?:明天|(?<!day after )\btomorrow\b|\besok\b)/iu,1],
     [/(?:后天|後天|\bday after tomorrow\b|\blusa\b)/iu,2],
   ])if(pattern.test(source))add(plusDays(anchorDate,offset));
-  for(const m of source.matchAll(/((?:下|这|這|本)(?:个|個)?(?:星期|礼拜|禮拜|周|週)|(?:星期|礼拜|禮拜|周|週))\s*([一二三四五六日天1-7])/gu)){
+  for(const m of source.matchAll(/((?:下|这|這|本)(?:个|個)?(?:星期|礼拜|禮拜|周|週)|(?:星期|礼拜|禮拜|周|週))\s*([一二三四五六日天1-7])(?!\s*次)/gu)){
     const target=/^[1-7]$/u.test(m[2])?+m[2]%7:
       m[2]==="日"||m[2]==="天"?0:"一二三四五六".indexOf(m[2])+1;
     let distance=(target-weekday(anchorDate)+7)%7;
@@ -683,6 +683,24 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
   return {reply:original,blocked:false,issue};
 }
 
+// AI decides whether this turn is scheduling. Do not parse ordinary medical,
+// treatment-frequency, pricing or other conversational prose as calendar dates.
+// Booking Ready still requires independent customer-evidence validation.
+// The narrowly scoped confirmation-claim check remains a safety backstop.
+function guardAiAppointmentReply(options={}){
+  const original=String(options.reply||"");
+  const {appointmentScheduling,requireValidPreference=false,language="zh"}=options;
+  if(appointmentScheduling===true||(requireValidPreference&&appointmentScheduling!==false)){
+    return guardAppointmentReply(options);
+  }
+  if(claimsConfirmedAppointment(original)){
+    const lang=String(language).toLowerCase().slice(0,2);
+    const safe=lang==="en"?"Our team needs to check availability before confirming any appointment.":lang==="ms"?"Pihak pusat perlu semak kekosongan sebelum janji temu disahkan.":"预约需要由门店同事核实空档后才能确认哦。";
+    return {reply:safe,blocked:true,issue:{status:"unverified_confirmation"}};
+  }
+  return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+}
+
 function describeWeeklyHours(hours){
   if(!hours?.weekly)return null;
   const weekly=hours.weekly;
@@ -710,4 +728,4 @@ function currentClinicDate(value=new Date()){
 }
 module.exports={ZONE,localParts,detectDate,intervals,timesInText,
   durationMinutesForPackage,evaluateAppointmentHours,issueReply,
-  guardAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady,parseClockPreference,claimsConfirmedAppointment,appointmentCustomerContext};
+  guardAppointmentReply,guardAiAppointmentReply,currentClinicDate,describeWeeklyHours,durationFromText,verifiedAppointmentPreference,canRecoverBookingReady,parseClockPreference,claimsConfirmedAppointment,appointmentCustomerContext};

@@ -1,5 +1,5 @@
 const config = require("../config/clinicConfig");
-const { currentClinicDate } = require("./appointmentHoursGuard");
+const { currentClinicDate, describeWeeklyHours } = require("./appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
@@ -1334,7 +1334,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
       "When discussing appointments, apply the CURRENT configured business hours to the requested day and time BEFORE offering to check a slot. A closed day, a passed time or a time outside opening hours is NOT booking_ready. Briefly explain the conflict, invite another open day and never claim a confirmed slot. Exact staff/provider slot availability still requires verification. Do not mistake a customer preference for a booking.\n"
     : "";
   const includeSchedulingDetails =
-    !hasScopedConversationContext || conversationContext.schedulingIntent === true;
+    conversion.mode === "appointment" || !hasScopedConversationContext || conversationContext.schedulingIntent === true;
   const includeContactDetails =
     !hasScopedConversationContext || conversationContext.contactIntent === true;
   const promotionsList = hasScopedConversationContext
@@ -1346,8 +1346,9 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const closingPlaybookText = hasScopedConversationContext
     ? filterServiceScopedGuidance(effectiveClosing, conversationContext)
     : String(effectiveClosing || "");
+  const verifiedWeeklyHours = conversion.mode === "appointment" ? describeWeeklyHours(hours) : null;
   const hoursText = includeSchedulingDetails
-    ? `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`
+    ? (verifiedWeeklyHours ? `${verifiedWeeklyHours.general || "Not configured"}. ${verifiedWeeklyHours.closed}.` : `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`)
     : "Detailed hours omitted because the current conversation is not about scheduling or opening times.";
   const contactLines = includeContactDetails
     ? [
@@ -1508,6 +1509,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "treatment": "canonical configured service name if clearly known, otherwise null",
   "branch": "canonical configured business location name if clearly chosen, otherwise null",
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
+  "appointmentScheduling": false,
   "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
   "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",
   "nextStep": "site_visit | quotation_discussion | null",
@@ -1515,6 +1517,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
 }
 
 Rules for structured fields:
+- Set "appointmentScheduling" true only for a current clinic scheduling exchange (including a short contextual reply to a scheduling question), or when your reply proposes a specific appointment day/date/time. Generic invitations to book an assessment, treatment session counts, duration, recurring frequency or maintenance (每星期一次, 每周一次, once a week, seminggu sekali), and opening-hours information alone are NOT scheduling. Answer the current treatment question first. Do not use old scheduling context to turn an unrelated question into a booking. Use false for other industries and for review/handoff. For clinic booking_ready, use true. Resolve actual appointment preferences against the supplied Malaysia date/time and weekly hours; do not propose closed days or claim an unverified booking.
 - For "normal" and "booking_ready", "reply" must contain only the truthful, helpful text the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - For "review_required", supply a non-empty internal placeholder such as "Staff review requested" to satisfy the JSON format; the application will suppress it completely. Do not generate a customer-facing apology, handoff announcement, or claim that staff answered. For "needs_human", provide a brief acknowledgement or appropriate immediate-care guidance without claiming a human has already replied.
 - Write natural, concise customer-service replies in the customer's language for verified questions. Do not proactively call yourself an AI, bot, or automation; do not claim to be a human employee or invent personal experiences. If explicitly asked whether you're automated, answer truthfully.
