@@ -1159,7 +1159,8 @@ function buildFollowUpPrompt(options = {}) {
         ? " (staff recommended it; do not claim the customer selected it)."
         : " (current verified context, not merely an old CRM label).") : null,
     mediaTreatment ? "Configured attachment treatment: " + mediaTreatment +
-      ". Return its exact canonical name in topic only if the current conversation still supports sending it; otherwise skip or human_review." : null,
+      ". Return its exact canonical name in topic only if the current conversation still supports sending it; otherwise skip or human_review."
+      : followUp.mediaTreatment === "" ? "The treatment-specific attachment has no verified single treatment. Skip this step rather than guessing." : null,
     followUp.mediaAttached === true
       ? "An approved attachment may accompany this message, but delivery is separate and not yet confirmed. Keep text useful on its own and never claim to have sent or attached media."
       : "No attachment is planned; never claim to be sharing a video, photo or recording.",
