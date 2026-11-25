@@ -32,6 +32,7 @@ const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryRevie
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
+const {configuredVideoTreatment}=require("./followUpAiService");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff,secondaryAutomationAttentionAllowedSql }=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -1166,7 +1167,8 @@ async function runOnce({
           ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
           : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
       if(contextualAiEnabled){
-        const personalized=await personalize20h({candidate,database,env});
+        const mediaTreatment=key ? configuredVideoTreatment(key,clinicConfig,followupTreatment) : null;
+        const personalized=await personalize20h({candidate,database,env,mediaTreatment,mediaAttached:Boolean(key)});
         if(!personalized?.ok){
           const code=personalized?.code||"secondary_contextual_ai_unavailable";
           if(["skip","stop_sequence","human_review"].includes(personalized?.action)){

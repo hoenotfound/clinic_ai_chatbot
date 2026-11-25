@@ -120,4 +120,4 @@ function resolveStaffResultPriceContext({customerText,conversationHistory=[],ser
  // explicit fresh customer price request; actual offer comes from config.
  return {name:selected.name,priceText:pricingMessageText(turns[requestIndex]).trim()};
 }
-module.exports={resolveStaffResultPriceContext};
+module.exports={resolveStaffResultPriceContext,isStandaloneQuotedSelection: value=>THIS.test(String(value||"").trim())};

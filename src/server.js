@@ -1685,9 +1685,14 @@ async function processIncomingMessage(
             packageQuery = false;
             details = null;
           } else if (plan?.reply && !flagged && plan.alreadyInvited) {
-            // Do not send the same assessment invitation again when a patient
-            // lists several treatments in separate WhatsApp messages.
-            aiReply = plan.reply;
+            // The existing evidence lookup still protects clinical reviews.
+            // A correctly identified current service enquiry is conversational:
+            // let Gemini answer it instead of unconditionally replacing its draft.
+            // Preserve the legacy recovery for missing/conflicting model metadata.
+            const modelIdentifiedTreatment = plan.treatment &&
+              serviceQuery && serviceQuerySource === "customer_message" &&
+              details?.treatment === plan.treatment && !priceQuery && !packageQuery;
+            if (!modelIdentifiedTreatment) aiReply = plan.reply;
           }
         } else {
           // A failed clinical-review lookup must not permit recovery.
@@ -1919,6 +1924,19 @@ async function processIncomingMessage(
         }
       }
     }
+
+    const verifiedQuotedPriceClarification = aiPricingEnabled &&
+      flagged && reviewRequired && !keywordReason && !urgentSafety &&
+      !bookingReady && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+      commercialHistory.at(-1)?.verifiedQuotedMessage
+      ? resolveClarifiedPriceService({customerText:text,conversationHistory:commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases}) : null;
+    // A quoted reply to a verified open monetary clarification is commercial
+    // information, not clinical suitability. Existing durable review evidence
+    // still decides whether recovery is permitted.
+    if (verifiedQuotedPriceClarification && shadowPriceException?.treatment === verifiedQuotedPriceClarification)
+      reviewType = "information";
 
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&

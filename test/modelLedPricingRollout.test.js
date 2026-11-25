@@ -468,3 +468,52 @@ test("delivered AI recommendation plus customer engagement grounds the real Puls
    assert.equal(resolveModelLedPricingDecision(b),null,kind);
  }
 });
+
+test("returning customer: named 3D, concern, location, price and quoted clarification use the same verified offer",async()=>{
+ const stamp=(id,role,content,ms,extra={})=>({...turn(role,content,ms),contextMessageId:id,...extra});
+ const history=[
+  stamp(1,"user","嗨",180*24*3600000),
+  stamp(2,"user","Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～",220000),
+  stamp(3,"assistant","3D小颜术主要是徒手做的脸型和轮廓护理，不打针哦～请问你目前最想改善脸部哪一块呢？",210000,{pricingDeliveredBotMessage:true}),
+  stamp(4,"assistant","这个是我们顾客完成【3D小颜术】后的 Before & After",200000,{pricingDeliveredBotMessage:true}),
+  stamp(5,"assistant","再给你看一个顾客【3D小颜术】护理后的 Before & After",195000,{pricingDeliveredBotMessage:true}),
+  stamp(6,"user","脸型、下巴",120000),
+  stamp(7,"assistant","针对脸型和下巴轮廓，3D小颜术会通过手法针对下颌线条调整。",110000,{pricingDeliveredBotMessage:true}),
+  stamp(8,"user","Kota Damansara?",90000),
+  stamp(9,"assistant","我们不在 Kota Damansara 哦～我们的门市在 Petaling Jaya 的 Section 19。",85000,{pricingDeliveredBotMessage:true}),
+  stamp(10,"user","费用多少",60000),
+ ];
+ const aliases=[...serviceAliases,{alias:"小颜术",officialService:"3D 小颜术"},{alias:"3D小颜术",officialService:"3D 小颜术"}];
+ const a=args("费用多少","3D 小颜术",{conversationHistory:history,serviceAliases:aliases});
+ const legacy=resolveAiPricingDecision({...a,priceQuery:false,treatment:null});
+ assert.equal(legacy?.treatment,"3D 小颜术");
+ assert.equal(legacy?.prices?.[0]?.price,"RM388");
+ const shadow=require("../src/utils/shadowPriceException").resolveShadowPriceException(a);
+ assert.equal(shadow?.treatment,"3D 小颜术");
+ const model=resolveModelLedPricingDecision(a);
+ assert.equal(model?.treatment,"3D 小颜术");
+ const quote=stamp(12,"user","这个",0,{verifiedQuotedMessage:{id:6,role:"user",content:"脸型、下巴"}});
+ const extended=[...history,stamp(11,"assistant","我可以帮你确认 😊\n\n请问你想了解哪项疗程的价格呢？我帮你确认 😊",55000,{pricingDeliveredBotMessage:true}),quote];
+ const b={...a,customerText:"这个",conversationHistory:extended};
+ const clarification=require("../src/utils/priceClarificationContext").resolveClarifiedPriceService;
+ assert.equal(clarification(b),"3D 小颜术");
+ const recovered=require("../src/utils/shadowPriceException").resolveShadowPriceException(b);
+ assert.equal(recovered?.treatment,"3D 小颜术");
+ const approved=resolveApprovedPricingAssessment({...b,mode:"enabled",aiDecision:recovered});
+ assert.equal(approved.reason,"approved");
+ const media=await resolvePricePromotionForReply({...b,aiPricingEnabled:true,pricingDecision:approved.decision,
+  treatment:"3D 小颜术",verifiedServiceFromText:"3D 小颜术",textSendSucceeded:true,contactId:1,
+  wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+ assert.equal(media?.packages?.length,1);
+ assert.equal(media.packages[0].imageUrl,"https://example.test/388");
+ for(const unsafe of [
+  {...quote,verifiedQuotedMessage:null},
+  {...quote,verifiedQuotedMessage:{id:999,role:"user",content:"脸型、下巴"}},
+  {...quote,content:"不要报价"},
+  {...quote,content:"不是"},
+  {...quote,content:"多久？"},
+  {...quote,content:"我有乳腺结节"},
+ ])assert.equal(clarification({...b,customerText:unsafe.content,conversationHistory:[...extended.slice(0,-1),unsafe]}),null);
+ const changed=extended.map(t=>t.contextMessageId===8?{...t,content:"另外想了解 9D 逆龄抗衰"}:t);
+ assert.equal(clarification({...b,conversationHistory:changed}),null);
+});

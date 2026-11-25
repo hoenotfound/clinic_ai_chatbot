@@ -210,15 +210,37 @@ test("Dashy controls use the local theme palette", async ({ page }) => {
   const controls = page.getByRole("group", { name: "Dashy controls" });
   await expect(controls).toBeVisible();
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  // Apply the simulated palette to the Inbox ancestor, not the entire app.
-  // This tests inheritance without changing native browser state.
-  // Keep the stylesheet attached until fixture teardown. Switch its values
-  // instead of removing a live stylesheet during a pointer interaction.
-  const palette = await page.addStyleTag({ content: ".wa-inbox-shell { --color-surface: #182521; --color-text: #f1f5f3; --color-text-muted: #c2d0c9; --color-bg: #101a17; --color-border: #40534b; --color-primary: #84c5b2; }" });
+  // Exercise real local CSS inheritance, without toggling a stylesheet's
+  // disabled flag (which did not remove its rules in iPhone WebKit).
+  // Preserve and restore the original inline values and their priorities.
+  const originalTextColor = await controls.evaluate(el => getComputedStyle(el).color);
+  const palette = {
+    "--color-surface": "#182521", "--color-text": "#f1f5f3",
+    "--color-text-muted": "#c2d0c9", "--color-bg": "#101a17",
+    "--color-border": "#40534b", "--color-primary": "#84c5b2",
+  };
+  const originalPalette = await controls.evaluate((el, values) => {
+    const shell = el.closest(".wa-inbox-shell");
+    if (!shell) throw new Error("Dashy controls must inherit from the Inbox shell");
+    const previous = Object.keys(values).map(key => ({
+      key, value: shell.style.getPropertyValue(key),
+      priority: shell.style.getPropertyPriority(key),
+    }));
+    for (const [key, value] of Object.entries(values)) shell.style.setProperty(key, value);
+    return previous;
+  }, palette);
   await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
   await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
-  await palette.evaluate(el => { el.disabled = true; });
+  await controls.evaluate((el, previous) => {
+    const shell = el.closest(".wa-inbox-shell");
+    if (!shell) throw new Error("Dashy controls must inherit from the Inbox shell");
+    for (const { key, value, priority } of previous) {
+      if (value) shell.style.setProperty(key, value, priority);
+      else shell.style.removeProperty(key);
+    }
+  }, originalPalette);
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(controls).toHaveCSS("color", originalTextColor);
   // Menu dismissal and focus restoration are covered by the interaction test.
   // Avoid an unrelated pointer action immediately after a theme mutation.
 });
