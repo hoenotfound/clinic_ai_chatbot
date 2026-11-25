@@ -206,8 +206,14 @@ const candidateSql = `
       WHERE event_reply.contact_id=c.id AND event_reply.role='assistant'
         AND event_reply.created_at>=origin.created_at
         AND event_reply.created_at<origin.created_at+interval '24 hours'
-        AND event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
-        AND event_reply.content LIKE '%首次体验只需 RM68%'
+        AND (
+          (event_reply.content LIKE '%我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】%'
+           AND event_reply.content LIKE '%首次体验只需 RM68%')
+          OR (event_reply.content LIKE '%Our limited-time breast wellness assessment + gentle pulse wave care offer%'
+              AND event_reply.content LIKE '%First trial: RM68%')
+          OR (event_reply.content LIKE '%Promosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut%'
+              AND event_reply.content LIKE '%Percubaan pertama: RM68%')
+        )
     )
     -- Later customer replies are allowed; restart silence only after
     -- a genuine business response to the latest inbound WhatsApp message.
