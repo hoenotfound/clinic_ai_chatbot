@@ -581,33 +581,63 @@ function isPlainNamedTreatmentInterest(current, candidate) {
 // participates in that particular treatment discussion. This is not a service
 // inference from symptoms, an ad, a CRM field or an isolated assistant name.
 function engagedRecommendationAnchor({turns, treatment, candidates, current, now}) {
-  if (!hasExplicitPriceRequest(current) && !isStandalonePriceQuestion(current)) return -1;
   const end=turns.length-1;
+  // The structured current price intent has already passed the outer
+  // negative gates. Do not require another positive price keyword.
+  // Reject ordinary concern/benefit statements and unscoped admin turns
+  // independently of the provider's pricing classification.
+  if (!/[?？]/u.test(current) &&
+      !hasExplicitPriceRequest(current) &&
+      !isStandalonePriceQuestion(current) &&
+      !isContinuedTreatmentPriceQuestion(current) &&
+      !/\b(?:would|could|how|what|berapa|macam mana)\b/iu.test(current)) {
+    // An unpunctuated natural question may still be genuine; require a
+    // conversational interrogative rather than a bare concern/affirmation.
+    if (!/(?:多少|几多|幾多|怎么算|怎麼算|怎么|怎麼|如何|哪|呢|吗|嗎)/u.test(current)) return -1;
+  }
+  if (/(?:有什么作用|有什麼作用|有什么好处|有什麼好處|怎么做|怎麼做|如何做|效果如何|会有效吗|會有效嗎|\b(?:what are the benefits|how does it work|what does it do|what is it|how is it done|what are the results|can it help|apa manfaat|bagaimana ia berfungsi)\b)/iu.test(current)) return -1;
+  const key=value=>String(value||"").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+  const terms=value=>String(value||"").normalize("NFKC").toLowerCase()
+    .split(/[\s,，、。.!！?？;；:：/]+/u).map(key)
+    .filter(s=>s.length>=2 && !/^(?:the|and|for|with|that|this|you|your|saya|yang|dan|untuk)$/u.test(s));
+  const overlaps=(answer,question)=>terms(answer).some(s=>key(question).includes(s));
+  const affirmative=/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada)[\s.!！。😊]*$/iu;
+  const polar=/(?:会不会|會不會|有没有|有沒有|是否|会经常|會經常|是不是|(?:吗|嗎)[?？]|\b(?:do you|are you|have you|is it|does it|adakah|ada tak|awak ada)\b)/iu;
+  const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
+    t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
+    !RESET.test(t.content) && !REFUSAL.test(t.content) &&
+    !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
+    !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
+    !hasExplicitPriceRequest(t.content) &&
+    !/^\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\s.!！。]*$/iu.test(t.content);
+  const engaged=(answer,question)=>meaningful(answer) &&
+    !/[?？]/u.test(answer.content) && /[?？]/u.test(question) &&
+    (overlaps(answer.content,question) || (affirmative.test(answer.content)&&polar.test(question)));
   for (let i=end-2;i>=Math.max(1,end-8);i--) {
     const t=turns[i], copy=pricingMessageText(t).trim();
     if (t?.role!=="assistant" || t.pricingDeliveredBotMessage!==true ||
         isVerifiedStaffTurn(t) || t.verifiedOutboundImageUrl ||
         !findServicesInText(copy,candidates).includes(treatment) ||
         assistantIntroducesCompetingPaidService(t,treatment,candidates) ||
-        !/[?？]\s*$/u.test(copy) || !isRecentPricingThread(turns,i,now)) continue;
+        !/[?？]/u.test(copy) || !isRecentPricingThread(turns,i-1,now)) continue;
     const before=turns[i-1], answer=turns[i+1];
-    const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
-      t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
-      !RESET.test(t.content) && !REFUSAL.test(t.content) &&
-      !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
-      !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
-      !hasExplicitPriceRequest(t.content) &&
-      !/^\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\s.!！。]*$/iu.test(t.content);
-    if (!meaningful(before) || !meaningful(answer) || /[?？]/u.test(answer.content)) continue;
-    const safe=turns.slice(i+1,end).every(t=>{
+    // Two independent conversational links: the bot reflects the customer's
+    // concern, and the customer answers a question about that recommendation.
+    // A generic yes/no answer alone, or a random nonempty message, is not proof.
+    if (!meaningful(before) || !engaged(answer,copy) ||
+        !overlaps(before.content,copy) ||
+        findServicesInText(before.content,candidates).some(name=>name!==treatment) ||
+        /\b(?:RM|MYR)\s*\d/iu.test(copy)) continue;
+    const safe=turns.slice(i+1,end).every((t,offset)=>{
       const value=pricingMessageText(t);
-      if(t?.role==="user") return meaningful(t) &&
-        findServicesInText(value,candidates).every(name=>name===treatment);
+      if(t?.role==="user") {
+        const preceding=turns[i+offset];
+        return engaged(t,pricingMessageText(preceding)) &&
+          findServicesInText(value,candidates).every(name=>name===treatment);
+      }
       if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
           t.pricingDeliveredBotMessage!==true || t.verifiedOutboundImageUrl ||
           /\b(?:RM|MYR)\s*\d/iu.test(value)) return false;
-      // A clearly complimentary introductory assessment is not a second
-      // paid recommendation, even if this particular turn omits the service.
       const names=findServicesInText(value,candidates);
       if(names.length && names.every(name=>name==="1对1体态评估") &&
           /(?:免费|免費|complimentary|free|percuma)/iu.test(value)) return true;
