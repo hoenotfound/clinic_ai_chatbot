@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import idle from "../assets/dashy/idle.webp?no-inline";
 import greeting from "../assets/dashy/greeting.webp?no-inline";
 import roaming from "../assets/dashy/roaming.webp?no-inline";
@@ -132,9 +131,21 @@ function useWorkspace(hostRef, layoutKey, enabled) {
   return space;
 }
 
+function DashyIcon({ name }) {
+  const paths = {
+    close: "M6 6l12 12M18 6L6 18",
+    pause: "M9 5v14M15 5v14",
+    play: "M8 5l11 7-11 7z",
+    expand: "M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4",
+    reset: "M4 11a8 8 0 1 1 2 6M4 5v6h6",
+    minimize: "M4 9h5V4m11 5h-5V4M4 15h5v5m11-5h-5v5",
+    hide: "M3 3l18 18M10.5 10.5a2 2 0 0 0 3 3M9 5a11 11 0 0 1 3-.5c6 0 10 7.5 10 7.5a16 16 0 0 1-3.5 4M6 6.5A17 17 0 0 0 2 12s4 7.5 10 7.5a10 10 0 0 0 4-.9",
+  };
+  return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
+}
+
 export default function InboxMascot({ hostRef, activity, selectedId, searching: searchLoading = false, busy = false,
   suspended = false, layoutKey, mobileThreadOpen = false }) {
-  const navigate = useNavigate();
   const [mode, setMode] = useMascotMode();
   const [placement, updatePlacement] = useDashyPlacement();
   const reduced = useMedia("(prefers-reduced-motion: reduce)");
@@ -144,6 +155,10 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   const [ambient, setAmbient] = useState("idle");
   const [reaction, setReaction] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const motionRef = useRef(null);
+  const releasePoint = useRef(null);
+  const restoreFocus = useRef(false);
   const [reading, setReading] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [hint, setHint] = useState(false);
@@ -159,16 +174,18 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   const greeted = useRef(false);
   const seenSequence = useRef(activity?.sequence ?? 0);
   const space = useWorkspace(hostRef, layoutKey, mode !== "hidden");
-  const size = Math.min(dashySize(space.width, placement.size), Math.max(0, space.height - 24));
+  const size = Math.min(minimized ? 44 : dashySize(space.width, placement.size), Math.max(0, space.height - 24), Math.max(0, space.width - 24));
   const bounds = offsetDashyBounds(space, size);
-  const point = safeDashyPoint(dashyPoint(placement.position, bounds), bounds, size, space.obstacles);
+  const point = safeDashyPoint(dashyPoint(minimized ? { x: .99, y: placement.position.y } : placement.position, bounds), bounds, size, space.obstacles);
   const renderable = mode !== "hidden" && !suspended && size >= 44 && !!point;
-  const canAnimate = renderable && mode === "animated" && visible && !reduced;
+  const canAnimate = renderable && !minimized && mode === "animated" && visible && !reduced;
   const current = reaction && Number(reaction.contactId) === Number(selectedId) ? reaction : null;
   const quiet = busy || editing || reading || dragging || menuOpen || focused || hovered;
-  const menuPosition = point && dashyMenuPosition(point, size, space, space.obstacles);
+  const menuPosition = point && !minimized && (dashyMenuPosition(point, size, space, space.obstacles, 248, 326) ||
+    dashyMenuPosition(point, size, space, space.obstacles, 176, 220, 64));
   const hintPosition = point && dashyMenuPosition(point, size, space, space.obstacles, 156, 38, 38);
   const flight = dashyFlight(point, bounds, size, space.obstacles);
+  const roamingNow = canAnimate && !quiet && !searching && !current && desktop && ambient === "roaming" && (flight.x !== 0 || flight.y !== 0);
 
   useEffect(() => {
     if (mode === "hidden") return;
@@ -180,6 +197,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
 
   useEffect(() => {
     if (!renderable) {
+      motionRef.current?.cancel(); motionRef.current = null;
       setMenuOpen(false); setDragging(false); drag.current = null; setFocused(false); setHovered(false);
       cancelAnimationFrame(dragFrame.current); dragFrame.current = 0;
     }
@@ -215,23 +233,61 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   }, [renderable, hostRef]);
 
   useEffect(() => {
-    if (!renderable || !visible || !hintPosition || hintSeen.current || busy || editing) return;
+    if (!renderable || minimized || !visible || !hintPosition || hintSeen.current || busy || editing) return;
     hintSeen.current = true;
     try { localStorage.setItem(HINT_KEY, "1"); } catch { /* optional */ }
     setHint(true);
-  }, [renderable, visible, Boolean(hintPosition), busy, editing]);
+  }, [renderable, minimized, visible, Boolean(hintPosition), busy, editing]);
   useEffect(() => {
     if (!hint) return;
     const timer = setTimeout(() => setHint(false), 5500);
     return () => clearTimeout(timer);
   }, [hint]);
-  useEffect(() => () => cancelAnimationFrame(dragFrame.current), []);
+  useEffect(() => () => { cancelAnimationFrame(dragFrame.current); motionRef.current?.cancel(); }, []);
   useLayoutEffect(() => {
     if (!dragging) {
       controlRef.current?.style.removeProperty("--dashy-drag-x");
       controlRef.current?.style.removeProperty("--dashy-drag-y");
     }
   }, [dragging]);
+  // The flight and the release animation share one transform. Read the
+  // current transform before cancelling so interruptions do not snap.
+  useLayoutEffect(() => {
+    const el = controlRef.current;
+    const previous = motionRef.current;
+    const from = previous && el ? getComputedStyle(el).transform : "none";
+    previous?.cancel();
+    motionRef.current = null;
+    if (!el || !renderable || minimized || dragging || reduced || !visible) {
+      releasePoint.current = null;
+      return;
+    }
+    if (roamingNow && typeof el.animate === "function") {
+      const t = (x, y) => `translate3d(${x}px, ${y}px, 0)`;
+      motionRef.current = el.animate([
+        { transform: t(0, 0), offset: 0 },
+        { transform: t(flight.x * .45, flight.y * .1), offset: .25 },
+        { transform: t(flight.x, flight.y), offset: .55 },
+        { transform: t(flight.x * .25, flight.y * .8), offset: .8 },
+        { transform: t(0, 0), offset: 1 },
+      ], { duration: 2200, easing: "ease-in-out" });
+      return;
+    }
+    const release = releasePoint.current;
+    releasePoint.current = null;
+    const initial = release ? `translate3d(${release.x - point.x}px, ${release.y - point.y}px, 0)` : from;
+    if (initial !== "none" && typeof el.animate === "function") {
+      motionRef.current = el.animate([{ transform: initial }, { transform: "translate3d(0,0,0)" }],
+        { duration: 180, easing: "cubic-bezier(.2,.75,.35,1)" });
+    }
+  }, [roamingNow, dragging, reduced, visible, renderable, minimized, point?.x, point?.y, flight.x, flight.y, size]);
+
+  useLayoutEffect(() => {
+    if (restoreFocus.current && renderable) {
+      restoreFocus.current = false;
+      controlRef.current?.focus({ preventScroll: true });
+    }
+  }, [minimized, renderable]);
   // A viewport/layout change invalidates the pointer origin; cancel cleanly.
   useLayoutEffect(() => {
     const d = drag.current;
@@ -322,10 +378,11 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
     el.style.setProperty("--dashy-drag-y", (p.y - base.y) + "px");
   }
   function start(event) {
-    if (event.button !== 0 || !event.isPrimary || drag.current || !point) return;
+    if (minimized || event.button !== 0 || !event.isPrimary || drag.current || !point) return;
     const host = hostRef.current?.getBoundingClientRect();
     const rect = event.currentTarget.getBoundingClientRect();
     const origin = host ? clampDashyPoint({ x: rect.left - host.left, y: rect.top - host.top }, bounds) : point;
+    motionRef.current?.cancel(); motionRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
     ignoreClick.current = false;
     drag.current = { id: event.pointerId, clientX: event.clientX, clientY: event.clientY, point: origin, base: point, moved: false };
@@ -351,14 +408,25 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
     drag.current = null;
     cancelAnimationFrame(dragFrame.current); dragFrame.current = 0;
     ignoreClick.current = cancelled || d.moved;
-    if (!cancelled && d.moved && d.latest) savePoint(d.latest);
+    if (!cancelled && d.moved && d.latest) {
+      releasePoint.current = d.latest;
+      savePoint(d.latest);
+    }
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
+  function toggleMinimized() {
+    setHint(false);
+    setMenuOpen(false);
+    setHovered(false);
+    restoreFocus.current = document.activeElement === controlRef.current || menuRef.current?.contains(document.activeElement);
+    setMinimized(old => !old);
+  }
   function openControls() {
     setHint(false);
+    if (minimized) { toggleMinimized(); return; }
     if (menuPosition) setMenuOpen(old => !old);
-    else navigate("/settings/appearance");
+    else toggleMinimized(); // Remain in the Inbox even when the keyboard leaves no room.
   }
   function closeControls() {
     setMenuOpen(false);
@@ -367,6 +435,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   function key(event) {
     if (event.key === "Enter" || event.key === " ") ignoreClick.current = false;
     setHint(false);
+    if (minimized) return;
     const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
     if (direction) {
       event.preventDefault(); setMenuOpen(false);
@@ -380,14 +449,13 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
     : current?.kind === "alert" || current?.kind === "success" ? current.kind
       : searching ? "searching" : current?.kind || (hovered && !menuOpen ? "greeting" : quiet ? "idle" : ambient);
   const animate = canAnimate && !quiet && (desktop || pose !== "idle");
-  const roamingNow = animate && pose === "roaming" && (flight.x !== 0 || flight.y !== 0);
   const dimmed = !dragging && !hovered && !focused && !menuOpen && (reading || editing || busy) && !current && !searching;
   return (
     <div className="da-mascot-layer" aria-label="Dashy floating companion">
       <button type="button" ref={controlRef} className="da-mascot-control" data-testid="inbox-mascot"
-        data-dragging={dragging} data-roaming={roamingNow} data-dimmed={dimmed}
-        aria-label="Dashy companion. Drag to move, use arrow keys, or open controls"
-        aria-expanded={menuOpen} title="Drag Dashy or click for controls"
+        data-dragging={dragging} data-roaming={roamingNow} data-dimmed={dimmed} data-minimized={minimized}
+        aria-label={minimized ? "Restore Dashy" : "Dashy companion. Drag to move, use arrow keys, or open controls"}
+        aria-expanded={minimized ? undefined : menuOpen} title={minimized ? "Restore Dashy" : "Drag Dashy or click for controls"}
         style={{ left: point.x, top: point.y, width: size, height: size, "--dashy-flight-x": flight.x + "px", "--dashy-flight-y": flight.y + "px" }}
         onPointerDown={start} onPointerMove={move} onPointerUp={event => end(event)}
         onPointerCancel={event => end(event, true)} onLostPointerCapture={event => end(event, true)}
@@ -398,18 +466,29 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
         <MascotArtwork mode={animate ? "animated" : "stationary"} pose={pose}
           paused={!visible} sequence={current?.sequence ?? 0} />
         <span className="da-mascot-hit" aria-hidden="true" />
+        {minimized && <span className="da-mascot-restore" aria-hidden="true"><DashyIcon name="expand" /></span>}
       </button>
-      {hint && hintPosition && !quiet && !menuOpen && visible && <span className="da-mascot-hint" aria-hidden="true" style={hintPosition}>Drag me · tap for controls</span>}
+      {hint && !minimized && hintPosition && !quiet && !menuOpen && visible && <span className="da-mascot-hint" aria-hidden="true" style={hintPosition}>Drag me · tap for controls</span>}
       {menuOpen && menuPosition && (
         <div ref={menuRef} className="da-mascot-menu" role="group" aria-label="Dashy controls" style={menuPosition}>
-          <div className="da-mascot-menu-title">Dashy <button type="button" aria-label="Close Dashy controls" onClick={() => { setMenuOpen(false); controlRef.current?.focus(); }}>×</button></div>
-          <button type="button" onClick={() => { setMode(mode === "animated" ? "stationary" : "animated"); closeControls(); }}>{mode === "animated" ? "Pause animation" : "Resume animation"}</button>
-          <label>Size <select aria-label="Dashy size" value={placement.size} onChange={event => updatePlacement({ size: event.target.value })}>
-            <option value="auto">Automatic</option><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option>
-          </select></label>
-          <button type="button" onClick={() => { updatePlacement({ position: DEFAULT_DASHY_POSITION }); closeControls(); }}>Reset position</button>
-          <button type="button" onClick={() => { setMode("hidden"); setMenuOpen(false); }}>Hide Dashy</button>
-          <p>Restore in Settings → Appearance.</p>
+          <div className="da-mascot-menu-title"><span>Dashy<small>Your Inbox companion</small></span><button type="button" aria-label="Close Dashy controls" onClick={closeControls}><DashyIcon name="close" /></button></div>
+          <button type="button" onClick={() => { setMode(mode === "animated" ? "stationary" : "animated"); closeControls(); }}><DashyIcon name={mode === "animated" ? "pause" : "play"} />{mode === "animated" ? "Pause animation" : "Resume animation"}</button>
+          <fieldset className="da-mascot-size">
+            <legend><DashyIcon name="expand" /> Size</legend>
+            <div className="da-mascot-size-options">
+              {[["auto","Auto"],["small","S"],["medium","M"],["large","L"]].map(([value,label]) => (
+                <label key={value} className={placement.size === value ? "is-selected" : ""}>
+                  <input type="radio" name="dashy-quick-size" aria-label={"Dashy size " + value} checked={placement.size === value} onChange={() => updatePlacement({ size: value })} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <button type="button" onClick={() => { updatePlacement({ position: DEFAULT_DASHY_POSITION }); closeControls(); }}><DashyIcon name="reset" />Reset position</button>
+          <button type="button" onClick={toggleMinimized}><DashyIcon name="minimize" />Minimise temporarily</button>
+          <div className="da-mascot-menu-separator" />
+          <button type="button" onClick={() => { setMode("hidden"); setMenuOpen(false); }}><DashyIcon name="hide" />Hide Dashy</button>
+          <p>Restore hidden Dashy in Settings → Appearance.</p>
         </div>
       )}
     </div>

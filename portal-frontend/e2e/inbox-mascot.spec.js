@@ -53,10 +53,28 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await expect.poll(async () => (await mascot.boundingBox()).x).toBeLessThan(moved.x - 5);
   await mascot.press("Enter");
   await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
-  await page.getByLabel("Dashy size").selectOption("small");
+  await page.getByRole("radio", { name: "Dashy size small" }).check();
   await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
   await page.getByRole("button", { name: "Reset position" }).click();
   await expect(page.getByRole("button", { name: "Pause animation" })).toHaveCount(0);
+  const savedPosition = await mascot.boundingBox();
+  await mascot.press("Enter");
+  await page.getByRole("button", { name: "Minimise temporarily" }).click();
+  await expect(page.getByRole("button", { name: "Restore Dashy" })).toBeVisible();
+  await expect.poll(async () => (await mascot.boundingBox()).width).toBe(44);
+  await expect(page).toHaveURL(/\/inbox/);
+  await page.getByRole("button", { name: "Restore Dashy" }).press("Enter");
+  await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
+  await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - savedPosition.x)).toBeLessThan(2);
+  // Validate the menu against the existing light palette and a simulated dark palette.
+  await mascot.press("Enter");
+  const controls = page.getByRole("group", { name: "Dashy controls" });
+  await expect(controls).toBeVisible();
+  await page.evaluate(() => { const s = document.documentElement.style; s.setProperty("--color-surface", "#182521"); s.setProperty("--color-text", "#f1f5f3"); s.setProperty("--color-text-muted", "#c2d0c9"); s.setProperty("--color-bg", "#101a17"); s.setProperty("--color-border", "#40534b"); s.setProperty("--color-primary", "#84c5b2"); });
+  await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
+  await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
+  await page.getByRole("button", { name: "Close Dashy controls" }).click();
+  await page.evaluate(() => { for (const name of ["surface","text","text-muted","bg","border","primary"]) document.documentElement.style.removeProperty("--color-" + name); });
   // Chromium touch events are real browser-dispatched pointer events, not synthetic React calls.
   if (await page.evaluate(() => navigator.maxTouchPoints > 0)) {
     const original = await mascot.boundingBox();
