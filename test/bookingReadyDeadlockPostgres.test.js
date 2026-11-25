@@ -135,6 +135,30 @@ test(
         mode: "human",
         needs_attention: false,
       });
+
+      // Exercise the durable duplicate check using actual PostgreSQL.
+      await staff.query("UPDATE contacts SET mode='ai',needs_attention=false,attention_reason=NULL WHERE id=42");
+      const first=await markBookingReady(42,778,{details:{appointmentPreference:"2026-12-01 15:00"}});
+      assert.equal(first.contactUpdated,true);
+      await staff.query("UPDATE contacts SET needs_attention=false,attention_reason=NULL WHERE id=42");
+      const repeat=await markBookingReady(42,779,{details:{appointmentPreference:"2026-12-01 15:00"}});
+      assert.equal(repeat.contactUpdated,false);
+      assert.equal(alertCalls,1);
+      const changed=await markBookingReady(42,780,{details:{appointmentPreference:"2026-12-01 16:00"}});
+      assert.equal(changed.contactUpdated,true);
+      // A no-op status write must not reset the pending request.
+      await staff.query("INSERT INTO lead_activities(lead_id,activity_type,metadata) VALUES (9,'updated',$1)",[JSON.stringify({previousAppointmentStatus:"none",appointmentStatus:"none"})]);
+      assert.equal((await markBookingReady(42,781,{details:{appointmentPreference:"2026-12-01 16:00"}})).contactUpdated,false);
+      assert.equal(alertCalls,2);
+      // Reopen even if the old attention flag has not yet been cleared.
+      await staff.query("INSERT INTO lead_activities(lead_id,activity_type,metadata) VALUES (9,'updated',$1)",[JSON.stringify({outcome:"booking_hold_resolved"})]);
+      const reopened=await markBookingReady(42,782,{details:{appointmentPreference:"2026-12-01 16:00"}});
+      assert.equal(reopened.contactUpdated,true);
+      assert.equal(alertCalls,3);
+      await staff.query("INSERT INTO lead_activities(lead_id,activity_type,metadata) VALUES (9,'updated',$1)",[JSON.stringify({previousAppointmentStatus:"none",appointmentStatus:"cancelled"})]);
+      const newAttempt=await markBookingReady(42,783,{details:{appointmentPreference:"2026-12-01 16:00"}});
+      assert.equal(newAttempt.contactUpdated,true);
+      assert.equal(alertCalls,4);
     } finally {
       if (lockHeld && blocker) {
         await blocker.query(

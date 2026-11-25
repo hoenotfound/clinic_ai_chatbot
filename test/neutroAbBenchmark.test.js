@@ -89,3 +89,14 @@ test("live benchmark distinguishes a verified raw location answer from one with 
     assert.equal(result.checks.find(c=>c.field==="locationDraftStatus").pass,expected);
   }
 });
+
+test("benchmark verifies address facts even when a contextual question is outside the runtime rewrite grammar",()=>{
+  const data={...original,branches:[{name:"Petaling Jaya (PJ)",address:"12 Jalan 19, Petaling Jaya, Selangor"}]};
+  const scenario=cases.find(c=>c.id==="stage2-location-stale");
+  const result=reply=>checksFor(data,scenario,JSON.stringify({reply,outcome:"normal",priceQuery:false})).checks.find(c=>c.field==="locationDraftStatus");
+  assert.equal(result("Address: 12 Jalan 19, Petaling Jaya, Selangor").pass,true);
+  assert.equal(result("We are in Puchong. Address: 12 Jalan 19, Petaling Jaya, Selangor").pass,false);
+  const {confirmedSingleBranchLocationAnswer,singleBranchLocationFacts}=require("../src/utils/verifiedPricingBusinessFacts");
+  assert.equal(confirmedSingleBranchLocationAnswer({customerText:scenario.history.at(-1).content,branches:data.branches,language:"en"}),null);
+  assert.equal(singleBranchLocationFacts([...data.branches,{name:"Other"}],"en"),null);
+});

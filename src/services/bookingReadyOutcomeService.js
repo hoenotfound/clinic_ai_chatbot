@@ -95,6 +95,20 @@ function normalizeOptions(reasonOrOptions) {
   };
 }
 
+// Both duplicate suppression and re-open eligibility use the same reset
+// evidence. Merely writing the same appointment status is not a new attempt.
+function unresolvedBookingSql(activityAlias, leadAlias) {
+  return `NOT EXISTS (
+    SELECT 1 FROM lead_activities reset
+    WHERE reset.lead_id = ${leadAlias}.id
+      AND reset.id > ${activityAlias}.id
+      AND (reset.metadata->>'outcome' = 'booking_hold_resolved'
+        OR (reset.metadata ? 'previousAppointmentStatus'
+          AND reset.metadata->>'appointmentStatus' IN ('none','cancelled','reschedule','set','visited')
+          AND reset.metadata->>'previousAppointmentStatus' IS DISTINCT FROM reset.metadata->>'appointmentStatus'))
+  )`;
+}
+
 function createBookingReadyOutcomeService({
   database = pool,
   publish = realtimeEvents.publish,
@@ -191,6 +205,28 @@ function createBookingReadyOutcomeService({
                  AND l.appointment_status IN ('set', 'visited')
              )
            )
+           -- A pending request is durable even if Inbox attention was
+           -- dismissed or replaced. Compare only the latest active-lead request.
+           -- A later staff release or appointment-state change resets it.
+           AND NOT (
+             $9::boolean = true AND $5::text IS NOT NULL AND EXISTS (
+               SELECT 1 FROM LATERAL (
+                 SELECT l.id FROM leads l
+                 WHERE l.contact_id = c.id AND l.is_closed = false
+                 ORDER BY l.created_at DESC, l.id DESC LIMIT 1
+               ) active_lead
+               JOIN LATERAL (
+                 SELECT a.id, a.metadata FROM lead_activities a
+                 WHERE a.lead_id = active_lead.id
+                   AND a.metadata->>'outcome' = 'booking_ready'
+                 ORDER BY a.created_at DESC, a.id DESC LIMIT 1
+               ) previous_request ON true
+               WHERE previous_request.metadata->>'appointmentPreference' = $5::text
+                 AND ($3::text IS NULL OR previous_request.metadata->>'branch' = $3::text)
+                 AND ($4::text IS NULL OR previous_request.metadata->>'treatment' = $4::text)
+                 AND ${unresolvedBookingSql("previous_request","active_lead")}
+             )
+           )
            AND (
              c.needs_attention = false
              OR c.attention_reason IS NULL
@@ -214,6 +250,7 @@ function createBookingReadyOutcomeService({
                    FROM lead_activities a
                    WHERE a.lead_id = current_lead.id
                      AND a.metadata->>'outcome' = 'booking_ready'
+                     AND ($9::boolean = false OR ${unresolvedBookingSql("a","current_lead")})
                    ORDER BY a.created_at DESC, a.id DESC
                    LIMIT 1
                  ) latest_booking ON true
