@@ -2275,7 +2275,9 @@ function ConversationList({
     () => filteredConversations.slice(0, visibleRowCount),
     [filteredConversations, visibleRowCount]
   );
-  useEffect(() => {
+  // Reset the row window before painting a changed filter. Otherwise a
+  // deferred effect can overwrite a Show more action on the newly restored list.
+  useLayoutEffect(() => {
     setVisibleRowCount(60);
     setRevealedArchiveId(null);
   }, [filters.status, filters.channel, filters.sender, filters.control,
