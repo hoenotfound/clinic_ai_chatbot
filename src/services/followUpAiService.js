@@ -24,9 +24,11 @@ function configuredVideoTreatment(key, config = clinicConfig, preferredTreatment
     }
   }
   if (!mapped) return null; // ordinary general attachment
-  if (names.size === 1) return [...names][0];
   const preferred = canonicalConfiguredService(preferredTreatment, config.services, config.serviceAliases);
-  // Empty string means treatment-specific but unresolved, NOT general.
+  // Empty string means treatment-specific but unresolved or inconsistent,
+  // NOT general. A fixed rule cannot override the verified current treatment.
+  if (preferredTreatment && (!preferred || !names.has(preferred))) return "";
+  if (names.size === 1) return [...names][0];
   return preferred && names.has(preferred) ? preferred : "";
 }
 
