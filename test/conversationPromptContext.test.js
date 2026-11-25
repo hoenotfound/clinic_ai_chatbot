@@ -791,7 +791,8 @@ test("scoped normal prompt keeps relevant treatment detail and global safety whi
     assert.match(prompt, /- KL/);
     assert.doesNotMatch(prompt, /PJ_ADDRESS_SENTINEL/);
     assert.doesNotMatch(prompt, /KL_ADDRESS_SENTINEL/);
-    assert.doesNotMatch(prompt, /HOURS_SENTINEL/);
+    assert.match(prompt, /HOURS_SENTINEL/); // Gemini needs clinic hours even on treatment-only turns.
+    assert.match(prompt, /appointmentScheduling/);
     assert.doesNotMatch(prompt, /WHATSAPP_SENTINEL/);
     assert.doesNotMatch(prompt, /INSTAGRAM_SENTINEL/);
   });

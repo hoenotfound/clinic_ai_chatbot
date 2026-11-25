@@ -169,7 +169,7 @@ function containsInternalAiScaffolding(value) {
   return (
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
-    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
     || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
@@ -334,6 +334,9 @@ function parseStructuredReply(raw) {
     treatment,
     appointmentPreference,
   };
+  if (conversion.mode === "appointment" && typeof parsed.appointmentScheduling === "boolean") {
+    details.appointmentScheduling = parsed.appointmentScheduling;
+  }
   if (isProjectMode && projectLocation) details.projectLocation = projectLocation;
   if (isProjectMode && projectSummary) details.projectSummary = projectSummary;
   if (isProjectMode && nextStep) details.nextStep = nextStep;

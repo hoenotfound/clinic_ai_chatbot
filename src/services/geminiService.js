@@ -69,13 +69,14 @@ const conversationReplySchema = {
     treatment: nullableString,
     branch: nullableString,
     appointmentPreference: nullableString,
+    appointmentScheduling: { type: "boolean" },
     projectLocation: nullableString,
     projectSummary: nullableString,
     nextStep: nullableString,
     staffSummary: nullableString,
   },
   required: ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery",
-    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference",
+    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling",
     "projectLocation", "projectSummary", "nextStep", "staffSummary"],
 };
 const followUpReplySchema = {

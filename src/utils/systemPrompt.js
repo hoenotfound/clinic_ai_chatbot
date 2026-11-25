@@ -1,5 +1,5 @@
 const config = require("../config/clinicConfig");
-const { currentClinicDate } = require("./appointmentHoursGuard");
+const { currentClinicDate, describeWeeklyHours } = require("./appointmentHoursGuard");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
@@ -874,7 +874,7 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
   if (compact) return `BOOKING READINESS:
 Use "booking_ready" only for clear current intent to proceed with ${conversion.label}, a configured location and usable day/date PLUS time, range or daypart. Price/availability/process questions alone are not ready; no clinical review, complaint or handoff condition may apply.
 ${appointmentLocationRule}
-- Read the whole current scheduling exchange, including separate messages, written months, ordinal/abbreviated dates and exact minutes (半). Resolve relative dates using the original customer's local date. Corrections supersede rejected times; 3–5pm is a continuous window. Never reuse old completed, cancelled, visited, abandoned or separate attempts.
+- Read the whole current scheduling exchange, including separate messages, written months, ordinal/abbreviated dates and exact minutes (半). Resolve relative dates using the original customer's local date. Corrections supersede rejected times; 3–5pm is a continuous window. A previously chosen future date remains relevant across days in the same open scheduling exchange; use verified staff offers to interpret short replies. Return the full resolved appointmentPreference (date and time) when known, never a confirmed booking. Never reuse old completed, cancelled, visited, abandoned or separate attempts.
 - Ask only for the missing date or time, or one focused clarification if ambiguous; if both known, acknowledge and check availability. No guessed times or repeated questions.
 - Closed day, passed time or outside operating hours: explain and invite another open time; NOT booking_ready. Open hours are not slot availability.
 - Booking-ready reply: ${conversion.staffConfirmationText}. Never claim a reservation/booking/visit/slot is secured, set, successful or confirmed without verified staff/system confirmation.
@@ -892,7 +892,7 @@ ${notReadyExamples}`;
 ${appointmentLocationRule}
 - The ${terms.customerSingular} has given a usable schedule preference: a day/date PLUS a time, time range, or daypart such as morning/afternoon/evening.
 - Interpret the customer's meaning across turns, not just the presence of date or clock words. A correction supersedes the rejected date/time (e.g. "3pm doesn't work, 4pm please" means 4pm only). A time window ("3pm to 5pm") is a continuous preference, not two separate slots. A cancelled, declined or abandoned booking is not a current scheduling request. If the customer's intended preference is uncertain, ask one focused question, not a guessed appointment or a repeated question. Preserve exact minutes including 半 (half past), and never claim a slot is reserved or confirmed without verified staff/provider evidence. For staffSummary describe the customer's concerns and treatment needs, not a second unverified schedule.
-- Read the current scheduling exchange as a whole. Written month names, ordinal dates, abbreviated dates and separate consecutive customer messages are valid evidence (for example, "29th November" followed by "3.00 PM"). Resolve relative dates using the original customer message's local date. If both date and time are known, acknowledge the preference and offer to check availability rather than asking for them again. If only one is missing, ask only for that missing detail. Never invent a missing time or carry over a superseded preference.
+- Read the current scheduling exchange as a whole. Written month names, ordinal dates, abbreviated dates and separate consecutive customer messages are valid evidence (for example, "29th November" followed by "3.00 PM"). Resolve relative dates using the original customer message's local date. If both date and time are known, acknowledge the preference and offer to check availability rather than asking for them again. If only one is missing, ask only for that missing detail. Keep a previously selected future date across days in the same open scheduling exchange; use verified staff offers to interpret short replies and return the full resolved appointmentPreference. Never invent a missing time or carry over a superseded preference.
 - The preferred day must be open under current BUSINESS INFO, and a stated time must be within operating hours and not already passed. Otherwise answer naturally with the closure/operating hours and ask for another day; do NOT set booking_ready. Never treat open hours as proof that a practitioner is available.
 - The intent, configured location, and schedule preference belong to the ${terms.customerSingular}'s CURRENT attempt. Do not reuse details from an older completed, cancelled, visited, abandoned, or clearly separate discussion.
 - No safety, complaint, or human-handoff condition applies.
@@ -1334,7 +1334,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
       "When discussing appointments, apply the CURRENT configured business hours to the requested day and time BEFORE offering to check a slot. A closed day, a passed time or a time outside opening hours is NOT booking_ready. Briefly explain the conflict, invite another open day and never claim a confirmed slot. Exact staff/provider slot availability still requires verification. Do not mistake a customer preference for a booking.\n"
     : "";
   const includeSchedulingDetails =
-    !hasScopedConversationContext || conversationContext.schedulingIntent === true;
+    conversion.mode === "appointment" || !hasScopedConversationContext || conversationContext.schedulingIntent === true;
   const includeContactDetails =
     !hasScopedConversationContext || conversationContext.contactIntent === true;
   const promotionsList = hasScopedConversationContext
@@ -1346,8 +1346,9 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const closingPlaybookText = hasScopedConversationContext
     ? filterServiceScopedGuidance(effectiveClosing, conversationContext)
     : String(effectiveClosing || "");
+  const verifiedWeeklyHours = conversion.mode === "appointment" ? describeWeeklyHours(hours) : null;
   const hoursText = includeSchedulingDetails
-    ? `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`
+    ? (verifiedWeeklyHours ? `${verifiedWeeklyHours.general || "Not configured"}. ${verifiedWeeklyHours.closed}.` : `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`)
     : "Detailed hours omitted because the current conversation is not about scheduling or opening times.";
   const contactLines = includeContactDetails
     ? [
@@ -1508,6 +1509,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "treatment": "canonical configured service name if clearly known, otherwise null",
   "branch": "canonical configured business location name if clearly chosen, otherwise null",
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
+  "appointmentScheduling": false,
   "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
   "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",
   "nextStep": "site_visit | quotation_discussion | null",
@@ -1515,6 +1517,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
 }
 
 Rules for structured fields:
+- Set "appointmentScheduling" true only for a current clinic scheduling exchange (including a short contextual reply to a scheduling question), or when your reply proposes a specific appointment day/date/time. Generic invitations to book an assessment, treatment session counts, duration, recurring frequency or maintenance (每星期一次, 每周一次, once a week, seminggu sekali), and opening-hours information alone are NOT scheduling. Answer the current treatment question first. Do not use old scheduling context to turn an unrelated question into a booking. Use false for other industries and for review/handoff. For clinic booking_ready, use true. Resolve actual appointment preferences against the supplied Malaysia date/time and weekly hours; do not propose closed days or claim an unverified booking.
 - For "normal" and "booking_ready", "reply" must contain only the truthful, helpful text the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - For "review_required", supply a non-empty internal placeholder such as "Staff review requested" to satisfy the JSON format; the application will suppress it completely. Do not generate a customer-facing apology, handoff announcement, or claim that staff answered. For "needs_human", provide a brief acknowledgement or appropriate immediate-care guidance without claiming a human has already replied.
 - Write natural, concise customer-service replies in the customer's language for verified questions. Do not proactively call yourself an AI, bot, or automation; do not claim to be a human employee or invent personal experiences. If explicitly asked whether you're automated, answer truthfully.
