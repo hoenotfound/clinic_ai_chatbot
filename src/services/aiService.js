@@ -671,6 +671,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     ...(Array.isArray(optionsOrFirstMessage?.priorClinicalContext) ? {priorClinicalContext:optionsOrFirstMessage.priorClinicalContext.filter(v=>typeof v==="string").slice(-8).map(v=>v.slice(0,600))} : {}),
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
+    rm68CampaignDay: ["both","dec6","expired"].includes(optionsOrFirstMessage?.rm68CampaignDay) ? optionsOrFirstMessage.rm68CampaignDay : null,
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     correctionSourceReply: typeof optionsOrFirstMessage?.correctionSourceReply === "string"
       ? optionsOrFirstMessage.correctionSourceReply.slice(0, 2000) : null,
