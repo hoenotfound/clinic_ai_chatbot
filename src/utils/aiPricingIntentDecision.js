@@ -489,7 +489,7 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
-    : clarifiedPriceService
+    : clarifiedPriceService && conversationHistory.at(-1)?.verifiedQuotedMessage
       ? { treatment: clarifiedPriceService, source: "customer_price_clarification" }
     : (() => {
         const customer = verifiedServiceAnchor({

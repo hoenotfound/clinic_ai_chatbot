@@ -54,7 +54,12 @@ function resolveClarifiedPriceService({
   // and the treatment must already have independent customer-led evidence.
   // Do not treat the quote itself as new consent or trust an arbitrary string.
   const quote=current.verifiedQuotedMessage;
-  if (!quote || quote.role !== "user" || clarification.pricingDeliveredBotMessage!==true ||
+  // Reuse the existing narrow selection grammar; arbitrary new questions,
+  // acknowledgements, refusals or clinical statements quoting an old message
+  // are not a selection of the price being clarified.
+  const {isStandaloneQuotedSelection}=require("./neutroStaffResultPriceContext");
+  if (!isStandaloneQuotedSelection(currentText) ||
+      !quote || quote.role !== "user" || clarification.pricingDeliveredBotMessage!==true ||
       !Number.isSafeInteger(quote.id)) return null;
   const quotedIndex=turns.findIndex(t=>t.role==="user" &&
     t.contextMessageId===quote.id && t.content===quote.content);

@@ -510,6 +510,8 @@ test("returning customer: named 3D, concern, location, price and quoted clarific
   {...quote,verifiedQuotedMessage:null},
   {...quote,verifiedQuotedMessage:{id:999,role:"user",content:"脸型、下巴"}},
   {...quote,content:"不要报价"},
+  {...quote,content:"不是"},
+  {...quote,content:"多久？"},
   {...quote,content:"我有乳腺结节"},
  ])assert.equal(clarification({...b,customerText:unsafe.content,conversationHistory:[...extended.slice(0,-1),unsafe]}),null);
  const changed=extended.map(t=>t.contextMessageId===8?{...t,content:"另外想了解 9D 逆龄抗衰"}:t);
