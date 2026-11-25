@@ -46,6 +46,20 @@ function standaloneLocationQuestion(customerText, modelLocationOnly = false) {
     || /^(?:aren't|are|isn't|is)\s+(?:you|your (?:clinic|centre|center|branch|shop)|the (?:clinic|centre|center|branch|shop))\s+(?:located |based )?(?:in|at)\s+[\p{L}][\p{L}\p{M} .'-]{0,48}$/iu.test(q);
 }
 
+// Configured facts are independent of customer intent. The offline/live
+// benchmark can verify a raw address claim without authorizing a reply rewrite.
+function singleBranchLocationFacts(branches, language = "zh") {
+  if (!Array.isArray(branches) || branches.length !== 1) return null;
+  const branch = branches[0];
+  if (typeof branch?.address !== "string" || !branch.address.trim()) return null;
+  const locale = String(language || "zh").toLowerCase();
+  return {
+    verifiedAddress: branch.address.trim(),
+    verifiedName: String(branch.name || "").trim(),
+    language: locale.startsWith("ms") ? "ms" : locale.startsWith("en") ? "en" : "zh",
+  };
+}
+
 // Safe, standalone business-address response from Settings. Do not use a
 // treatment location ("my pain is located here") to authorize this response.
 // When a question also asks for a package price, leave the combined answer to
@@ -56,22 +70,17 @@ function confirmedSingleBranchLocationAnswer({
   const question = String(customerText || "").trim();
   if (!question || question.length > 130 || !standaloneLocationQuestion(question, modelLocationOnly) ||
       /(?:疼|痛|不舒服|症状|症狀|部位|身体|身體|[价價][钱錢格]|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|活动|活動|[预預]约|[病癌]|(?:\b(?:price|cost|fee|promo|package|treatment|pain|symptom|booking|appointment|rawatan|harga)\b))/iu.test(question)) return null;
-  const valid = (Array.isArray(branches) ? branches : [])
-    .filter(b => b && typeof b.address === "string" && b.address.trim());
-  if (valid.length !== 1 || branches.length !== 1) return null;
-  const name = String(valid[0].name || "").trim();
-  const address = valid[0].address.trim();
   // Production has already resolved the language for this turn; direct
   // legacy callers can still infer it from the current message.
-  const locale = String(resolvedLanguage || detectExplicitLanguagePreference(question) ||
-    detectMessageLanguage(question) || language || "zh").toLowerCase();
-  const ms = locale.startsWith("ms");
-  const en = locale.startsWith("en");
+  const facts = singleBranchLocationFacts(branches, resolvedLanguage ||
+    detectExplicitLanguagePreference(question) || detectMessageLanguage(question) || language);
+  if (!facts) return null;
+  const {verifiedName: name, verifiedAddress: address} = facts;
+  const ms = facts.language === "ms";
+  const en = facts.language === "en";
   return {
     kind: "verified_location",
-    verifiedAddress: address,
-    verifiedName: name,
-    language: ms ? "ms" : en ? "en" : "zh",
+    ...facts,
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
         + (modelLocationOnly ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
@@ -242,4 +251,4 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
 }
 
 module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply,
-  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft, standaloneLocationQuestion };
+  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft, standaloneLocationQuestion, singleBranchLocationFacts };
