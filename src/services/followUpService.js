@@ -1544,7 +1544,9 @@ async function sendCandidate(candidate) {
             instruction: [
               step.aiInstruction,
               clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true && selectedVideoKey
-                ? "A verified treatment-specific video may accompany your text. Write a short, relevant, safe caption, grounded in the actual concern. Do not claim a guaranteed outcome. For Messenger/Instagram, do not say the video has already been delivered; the attachment is sent separately."
+                ? "A verified treatment-specific video may accompany your text" +
+                    (targetedMediaService || targetedService ? " for " + (targetedMediaService || targetedService) : "") +
+                    ". If the current conversation no longer supports that topic, choose skip or human_review rather than pairing unrelated text with the video. Write a short, relevant, safe caption, grounded in the actual concern. Do not claim a guaranteed outcome. For Messenger/Instagram, do not say the video has already been delivered; the attachment is sent separately."
                 : "No video is attached to this message. Never claim to be sharing or attaching a video, image, testimonial clip or result photo.",
             ].filter(Boolean).join("\n").slice(0, 1000),
             channel: candidate.channel || "whatsapp",
