@@ -283,3 +283,40 @@ test("follow-up conversion prompt carries customer context and moves booking for
   assert.match(prompt, /return stop_sequence instead of pushing for a booking/);
   assert.match(prompt, /Ask for an actionable date or time, without pressure/);
 });
+
+test("follow-up uses recent customer service context rather than hiding it behind a stale CRM service", () => {
+  const original = { services:config.services, serviceAliases:config.serviceAliases,
+    promotions:config.promotions, automatedFollowUp:config.automatedFollowUp };
+  try {
+    config.services = [
+      {name:"Pelvic Care",description:"PELVIC_CURRENT_FACT",priceRange:"PELVIC_PRICE_SENTINEL",duration:"60 minutes"},
+      {name:"Face Lift",description:"FACE_CURRENT_FACT",priceRange:"FACE_PRICE_SENTINEL",duration:"90 minutes"},
+      {name:"Unrelated Care",description:"UNRELATED_FACT",priceRange:"OTHER_PRICE_SENTINEL"},
+    ];
+    config.serviceAliases = [];
+    config.promotions = [
+      {name:"PELVIC_OFFER_SENTINEL",linkedService:"Pelvic Care",caption:"RM388"},
+      {name:"FACE_OFFER_SENTINEL",linkedService:"Face Lift",caption:"RM488"},
+    ];
+    config.automatedFollowUp = {assessmentFirstPricingEnabled:true};
+    const prompt = buildFollowUpPrompt({followUpContext:{
+      treatmentInterest:"Pelvic Care", recentServiceNames:["Face Lift"], stepNumber:2,
+    }});
+    assert.match(prompt,/PELVIC_CURRENT_FACT/u);
+    assert.match(prompt,/FACE_CURRENT_FACT/u);
+    assert.ok(prompt.indexOf("FACE_CURRENT_FACT") < prompt.indexOf("PELVIC_CURRENT_FACT"));
+    assert.doesNotMatch(prompt,/UNRELATED_FACT|PELVIC_PRICE_SENTINEL|FACE_PRICE_SENTINEL|OTHER_PRICE_SENTINEL/u);
+    assert.doesNotMatch(prompt,/PELVIC_OFFER_SENTINEL|FACE_OFFER_SENTINEL/u);
+    assert.match(prompt,/Recent customer and authenticated staff conversation takes priority/u);
+    const same = buildFollowUpPrompt({followUpContext:{
+      treatmentInterest:"Pelvic Care", recentServiceNames:["Pelvic Care"], stepNumber:1,
+    }});
+    assert.match(same,/PELVIC_CURRENT_FACT/u);
+    assert.doesNotMatch(same,/FACE_CURRENT_FACT|PELVIC_PRICE_SENTINEL/u);
+    config.automatedFollowUp = {assessmentFirstPricingEnabled:false};
+    const nonAssessment = buildFollowUpPrompt({followUpContext:{treatmentInterest:"Pelvic Care"}});
+    assert.match(nonAssessment,/PELVIC_PRICE_SENTINEL/u);
+  } finally {
+    Object.assign(config,original);
+  }
+});
