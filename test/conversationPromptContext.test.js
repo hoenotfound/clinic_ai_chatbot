@@ -1383,9 +1383,24 @@ test("assessment-first treatment context exposes alternative canonical names wit
     assert.deepEqual(context.relevantServiceNames, ["3D 小颜术"]);
     const prompt = buildSystemPrompt({ conversationContext: context });
     assert.match(prompt, /THREED_FULL_DETAILS/u);
-    assert.match(prompt, /Other configured treatment names \(details not supplied\): 9D 逆龄抗衰, 骨盆调理/u);
-    assert.doesNotMatch(prompt, /NINED_FULL_DETAILS|PELVIS_FULL_DETAILS|NINED_PRICE|PELVIS_PRICE/u);
+    assert.match(prompt, /Other configured treatments \(compact descriptions; detailed offer facts not supplied\)/u);
+    assert.match(prompt, /NINED_FULL_DETAILS/u);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/u);
+    assert.match(prompt, /"9D \/ 逆龄" → 9D 逆龄抗衰/u);
+    assert.doesNotMatch(prompt, /NINED_PRICE|PELVIS_PRICE/u);
     assert.match(prompt, /retrieval context, not a decision/u);
     assert.match(prompt, /A previous assessment invitation is not a reason to repeat it/u);
+  });
+});
+
+test("only delivered assessment invitation evidence enters the conversation prompt", () => {
+  withConfig(scopedConfig(), () => {
+    const invitation = {role:"assistant",content:"Would you like to arrange a 1-to-1 assessment?"};
+    const current = {role:"user",content:"3D 小颜术"};
+    const ordinary = buildConversationPromptContext([invitation,current]);
+    assert.equal(ordinary.assessmentInvitationPreviouslyDelivered,false);
+    const verified = buildConversationPromptContext([{...invitation,pricingDeliveredBotMessage:true},current]);
+    assert.equal(verified.assessmentInvitationPreviouslyDelivered,true);
+    assert.match(buildSystemPrompt({conversationContext:verified}),/prior assessment invitation was verified as delivered/u);
   });
 });
