@@ -304,6 +304,15 @@ async function findCandidates({
            LIMIT 5
          ) AS recent_inbound_messages,
          ARRAY(
+           SELECT recent_inbound.created_at
+           FROM messages recent_inbound
+           WHERE recent_inbound.contact_id = c.id
+             AND recent_inbound.role = 'user'
+             AND recent_inbound.id <= latest_inbound.id
+             AND (previous_outbound.id IS NULL OR recent_inbound.id > previous_outbound.id)
+           ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC LIMIT 5
+         ) AS recent_inbound_times,
+         ARRAY(
            SELECT service_inbound.content
            FROM messages service_inbound
            WHERE service_inbound.contact_id = c.id
@@ -485,6 +494,7 @@ async function findCandidates({
        trigger_message_id,
        trigger_message_content,
        recent_inbound_messages,
+       recent_inbound_times,
        recent_service_messages,
        followup_topic_turns,
        treatment_interest,
