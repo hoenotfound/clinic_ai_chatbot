@@ -261,14 +261,21 @@ async function runGeminiModelAttempt(
     sleepFn = sleep,
     randomFn = Math.random,
     signal = null,
+    correctiveRetry = false,
   } = {}
 ) {
   const boundedRetryCount = Math.max(0, Math.min(Number(overloadRetryCount) || 0, 1));
 
   for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
+    if (signal?.aborted) {
+      const err = new Error("Gemini attempt was cancelled before generation.");
+      err.code = "AI_TIMEOUT";
+      throw err;
+    }
     try {
       const raw = await gemini.getReply(messages, options, apiKey, model, {
         signal,
+        ...(correctiveRetry ? { correctiveRetry: true } : {}),
         // The usage event must be tagged rejected_invalid_output when the
         // provider completes but the structured reply is unusable. Keep the
         // existing outer validation for injected/test providers.
@@ -540,6 +547,16 @@ async function runGeminiReply(
     );
     const modelPolicy = { ...policy, globalBudgetMs: modelBudgetMs };
     const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, modelPolicy);
+    // The fair-share key window can shrink to milliseconds as the budget
+    // runs out. Do not use it as the minimum useful generation window.
+    const minAttemptWindowMs = Math.min(policy.minRemainingKeyWindowMs, policy.preferredTimeoutMs, policy.fallbackTimeoutMs);
+    const isFallbackModel = model !== configuredModels[0];
+    if (isFallbackModel && modelBudgetMs < minAttemptWindowMs) {
+      const err = new Error("Insufficient time for a fallback Gemini generation.");
+      err.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
+      failures.push({ model, error: err });
+      continue;
+    }
 
     try {
       const reply = await runWithGeminiKeys(
@@ -547,7 +564,8 @@ async function runGeminiReply(
           // A provider-level 503 says the model is unavailable, not the key.
           // When another model is ready, switch immediately rather than spend
           // a second quota-counting request on the same overloaded model.
-          overloadRetryCount: hasNextRoute ? 0 : policy.retryCount,
+          overloadRetryCount: hasNextRoute || requestControl.correctiveRetry ? 0 : policy.retryCount,
+          correctiveRetry: requestControl.correctiveRetry === true,
           sleepFn,
           randomFn,
           signal: requestControl.signal || null,
@@ -567,7 +585,8 @@ async function runGeminiReply(
           confirmModelUnavailableAcrossKeys: !hasNextRoute,
           stopKeyRotationOnTimeout: hasNextRoute,
           stopKeyRotationOnInvalidResponse: isFlashLite,
-          minAttemptWindowMs: hasNextRoute ? effectiveMinKeyWindowMs : 0,
+          allowInvalidResponseRecovery: isFlashLite && !hasNextRoute,
+          minAttemptWindowMs: hasNextRoute || isFlashLite ? minAttemptWindowMs : 0,
           smartRetryDelayMinMs: 500,
           smartRetryDelayMaxMs: 1000,
           clock,
@@ -579,7 +598,11 @@ async function runGeminiReply(
       return reply;
     } catch (err) {
       failures.push({ model, error: err });
-      if (err?.code === "GEMINI_MODEL_UNAVAILABLE") {
+      // Preserve the established primary-model cooldown policy. For Flash-Lite
+      // with multiple configured credentials, a single capacity error may be
+      // project-specific; do not suppress the entire pool without confirmation.
+      if (err?.code === "GEMINI_MODEL_UNAVAILABLE" &&
+          (!isFlashLite || err.modelCapacityConfirmed === true || getGeminiApiKeys(env).length === 1)) {
         const health = markGeminiModelUnavailable(model, env, clock());
         if (health?.cooldownUntil) {
           console.warn(
@@ -740,6 +763,14 @@ async function getReplyWithEnv(
       hasLaterProvider,
       policy.fallbackProviderReserveMs
     );
+    const geminiPolicy = getGeminiReplyPolicy(env);
+    const fallbackWindow = Math.min(geminiPolicy.minRemainingKeyWindowMs,
+      candidateProvider === "claude" ? timeoutMs : geminiPolicy.preferredTimeoutMs);
+    if (providerIndex > 0 && providerBudgetMs < fallbackWindow) {
+      failures.push({ provider: candidateProvider, code: "AI_GLOBAL_BUDGET_EXCEEDED",
+        message: "Insufficient time for fallback provider generation.", recoverable: true });
+      continue;
+    }
 
     try {
       if (candidateProvider === "gemini") {
