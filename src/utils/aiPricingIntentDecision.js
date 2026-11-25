@@ -577,6 +577,79 @@ function isPlainNamedTreatmentInterest(current, candidate) {
   return false;
 }
 
+// A delivered recommendation can establish a service only after the customer
+// participates in that particular treatment discussion. This is not a service
+// inference from symptoms, an ad, a CRM field or an isolated assistant name.
+function engagedRecommendationAnchor({turns, treatment, candidates, current, now}) {
+  const end=turns.length-1;
+  // The structured current price intent has already passed the outer
+  // negative gates. Do not require another positive price keyword.
+  // Reject ordinary concern/benefit statements and unscoped admin turns
+  // independently of the provider's pricing classification.
+  if (/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada|ok|okay|好的)[\s.!！。😊]*$/iu.test(current)) return -1;
+  if (/(?:有什么作用|有什麼作用|有什么好处|有什麼好處|怎么做|怎麼做|如何做|效果如何|会有效吗|會有效嗎|\b(?:what are the benefits|how does it work|what does it do|what is it|how is it done|what are the results|can it help|apa manfaat|bagaimana ia berfungsi)\b)/iu.test(current)) return -1;
+  const key=value=>String(value||"").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+  const stopWords=new Set("the and for with that this you your i me my we our it to a an is are was be am of in on at as what which where when would could can will how do does did have had want need like about please also saya awak anda yang dan untuk nak mahu ini itu boleh ada apa mana macam".split(" "));
+  const terms=value=>String(value||"").normalize("NFKC").toLowerCase()
+    .split(/[\s,，、。.!！?？;；:：/]+/u).map(key)
+    .filter(s=>s.length>=2&&!stopWords.has(s));
+  const overlaps=(answer,question)=>{
+    const normalized=String(question||"").normalize("NFKC").toLowerCase();
+    const words=new Set(normalized.match(/[a-z0-9]+/gu)||[]);
+    return terms(answer).some(s=>/^[a-z0-9]+$/u.test(s)
+      ? words.has(s) : key(normalized).includes(s));
+  };
+  const affirmative=/^(?:会|會|有|是|对|對|嗯|是的|yes|yep|ya|betul|ada)[\s.!！。😊]*$/iu;
+  const polar=/(?:会不会|會不會|有没有|有沒有|是否|会经常|會經常|是不是|(?:吗|嗎)[?？]|\b(?:do you|are you|have you|is it|does it|adakah|ada tak|awak ada)\b)/iu;
+  const meaningful=t=>t?.role==="user" && typeof t.content==="string" &&
+    t.content.trim().length>0 && !isGreetingOrLanguageOnly(t.content) &&
+    !RESET.test(t.content) && !REFUSAL.test(t.content) &&
+    !AD_NEGATED_TOPIC.test(t.content) && !AD_BROAD_TOPIC.test(t.content) &&
+    !hasClinicalMediaRisk(t.content) && !UNRELATED.test(t.content) &&
+    !hasExplicitPriceRequest(t.content) &&
+    !/^\s*(?:thanks?|thank you|terima kasih|谢谢|謝謝|ok(?:ay)?|好的|明白了|了解了)[\s.!！。]*$/iu.test(t.content);
+  const engaged=(answer,question)=>meaningful(answer) &&
+    !/[?？]/u.test(answer.content) && /[?？]/u.test(question) &&
+    (overlaps(answer.content,question) || (affirmative.test(answer.content)&&polar.test(question)));
+  // A literal answer to the preceding concern question is not a new
+  // pricing enquiry even if the model mistakenly marks it commercial.
+  if (!hasExplicitPriceRequest(current) &&
+      engaged({role:"user",content:current},pricingMessageText(turns[end-1]))) return -1;
+  for (let i=end-2;i>=Math.max(1,end-8);i--) {
+    const t=turns[i], copy=pricingMessageText(t).trim();
+    if (t?.role!=="assistant" || t.pricingDeliveredBotMessage!==true ||
+        isVerifiedStaffTurn(t) || t.verifiedOutboundImageUrl ||
+        !findServicesInText(copy,candidates).includes(treatment) ||
+        assistantIntroducesCompetingPaidService(t,treatment,candidates) ||
+        !/[?？]/u.test(copy) || !isRecentPricingThread(turns,i-1,now)) continue;
+    const before=turns[i-1], answer=turns[i+1];
+    // Two independent conversational links: the bot reflects the customer's
+    // concern, and the customer answers a question about that recommendation.
+    // A generic yes/no answer alone, or a random nonempty message, is not proof.
+    if (!meaningful(before) || !engaged(answer,copy) ||
+        !overlaps(before.content,copy) ||
+        findServicesInText(before.content,candidates).some(name=>name!==treatment) ||
+        /\b(?:RM|MYR)\s*\d/iu.test(copy)) continue;
+    const safe=turns.slice(i+1,end).every((t,offset)=>{
+      const value=pricingMessageText(t);
+      if(t?.role==="user") {
+        const preceding=turns[i+offset];
+        return engaged(t,pricingMessageText(preceding)) &&
+          findServicesInText(value,candidates).every(name=>name===treatment);
+      }
+      if(t?.role!=="assistant" || isVerifiedStaffTurn(t) ||
+          t.pricingDeliveredBotMessage!==true || t.verifiedOutboundImageUrl ||
+          /\b(?:RM|MYR)\s*\d/iu.test(value)) return false;
+      const names=findServicesInText(value,candidates);
+      if(names.length && names.every(name=>name==="1对1体态评估") &&
+          /(?:免费|免費|complimentary|free|percuma)/iu.test(value)) return true;
+      return !assistantIntroducesCompetingPaidService(t,treatment,candidates);
+    });
+    if(safe) return i;
+  }
+  return -1;
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -643,7 +716,7 @@ function resolveModelLedPricingDecision({
     // customer-named service, allowing ordinary intermediate questions.
     // An intervening contradictory selection or an unknown topic reset
     // invalidates the older anchor. Never infer treatment solely from an ad,
-    // CRM label, assistant recommendation or model guess.
+    // CRM label, isolated assistant recommendation or model guess.
     anchorIndex=-1;
     for (let i=turns.length-2;i>=0;i--) {
       const turn=turns[i], at=turn?.pricingCreatedAtMs;
@@ -662,6 +735,8 @@ function resolveModelLedPricingDecision({
       anchorIndex=i;
       break;
     }
+    const recommendationOnly=anchorIndex<0;
+    if (recommendationOnly) anchorIndex=engagedRecommendationAnchor({turns,treatment:intent.treatment,candidates,current,now});
     if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
     const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
     // Assistant explanations and generic safety disclaimers are not customer
@@ -670,10 +745,10 @@ function resolveModelLedPricingDecision({
     // independent customer, staff, and current clinical/safety vetoes.
     const latestNamedResponse=responses.findLast(t=>
       findServicesInText(pricingMessageText(t),candidates).length>0);
-    if (!latestNamedResponse ||
+    if (!recommendationOnly && (!latestNamedResponse ||
         !findServicesInText(pricingMessageText(latestNamedResponse),candidates)
           .includes(intent.treatment) ||
-        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates)) return null;
+        assistantIntroducesCompetingPaidService(latestNamedResponse,intent.treatment,candidates))) return null;
   }
   // Known readable staff assistance is conversation evidence, not a
   // takeover. Unknown/deleted echoes and unverified/conflicting staff prices

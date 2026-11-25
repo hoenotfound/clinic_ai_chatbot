@@ -93,10 +93,10 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts,
+const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
-  hasCampaignConversation,stillDiscussingCampaign } =
+  hasCampaignConversation,stillDiscussingCampaign,campaignContinuationPolicy,campaignHasVerifiedNewService } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -2767,6 +2767,28 @@ async function processIncomingMessage(
         : nonUrgentUrinaryAcknowledgement(text, mediaLanguage);
     }
 
+    // An unverified screening capability requires a staff answer. Send a
+    // non-diagnostic acknowledgement via the existing durable review path,
+    // not a silent review or a promotional reply. Never release a handoff.
+    if ((!flagged || reviewRequired) && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+        !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const screeningAnswer = screeningAcknowledgement({history:commercialHistory,customerText:text});
+      if (screeningAnswer && !clinicalAcknowledgement) {
+        if (!flagged) reviewType = "information";
+        flagged = true;
+        reviewRequired = true;
+        bookingReady = false;
+        priceQuery = false;
+        packageQuery = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        clinicalAcknowledgement = screeningAnswer;
+      }
+    }
+
     // Coexistence staff can reply from the phone while generation is in flight.
     // Give the echo webhook a brief chance to arrive, then abort this AI turn
     // if that staff action changed the cancellation epoch.
@@ -2915,29 +2937,38 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // Only a verified prior RM68 first reply can authorize event-continuation
-    // facts. Keep genuine booking-ready, safety, opt-out and staff handoffs on
-    // their existing paths. This separate offer never enables standing RM388
-    // price media or overrides an explicitly switched treatment.
+    // Validate event scope even if the model classified this as booking-ready.
+    // Independent customer service evidence, not the old campaign or an AI
+    // label alone, permits an ordinary treatment to resume its own media path.
     let rm68CampaignContinuationTextOnly = false;
-    if (!flagged && !bookingReady && !marketingStopQuestion &&
-        !keywordReason && !urgentSafety && !isActiveSafetyConcern(text)) {
-      const campaignAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
+    let rm68BlocksBooking = false;
+    if (!flagged && !marketingStopQuestion && !keywordReason && !urgentSafety &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
+        !fixedAdFirstReply && !staffPriceConflict &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      const verifiedNewService = campaignHasVerifiedNewService({
+        history:commercialHistory,customerText:text,services:clinicConfig.services,
+        serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer,
       });
-      if (campaignAnswer) {
-        reply = campaignAnswer;
-        rm68CampaignContinuationTextOnly = true;
-        priceQuery = false;
-        packageQuery = false;
-        serviceQuery = false;
-        serviceQuerySource = null;
-      } else {
-        const replyBeforeCampaignGuard = reply;
-        reply = guardCampaignPriceConflicts({ history:commercialHistory, customerText: text, reply,
-        });
-        // If any old Pulse Wave terms were corrected, do not attach media
-        // derived from the conflicting generic service offer.
-        rm68CampaignContinuationTextOnly = reply !== replyBeforeCampaignGuard;
+      const campaign = campaignContinuationPolicy({
+        history:commercialHistory,customerText:text,reply,verifiedNewService,
+      });
+      if (campaign) {
+        reply=campaign.reply;
+        rm68CampaignContinuationTextOnly=campaign.textOnly;
+        rm68BlocksBooking=campaign.blocksBooking;
+        if (rm68BlocksBooking) {
+          bookingReady=false;
+          if (details) details={...details,appointmentPreference:null};
+        }
+        if (rm68CampaignContinuationTextOnly) {
+          priceQuery=false;
+          packageQuery=false;
+          serviceQuery=false;
+          serviceQuerySource=null;
+        }
       }
     }
 
@@ -3045,7 +3076,7 @@ async function processIncomingMessage(
       // Always apply a corrected reply, even when the validated preference
       // stays eligible for Booking Ready.
       reply = checked.reply;
-      if (!checked.blocked && checked.repairedPreference && !bookingReady &&
+      if (!checked.blocked && checked.repairedPreference && !bookingReady && !rm68BlocksBooking &&
           ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType) &&
           !contact.needs_attention && !priceQuery && !packageQuery && !serviceQuery &&
           !isDefiniteAppointmentCancellation(text)) {

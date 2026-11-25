@@ -9,7 +9,7 @@ const { isDefiniteAppointmentCancellation } = require("../src/utils/appointmentC
 const {
   CAMPAIGN_KEY, PREFILL, FOLLOWUP_PREFILL, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches,
   campaignDay, firstReply, hasCampaignConversation, isOtherTreatmentQuery,
-  isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, candidateIsCampaign,
+  isCampaignAvailabilityQuestion, campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement, campaignContinuationPolicy, campaignHasVerifiedNewService, candidateIsCampaign,
   campaignFollowUp,
 } = require("../src/utils/neutroBreastRm68Campaign");
 
@@ -245,7 +245,7 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
   const fixed = fs.readFileSync(path.join(__dirname, "../src/utils/fixedAdFirstReply.js"), "utf8");
   assert.match(fixed, /campaignCreativeMatches\(metaAdContext\)/);
   assert.match(server, /campaignContextReply\(\{/);
-  assert.match(server, /guardCampaignPriceConflicts\(\{/);
+  assert.match(server, /campaignContinuationPolicy\(\{/);
   assert.match(server, /neutro_breast_rm68_continuation_text_only/);
   assert.match(follow, /campaignFollowUp\(\{ candidate \}\)/);
   assert.match(follow, /neutro_rm68_campaign_expired/);
@@ -265,4 +265,116 @@ test("Production paths include RM68 scoped continuation and follow-up guards", (
     "RM68 event must not receive ordinary RM388 extended marketing templates");
   assert.match(freeEntry, /event_reply\.content LIKE '%首次体验只需 RM68%'/,
     "RM68 event must not use unrelated free-entry marketing graphics");
+});
+
+test("RM68 rejects unavailable event dates, answers the screening question and keeps English",()=>{
+  const h=[...history,
+    {role:"user",content:"How to conduct the checking"},
+    {role:"assistant",content:"A wellness assessment followed by pulse-wave care."},
+    {role:"user",content:"Any ultrasound screening"},
+    {role:"user",content:"December 5 and 6, I am not available\nIs that possible to do the treatment and checking today"},
+  ];
+  const text=h.at(-1).content;
+  const answer=campaignContextReply({history:h,customerText:text,now:early});
+  assert.match(answer,/today/);
+  assert.match(answer,/clinic will need to confirm/i);
+  assert.match(answer,/ultrasound/);
+  assert.doesNotMatch(answer,/RM\s*68|December [56]|12月|[\u3400-\u9fff]/u);
+  const screening=screeningAcknowledgement({history:h.slice(0,-1),customerText:h.at(-2).content});
+  assert.match(screening,/cannot|can’t confirm/i);
+  assert.match(screening,/staff will need to check/i);
+  assert.equal(isCampaignAvailabilityQuestion("Any ultrasound screening"),false);
+  assert.equal(screeningAcknowledgement({history:[],customerText:"Any ultrasound screening"}),null);
+  assert.equal(screeningAcknowledgement({history:h,customerText:"I have a breast lump, can ultrasound help?"}),null);
+  const price=campaignContextReply({history:[...h,{role:"user",content:"How much?"}],customerText:"How much?",now:early});
+  assert.match(price,/price also needs to be confirmed separately/i);
+  assert.doesNotMatch(price,/RM\s*68/i);
+});
+test("campaign factual continuation does not invent prices for ordinary questions",()=>{
+  assert.doesNotMatch(run("做多久？"),/RM\s*68/);
+  assert.doesNotMatch(run("还有名额吗？"),/RM\s*68/);
+  assert.equal(run("胸部护理有什么作用？"),null);
+  const mixed=campaignContextReply({history,customerText:"Can I book today?",now:early});
+  assert.match(mixed,/clinic will need to confirm/i);
+  assert.doesNotMatch(mixed,/RM\s*68/);
+  const localized=campaignContextReply({history,customerText:"Ada slot hari ini?",now:early});
+  assert.match(localized,/Pusat perlu mengesahkan/);
+  assert.doesNotMatch(localized,/RM\s*68/);
+});
+
+test("campaign scope follows actual customer dates and latest service choice",()=>{
+  const before=[...history,{role:"user",content:"因为刚好这两天我不在kl😭"},
+    {role:"assistant",content:"可以帮你确认其他日期"}];
+  const ordinary=campaignContextReply({history:before,customerText:"价钱呢？",now:early});
+  assert.match(ordinary,/其他日期/);
+  assert.match(ordinary,/收费需要先请门店确认/);
+  assert.doesNotMatch(ordinary,/RM\s*68/);
+  const dateOnly=campaignContextReply({history,customerText:"活动哪天？",now:dec6});
+  assert.match(dateOnly,/12月6日/);
+  assert.doesNotMatch(dateOnly,/12月5日|RM\s*68/);
+  const reselected=campaignContextReply({history:[...before,{role:"user",content:"12月6日方便"},{role:"assistant",content:"可以确认"}],customerText:"价钱呢？",now:early});
+  assert.match(reselected,/RM68/);
+  const other=[...history,{role:"user",content:"pulse wave"},{role:"assistant",content:"Sure"}];
+  assert.equal(campaignContextReply({history:other,customerText:"price?",now:early}),null);
+  const aliases=[{name:"徒手体态调理"}];
+  const selected=campaignHasVerifiedNewService({history:[...history,{role:"user",content:"徒手调理"},{role:"assistant",content:"好"}],
+    customerText:"价格？",services:aliases,serviceAliases:[],resolveService:t=>t==="徒手调理"?aliases[0]:null});
+  assert.equal(selected,true);
+  assert.equal(campaignContinuationPolicy({history,customerText:"价格？",reply:"RM388",now:early,verifiedNewService:selected}),null);
+});
+test("real final campaign boundary checks booking-ready and respects service switch",()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const start=server.indexOf("    // Validate event scope even if the model classified");
+  const end=server.indexOf("    // Final exact-copy boundary",start);
+  assert.ok(start>=0&&end>start);
+  const source=server.slice(start,end);
+  const run=(text,history,selected=false)=>vm.runInNewContext(
+    "(function(){"+source+"\nreturn {reply,bookingReady,details,rm68BlocksBooking,rm68CampaignContinuationTextOnly};})()",{
+      flagged:false,bookingReady:true,marketingStopQuestion:false,keywordReason:null,urgentSafety:false,
+      text,reply:"Your event appointment is confirmed for RM68 on December 5.",details:{appointmentPreference:"December 5"},
+      fixedAdFirstReply:null,staffPriceConflict:false,clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
+      commercialHistory:history,isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,
+      isExplicitStaffRequest:()=>false,isDefiniteAppointmentCancellation:()=>false,safeServiceFromCustomer:()=>null,
+      campaignHasVerifiedNewService:()=>selected,campaignContinuationPolicy:args=>campaignContinuationPolicy({...args,now:early}),
+      priceQuery:true,packageQuery:false,serviceQuery:true,serviceQuerySource:"model",
+    });
+  const invalid=run("December 5 and 6, I am not available. Can I book today?",history);
+  assert.equal(invalid.bookingReady,false);
+  assert.equal(invalid.details.appointmentPreference,null);
+  assert.equal(invalid.rm68CampaignContinuationTextOnly,true);
+  assert.doesNotMatch(invalid.reply,/RM68|December 5/);
+  const other=run("徒手调理",history,true);
+  assert.equal(other.rm68CampaignContinuationTextOnly,false);
+});
+test("screening uses actual review persistence and guarded acknowledgement, never a media send",async()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const a=server.indexOf("    // An unverified screening capability");
+  const b=server.indexOf("    // Coexistence staff",a);
+  const c=server.indexOf("    if (flagged && reviewRequired) {",b);
+  const d=server.indexOf("    } else if (flagged) {",c);
+  assert.ok(a>=0&&b>a&&c>b&&d>c);
+  const text="Any ultrasound screening";
+  for(const allowed of [true,false]){
+    const actions=[];
+    const context={
+      flagged:false,reviewRequired:false,reviewType:null,bookingReady:true,priceQuery:true,packageQuery:true,
+      serviceQuery:true,serviceQuerySource:"model",clinicalAcknowledgement:null,
+      keywordReason:null,urgentSafety:false,marketingStopQuestion:false,text,commercialHistory:[...history,{role:"user",content:text}],
+      clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
+      isActiveSafetyConcern:()=>false,isExplicitStaffRequest:()=>false,isDefiniteAppointmentCancellation:()=>false,
+      screeningAcknowledgement,contactsRepo:{setAiReviewAttention:async(...args)=>actions.push(["review",...args])},
+      contact:{id:42},savedInbound:{id:123},categorizeAiReview:()=> "information",
+      getAiOwnedContact:async()=>allowed?{id:42}:null,canSendAutomatedReply:()=>allowed,
+      sendTrackedText:async(...args)=>actions.push(["text",...args]),channel:"whatsapp",from:"synthetic",
+      responseAttempted:false,processingJobId:"test",wasFirstMessage:false,
+    };
+    await vm.runInNewContext("(async()=>{"+server.slice(a,b)+server.slice(c,d)+"\n}})()",context);
+    assert.equal(actions[0][0],"review");
+    assert.equal(actions[0][2],123);
+    assert.equal(actions.length,allowed?2:1);
+    if(allowed){
+      assert.match(actions[1][2],/ultrasound/);
+      assert.equal(actions[1][4].reviewReplyToInboundMessageId,123);
+    }
+  }
 });

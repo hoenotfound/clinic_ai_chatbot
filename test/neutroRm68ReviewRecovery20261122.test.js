@@ -19,7 +19,11 @@ test("verified RM68 opener supports short date and price questions", () => {
   ];
   for (const question of ["只有这两天？", "价钱呢？"]) {
     const answer = campaignContextReply({ history, customerText: question, now: Date.parse("2026-11-22T00:00:00Z") });
-    assert.ok(answer && answer.includes("RM68"), question);
+    assert.ok(answer, question);
+    if(question==="只有这两天？"){
+      assert.match(answer,/12月5日.*6日/);
+      assert.doesNotMatch(answer,/RM\s*68/,"date-only enquiries must not disclose unsolicited prices");
+    }else assert.match(answer,/RM68/);
   }
 });
 test("campaign does not inherit price after treatment switch", () => {
