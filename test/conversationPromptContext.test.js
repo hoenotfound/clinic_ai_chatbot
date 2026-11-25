@@ -1372,3 +1372,20 @@ test("single configured business address is available even when the context clas
     assert.match(prompt,/Use the current configured business location\/address/);
   });
 });
+
+test("assessment-first treatment context exposes alternative canonical names without unrelated pricing or details", () => {
+  const overrides = scopedConfig();
+  overrides.automatedFollowUp = { assessmentFirstPricingEnabled: true };
+  withConfig(overrides, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "3D 小颜术需要多久？" },
+    ]);
+    assert.deepEqual(context.relevantServiceNames, ["3D 小颜术"]);
+    const prompt = buildSystemPrompt({ conversationContext: context });
+    assert.match(prompt, /THREED_FULL_DETAILS/u);
+    assert.match(prompt, /Other configured treatment names \(details not supplied\): 9D 逆龄抗衰, 骨盆调理/u);
+    assert.doesNotMatch(prompt, /NINED_FULL_DETAILS|PELVIS_FULL_DETAILS|NINED_PRICE|PELVIS_PRICE/u);
+    assert.match(prompt, /retrieval context, not a decision/u);
+    assert.match(prompt, /A previous assessment invitation is not a reason to repeat it/u);
+  });
+});
