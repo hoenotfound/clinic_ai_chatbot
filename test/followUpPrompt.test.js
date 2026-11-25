@@ -320,3 +320,33 @@ test("follow-up uses recent customer service context rather than hiding it behin
     Object.assign(config,original);
   }
 });
+
+test("verified staff treatment and media remain in prompt despite two old topics and long instruction", () => {
+  const old = {services:config.services,serviceAliases:config.serviceAliases,promotions:config.promotions};
+  try {
+    config.services = [
+      {name:"Pelvic Care",description:"VERIFIED_PELVIC"},
+      {name:"Face Lift",description:"RECENT_FACE"},
+      {name:"Other Care",description:"STALE_OTHER"},
+    ];
+    config.serviceAliases = [];
+    config.promotions = [];
+    const prompt=buildFollowUpPrompt({followUpContext:{
+      treatmentInterest:"Other Care",recentServiceNames:["Face Lift","Other Care"],
+      verifiedTreatment:"Pelvic Care",staffDiscussedTreatment:true,
+      mediaTreatment:"Pelvic Care",mediaAttached:true,instruction:"X".repeat(1200),
+    }});
+    assert.match(prompt,/VERIFIED_PELVIC/u);
+    assert.match(prompt,/RECENT_FACE/u);
+    assert.doesNotMatch(prompt,/STALE_OTHER/u);
+    assert.match(prompt,/Verified current discussion: Pelvic Care \(staff recommended it/u);
+    assert.match(prompt,/Configured attachment treatment: Pelvic Care/u);
+    const reset=buildFollowUpPrompt({followUpContext:{
+      treatmentInterest:"Other Care",recentServiceNames:["Face Lift","Other Care"],
+      verifiedTreatment:"Pelvic Care",restrictTreatmentContext:true,instruction:"X".repeat(1200),
+    }});
+    assert.match(reset,/Earlier conversation is available only for clinical safety/u);
+    assert.match(reset,/VERIFIED_PELVIC/u);
+    assert.doesNotMatch(reset,/RECENT_FACE|STALE_OTHER/u);
+  } finally {Object.assign(config,old);}
+});
