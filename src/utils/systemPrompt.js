@@ -534,9 +534,10 @@ function resolveFollowUpService(serviceInterest) {
 
 function renderFollowUpService(service) {
   const description = promptContextText(service?.description, 1_200) || "No description configured.";
-  const price = promptContextText(service?.priceRange, 500) || "Not configured";
+  const price = config.automatedFollowUp?.assessmentFirstPricingEnabled === true
+    ? "" : " | Price: " + (promptContextText(service?.priceRange, 500) || "Not configured");
   const duration = promptContextText(service?.duration, 300) || "Not configured";
-  return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+  return `- ${service.name}: ${description}${price} | Duration: ${duration}`;
 }
 
 function followUpServiceContext(serviceInterest, recentServiceNames = []) {
