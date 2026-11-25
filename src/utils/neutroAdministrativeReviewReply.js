@@ -31,7 +31,7 @@ function administrativeReviewReply({
       : /\b(?:where|address|how\s+much|price|cost|clinic\s+location)\b/iu.test(message)
         ? "en" : language;
   const campaignActive = hasCampaignConversation(history) && stillDiscussingCampaign(history);
-  const replyLanguage = campaignActive ? (detectExplicitLanguagePreference(message) || detectMessageLanguage(message) || language || ordinaryReplyLanguage) : ordinaryReplyLanguage;
+  const replyLanguage = detectExplicitLanguagePreference(message) || (campaignActive ? (detectMessageLanguage(message) || language || ordinaryReplyLanguage) : ordinaryReplyLanguage);
   const mixedLocationPrice = isBusinessLocationQuestion(message) &&
     hasExplicitPriceRequest(message);
   const withRequestedLocation = (answer) => mixedLocationPrice
@@ -40,7 +40,7 @@ function administrativeReviewReply({
         language: replyLanguage,
       }) : answer;
   const location = confirmedSingleBranchLocationAnswer({
-    customerText: message, branches, language: replyLanguage,
+    customerText: message, branches, language: replyLanguage, resolvedLanguage: replyLanguage,
   });
   if (location) return location;
   // Only factual price/availability requests are eligible for the campaign

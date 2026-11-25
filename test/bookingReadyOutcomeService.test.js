@@ -307,3 +307,16 @@ test("booking-ready does nothing when the contact is no longer eligible for a fr
   assert.deepEqual(published, []);
   assert.deepEqual(alerts, []);
 });
+
+test("booking deduplication uses durable latest active-lead preference and explicit staff resets",async()=>{
+  const {database,calls}=fakeDatabase({contactUpdated:false});
+  const mark=createBookingReadyOutcomeService({database,publish(){},sendBookingReadyAlert(){throw Error("unexpected duplicate alert");}});
+  await mark(42,777,{details:{appointmentPreference:"2026-12-01 15:00"}});
+  const sql=calls.find(c=>c.sql.startsWith("UPDATE contacts")).sql;
+  assert.match(sql,/previous_request\.metadata->>'appointmentPreference' = \$5::text/);
+  assert.match(sql,/reset\.metadata->>'outcome' = 'booking_hold_resolved'/);
+  assert.match(sql,/reset\.metadata->>'appointmentStatus' IN \('none','cancelled','reschedule','set','visited'\)/);
+  assert.match(sql,/reset\.id > previous_request\.id/);
+  assert.match(sql,/reset\.id > a\.id/);
+  assert.match(sql,/previousAppointmentStatus\x27 IS DISTINCT FROM reset\.metadata->>\x27appointmentStatus/);
+});
