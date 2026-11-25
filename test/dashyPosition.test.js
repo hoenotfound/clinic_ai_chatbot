@@ -48,3 +48,17 @@ test("Dashy menu avoids protected controls and flight stays inside its safe rect
   assert.ok(Math.min(p.y, p.y + flight.y) >= 128 && Math.max(p.y, p.y + flight.y) + size <= 472);
   assert.equal(dashyMenuPosition(p, size, { ...area, height: 70 }, obstacles), null);
 });
+
+test("Compact Dashy flight stays within smaller travel caps and skips blocked paths", async () => {
+  const { dashyFlight, dashyBounds } = await load();
+  const size = 65, bounds = dashyBounds(390, 600, size);
+  const p = { x: 200, y: 250 };
+  const open = dashyFlight(p, bounds, size, [], true);
+  assert.equal(Math.abs(open.x), 35);
+  assert.equal(Math.abs(open.y), 20);
+  const blocked = [{ left: 0, right: 390, top: 0, bottom: 242 },
+    { left: 0, right: 390, top: 323, bottom: 600 },
+    { left: 0, right: 192, top: 0, bottom: 600 },
+    { left: 273, right: 390, top: 0, bottom: 600 }];
+  assert.deepEqual(dashyFlight(p, bounds, size, blocked, true), { x: 0, y: 0 });
+});

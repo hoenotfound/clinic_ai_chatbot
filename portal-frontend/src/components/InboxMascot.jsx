@@ -79,7 +79,7 @@ const SCROLL_AREAS = ".wa-thread-messages, .wa-inbox-rows";
 const THREAD_ACTIONS = "button, a, summary, audio[controls], video[controls], [role=button], img.cursor-zoom-in, input, select, textarea";
 const LIST_ACTIONS = "button:not(.wa-inbox-row), a[href], [role=button]:not(.wa-inbox-row)";
 const ACTIVITY_EVENTS = ["pointerdown", "pointermove", "keydown", "input", "wheel", "touchstart", "scroll"];
-const EMPTY = { left: 0, top: 0, width: 0, height: 0, obstacles: [] };
+const EMPTY = { left: 0, top: 0, width: 0, height: 0, obstacles: [], keyboardReduced: false };
 const HINT_KEY = "da.inbox.dashy.hint.v1";
 function hasSeenHint() { try { return localStorage.getItem(HINT_KEY) === "1"; } catch { return false; } }
 function useWorkspace(hostRef, layoutKey, enabled) {
@@ -116,7 +116,9 @@ function useWorkspace(hostRef, layoutKey, enabled) {
       const viewport = window.visualViewport;
       const area = dashyVisibleArea({ left: box.left, top: box.top, width: host.clientWidth, height: host.clientHeight },
         viewport || { offsetLeft: 0, offsetTop: 0, width: window.innerWidth, height: window.innerHeight });
-      const next = { ...area, obstacles };
+      // A software keyboard can shrink the visual viewport without resizing the layout.
+      const keyboardReduced = Boolean(viewport && window.innerHeight - viewport.height > 100);
+      const next = { ...area, obstacles, keyboardReduced };
       setSpace(old => JSON.stringify(old) === JSON.stringify(next) ? old : next);
     }
     function schedule(event) {
@@ -180,6 +182,8 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   const [placement, updatePlacement] = useDashyPlacement();
   const reduced = useMedia("(prefers-reduced-motion: reduce)");
   const desktop = useMedia("(min-width: 1024px)");
+  const compact = useMedia("(max-width: 1023px), (pointer: coarse)");
+  const flightDuration = compact ? 2000 : 2200;
   const searching = searchLoading && (desktop || !mobileThreadOpen);
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const [ambient, setAmbient] = useState("idle");
@@ -197,6 +201,9 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   const ignoreClick = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const [hoverGreeting, setHoverGreeting] = useState(false);
   const [focused, setFocused] = useState(false);
   const drag = useRef(null);
   const controlRef = useRef(null);
@@ -210,12 +217,14 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   const renderable = mode !== "hidden" && !suspended && size >= 44 && !!point;
   const canAnimate = renderable && !minimized && mode === "animated" && visible && !reduced;
   const current = reaction && Number(reaction.contactId) === Number(selectedId) ? reaction : null;
-  const quiet = busy || editing || reading || dragging || menuOpen || focused || hovered;
+  const motionBlocked = busy || typing || composing || reading || dragging || menuOpen;
+  const quiet = motionBlocked || editing || focused || hovered;
   const menuPosition = point && !minimized && (dashyMenuPosition(point, size, space, space.obstacles, 248, 326) ||
     dashyMenuPosition(point, size, space, space.obstacles, 176, 220, 64));
   const hintPosition = point && dashyMenuPosition(point, size, space, space.obstacles, 156, 38, 38);
-  const flight = dashyFlight(point, bounds, size, space.obstacles);
-  const roamingNow = canAnimate && !quiet && !searching && !current && desktop && ambient === "roaming" && (flight.x !== 0 || flight.y !== 0);
+  const flight = dashyFlight(point, bounds, size, space.obstacles, compact);
+  const canRoam = !space.keyboardReduced && (flight.x !== 0 || flight.y !== 0);
+  const roamingNow = canAnimate && !quiet && !searching && !current && canRoam && ambient === "roaming";
 
   useEffect(() => {
     if (mode === "hidden") return;
@@ -228,7 +237,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   useEffect(() => {
     if (!renderable) {
       motionRef.current?.cancel(); motionRef.current = null;
-      setMenuOpen(false); setDragging(false); drag.current = null; setFocused(false); setHovered(false);
+      setMenuOpen(false); setDragging(false); drag.current = null; setFocused(false); setHovered(false); setHoverGreeting(false); setTyping(false); setComposing(false);
       cancelAnimationFrame(dragFrame.current); dragFrame.current = 0;
     }
   }, [renderable]);
@@ -243,6 +252,40 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
     setEditing(isEditing(document.activeElement));
     return () => { document.removeEventListener("focusin", focusIn); document.removeEventListener("focusout", focusOut); };
   }, [renderable, hostRef]);
+
+  // Actual typing pauses the artwork briefly. Merely leaving a field focused
+  // does not stop idle hovering for the rest of a staff session.
+  useEffect(() => {
+    if (!renderable) return;
+    const host = hostRef.current;
+    let timer;
+    function onTyping(event) {
+      if (!(event.target instanceof Element) || event.target.closest(".da-mascot-layer") ||
+          !event.target.closest("input, textarea, [contenteditable=true]")) return;
+      if (event.type === "compositionstart" || event.type === "compositionupdate") setComposing(true);
+      if (event.type === "compositionend") setComposing(false);
+      setTyping(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setTyping(false), 2500);
+    }
+    for (const name of ["input", "keydown", "compositionstart", "compositionupdate", "compositionend"])
+      host?.addEventListener(name, onTyping, true);
+    const onBlur = () => setComposing(false);
+    host?.addEventListener("focusout", onBlur, true);
+    return () => {
+      clearTimeout(timer);
+      host?.removeEventListener("focusout", onBlur, true);
+      for (const name of ["input", "keydown", "compositionstart", "compositionupdate", "compositionend"])
+        host?.removeEventListener(name, onTyping, true);
+    };
+  }, [renderable, hostRef]);
+
+  // Greet the pointer once, then return to the idle loop even if it stays.
+  useEffect(() => {
+    if (!hoverGreeting) return;
+    const timer = setTimeout(() => setHoverGreeting(false), 1500);
+    return () => clearTimeout(timer);
+  }, [hoverGreeting]);
 
   useEffect(() => {
     if (!renderable) { setReading(false); return; }
@@ -300,7 +343,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
         { transform: t(flight.x, flight.y), offset: .55 },
         { transform: t(flight.x * .25, flight.y * .8), offset: .8 },
         { transform: t(0, 0), offset: 1 },
-      ], { duration: 2200, easing: "ease-in-out" });
+      ], { duration: flightDuration, easing: "ease-in-out" });
       return;
     }
     const release = releasePoint.current;
@@ -310,7 +353,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
       motionRef.current = el.animate([{ transform: initial }, { transform: "translate3d(0,0,0)" }],
         { duration: 180, easing: "cubic-bezier(.2,.75,.35,1)" });
     }
-  }, [roamingNow, dragging, reduced, visible, renderable, minimized, point?.x, point?.y, flight.x, flight.y, size]);
+  }, [roamingNow, dragging, reduced, visible, renderable, minimized, point?.x, point?.y, flight.x, flight.y, size, flightDuration]);
 
   useLayoutEffect(() => {
     if (restoreFocus.current && renderable) {
@@ -360,16 +403,16 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   useEffect(() => {
     if (!canAnimate || quiet || searching || current) { setAmbient("idle"); return; }
     let timer, roamingNow = false, lastActivity = Date.now();
-    const idleMs = 75000;
+    const idleMs = 60000;
     function schedule() {
       clearTimeout(timer);
-      if (desktop) timer = setTimeout(check, Math.max(0, idleMs - (Date.now() - lastActivity)));
+      if (canRoam) timer = setTimeout(check, Math.max(0, idleMs - (Date.now() - lastActivity)));
     }
     function check() {
       if (Date.now() - lastActivity < idleMs) { schedule(); return; }
       roamingNow = true;
       setAmbient("roaming");
-      timer = setTimeout(() => { roamingNow = false; setAmbient("idle"); lastActivity = Date.now(); schedule(); }, 2200);
+      timer = setTimeout(() => { roamingNow = false; setAmbient("idle"); lastActivity = Date.now(); schedule(); }, flightDuration);
     }
     function onActivity() {
       lastActivity = Date.now();
@@ -384,7 +427,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
       clearTimeout(timer);
       for (const name of ACTIVITY_EVENTS) document.removeEventListener(name, onActivity, true);
     };
-  }, [canAnimate, quiet, searching, current, selectedId, desktop]);
+  }, [canAnimate, quiet, searching, current, selectedId, canRoam, flightDuration]);
 
   useEffect(() => {
     const sequence = activity?.sequence ?? 0;
@@ -477,8 +520,10 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
   if (!renderable) return null;
   const pose = !canAnimate || dragging ? "idle"
     : current?.kind === "alert" || current?.kind === "success" ? current.kind
-      : searching ? "searching" : current?.kind || (hovered && !menuOpen ? "greeting" : quiet ? "idle" : ambient);
-  const animate = canAnimate && !quiet && (desktop || pose !== "idle");
+      : searching ? "searching" : current?.kind || (hoverGreeting && !menuOpen && !motionBlocked ? "greeting" : quiet || (ambient === "roaming" && !roamingNow) ? "idle" : ambient);
+  // The gentle artwork loop is independent of the larger flight timer.
+  // Focus and hover alone restrict roaming, not ordinary hovering.
+  const animate = canAnimate && !motionBlocked && (pose === "idle" || !quiet || (hoverGreeting && pose === "greeting" && !editing));
   const dimmed = !dragging && !hovered && !focused && !menuOpen && (reading || editing || busy) && !current && !searching;
   return (
     <div className="da-mascot-layer" aria-label="Dashy floating companion">
@@ -491,8 +536,8 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
         onPointerCancel={event => end(event, true)} onLostPointerCapture={event => end(event, true)}
         onKeyDown={key} onClick={() => { if (ignoreClick.current) { ignoreClick.current = false; return; } openControls(); }}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-        onPointerEnter={event => { if (event.pointerType === "mouse") setHovered(true); }}
-        onPointerLeave={() => setHovered(false)}>
+        onPointerEnter={event => { if (event.pointerType === "mouse") { setHovered(true); setHoverGreeting(true); } }}
+        onPointerLeave={() => { setHovered(false); setHoverGreeting(false); }}>
         <MascotArtwork mode={animate ? "animated" : "stationary"} pose={pose}
           paused={!visible} sequence={current?.sequence ?? 0} />
         <span className="da-mascot-hit" aria-hidden="true" />
