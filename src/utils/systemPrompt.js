@@ -182,7 +182,7 @@ function explicitConversationPriceRequest(conversationContext) {
 function conversationServicesList(conversationContext, terms) {
   const selected = conversationSelectedServices(conversationContext);
   if (selected.length) {
-    return selected
+    const detailed = selected
       .map((service) => {
         const description = promptContextText(service?.description, 1_600) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
@@ -190,6 +190,16 @@ function conversationServicesList(conversationContext, terms) {
         return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)) ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
       })
       .join("\n");
+    if (config.businessType !== "tcm_clinic" ||
+        config.automatedFollowUp?.assessmentFirstPricingEnabled !== true) return detailed;
+    // Scoped retrieval is only a cost-saving hint. Give the model the other
+    // canonical choices without copying unrelated prices, descriptions or offers.
+    const otherNames = (config.services || [])
+      .filter((service) => !selected.some((item) => item.name === service?.name))
+      .map((service) => promptContextText(service?.name, 160)).filter(Boolean).slice(0, 30);
+    return [detailed, otherNames.length
+      ? "Other configured treatment names (details not supplied): " + otherNames.join(", ")
+      : null].filter(Boolean).join("\n");
   }
 
   const configured = Array.isArray(config.services) ? config.services : [];
@@ -1524,6 +1534,7 @@ Rules for structured fields:
 - For "review_required", supply a non-empty internal placeholder such as "Staff review requested" to satisfy the JSON format; the application will suppress it completely. Do not generate a customer-facing apology, handoff announcement, or claim that staff answered. For "needs_human", provide a brief acknowledgement or appropriate immediate-care guidance without claiming a human has already replied.
 - Write natural, concise customer-service replies in the customer's language for verified questions. Do not proactively call yourself an AI, bot, or automation; do not claim to be a human employee or invent personal experiences. If explicitly asked whether you're automated, answer truthfully.
 - Set "serviceQuery" to true ONLY when the customer's CURRENT message genuinely asks for information about, expresses interest in, or states a relevant concern that clearly maps to exactly ONE configured service. The service can be established directly by the current message, by a short follow-up to an already clear one-service conversation, or by unambiguous META AD ACQUISITION CONTEXT. A greeting alone, thanks, location/hours/payment/admin question, pure booking/scheduling message, complaint, safety question, or human request is NOT a serviceQuery.
+- Treat any scoped treatment information or old advertisement as retrieval context, not a decision. Use the latest customer message and conversation to distinguish a new enquiry, a comparison, a concern, a package inclusion and a rejection. A previous assessment invitation is not a reason to repeat it: answer the new question first and advance only if useful. If a different treatment is clearly intended but its details are not supplied, acknowledge it without borrowing another treatment's facts; ask a focused question or seek staff verification for missing facts.
 - When "serviceQuery" is true, "treatment" MUST be the one canonical configured service and "serviceQuerySource" MUST be exactly one of "customer_message", "conversation", or "meta_ad". Use "customer_message" when the CURRENT message itself identifies the service; use "conversation" when a short service-information follow-up relies on the immediately established one-service conversation; use "meta_ad" only when the current message shows genuine interest but is vague and the Meta creative headline/body uniquely identifies the service. If the service is ambiguous, multiple services are being compared, or the source is unclear, set "serviceQuery" to false and "serviceQuerySource" to null.
 ${compactPolicy ? '- A current price/package enquiry about one verified service also sets serviceQuery true and uses the same source rules above.' : '- A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".'}
 - A customer-sent Click-to-WhatsApp introduction granting FUTURE follow-ups or offer notifications (for example "可以跟进我，有优惠也发我看看") is NOT an immediate request for pricing, offers, or package lists. Interpret its separate current treatment interest normally. Greet naturally, explain the named treatment briefly and ask one useful question. Do not quote or list packages/prices unless the customer also asks about them NOW.
