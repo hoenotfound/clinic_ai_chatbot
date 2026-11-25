@@ -9,8 +9,12 @@
   flex-shrink: 0; pointer-events: none; user-select: none;
 }
 .da-inbox-mascot-slot .da-mascot-stage {
-  width: min(60px, max(0px, calc(100% - 22px)));
+  width: min(52px, max(0px, calc(100% - 22px)));
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+}
+/* Phone title row already reserves 40px; allow the larger art there. */
+@media (max-width: 639px) {
+  .da-inbox-mascot-slot .da-mascot-stage { width: min(60px, max(0px, calc(100% - 22px))); }
 }
 .da-mascot-drift { position: absolute; inset: 0; display: block; }
 .da-mascot-image {

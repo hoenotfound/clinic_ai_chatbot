@@ -1,6 +1,6 @@
 # Dashy Inbox mascot
 
-Artwork: the owner's 12-page Dashy Expression PDF includes ten illustrated poses. The ten transparent WebP files under portal-frontend/src/assets/dashy are aligned to a common 160 × 160 canvas, with roughly the same head position and scale. Page 11 (Sleeping) and page 12 (Interactive) contain headings only. Pages 1, 2 and 4 are unlabeled; Welcome, Crossed hands and Confident are descriptive preview labels.
+Artwork: the owner's 12-page Dashy Expression PDF includes ten illustrated poses. The ten transparent WebP files under portal-frontend/src/assets/dashy are aligned to a common 160 × 160 canvas, with roughly the same head position and scale. The live art is at most 52px on desktop and 60px on phones; the smaller desktop size preserves clearance above the search control. Page 11 (Sleeping) and page 12 (Interactive) contain headings only. Pages 1, 2 and 4 are unlabeled; Welcome, Crossed hands and Confident are descriptive preview labels.
 
 Automatic Inbox behavior:
 - Greeting on entry (and a brief greeting for identified new-message activity in the currently open conversation).

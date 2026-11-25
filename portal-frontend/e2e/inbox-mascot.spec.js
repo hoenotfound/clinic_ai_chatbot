@@ -28,6 +28,11 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await expect.poll(() => mascot.locator("img").first().evaluate(img => img.naturalWidth)).toBe(160);
   await expect(mascot.locator(".da-mascot-drift")).toHaveCSS("animation-name", "none");
   const search = page.getByRole("searchbox", { name: /Search by name/ });
+  const artBounds = await mascot.locator(".da-mascot-stage").boundingBox();
+  const searchBounds = await search.boundingBox();
+  expect(artBounds).not.toBeNull();
+  expect(searchBounds).not.toBeNull();
+  expect(artBounds.y + artBounds.height).toBeLessThanOrEqual(searchBounds.y + 1);
   await search.fill("test");
   await expect(search).toHaveValue("test");
   await page.goto("/settings/appearance");
