@@ -812,27 +812,39 @@ async function processIncomingMessage(
     // pricing/media selection and assistant draft creation. The inbound
     // remains saved and unread for staff in the secondary Inbox.
     if (secondaryInboxOnly && !mediaType && !unsupportedType) {
-      // An imported/old secondary contact is intentionally staff-managed.
-      // Do not start AI, but do not silently lose urgent scheduling or
-      // health questions either. Do not overwrite an existing staff review,
-      // or alert after staff has already answered this exact inbound turn.
-      const actionable=manualOnlySecondaryAttention(incoming.text);
-      if(actionable &&
-         !await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
-        try {
-          if(actionable.kind==="health" && contact.mode==="ai"){
-            // Manual-only does not imply AI eligibility. Record the original
-            // clinical question for staff without sending any AI reply.
+      // Keep the legacy/manual audience unchanged. Every actionable question
+      // gets a durable staff task or an existing attention episode, including
+      // questions expressed without a known treatment/appointment keyword.
+      const actionable=manualOnlySecondaryAttention(incoming.text,{receivedAt:savedInbound.created_at||Date.now()});
+      let staffDisposition="no_actionable_enquiry";
+      if(actionable){
+        if(await messagesRepo.hasStaffReplyAfter(contact.id,savedInbound.id)){
+          staffDisposition="staff_already_replied";
+        } else {
+          // Account questions need an independent record even when a prior
+          // clinical concern already owns the attention banner.
+          if((actionable.kind==="health" || actionable.kind==="account") && contact.mode==="ai"){
             await contactsRepo.setAiReviewAttention(
               contact.id,savedInbound.id,
-              String(incoming.text||"").trim().slice(0,350),"clinical");
+              String(incoming.text||"").trim().slice(0,350),
+              actionable.kind==="health"?"clinical":"information",
+              {unansweredOnly:true});
+            staffDisposition="review_checked";
           } else if(!contact.needs_attention){
-            await contactsRepo.setAttention(contact.id,true,actionable.reason);
+            const updated=await contactsRepo.setAttention(contact.id,true,actionable.reason,
+              {unansweredInboundId:savedInbound.id});
+            staffDisposition=updated?"attention_set":"attention_already_owned_or_answered";
+          } else {
+            staffDisposition="existing_attention";
           }
-        } catch(err){
-          console.error("Could not flag actionable manual-only secondary inbound:",err?.message||err);
         }
       }
+      // Do not log customer content or phone numbers. A failed durable write
+      // must propagate to inbound processing retry rather than silently mark
+      // an unanswered actionable turn completed.
+      console.info("[Secondary manual-only inbound] contact="+contact.id+
+        " inbound="+savedInbound.id+" reason=ai_audience_excluded"+
+        " kind="+(actionable?.kind||"none")+" staff="+staffDisposition);
       return { wasFirstMessage, keywordReason };
     }
 
