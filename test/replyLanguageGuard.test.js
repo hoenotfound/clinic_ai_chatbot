@@ -323,3 +323,17 @@ test("actual reply correction runs ahead of downstream pricing, booking and outb
   assert.match(src.slice(draft, guard), /ai\.getReply\(modelReplyHistory, replyOptions\)/);
   assert.match(src.slice(guard, assembled), /parsedReply, modelReplyHistory, replyOptions/);
 });
+
+test("configured address is neutral factual data, not Malay or English prose", () => {
+  const config = require("../src/config/clinicConfig");
+  const old = config.branches;
+  const address = "Pusat Rawatan Kami Untuk Anda, Jalan Semak 12";
+  try {
+    config.branches = [{name:"PJ",address}];
+    assert.equal(clearReplyLanguageMismatch(address,"en"),false);
+    assert.equal(clearReplyLanguageMismatch("Here is our address: "+address,"en"),false);
+    assert.equal(clearReplyLanguageMismatch("Saya akan semak harga untuk anda. "+address,"en"),true);
+    assert.equal(clearReplyLanguageMismatch("我们在这里哦 😊 "+address,"zh"),false);
+    assert.equal(clearReplyLanguageMismatch("好的 😊 "+address,"en"),true);
+  } finally { config.branches = old; }
+});

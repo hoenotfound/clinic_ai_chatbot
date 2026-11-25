@@ -59,6 +59,7 @@ test("address is sourced from clinic settings, not an old Puchong location", () 
     });
     assert.ok(result, question);
     assert.ok(result.reply.includes(PJ[0].address));
+    assert.equal(result.verifiedAddress,PJ[0].address);
     assert.ok(result.reply.includes(part));
     assert.ok(!result.reply.includes("Puchong"));
   }
@@ -201,6 +202,7 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
       priceQuery:false, packageQuery:false, serviceQuery:false,
       serviceQuerySource:null,
       contact:{id:24,whatsapp_sender_id:sender},
+      console:{info:()=>{}},
       clinicConfig:{businessType:"tcm_clinic",
         businessName:"Neutro Sense TCM Centre",branches:PJ},
       isActiveSafetyConcern:()=>false, hasClinicalMediaRisk:()=>false,

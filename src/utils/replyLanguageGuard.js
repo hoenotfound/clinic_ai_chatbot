@@ -36,7 +36,12 @@ function protectedNames() {
     ...(clinicConfig.serviceAliases || []).flatMap(item => [item?.alias, item?.officialService]),
     clinicConfig.businessName,
   ].filter(value => typeof value === "string" &&
-    (value.match(CHINESE_TEXT) || []).length >= 3);
+    (value.match(CHINESE_TEXT) || []).length >= 3).concat(
+    // Configured addresses are factual identifiers, not conversational prose.
+    // Ignore only the full literal address, never individual street words.
+    (clinicConfig.branches || []).flatMap(branch => [branch?.address])
+      .filter(value => typeof value === "string" && value.trim().length >= 12)
+  );
 }
 
 function removeConfiguredNames(text, names = protectedNames()) {

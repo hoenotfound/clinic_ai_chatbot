@@ -3025,6 +3025,13 @@ async function processIncomingMessage(
         language: mediaLanguage,
       });
       if (verifiedLocation) {
+        // Shadow measurement only: keep the established factual fallback until
+        // live evidence shows when a model-generated location reply is safe.
+        const suppliedAddress = String(verifiedLocation.verifiedAddress || "").trim();
+        const draftHasConfiguredAddress = Boolean(suppliedAddress &&
+          String(reply || "").toLocaleLowerCase().includes(suppliedAddress.toLocaleLowerCase()));
+        console.info("[Location facts] contact=" + contact.id +
+          " draft_has_configured_address=" + draftHasConfiguredAddress);
         reply = verifiedLocation.reply;
         reviewContinuationTextOnly = true;
         priceQuery = false;

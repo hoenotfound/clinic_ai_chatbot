@@ -48,6 +48,7 @@ function confirmedSingleBranchLocationAnswer({
     (explicitEnglish || locale.startsWith("en"));
   return {
     kind: "verified_location",
+    verifiedAddress: address,
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
         + "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji."
