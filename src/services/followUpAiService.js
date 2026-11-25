@@ -524,6 +524,7 @@ async function generatePersonalizedFollowUp({
   triggerMessageId,
   stepNumber,
   treatmentInterest = null,
+  restrictTreatmentContext = false,
   stageName = null,
   branchName = null,
   appointmentStatus = null,
@@ -549,7 +550,9 @@ async function generatePersonalizedFollowUp({
     branchName,
     appointmentStatus,
   });
-  const recentServiceNames = recentConfiguredServiceNames(trimmed);
+  // Secondary recovery can explicitly reset the commercial topic. Keep the
+  // old turns available for safety/stop decisions, not treatment retrieval.
+  const recentServiceNames = restrictTreatmentContext ? [] : recentConfiguredServiceNames(trimmed);
   let avoidMessage = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
