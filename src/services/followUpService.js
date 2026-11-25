@@ -1531,29 +1531,29 @@ async function sendCandidate(candidate) {
         followUpMessageMode = "ai_fallback";
       } else {
         try {
-          const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
+          const mediaTreatment = targetedMediaService ||
+            followUpAiService.configuredVideoTreatment(selectedVideoKey);
+          const rawDecision = await followUpAiService.generatePersonalizedFollowUp({
             conversation: aiContext.messages,
             triggerMessageId: candidate.trigger_message_id,
             stepNumber: stepIndex,
             treatmentInterest:
               fallbackSelection.staffDiscussedFollowupTopic ||
               aiContext.lead?.treatment_interest || candidate.treatment_interest,
+            verifiedTreatment: fallbackSelection.staffDiscussedFollowupTopic || null,
+            staffDiscussedTreatment: Boolean(fallbackSelection.staffDiscussedFollowupTopic),
+            mediaTreatment,
+            mediaAttached: Boolean(selectedVideoKey || selectedImageUrl || selectedVoice),
             stageName: aiContext.lead?.stage_name,
             branchName: aiContext.lead?.branch_name,
             appointmentStatus: aiContext.lead?.appointment_status,
-            instruction: [
-              step.aiInstruction,
-              clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true && selectedVideoKey
-                ? "A verified treatment-specific video may accompany your text" +
-                    (targetedMediaService || targetedService ? " for " + (targetedMediaService || targetedService) : "") +
-                    ". If the current conversation no longer supports that topic, choose skip or human_review rather than pairing unrelated text with the video. Write a short, relevant, safe caption, grounded in the actual concern. Do not claim a guaranteed outcome. For Messenger/Instagram, do not say the video has already been delivered; the attachment is sent separately."
-                : "No video is attached to this message. Never claim to be sharing or attaching a video, image, testimonial clip or result photo.",
-            ].filter(Boolean).join("\n").slice(0, 1000),
+            instruction: step.aiInstruction,
             channel: candidate.channel || "whatsapp",
             contactId: candidate.contact_id,
             leadId: aiContext.lead?.id || null,
           });
 
+          const aiDecision = followUpAiService.validateFollowUpMediaDecision(rawDecision, mediaTreatment);
           if (aiDecision.action !== "send") {
             const suppressStaffPromotionReview =
               aiDecision.action === "human_review" &&
