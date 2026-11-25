@@ -10,22 +10,28 @@ const { serviceCandidates, strongServiceMatchesInText } = require("../utils/conv
 // Match the actual configured asset, not a CRM label or a guessed filename.
 // A default/general video has no asserted treatment. Shared/ambiguous keys
 // cannot be represented as a single verified treatment.
-function configuredVideoTreatment(key, config = clinicConfig) {
+function configuredVideoTreatment(key, config = clinicConfig, preferredTreatment = null) {
   if (!key) return null;
   const base = config.automatedFollowUp || {};
   const names = new Set();
+  let mapped = false;
   for (const step of [base, ...(base.additionalSteps || [])]) {
     for (const entry of step?.serviceOverrides || []) {
       if (entry?.videoKey !== key) continue;
+      mapped = true;
       const name = canonicalConfiguredService(entry.serviceName, config.services, config.serviceAliases);
       if (name) names.add(name);
     }
   }
-  return names.size === 1 ? [...names][0] : null;
+  if (!mapped) return null; // ordinary general attachment
+  if (names.size === 1) return [...names][0];
+  const preferred = canonicalConfiguredService(preferredTreatment, config.services, config.serviceAliases);
+  // Empty string means treatment-specific but unresolved, NOT general.
+  return preferred && names.has(preferred) ? preferred : "";
 }
 
 function validateFollowUpMediaDecision(decision, mediaTreatment, config = clinicConfig) {
-  if (!mediaTreatment || decision?.action !== "send") return decision;
+  if (mediaTreatment == null || decision?.action !== "send") return decision;
   const expected = canonicalConfiguredService(mediaTreatment, config.services, config.serviceAliases);
   const actual = canonicalConfiguredService(decision.topic, config.services, config.serviceAliases);
   const named = strongServiceMatchesInText(decision.message, serviceCandidates(config.services, config.serviceAliases));
