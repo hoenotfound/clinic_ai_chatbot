@@ -192,6 +192,8 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
       marketingStopQuestion:null, urgentSafety:false,
       text:"你们的店是在哪？", reply:"我们的店在 Puchong。",
       channel:"whatsapp", mediaLanguage:"zh", reviewContinuationTextOnly:false,
+      rm68CampaignContinuationTextOnly:false, fixedAdFirstReply:null,
+      clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
       priceQuery:false, packageQuery:false, serviceQuery:false,
       serviceQuerySource:null,
       contact:{id:24,whatsapp_sender_id:sender},
