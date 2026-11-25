@@ -70,6 +70,7 @@ export default function Settings() {
   const { toasts, showToast, dismissToast } = useToasts();
 
   const notificationsItem = { id: "notifications", label: "Notifications", to: "/settings/notifications" };
+  const appearanceItem = { id: "appearance", label: "Appearance", to: "/settings/appearance" };
   const teamItem = permissions.manage_users
     ? { id: "team", label: "Team & Access", to: "/settings/team" }
     : null;
@@ -85,7 +86,7 @@ export default function Settings() {
   const advancedConfigItem = user?.role === "admin"
     ? { id: "advanced-config", label: "Advanced Config", to: "/settings/advanced-config" }
     : null;
-  const destinationItems = [notificationsItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
+  const destinationItems = [notificationsItem, appearanceItem, teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +212,10 @@ export default function Settings() {
             >
               {notificationsItem.label}
             </button>
+            <button type="button" onClick={() => navigate(appearanceItem.to)}
+              className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]">
+              {appearanceItem.label}
+            </button>
           </div>
 
           {teamItem && (
@@ -265,6 +270,7 @@ export default function Settings() {
               </optgroup>
               <optgroup label="Preferences">
                 <option value={notificationsItem.id}>{notificationsItem.label}</option>
+                <option value={appearanceItem.id}>{appearanceItem.label}</option>
               </optgroup>
               {teamItem && (
                 <optgroup label="Administration">

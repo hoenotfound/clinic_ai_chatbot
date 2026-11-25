@@ -1,0 +1,125 @@
+/* A single transparent overlay. The surrounding layer never captures input.
+   Existing thread headers, composer menus and modal dialogs stack above it. */
+.da-mascot-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+/* Critical delivery actions always win hit testing, even before the next
+   geometry measurement or while Dashy is being dragged across a message.
+   The message bubble is already a stacking context (z-10). */
+.wa-message-bubble:has([data-dashy-priority]) { z-index: 21; }
+.da-mascot-control {
+  position: absolute; display: block; border: 0; padding: 0; background: transparent;
+  cursor: grab; user-select: none; pointer-events: none;
+  transform: translate3d(var(--dashy-drag-x, 0px), var(--dashy-drag-y, 0px), 0);
+  opacity: .92; transition: opacity 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.da-mascot-hit {
+  position: absolute; inset: 0; pointer-events: auto; touch-action: none; cursor: grab;
+  /* Approximate the character silhouette while retaining an easy touch target. */
+  clip-path: ellipse(47% 46% at 50% 49%);
+}
+.da-mascot-control[data-dragging="true"] .da-mascot-hit { cursor: grabbing; }
+.da-mascot-control[data-dimmed="true"] { opacity: .42; }
+.da-mascot-control[data-minimized="true"] { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 50%; opacity: 1; box-shadow: 0 2px 8px color-mix(in srgb, var(--color-text) 18%, transparent); }
+.da-mascot-control[data-minimized="true"] .da-mascot-hit { cursor: pointer; clip-path: circle(50%); }
+.da-mascot-restore { position: absolute; right: -2px; bottom: -2px; display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); pointer-events: none; }
+.da-mascot-restore svg { width: 11px; height: 11px; }
+.da-mascot-control:hover, .da-mascot-control:focus-visible, .da-mascot-control[data-dragging="true"] { opacity: 1; }
+.da-mascot-hint {
+  position: absolute; pointer-events: none; box-sizing: border-box; padding: 8px;
+  border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface);
+  color: var(--color-text-muted); font-size: 11px; text-align: center;
+  box-shadow: 0 4px 14px #152b451a;
+}
+.da-mascot-control:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 16px; }
+.da-mascot-stage {
+  position: relative; display: block; width: 128px; aspect-ratio: 1;
+  flex-shrink: 0; pointer-events: none; user-select: none;
+}
+.da-mascot-control .da-mascot-stage { width: 100%; height: 100%; filter: drop-shadow(0 3px 4px color-mix(in srgb, var(--color-text) 18%, transparent)); }
+.da-mascot-menu {
+  position: absolute; pointer-events: auto; overflow: auto; overscroll-behavior: contain;
+  box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--color-surface); color: var(--color-text);
+  border: 1px solid var(--color-border); box-shadow: 0 12px 32px color-mix(in srgb, var(--color-text) 20%, transparent);
+  font-size: 14px;
+}
+.da-mascot-menu-title { display: flex; align-items: center; justify-content: space-between; font-weight: 700; padding: 2px 0 6px 8px; border-bottom: 1px solid var(--color-border); }
+.da-mascot-menu-title small { display: block; font-size: 11px; font-weight: 400; color: var(--color-text-muted); }
+.da-mascot-menu-title button { width: 44px; flex: 0 0 44px; justify-content: center; }
+.da-mascot-menu button { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 6px 8px; border-radius: 8px; }
+.da-mascot-menu button svg, .da-mascot-size svg { flex-shrink: 0; color: var(--color-text-muted); }
+.da-mascot-menu > button { width: 100%; text-align: left; }
+.da-mascot-menu button:hover { background: var(--color-bg); }
+.da-mascot-size { border: 0; padding: 6px 8px 8px; min-width: 0; margin: 0; }
+.da-mascot-size legend { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.da-mascot-size-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; border: 1px solid var(--color-border); padding: 3px; border-radius: 10px; background: var(--color-bg); }
+.da-mascot-size-options label { position: relative; display: grid; place-items: center; min-height: 44px; cursor: pointer; border-radius: 7px; font-size: 12px; }
+.da-mascot-size-options input { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.da-mascot-size-options label:focus-within { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.da-mascot-size-options .is-selected { background: var(--color-surface); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-primary); font-weight: 600; }
+.da-mascot-menu-separator { height: 1px; background: var(--color-border); margin: 4px 0; }
+.da-mascot-menu p { padding: 4px 8px; color: var(--color-text-muted); font-size: 11px; line-height: 1.4; }
+.da-mascot-outgoing { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; animation: da-mascot-fade-out 140ms ease-out both; }
+.da-mascot-entering { animation: da-mascot-fade-in 140ms ease-in both; }
+@keyframes da-mascot-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes da-mascot-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.da-mascot-drift { position: absolute; inset: 0; display: block; }
+.da-mascot-image {
+  display: block; width: 100%; height: 100%; object-fit: contain;
+  pointer-events: none; user-select: none;
+}
+.da-mascot-stage[data-mode="animated"][data-pose="idle"] .da-mascot-drift {
+  animation: da-mascot-idle 16s ease-in-out infinite;
+}
+.da-mascot-stage[data-mode="animated"][data-pose="roaming"] .da-mascot-drift {
+  animation: da-mascot-roam 2.2s ease-in-out 1;
+}
+.da-mascot-control .da-mascot-stage[data-pose="roaming"] .da-mascot-drift { animation: none; }
+.da-mascot-stage[data-mode="animated"][data-pose="greeting"] .da-mascot-drift,
+.da-mascot-stage[data-mode="animated"][data-pose="welcome"] .da-mascot-drift {
+  animation: da-mascot-greet 1.5s ease-in-out 1;
+}
+.da-mascot-stage[data-mode="animated"][data-pose="searching"] .da-mascot-drift,
+.da-mascot-stage[data-mode="animated"][data-pose="thinking"] .da-mascot-drift {
+  animation: da-mascot-consider 1.4s ease-in-out 1;
+}
+.da-mascot-stage[data-mode="animated"][data-pose="success"] .da-mascot-drift,
+.da-mascot-stage[data-mode="animated"][data-pose="confident"] .da-mascot-drift {
+  animation: da-mascot-celebrate 1.5s ease-in-out 1;
+}
+.da-mascot-stage[data-mode="animated"][data-pose="alert"] .da-mascot-drift,
+.da-mascot-stage[data-mode="animated"][data-pose="blocked"] .da-mascot-drift {
+  animation: da-mascot-notice 1.1s ease-in-out 1;
+}
+@keyframes da-mascot-idle {
+  0%, 8%, 30%, 100% { transform: translateY(0); }
+  18% { transform: translateY(-2px); }
+}
+@keyframes da-mascot-roam {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-7px, -3px) rotate(-3deg); }
+  70% { transform: translate(7px, -2px) rotate(3deg); }
+}
+@keyframes da-mascot-greet {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  30% { transform: translateY(-3px) rotate(-4deg); }
+  65% { transform: translateY(-1px) rotate(2deg); }
+}
+@keyframes da-mascot-consider {
+  0%, 100% { transform: rotate(0); }
+  40% { transform: rotate(-4deg); }
+}
+@keyframes da-mascot-celebrate {
+  0%, 100% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(-3px) scale(1.04); }
+  65% { transform: translateY(-1px); }
+}
+@keyframes da-mascot-notice {
+  0%, 100% { transform: rotate(0); }
+  35% { transform: rotate(-4deg); }
+  70% { transform: rotate(3deg); }
+}
+.da-mascot-stage[data-paused="true"] * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .da-mascot-stage * { animation: none !important; transform: none !important; }
+  .da-mascot-control { animation: none !important; transition: none; }
+}

@@ -60,7 +60,7 @@ test("known deep links load the SPA; invalid paths never send portal HTML", () =
   const handler = createPortalFallback("/tmp/test-portal-dist", {
     limiter: () => { limiterCalls++; return { limited: false, retryAfterSeconds: 300 }; },
   });
-  for (const route of ["/login", "/inbox", "/settings/team", "/tools/lead-distribution"]) {
+  for (const route of ["/login", "/inbox", "/settings/team", "/settings/appearance", "/tools/lead-distribution"]) {
     const res = responseRecorder();
     handler({ path: route, ip: "client" }, res);
     assert.equal(res.file, path.join("/tmp/test-portal-dist", "index.html"));
