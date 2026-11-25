@@ -8,6 +8,7 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 import InboxMascot from "../components/InboxMascot";
+import { classifyMascotEvent, nextMascotActivity } from "../utils/mascotActivity";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
 import WhatsAppTemplateModal from "../components/WhatsAppTemplateModal";
 import LeadAssignmentBadge, {
@@ -627,7 +628,7 @@ export default function Inbox() {
   const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [mascotActivity, setMascotActivity] = useState({ kind: "idle", sequence: 0 });
+  const [mascotActivity, setMascotActivity] = useState(null);
   const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
@@ -1231,12 +1232,12 @@ export default function Inbox() {
             )
           );
         }
-        // Cosmetic reaction only for identifiable activity in the open conversation.
+        // Cosmetic reaction only for identified activity in the open conversation.
         // Do not infer AI generation, bookings or customer activity from redacted events.
-        if (payload.contactId != null && Number(payload.contactId) === Number(selectedIdRef.current)) {
-          const kind = payload.deliveryStatus === "failed" ? "alert"
-            : payload.reason === "message" && payload.messageId != null ? "activity" : null;
-          if (kind) setMascotActivity(previous => ({ kind, sequence: previous.sequence + 1 }));
+        const mascotEvent = classifyMascotEvent(payload, selectedIdRef.current);
+        if (mascotEvent) {
+          const now = Date.now();
+          setMascotActivity(previous => nextMascotActivity(previous, mascotEvent, now));
         }
         if (payload.reason === "message_mutation") pendingMessageMutation = true;
         scheduleRefresh(payload.contactId ?? null, "unknown_conversation_event", {
@@ -1677,6 +1678,12 @@ export default function Inbox() {
         showToast(result.bookingSyncWarning, "warning");
       } else if (result?.bookingSynced) {
         showToast("Appointment confirmed and saved in Pipeline.", "success");
+        if (Number(selectedIdRef.current) === Number(contactId)) {
+          const now = Date.now();
+          setMascotActivity(previous => nextMascotActivity(previous, {
+            kind: "success", contactId: Number(contactId), key: "booking:" + (result.id ?? optimisticId),
+          }, now));
+        }
       }
       if (result?.delivery_unknown === true) {
         showToast(
@@ -2388,7 +2395,8 @@ function ConversationList({
       <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
         <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
-          <InboxMascot activity={mascotActivity} />
+          <InboxMascot activity={mascotActivity} selectedId={selectedId}
+            searching={Boolean(filters.query.trim()) && pageLoading} />
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {!conversations
               ? "Loading…"

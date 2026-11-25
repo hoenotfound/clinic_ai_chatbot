@@ -25,12 +25,18 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await page.goto("/inbox");
   const mascot = page.getByTestId("inbox-mascot");
   await expect(mascot).toBeVisible();
-  await expect.poll(() => mascot.locator("img").first().evaluate(img => img.naturalWidth)).toBe(220);
+  await expect.poll(() => mascot.locator("img").first().evaluate(img => img.naturalWidth)).toBe(160);
   await expect(mascot.locator(".da-mascot-drift")).toHaveCSS("animation-name", "none");
   const search = page.getByRole("searchbox", { name: /Search by name/ });
   await search.fill("test");
   await expect(search).toHaveValue("test");
   await page.goto("/settings/appearance");
+  const preview = page.getByLabel("Preview Dashy expression");
+  for (const pose of ["greeting", "roaming", "searching", "thinking", "success", "alert", "welcome", "blocked", "confident", "idle"]) {
+    await preview.selectOption(pose);
+    await expect(page.locator(".da-mascot-stage")).toHaveAttribute("data-pose", pose);
+    await expect.poll(() => page.locator(".da-mascot-image").evaluate(img => img.naturalWidth)).toBe(160);
+  }
   await page.getByRole("radio", { name: /Stationary/ }).check();
   await page.goto("/inbox");
   await expect(mascot.locator(".da-mascot-stage")).toHaveAttribute("data-mode", "stationary");
