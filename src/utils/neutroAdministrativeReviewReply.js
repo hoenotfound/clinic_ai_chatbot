@@ -44,7 +44,7 @@ function administrativeReviewReply({
   // recovery. A broader treatment or medical question stays in normal review.
   const campaign = (isStandalonePriceQuestion(message) ||
     isCampaignAvailabilityQuestion(message) || mixedLocationPrice)
-    ? campaignContextReply({ history, customerText: message, now })
+    ? campaignContextReply({ history, customerText: message, now, language: replyLanguage })
     : null;
   if (campaign) return { kind: "verified_rm68_campaign",
     reply: withRequestedLocation(campaign) };
