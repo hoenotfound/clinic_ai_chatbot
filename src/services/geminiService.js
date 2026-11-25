@@ -89,7 +89,7 @@ const followUpReplySchema = {
   required: ["action", "message", "reason", "topic"],
 };
 
-function buildGeminiRequest(messages, options, resolvedModel) {
+function buildGeminiRequest(messages, options, resolvedModel, requestControl = {}) {
   const promptOptions = options.surface === "conversation"
     ? {
         ...options,
@@ -98,8 +98,9 @@ function buildGeminiRequest(messages, options, resolvedModel) {
         }),
       }
     : options;
-  const thinkingConfig = buildThinkingConfig(resolvedModel);
   const isFlashLite = String(resolvedModel || "").trim().toLowerCase() === "gemini-3.5-flash-lite";
+  const correctiveRetry = isFlashLite && requestControl.correctiveRetry === true;
+  const thinkingConfig = correctiveRetry ? { thinkingLevel: "minimal" } : buildThinkingConfig(resolvedModel);
   const schema = isFlashLite
     ? options.surface === "follow_up" ? followUpReplySchema
       : !options.surface || options.surface === "conversation" ? conversationReplySchema : null
@@ -110,8 +111,10 @@ function buildGeminiRequest(messages, options, resolvedModel) {
       model: resolvedModel,
       contents: buildContents(messages),
       config: {
-        systemInstruction: buildSystemPrompt(promptOptions),
-        maxOutputTokens: isFlashLite ? 2048 : 1200,
+        systemInstruction: buildSystemPrompt(promptOptions) + (correctiveRetry
+          ? "\n\nOUTPUT RECOVERY: Return one complete valid JSON object matching the existing contract. Keep the customer-facing text concise; use null or empty fields only where allowed. Do not omit required fields or weaken any business, safety or handoff rule."
+          : ""),
+        maxOutputTokens: isFlashLite ? (correctiveRetry ? 3072 : 2048) : 1200,
         responseMimeType: "application/json",
         ...(schema ? { responseJsonSchema: schema } : {}),
         ...(thinkingConfig ? { thinkingConfig } : {}),
@@ -142,7 +145,7 @@ async function getReply(
     throw err;
   }
 
-  const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel);
+  const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel, requestControl);
   const ai = new GoogleGenAI({ apiKey: resolvedKey });
   const response = await generateGeminiContent(ai, request, {
     purpose,
