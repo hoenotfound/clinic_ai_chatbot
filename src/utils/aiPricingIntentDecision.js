@@ -678,7 +678,10 @@ function staleCommercialIntent({customerText,conversationHistory=[],services=[],
     const t=turns[i], priorAt=t?.pricingCreatedAtMs;
     if(!Number.isFinite(priorAt)||priorAt>at||at-priorAt>RAPID_PRICE_BURST_MS ||
         isVerifiedStaffTurn(t)) break;
-    if(t.role==="user" && requested(pricingMessageText(t))) return true;
+    // Require an actual earlier customer price request, not the model's
+    // inherited offer flag or an isolated package mention.
+    if(t.role==="user" && (hasCurrentPriceAmountRequest(pricingMessageText(t)) ||
+        isStandalonePriceQuestion(pricingMessageText(t)))) return true;
   }
   return false;
 }
