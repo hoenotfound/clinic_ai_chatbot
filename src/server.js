@@ -93,14 +93,14 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateReply, selectCampaignReply, campaignDay,
+const { campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateContext, alternativeDateReply, selectCampaignReply, campaignDay,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
+const { correctReplyLanguage, clearReplyLanguageMismatch } = require("./utils/replyLanguageGuard");
 const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -2788,13 +2788,15 @@ async function processIncomingMessage(
     // and availability. Keep earlier clinical reviews intact, record this
     // separate inbound as an information review, and acknowledge safely.
     if ((!flagged || (reviewRequired && reviewType === "information")) &&
-        !bookingReady && !keywordReason && !urgentSafety && !marketingStopQuestion &&
+        !keywordReason && !urgentSafety && !marketingStopQuestion &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
         hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory) &&
-        alternativeDateRequest(text) && campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage})) {
+        alternativeDateContext(commercialHistory,text,Date.parse(savedInbound.created_at)||Date.now()) &&
+        (alternativeDateRequest(text,Date.parse(savedInbound.created_at)||Date.now()) || hasExplicitPriceRequest(text) || bookingReady) &&
+        campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage})) {
       flagged = true;
       reviewRequired = true;
       reviewType = "information";
@@ -3123,9 +3125,10 @@ async function processIncomingMessage(
       }
     }
     // Campaign-specific final language validation, including downstream overrides.
-    if (!flagged && !bookingReady && rm68CampaignContinuationTextOnly &&
-        require("./utils/replyLanguageGuard").clearReplyLanguageMismatch(reply,mediaLanguage)) {
-      reply = campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
+    if (!flagged && !bookingReady && (rm68CampaignContinuationTextOnly || reviewContinuationTextOnly || fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") &&
+        clearReplyLanguageMismatch(reply,mediaLanguage)) {
+      reply = (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026" ? fixedAdFirstReply.reply : null) ||
+        campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
         (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
           mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
     }
