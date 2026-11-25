@@ -480,7 +480,7 @@ test("rapid Pulse Wave concern messages must not inherit an earlier pricing requ
    promotions:[...promotions,promo(name,388)],conversationHistory:prior,
  });
  assert.deepEqual(resolveModelLedPricingDecision(first)?.prices.map(p=>p.price),["RM388"]);
- for(const current of ["排毒全身","减肥","whole body","weight loss","kurus badan","肚子，腿","会","yes"]){
+ for(const current of ["排毒全身","减肥","whole body","weight loss","kurus badan","肚子，腿","会","yes","全身排毒吗？","想了解减肥","肚子呢？","What areas does it cover?","Is this for the whole body?"]){
    for(const afterQuote of [false,true]){
      const history=[...prior,...(afterQuote?[quoted]:[]),
        turn("user","排毒全身",2000),turn("user",current,0)];
@@ -496,10 +496,31 @@ test("rapid Pulse Wave concern messages must not inherit an earlier pricing requ
      assert.equal(media,null,current);
    }
  }
- for(const current of ["多少钱？","一般是怎么算?","What would I be paying","Berapa perlu saya sediakan"]){
+ // Fresh independently evidenced price questions still work in the burst.
+ for(const current of ["多少钱？","How much for two?","Berapa harga?"]){
    const a={...first,customerText:current,conversationHistory:[...prior,quoted,turn("user",current,0)]};
    assert.equal(staleCommercialIntent(a),false,current);
    assert.deepEqual(resolveModelLedPricingDecision(a)?.prices.map(p=>p.price),["RM388"],current);
+ }
+ // Do not impose a grammar or monetary-keyword requirement on the normal
+ // AI-led conversation outside this narrow rapid-inbound exception.
+ const older=[...prior,quoted].map(t=>({...t,pricingCreatedAtMs:t.pricingCreatedAtMs-20_000}));
+ for(const current of ["一般是怎么算?","What would I be paying","I'd like to know what I'd be paying","Berapa perlu saya sediakan","Total for both","And for two people"]){
+   const a={...first,customerText:current,conversationHistory:[...older,turn("user",current,0)]};
+   assert.equal(staleCommercialIntent(a),false,current);
+   assert.deepEqual(resolveModelLedPricingDecision(a)?.prices.map(p=>p.price),["RM388"],current);
+ }
+ // No previous customer price request: an assistant quote alone does not
+ // invoke the new safeguard (e.g. an automated promotion or old caption).
+ const onlyBot={...first,customerText:"减肥",
+   conversationHistory:[...prior.slice(0,2),quoted,turn("user","减肥",0)]};
+ assert.equal(staleCommercialIntent(onlyBot),false);
+ // The observed 7-second burst is in scope; a 15-second-old request is the
+ // upper boundary. Beyond it no new pricing restriction applies.
+ for(const age of [7_000,15_000,15_001,60_000]){
+   const current="减肥";
+   const history=[turn("user",prior.at(-1).content,age),turn("user",current,0)];
+   assert.equal(staleCommercialIntent({...first,customerText:current,conversationHistory:history}),age<=15_000);
  }
  const noPrior={...first,customerText:"我要知道你们的收费标准",
    conversationHistory:[...prior.slice(0,2),turn("user","我要知道你们的收费标准",0)]};
@@ -513,4 +534,12 @@ test("an actual unanswered price clarification is not stale commercial intent",(
    turn("assistant","请问你想了解哪一项疗程的价格呢？",1000),turn("user","3D",0)];
  assert.equal(staleCommercialIntent(a),false);
  assert.equal(resolveModelLedPricingDecision(a)?.treatment,"3D 小颜术");
+});
+
+test("rapid guard leaves verified legacy pricing exceptions and Shadow observational",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ assert.match(source,/staleModelPricing = aiPricingEnabled && staleIntent && !legacyPricingApproval\.decision/u);
+ assert.match(source,/const selectedPricingApproval = staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
+ assert.match(source,/if \(staleModelPricing\) \{[\s\S]*?priceQuery = false;\s*packageQuery = false;\s*modelPricingStage = null;/u);
 });
