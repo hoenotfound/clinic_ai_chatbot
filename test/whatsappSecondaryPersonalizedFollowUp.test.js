@@ -60,3 +60,21 @@ test("20h AI fails closed on history anchor, later customer message, AI absence,
   candidate,env,database:db().database,
   generate:async()=>({action:"send",message:"可以安排体态评估了解需求"})})).ok,false);
 });
+
+test("verified recovery reset restricts AI treatment retrieval without discarding earlier conversation",async()=>{
+ const x=db({rows:[
+  {id:100,role:"user",content:"I want to ask about face alignment",lead:{id:50,treatment_interest:"骨盆调理"}},
+  {id:99,role:"assistant",content:"Earlier pelvic care discussion",lead:null},
+ ]});
+ const result=await ai.createPersonalized20h({env,
+  candidate:{...candidate,recovery_topic_reset:true,adFollowUpPolicy:{treatment:"3D 小颜术"}},
+  database:x.database,generate:async payload=>{
+   assert.equal(payload.restrictTreatmentContext,true);
+   assert.equal(payload.treatmentInterest,"3D 小颜术");
+   assert.equal(payload.conversation.length,2);
+   assert.match(payload.instruction,/Earlier conversation is available only for clinical safety/u);
+   return {action:"skip",message:""};
+  }});
+ assert.equal(result.action,"skip");
+ assert.equal(x.got.length,1);
+});
