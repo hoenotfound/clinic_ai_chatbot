@@ -68,7 +68,15 @@
   pointer-events: none; user-select: none;
 }
 .da-mascot-stage[data-mode="animated"][data-pose="idle"] .da-mascot-drift {
-  animation: da-mascot-idle 16s ease-in-out infinite;
+  /* Move the artwork only: the saved position and touch target remain stable. */
+  --dashy-hover-height: -6px;
+  animation: da-mascot-idle 3.8s ease-in-out infinite;
+}
+@media (max-width: 1023px), (pointer: coarse) {
+  .da-mascot-stage[data-mode="animated"][data-pose="idle"] .da-mascot-drift {
+    --dashy-hover-height: -4px;
+    animation-duration: 4s;
+  }
 }
 .da-mascot-stage[data-mode="animated"][data-pose="roaming"] .da-mascot-drift {
   animation: da-mascot-roam 2.2s ease-in-out 1;
@@ -91,8 +99,8 @@
   animation: da-mascot-notice 1.1s ease-in-out 1;
 }
 @keyframes da-mascot-idle {
-  0%, 8%, 30%, 100% { transform: translateY(0); }
-  18% { transform: translateY(-2px); }
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(var(--dashy-hover-height, -6px)) rotate(1deg); }
 }
 @keyframes da-mascot-roam {
   0%, 100% { transform: translate(0, 0); }

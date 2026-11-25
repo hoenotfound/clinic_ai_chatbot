@@ -100,10 +100,10 @@ export function dashyMenuPosition(point, size, area, obstacles, desiredWidth = 2
 
 // Choose a bounded flight rectangle. Every point along the flight (including
 // between keyframes) remains inside this rectangle and outside protected UI.
-export function dashyFlight(point, bounds, size, obstacles) {
+export function dashyFlight(point, bounds, size, obstacles, compact = false) {
   if (!point) return { x: 0, y: 0 };
-  const dxs = [-72, 72, -44, 44, -24, 24, 0];
-  const dys = [-38, 38, -20, 20, 0];
+  const dxs = compact ? [-35, 35, -22, 22, -12, 12, 0] : [-72, 72, -44, 44, -24, 24, 0];
+  const dys = compact ? [-20, 20, -12, 12, 0] : [-38, 38, -20, 20, 0];
   let best = { x: 0, y: 0 }, distance = 0;
   for (const dx of dxs) for (const dy of dys) {
     const end = { x: point.x + dx, y: point.y + dy };
