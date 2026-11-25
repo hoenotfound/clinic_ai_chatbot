@@ -2,7 +2,8 @@
 
 const { confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion,
   appendRequestedBusinessFacts } = require("./verifiedPricingBusinessFacts");
-const { campaignContextReply, isCampaignAvailabilityQuestion } =
+const { detectMessageLanguage, detectExplicitLanguagePreference } = require("./chatLanguage");
+const { campaignContextReply, isCampaignAvailabilityQuestion, hasCampaignConversation, stillDiscussingCampaign } =
   require("./neutroBreastRm68Campaign");
 const { planNeutroReviewContinuation } = require("./neutroReviewContinuation");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
@@ -25,10 +26,12 @@ function administrativeReviewReply({
   if (!message || message.length > 150) return null;
   // A customer can switch languages between messages. Respect the latest
   // explicit administrative question rather than a stale ad language.
-  const replyLanguage = /[\u3400-\u9FFF]/u.test(message) ? "zh"
+  const ordinaryReplyLanguage = /[\u3400-\u9FFF]/u.test(message) ? "zh"
     : /\b(?:alamat|boleh\s+tahu|berapa\s+harga|dimana|di\s+mana|kat\s+mana|harga)\b/iu.test(message) ? "ms"
       : /\b(?:where|address|how\s+much|price|cost|clinic\s+location)\b/iu.test(message)
         ? "en" : language;
+  const campaignActive = hasCampaignConversation(history) && stillDiscussingCampaign(history);
+  const replyLanguage = campaignActive ? (detectExplicitLanguagePreference(message) || detectMessageLanguage(message) || language || ordinaryReplyLanguage) : ordinaryReplyLanguage;
   const mixedLocationPrice = isBusinessLocationQuestion(message) &&
     hasExplicitPriceRequest(message);
   const withRequestedLocation = (answer) => mixedLocationPrice
