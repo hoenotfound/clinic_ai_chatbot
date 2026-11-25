@@ -63,11 +63,15 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
 
 test("Dashy reacts to selected-thread messages, failures and verified booking sends", async ({ page }) => {
   await page.addInitScript(() => {
+    const sources = new Set();
+    window.dashyEmit = payload => {
+      for (const source of sources) source.listeners.get("conversation_changed")?.({ data: JSON.stringify(payload) });
+    };
     class StubEventSource {
-      constructor() { this.listeners = new Map(); window.dashyEventSource = this; setTimeout(() => this.onopen?.(), 0); }
+      constructor() { this.listeners = new Map(); sources.add(this); setTimeout(() => this.onopen?.(), 0); }
       addEventListener(name, fn) { this.listeners.set(name, fn); }
       removeEventListener(name) { this.listeners.delete(name); }
-      close() {}
+      close() { sources.delete(this); }
     }
     window.EventSource = StubEventSource;
   });
@@ -76,8 +80,8 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   } };
   const now = new Date().toISOString();
   const contact = { contact_id: 201, name: "Dashy Customer", whatsapp_profile_name: "Dashy Customer",
-    whatsapp_number: "60121234567", channel: "whatsapp", mode: "human",
-    last_message_at: now, latest_inbound_at: now, last_message: "Hello", last_message_role: "user",
+    whatsapp_number: "60121234567", channel: "whatsapp", mode: "human", takeover_by: user.username, takeover_at: now,
+    last_message_at: now, latest_inbound_at: now, latest_customer_message_at: now, last_message: "Hello", last_message_role: "user",
     is_unread: false, has_unreplied: false, needs_attention: false };
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
@@ -93,6 +97,7 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
   });
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install();
   await page.goto("/inbox?contact=201");
   const thread = page.getByRole("region", { name: "Conversation with Dashy Customer" });
   await expect(thread).toBeVisible();
@@ -101,9 +106,7 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   await expect(mascot).toBeVisible();
   const stage = mascot.locator(".da-mascot-stage");
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  const emit = payload => page.evaluate(payload => {
-    window.dashyEventSource.listeners.get("conversation_changed")?.({ data: JSON.stringify(payload) });
-  }, payload);
+  const emit = payload => page.evaluate(payload => window.dashyEmit(payload), payload);
   await emit({ contactId: 201, reason: "message", messageId: 101 });
   await expect(stage).toHaveAttribute("data-pose", "greeting");
   await emit({ contactId: 201, deliveryStatus: "failed", messageId: 102 });
@@ -112,10 +115,20 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   await expect(stage).toHaveAttribute("data-pose", "alert");
   await expect(stage).toHaveAttribute("data-pose", "idle");
   await emit({ contactId: 201, deliveryStatus: "failed", messageId: 102 });
+  await page.clock.runFor(300);
   await expect(stage).toHaveAttribute("data-pose", "idle");
   await thread.locator("textarea").fill("Appointment confirmed");
   await thread.getByRole("button", { name: "Send message" }).click();
   await expect(stage).toHaveAttribute("data-pose", "success");
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  // A recent staff action postpones roaming even when the original timer expires.
+  await page.clock.fastForward(20000);
+  await page.evaluate(() => document.dispatchEvent(new Event("keydown")));
+  await page.clock.fastForward(10000);
+  await expect(stage).toHaveAttribute("data-pose", "idle");
+  await page.clock.fastForward(17000);
+  await expect(stage).toHaveAttribute("data-pose", "roaming");
+  await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
   await expect(stage).toHaveAttribute("data-pose", "idle");
   const mobile = await page.evaluate(() => innerWidth < 1024);
   if (mobile) {
