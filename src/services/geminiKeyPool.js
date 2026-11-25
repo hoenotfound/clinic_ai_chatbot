@@ -530,8 +530,15 @@ async function runWithGeminiKeys(
           throw err;
         }
         // A corrective attempt is the final recovery generation, not the start
-        // of another credential sweep.
-        if (correctiveRetry) throw err;
+        // of another credential sweep. Still record real credential/provider
+        // failures so future turns respect quota and authentication cooldowns.
+        // Invalid output is handled above; a timeout is not a credential fault.
+        if (correctiveRetry) {
+          if (outcome.failureKind !== "timeout") {
+            recordCandidateHealth(candidate, outcome, { env, persist: persistHealth, now });
+          }
+          throw err;
+        }
 
         // A customer-reply timeout says the generation path was too slow, not
         // that this API key is unhealthy. Never poison key health for it. When
