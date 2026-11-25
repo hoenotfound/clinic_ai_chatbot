@@ -315,8 +315,27 @@ function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.
 
 // One campaign-specific boundary for text, booking and media. A verified
 // new service selection exits the old event even if Gemini reused its facts.
+function campaignHasVerifiedNewService({history,customerText,services,serviceAliases,resolveService}={}) {
+  if(typeof resolveService!=="function")return false;
+  const prior=priorCampaignTurns(history,customerText);
+  const opener=prior.findLastIndex(t=>t?.role==="assistant"&&isCampaignOpening(t.content));
+  if(opener<0)return false;
+  return [...prior.slice(opener+1).filter(t=>t?.role==="user").map(t=>t.content),customerText].some(value=>{
+    const text=String(value||"");
+    if(isOtherTreatmentQuery(text))return true;
+    // Breast-event wording also mentions pulse wave and moxibustion.
+    // Those mentions alone do not establish a separately purchased service.
+    const selected=resolveService(text,services,serviceAliases);
+    if(!selected?.name || /(?:胸|乳|breast|payudara|\bRM\s*68\b)/iu.test(text))return false;
+    if(/^(?:脉冲波调理|艾灸|草药胸部疏通乳腺护理)$/u.test(selected.name)) {
+      const standalone=normalize(text)===normalize(selected.name);
+      return standalone || isOtherTreatmentQuery(text);
+    }
+    return true;
+  });
+}
 function campaignContinuationPolicy({history,customerText,reply,now=Date.now(),verifiedNewService=false}={}) {
-  if(verifiedNewService || !activeCampaignThread(history,customerText))return null;
+  if(verifiedNewService || !activeCampaignThread(history,customerText) || hasClinicalMediaRisk(customerText))return null;
   const answer=campaignContextReply({history,customerText,now});
   const corrected=answer||guardCampaignPriceConflicts({history,customerText,reply,now});
   const scope=campaignDateScope(history,customerText,now);
@@ -397,6 +416,6 @@ module.exports = {
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
   campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement,
-  activeCampaignThread, campaignDateScope, campaignContinuationPolicy,
+  activeCampaignThread, campaignDateScope, campaignContinuationPolicy, campaignHasVerifiedNewService,
   candidateIsCampaign, campaignFollowUp, recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
 };
