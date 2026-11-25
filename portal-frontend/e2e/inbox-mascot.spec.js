@@ -43,6 +43,8 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await expect(page.getByRole("button", { name: "Pause animation" })).toHaveCount(0);
   await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - before.x)).toBeGreaterThan(20);
   const moved = await mascot.boundingBox();
+  // Transparent corners must not consume clicks; the center remains draggable.
+  expect(await mascot.evaluate(el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.left + 2, r.top + 2)); })).toBe(false);
   await page.reload();
   await expect(mascot).toBeVisible();
   await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - moved.x)).toBeLessThan(2);
@@ -55,6 +57,32 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
   await page.getByRole("button", { name: "Reset position" }).click();
   await expect(page.getByRole("button", { name: "Pause animation" })).toHaveCount(0);
+  // Chromium touch events are real browser-dispatched pointer events, not synthetic React calls.
+  if (await page.evaluate(() => navigator.maxTouchPoints > 0)) {
+    const original = await mascot.boundingBox();
+    const client = await page.context().newCDPSession(page);
+    try {
+      const x = Math.round(original.x + original.width / 2), y = Math.round(original.y + original.height / 2);
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 60, y: y - 20 }] });
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - original.x)).toBeGreaterThan(20);
+      await expect(page.getByRole("group", { name: "Dashy controls" })).toHaveCount(0);
+    } finally { await client.detach(); }
+    const viewport = page.viewportSize();
+    await page.setViewportSize({ width: viewport.height, height: viewport.width });
+    await expect(mascot).toBeVisible();
+    await expect.poll(async () => { const r = await mascot.boundingBox(); return r.x >= 0 && r.y >= 0 && r.x + r.width <= viewport.height + 1 && r.y + r.height <= viewport.width + 1; }).toBe(true);
+    await page.setViewportSize(viewport);
+    // Model a software keyboard reducing visualViewport without resizing the layout viewport.
+    await page.evaluate(() => {
+      const fake = new EventTarget(); Object.assign(fake, { offsetLeft: 0, offsetTop: 0, width: innerWidth, height: Math.floor(innerHeight * .6) });
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: fake });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await expect.poll(async () => { const r = await mascot.boundingBox(); return !r || r.y + r.height <= await page.evaluate(() => visualViewport.height + 1); }).toBe(true);
+    await page.evaluate(() => { delete window.visualViewport; window.dispatchEvent(new Event("resize")); });
+  }
   await page.goto("/settings/appearance");
   const preview = page.getByLabel("Preview Dashy expression");
   for (const pose of ["greeting", "roaming", "searching", "thinking", "success", "alert", "welcome", "blocked", "confident", "idle"]) {

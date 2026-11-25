@@ -25,3 +25,26 @@ test("Dashy moves away from protected controls and hides if no safe space", asyn
   assert.deepEqual(safeDashyPoint({ x: 120, y: 250 }, b, 80, obstacles), { x: 120, y: 250 });
   assert.equal(safeDashyPoint({ x: 0, y: 0 }, b, 80, [{ left: 0, right: 400, top: 0, bottom: 600 }]), null);
 });
+
+test("Dashy respects a panned or keyboard-reduced visual viewport", async () => {
+  const { dashyVisibleArea, offsetDashyBounds } = await load();
+  const area = dashyVisibleArea({ left: 0, top: 0, width: 390, height: 844 },
+    { offsetLeft: 10, offsetTop: 40, width: 360, height: 360 });
+  assert.deepEqual(area, { left: 10, top: 40, width: 360, height: 360 });
+  assert.deepEqual(offsetDashyBounds(area, 65), { left: 22, top: 52, right: 293, bottom: 323 });
+});
+test("Dashy menu avoids protected controls and flight stays inside its safe rectangle", async () => {
+  const { dashyMenuPosition, dashyFlight, dashyBounds } = await load();
+  const area = { left: 0, top: 0, width: 390, height: 600 };
+  const obstacles = [{ left: 0, right: 390, top: 0, bottom: 120 }, { left: 0, right: 390, top: 480, bottom: 600 }];
+  const p = { x: 300, y: 300 }, size = 65;
+  const menu = dashyMenuPosition(p, size, area, obstacles);
+  assert.ok(menu);
+  assert.ok(menu.top >= 128 && menu.top + menu.maxHeight <= 472);
+  assert.ok(menu.left + menu.width <= p.x - 8 || menu.top + menu.maxHeight <= p.y - 8 || menu.top >= p.y + size + 8);
+  const flight = dashyFlight(p, dashyBounds(390, 600, size), size, obstacles);
+  assert.ok(Math.abs(flight.x) >= 24);
+  assert.ok(p.x + flight.x >= 12 && p.x + flight.x + size <= 378);
+  assert.ok(Math.min(p.y, p.y + flight.y) >= 128 && Math.max(p.y, p.y + flight.y) + size <= 472);
+  assert.equal(dashyMenuPosition(p, size, { ...area, height: 70 }, obstacles), null);
+});
