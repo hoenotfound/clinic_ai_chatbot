@@ -82,9 +82,12 @@ const HINT_KEY = "da.inbox.dashy.hint.v1";
 function hasSeenHint() { try { return localStorage.getItem(HINT_KEY) === "1"; } catch { return false; } }
 function useWorkspace(hostRef, layoutKey, enabled) {
   const [space, setSpace] = useState(EMPTY);
-  useLayoutEffect(() => {
+  // A child layout effect can run before the parent host ref is attached.
+  // The passive effect runs after attachment, including an empty Inbox.
+  useEffect(() => {
     const host = hostRef.current;
     if (!host || !enabled) return;
+    const observedViewport = window.visualViewport;
     let frame = 0;
     let nodes = [];
     function measure() {
@@ -117,13 +120,13 @@ function useWorkspace(hostRef, layoutKey, enabled) {
     });
     mutation.observe(host, { childList: true, subtree: true });
     window.addEventListener("resize", schedule);
-    window.visualViewport?.addEventListener("resize", schedule);
-    window.visualViewport?.addEventListener("scroll", schedule);
+    observedViewport?.addEventListener("resize", schedule);
+    observedViewport?.addEventListener("scroll", schedule);
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); mutation.disconnect();
       window.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("scroll", schedule);
+      observedViewport?.removeEventListener("resize", schedule);
+      observedViewport?.removeEventListener("scroll", schedule);
     };
   }, [hostRef, layoutKey, enabled]);
   return space;
@@ -184,7 +187,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
 
   useEffect(() => {
     if (!renderable) return;
-    const isEditing = el => Boolean(el?.matches("input, textarea, select, [contenteditable=true]") && hostRef.current?.contains(el));
+    const isEditing = el => Boolean(el instanceof Element && el.matches("input, textarea, select, [contenteditable=true]") && hostRef.current?.contains(el));
     const focusIn = event => setEditing(isEditing(event.target));
     const focusOut = event => setEditing(isEditing(event.relatedTarget));
     document.addEventListener("focusin", focusIn);
@@ -234,6 +237,7 @@ export default function InboxMascot({ hostRef, activity, selectedId, searching: 
     const d = drag.current;
     if (!d) return;
     drag.current = null;
+    ignoreClick.current = true;
     cancelAnimationFrame(dragFrame.current); dragFrame.current = 0;
     setDragging(false);
     const el = controlRef.current;
