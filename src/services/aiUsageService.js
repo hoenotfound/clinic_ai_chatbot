@@ -208,6 +208,20 @@ async function generateGeminiContent(
     } catch (error) {
       rejected = error;
       disposition = "rejected_invalid_output";
+      // Log only a known provider finish code and numerical usage. Never log
+      // the generated text, customer identity, prompt or credentials.
+      const reason = String(response?.candidates?.[0]?.finishReason || "");
+      const knownReasons = new Set(["STOP", "MAX_TOKENS", "SAFETY", "RECITATION",
+        "LANGUAGE", "OTHER", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+        "MALFORMED_FUNCTION_CALL", "FINISH_REASON_UNSPECIFIED"]);
+      const usage = usageFromResponse(response);
+      console.warn("[Gemini rejected response]", {
+        purpose, model,
+        finishReason: knownReasons.has(reason) ? reason : "UNKNOWN",
+        outputTokens: usage.outputTokens,
+        thinkingTokens: usage.thinkingTokens,
+        maxOutputTokens: tokenCount(request?.config?.maxOutputTokens),
+      });
     }
   }
   // A completed provider call is still potentially billable even if its reply

@@ -375,3 +375,34 @@ test("an SDK abort with no provider usage metadata is never logged as accepted",
   assert.equal(recorded[0].failureKind,"timeout");
   assert.equal(recorded[0].promptTokens,0);
 });
+
+test("MAX_TOKENS reply is rejected by the real router validator and its provider usage is retained", async () => {
+  const geminiService = require("../src/services/geminiService");
+  const { runGeminiModelAttempt } = require("../src/services/aiService");
+  const original = geminiService.getReply;
+  const recorded = [];
+  const response = {
+    text: '{"reply":"Hello","outcome":"normal"}',
+    candidates: [{ finishReason: "MAX_TOKENS" }],
+    usageMetadata: { promptTokenCount: 15131, candidatesTokenCount: 119, thoughtsTokenCount: 1077, totalTokenCount: 16327 },
+  };
+  try {
+    geminiService.getReply = async (_m, _o, _k, model, control) => {
+      const result = await generateGeminiContent(
+        { models: { async generateContent() { return response; } } },
+        { model, config: { maxOutputTokens: 1200 } },
+        { database: {}, repository: { async recordAiUsage(e) { recorded.push(e); } }, validateResponse: control.validateResponse }
+      );
+      return result.text;
+    };
+    await assert.rejects(() => runGeminiModelAttempt([], { surface: "conversation" }, "fake-key", "gemini-3.5-flash-lite", { overloadRetryCount: 0 }),
+      err => err.code === "AI_OUTPUT_TRUNCATED");
+    await flushPromises();
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].status, "success");
+    assert.equal(recorded[0].responseDisposition, "rejected_invalid_output");
+    assert.equal(recorded[0].promptTokens, 15131);
+    assert.equal(recorded[0].outputTokens, 119);
+    assert.equal(recorded[0].thinkingTokens, 1077);
+  } finally { geminiService.getReply = original; }
+});
