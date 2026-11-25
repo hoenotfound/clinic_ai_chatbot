@@ -333,7 +333,7 @@ function campaignClaimsSafe(value, now=Date.now()) {
   // Unverified slot, clinical equipment, guarantees and unrelated prices
   // cannot be authorised by a fluent answer.
   if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(text))return false;
-  if(amounts.length && (!dates.length||/\b(?:any day|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|also (?:available|valid)|anytime|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
+  if(amounts.length && (!dates.length||/\b(?:any day|any date|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|also (?:available|valid)|anytime|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
   const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
   for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
     const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
@@ -365,8 +365,9 @@ function guardCampaignPriceConflicts({history,customerText,reply,now=Date.now(),
   // Only police commercial/event claims here, not unrelated clinical replies.
   if(!/(?:\b(?:RM|MYR)\s*\d|December|Disember|12月|2\s*(?:hours?|jam|小时|小時)\s*15|2h\s*15)/iu.test(original))return original;
   if(campaignClaimsSafe(original,now))return original;
+  const fallbackQuery=campaignDay(now)==="dec6" && campaignDatesInText(original).some(d=>d.month===12&&d.day===5) ? "活动日期" : "RM68优惠";
   return campaignContextReply({history,customerText,now,language})||
-    campaignContextReply({history,customerText:"RM68优惠",now,language:localeFor(history,customerText,language)})||original;
+    campaignContextReply({history,customerText:fallbackQuery,now,language:localeFor(history,customerText,language)})||original;
 }
 function candidateIsCampaign(candidate) {
   const trigger = String(candidate?.trigger_message_content || "");
