@@ -79,3 +79,26 @@ test("verified recovery reset restricts AI treatment retrieval without discardin
  assert.equal(result.action,"skip");
  assert.equal(x.got.length,1);
 });
+
+test("secondary AI refuses to pair unrelated copy with a selected treatment video",async()=>{
+ const config=require("../src/config/clinicConfig");
+ const original={services:config.services,serviceAliases:config.serviceAliases};
+ try {
+  config.services=[{name:"Pelvic Care"},{name:"Face Lift"}];
+  config.serviceAliases=[];
+  let calls=0;
+  const x=db();
+  const result=await ai.createPersonalized20h({env,candidate,database:x.database,
+   mediaTreatment:"Pelvic Care",mediaAttached:true,generate:async payload=>{
+    calls++;
+    assert.equal(payload.mediaTreatment,"Pelvic Care");
+    assert.equal(payload.mediaAttached,true);
+    return {action:"send",topic:"Face Lift",message:"Would you like to learn more about Face Lift?"};
+   }});
+  assert.equal(result.ok,false);
+  assert.equal(result.action,"skip");
+  assert.equal(result.code,"secondary_contextual_ai_skip");
+  assert.equal(calls,1);
+  assert.equal(x.got.length,1);
+ } finally {Object.assign(config,original);}
+});
