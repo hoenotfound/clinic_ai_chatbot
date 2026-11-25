@@ -359,7 +359,11 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
         // scheduling reply and model or authenticated staff corroborate them.
         if(older&&(!continuation||!explicitCalendarText(content)||
           (modelDate!==found.date&&staffDate!==found.date)))break;
-        if(dayOnly!==null&&+found.date.slice(8)!==dayOnly)
+        const conflictingPartial=activeHistory.slice(0,i).some(item=>{
+          const day=partialCalendarDay(item.content);
+          return day!==null&&day!==+found.date.slice(8);
+        });
+        if((dayOnly!==null&&+found.date.slice(8)!==dayOnly)||conflictingPartial)
           return {status:"unknown",hasTime};
         selected=found.date;selectedIndex=i;break;
       }
@@ -383,7 +387,9 @@ function evaluateAppointmentHours({hours,customerText="",recentCustomerTexts=[],
   for(let i=0;i<activeHistory.length;i++){
     const item=activeHistory[i];
     const referenced=parseCalendar(item.content,item.local.date);
-    if(referenced?.invalid||referenced?.ambiguous||(referenced?.date&&referenced.date!==selected))break;
+    const partial=partialCalendarDay(item.content);
+    if(referenced?.invalid||referenced?.ambiguous||(referenced?.date&&referenced.date!==selected)||
+      (partial!==null&&partial!==+selected.slice(8)))break;
     if(referenced?.date===selected&&customerDateEvidence(item.content,item.local.date)){
       matchingHistory.push(item);continue;
     }
