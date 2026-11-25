@@ -1,36 +1,32 @@
-/* Reserved title-row width, no overlay over messages or controls.
-   The square source images contain transparent padding around each pose. */
-.da-inbox-mascot-slot {
-  position: relative; display: block; height: 40px; flex: 0 1 112px;
-  min-width: 0; max-width: 112px; pointer-events: none;
+/* A single transparent overlay. The surrounding layer never captures input.
+   Existing thread headers, composer menus and modal dialogs stack above it. */
+.da-mascot-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+.da-mascot-control {
+  position: absolute; display: block; border: 0; padding: 0; background: transparent;
+  cursor: grab; touch-action: none; user-select: none; pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
 }
+.da-mascot-control[data-dragging="true"] { cursor: grabbing; }
+.da-mascot-control:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 16px; }
 .da-mascot-stage {
-  position: relative; display: block; width: 104px; aspect-ratio: 1;
+  position: relative; display: block; width: 128px; aspect-ratio: 1;
   flex-shrink: 0; pointer-events: none; user-select: none;
 }
-.da-inbox-mascot-slot .da-mascot-stage {
-  width: min(60px, max(0px, calc(100% - 22px)));
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+.da-mascot-control .da-mascot-stage { width: 100%; height: 100%; filter: drop-shadow(0 3px 4px #183b5629); }
+.da-mascot-menu {
+  position: absolute; pointer-events: auto; overflow: auto; overscroll-behavior: contain;
+  padding: 8px; border-radius: 14px; background: var(--color-surface); color: var(--color-text);
+  border: 1px solid var(--color-border); box-shadow: 0 12px 32px #152b4530;
+  font-size: 12px;
 }
-/* Phone title row already reserves 40px; allow the larger art there. */
-@media (max-width: 639px) {
-  .da-inbox-mascot-slot .da-mascot-stage { width: min(60px, max(0px, calc(100% - 22px))); }
-}
-/* Extra width on larger layouts, but keep the search gap clear. */
-@media (min-width: 1280px) {
-  .da-inbox-mascot-slot:not(.da-inbox-mascot-thread) { height: 48px; }
-  .da-inbox-mascot-slot:not(.da-inbox-mascot-thread) .da-mascot-stage { width: min(68px, max(0px, calc(100% - 22px))); }
-}
-/* Mobile chat uses a reserved compact toolbar slot. No overlay or hit target. */
-.da-inbox-mascot-slot.da-inbox-mascot-thread {
-  flex: 0 0 38px; width: 38px; height: 38px; max-width: 38px;
-  overflow: hidden;
-}
-.da-inbox-mascot-slot.da-inbox-mascot-thread .da-mascot-stage { width: 32px; }
-@media (max-width: 360px) {
-  .da-inbox-mascot-slot.da-inbox-mascot-thread { flex-basis: 30px; width: 30px; max-width: 30px; }
-  .da-inbox-mascot-slot.da-inbox-mascot-thread .da-mascot-stage { width: 26px; }
-}
+.da-mascot-menu-title { display: flex; align-items: center; justify-content: space-between; font-weight: 700; padding-left: 8px; }
+.da-mascot-menu-title button { width: 44px; font-size: 20px; }
+.da-mascot-menu button, .da-mascot-menu label { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; border-radius: 8px; }
+.da-mascot-menu > button { width: 100%; text-align: left; }
+.da-mascot-menu button:hover { background: var(--color-bg); }
+.da-mascot-menu label { justify-content: space-between; gap: 8px; }
+.da-mascot-menu select { min-height: 36px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); }
+.da-mascot-menu p { padding: 4px 8px; color: var(--color-text-muted); font-size: 11px; }
 .da-mascot-outgoing { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; animation: da-mascot-fade-out 140ms ease-out both; }
 .da-mascot-entering { animation: da-mascot-fade-in 140ms ease-in both; }
 @keyframes da-mascot-fade-out { from { opacity: 1; } to { opacity: 0; } }
@@ -68,8 +64,8 @@
 }
 @keyframes da-mascot-roam {
   0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(-9px, -3px) rotate(-3deg); }
-  70% { transform: translate(9px, -2px) rotate(3deg); }
+  25% { transform: translate(-7px, -3px) rotate(-3deg); }
+  70% { transform: translate(7px, -2px) rotate(3deg); }
 }
 @keyframes da-mascot-greet {
   0%, 100% { transform: translateY(0) rotate(0); }
@@ -89,14 +85,6 @@
   0%, 100% { transform: rotate(0); }
   35% { transform: rotate(-4deg); }
   70% { transform: rotate(3deg); }
-}
-.da-inbox-mascot-thread .da-mascot-stage[data-pose="roaming"] .da-mascot-drift {
-  animation-name: da-mascot-thread-roam;
-}
-@keyframes da-mascot-thread-roam {
-  0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(-2px, -1px); }
-  70% { transform: translate(2px, -1px); }
 }
 .da-mascot-stage[data-paused="true"] * { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) {

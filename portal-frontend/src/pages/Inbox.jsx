@@ -629,6 +629,9 @@ export default function Inbox() {
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [mascotActivity, setMascotActivity] = useState(null);
+  const mascotHostRef = useRef(null);
+  const [mascotSearching, setMascotSearching] = useState(false);
+  const [mascotWork, setMascotWork] = useState(null);
   const [customerEditNotices, setCustomerEditNotices] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
@@ -730,6 +733,7 @@ export default function Inbox() {
   function handleInboxFiltersChange(nextFilters) {
     const previous=inboxFiltersRef.current;
     inboxFiltersRef.current={...nextFilters};
+    setMascotSearching(Boolean(nextFilters.query.trim()));
     if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
     if (previous.query!==nextFilters.query) {
       // Search is global and server-backed. Debounce typing but not filter taps.
@@ -1906,7 +1910,7 @@ export default function Inbox() {
     !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
-    <div className="wa-inbox-shell flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
+    <div ref={mascotHostRef} className="wa-inbox-shell relative flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -1927,7 +1931,6 @@ export default function Inbox() {
         canViewAllLeads={canViewAllLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         customerPlural={ui.customerPlural}
-        mascotActivity={mascotActivity}
       />
       {selectedContactIsFilteredOut ? (
         <section
@@ -2009,7 +2012,7 @@ export default function Inbox() {
         mobileThreadOpen={visibleMobileThreadOpen}
         onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
-        mascotActivity={mascotActivity}
+        onMascotWork={setMascotWork}
       />
       )}
       <ContactDetailsDrawer
@@ -2052,6 +2055,11 @@ export default function Inbox() {
           }}
         />
       )}
+      <InboxMascot hostRef={mascotHostRef} activity={mascotActivity} selectedId={selectedId}
+        searching={mascotSearching && inboxPageLoading && !visibleMobileThreadOpen}
+        busy={messagesLoading || actionPending || conversationStatePending || Boolean(outboundPendingByContact[String(selectedId)]) || Boolean(mascotWork?.busy)}
+        suspended={contactDetailsOpen || whatsappTemplateOpen || Boolean(mascotWork?.modal)}
+        layoutKey={String(selectedId) + ":" + visibleMobileThreadOpen + ":" + Boolean(selectedContactIsFilteredOut)} />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -2148,7 +2156,6 @@ function ConversationList({
   canViewAllLeads,
   showUnassignedAssignment,
   customerPlural,
-  mascotActivity,
 }) {
   const [filters, setFilters] = useState({
     status: "all",
@@ -2396,8 +2403,6 @@ function ConversationList({
       <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
         <div className="flex items-center justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
-          <InboxMascot activity={mascotActivity} selectedId={selectedId}
-            mobileThreadOpen={mobileThreadOpen} searching={Boolean(filters.query.trim()) && pageLoading} />
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
             {!conversations
               ? "Loading…"
@@ -3019,7 +3024,7 @@ function ThreadView({
   mobileThreadOpen,
   onBack,
   customerSingular,
-  mascotActivity,
+  onMascotWork,
 }) {
   const bottomRef = useRef(null);
   const threadScrollRef = useRef(null);
@@ -3070,6 +3075,11 @@ function ThreadView({
   const [verifiedFreeTemplateWindow, setVerifiedFreeTemplateWindow] = useState(null);
   const [freeWindowRefreshSignal, setFreeWindowRefreshSignal] = useState(0);
   const freeWindowLastCheckedAt = useRef(0);
+  useEffect(() => {
+    onMascotWork?.({ busy: sending || isRecording || isStartingRecording || !!voiceBlob || imagePreparing || actionsOpen || attachmentMenuOpen,
+      modal: Boolean(lightboxSrc || forwardingMessage || attachmentMenuOpen) });
+    return () => onMascotWork?.(null);
+  }, [onMascotWork, sending, isRecording, isStartingRecording, voiceBlob, imagePreparing, actionsOpen, attachmentMenuOpen, lightboxSrc, forwardingMessage]);
 
   activeContactIdRef.current = contact?.contact_id;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
@@ -4056,8 +4066,6 @@ function ThreadView({
               </div>
             </div>
           </div>
-          <InboxMascot activity={mascotActivity} selectedId={contact.contact_id}
-            placement="thread" mobileThreadOpen={mobileThreadOpen} busy={sending || loading || actionPending || isRecording || isStartingRecording || !!voiceBlob || actionsOpen} />
           <div ref={actionsMenuRef} className="wa-thread-actions relative flex shrink-0 items-center gap-1.5 sm:gap-2">
             {contact.mode === "human" ? (
               <button

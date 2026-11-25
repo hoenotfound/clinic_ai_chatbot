@@ -32,9 +32,28 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   const searchBounds = await search.boundingBox();
   expect(artBounds).not.toBeNull();
   expect(searchBounds).not.toBeNull();
-  expect(artBounds.y + artBounds.height).toBeLessThanOrEqual(searchBounds.y + 1);
+  expect(artBounds.y >= searchBounds.y + searchBounds.height || artBounds.x >= searchBounds.x + searchBounds.width || artBounds.x + artBounds.width <= searchBounds.x).toBeTruthy();
   await search.fill("test");
   await expect(search).toHaveValue("test");
+  const before = await mascot.boundingBox();
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 - 100, before.y + before.height / 2 - 30, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - before.x)).toBeGreaterThan(20);
+  const moved = await mascot.boundingBox();
+  await page.reload();
+  await expect(mascot).toBeVisible();
+  await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - moved.x)).toBeLessThan(2);
+  await mascot.focus();
+  await mascot.press("ArrowLeft");
+  await expect.poll(async () => (await mascot.boundingBox()).x).toBeLessThan(moved.x - 5);
+  await mascot.press("Enter");
+  await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
+  await page.getByLabel("Dashy size").selectOption("small");
+  await expect.poll(async () => (await mascot.boundingBox()).width).toBe(65);
+  await page.getByRole("button", { name: "Reset position" }).click();
+  await expect(page.getByRole("button", { name: "Pause animation" })).toHaveCount(0);
   await page.goto("/settings/appearance");
   const preview = page.getByLabel("Preview Dashy expression");
   for (const pose of ["greeting", "roaming", "searching", "thinking", "success", "alert", "welcome", "blocked", "confident", "idle"]) {
@@ -121,18 +140,15 @@ test("Dashy reacts to selected-thread messages, failures and verified booking se
   await thread.getByRole("button", { name: "Send message" }).click();
   await expect(stage).toHaveAttribute("data-pose", "success");
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  // A recent staff action postpones roaming even when the original timer expires.
-  await page.clock.fastForward(20000);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.clock.fastForward(65000);
   await page.evaluate(() => document.dispatchEvent(new Event("keydown")));
-  await page.clock.fastForward(10000);
+  await page.clock.fastForward(20000);
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  await page.clock.fastForward(17000);
-  await expect(stage).toHaveAttribute("data-pose", "roaming");
+  await page.clock.fastForward(56000);
+  const desktop = await page.evaluate(() => matchMedia("(min-width: 1024px)").matches);
+  await expect(stage).toHaveAttribute("data-pose", desktop ? "roaming" : "idle");
   await page.evaluate(() => document.dispatchEvent(new Event("pointerdown")));
   await expect(stage).toHaveAttribute("data-pose", "idle");
-  const mobile = await page.evaluate(() => innerWidth < 1024);
-  if (mobile) {
-    await expect(thread.getByTestId("inbox-mascot")).toBeVisible();
-    await expect(thread.getByRole("button", { name: "Conversation actions" })).toBeVisible();
-  }
+  await expect(thread.getByRole("button", { name: "Conversation actions" })).toBeVisible();
 });

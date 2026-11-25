@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { MascotArtwork, DASHY_POSES } from "../components/InboxMascot";
 import { useMascotMode } from "../hooks/useMascotMode";
+import { useDashyPlacement } from "../hooks/useDashyPlacement";
+import { DEFAULT_DASHY_POSITION } from "../utils/dashyPosition";
 
 const OPTIONS = [
   ["animated", "Animated", "Occasional gentle movement and brief reactions."],
@@ -10,6 +12,7 @@ const OPTIONS = [
 export default function Appearance() {
   const [mode, setMode] = useMascotMode();
   const [preview, setPreview] = useState("idle");
+  const [placement, updatePlacement] = useDashyPlacement();
   return (
     <main className="h-full overflow-y-auto px-3.5 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
       <section className="max-w-3xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm sm:p-6">
@@ -20,11 +23,11 @@ export default function Appearance() {
           </div>
         </div>
         <div className="mt-6 rounded-xl border border-[var(--color-border)] p-4">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <MascotArtwork mode={mode === "animated" ? "animated" : "stationary"} pose={preview} />
             <div>
               <h2 className="text-sm font-semibold">Dashy · Inbox mascot</h2>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">A small companion that never covers your conversations.</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">A floating companion. Drag Dashy to move, or click for quick controls.</p>
             </div>
           </div>
           <label className="mt-4 block text-xs font-semibold text-[var(--color-text-muted)]">
@@ -38,7 +41,7 @@ export default function Appearance() {
           <fieldset className="mt-4 space-y-2">
             <legend className="sr-only">Inbox mascot display mode</legend>
             {OPTIONS.map(([value, label, description]) => (
-              <label key={value} className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border border-[var(--color-border)] px-3 py-2">
+              <label key={value} className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border px-3 py-2 ${mode === value ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]" : "border-[var(--color-border)]"}`}>
                 <input type="radio" name="mascot-mode" value={value} checked={mode === value}
                   onChange={() => setMode(value)} className="h-4 w-4 accent-[var(--color-primary)]" />
                 <span><span className="block text-sm font-semibold">{label}</span>
@@ -46,6 +49,16 @@ export default function Appearance() {
               </label>
             ))}
           </fieldset>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="flex-1 text-xs font-semibold text-[var(--color-text-muted)]">Dashy size
+              <select value={placement.size} onChange={event => updatePlacement({ size: event.target.value })}
+                className="mt-1 min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]">
+                <option value="auto">Automatic</option><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option>
+              </select>
+            </label>
+            <button type="button" onClick={() => updatePlacement({ position: DEFAULT_DASHY_POSITION })}
+              className="min-h-11 rounded-xl border border-[var(--color-border)] px-3 text-sm font-semibold">Reset position</button>
+          </div>
           <p className="mt-3 text-xs text-[var(--color-text-muted)]">Saved automatically on this browser. Your device's reduced-motion preference is respected.</p>
         </div>
       </section>
