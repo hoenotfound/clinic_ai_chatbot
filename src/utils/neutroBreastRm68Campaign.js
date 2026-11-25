@@ -165,20 +165,58 @@ function stillDiscussingCampaign(history) {
     row => row?.role === "user" && isOtherTreatmentQuery(row.content)
   );
 }
-function isCampaignAvailabilityQuestion(text) {
-  return DATE_QUESTION.test(String(text || "")) || /(?:\btoday\b|\btomorrow\b|\b(?:hari ini|esok|temu janji|kekosongan|tarikh|Disember)\b|今天|明天)/iu.test(String(text||""));
+// A relative day is not an appointment request by itself. Match a visit or
+// booking action, not questions about results, symptoms or how care works.
+const VISIT_ACTION=/(?:\b(?:come|visit|book|appointment|slot|schedule|reschedule|available|availability|attend|make it|do the treatment|do the checking|have (?:the |a )?(?:treatment|assessment|session))\b|预约|預約|安排|名额|名額|空位|有位|过来|過來|来做|來做|来店|來店|到店|上来|上來|可以来|可以來|\b(?:datang|tempah|temu janji|kekosongan|buat rawatan|buat pemeriksaan|lapang)\b)/iu;
+const RESULT_TIMING=/(?:\b(?:results?|effectiveness|effective|side effects?|pain|swelling|recovery|heal|improvement)\b|见效|見效|效果|消肿|消腫|副作用|疼痛|恢复|恢復|\b(?:kesan|berkesan|sakit|pulih)\b)/iu;
+const EVENT_REJECTION=/(?:\b(?:cannot attend|can['’]t (?:come|attend|make it)|not available|unavailable|not free|away)\b|不方便|没空|沒空|来不了|來不了|不在|无法|無法|\b(?:tak (?:lapang|boleh)|tidak (?:lapang|boleh))\b)/iu;
+const EVENT_REFERENCE=/(?:December|Dec\b|5th|6th|event|12月|[56]\s*[号日]|这两天|這兩天|那两天|那兩天|活动|活動|Disember|acara|tarikh)/iu;
+const OTHER_DATE=/(?:\b(?:other (?:day|date)s?|another (?:day|date)|next week)\b|其他(?:日子|日期|时间|時間)|改天|下周|下星期|\b(?:hari lain|tarikh lain|minggu depan)\b)/iu;
+const TODAY=/(?:\btoday\b|今天|\bhari ini\b)/iu;
+const TOMORROW=/(?:\btomorrow\b|明天|\besok\b)/iu;
+function eventDateRejection(text) {
+  const value=String(text||"");
+  return EVENT_REJECTION.test(value) && EVENT_REFERENCE.test(value) && !RESULT_TIMING.test(value);
 }
-// Detect an explicit request outside the event, not a request to confirm an event slot.
+function isCampaignAvailabilityQuestion(text) {
+  const value=String(text||"");
+  if(RESULT_TIMING.test(value) && !VISIT_ACTION.test(value)) return false;
+  return DATE_QUESTION.test(value) || eventDateRejection(value) ||
+    (VISIT_ACTION.test(value) && (TODAY.test(value)||TOMORROW.test(value)||OTHER_DATE.test(value)||
+       /\b(?:temu janji|kekosongan|tarikh|Disember)\b/iu.test(value)));
+}
 function alternativeDateRequest(text, now=Date.now()) {
   const value=String(text||"");
-  const day=new Date(Number(now)+8*3600000).toISOString().slice(0,10);
-  const tomorrow=new Date(Number(now)+32*3600000).toISOString().slice(0,10);
+  if(eventDateRejection(value)) return true;
+  if(!VISIT_ACTION.test(value) || RESULT_TIMING.test(value)) return false;
+  if(OTHER_DATE.test(value)) return true;
+  // Explicit December dates outside the advertised days.
+  const dates=campaignDatesInText(value);
+  if(dates.some(d=>d.month!==12||![5,6].includes(d.day))) return true;
+  const at=now===null?NaN:Number(now);
+  if(!Number.isFinite(at)) return false;
+  const day=new Date(at+8*3600000).toISOString().slice(0,10);
+  const tomorrow=new Date(at+32*3600000).toISOString().slice(0,10);
   const eventDates=["2026-12-05","2026-12-06"];
-  const rejection=/(?:\b(?:cannot attend|can['’]t (?:come|attend|make it)|not available|unavailable)\b|不方便|没空|沒空|来不了|來不了|\b(?:tak (?:lapang|boleh)|tidak (?:lapang|boleh))\b)/iu;
-  return /(?:\b(?:other (?:day|date)s?|another (?:day|date)|next week)\b|其他(?:日子|日期|时间)|改天|下周|下星期|\b(?:hari lain|tarikh lain|minggu depan)\b)/iu.test(value) ||
-    (rejection.test(value) && /(?:December|Dec\b|5th|6th|event|12月|这两天|這兩天|活动|活動|Disember|acara|tarikh)/iu.test(value)) ||
-    (!eventDates.includes(day) && /(?:\btoday\b|今天|\bhari ini\b)/iu.test(value)) ||
-    (!eventDates.includes(tomorrow) && /(?:\btomorrow\b|明天|\besok\b)/iu.test(value));
+  return (!eventDates.includes(day)&&TODAY.test(value))||
+    (!eventDates.includes(tomorrow)&&TOMORROW.test(value));
+}
+function historicalTime(row) {
+  const raw=row?.pricingCreatedAtMs ?? row?.created_at ?? row?.createdAt;
+  if(raw==null)return null;
+  const at=typeof raw==="number"?raw:Date.parse(raw);
+  return Number.isFinite(at)?at:null;
+}
+function alternativeDateContext(history, customerText, now=Date.now()) {
+  if(alternativeDateRequest(customerText,now))return true;
+  const prior=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user"&&String(r.content||"").trim()!==String(customerText||"").trim()).slice(-4).reverse();
+  for(const row of prior) {
+    if(isOtherTreatmentQuery(row.content))return false;
+    // A later explicit affirmative event-date choice supersedes earlier rejection.
+    if(!eventDateRejection(row.content)&&VISIT_ACTION.test(row.content)&&campaignDatesInText(row.content).some(d=>d.month===12&&[5,6].includes(d.day)))return false;
+    if(alternativeDateRequest(row.content,historicalTime(row)))return true;
+  }
+  return false;
 }
 function alternativeDateReply(language, now=Date.now()) {
   const expired=campaignDay(now)==="expired";
@@ -196,14 +234,23 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
       isOtherTreatmentQuery(customerText)) return null;
   const locale=localeFor(history,customerText,language);
   if (alternativeDateRequest(customerText,now)) return alternativeDateReply(locale,now);
-  const priorUser=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user" && String(r.content||"").trim()!==String(customerText||"").trim()).slice(-4);
-  if (AMOUNT_QUESTION.test(String(customerText||"")) && priorUser.some(r=>alternativeDateRequest(r.content,now)))
+  if (AMOUNT_QUESTION.test(String(customerText||"")) && alternativeDateContext(history,customerText,now))
     return alternativeDateReply(locale,now);
   if(locale!=="zh") {
     if(campaignDay(now)==="expired") return locale==="en"
       ? "The RM68 breast-care trial ended on December 6. The clinic can confirm current care options and charges 😊"
       : "Promosi penjagaan payudara RM68 telah tamat pada 6 Disember. Pihak pusat boleh mengesahkan pilihan penjagaan dan caj semasa 😊";
     const dates=localizedDates(now,locale);
+    const query=String(customerText||"");
+    if(INCLUDES_QUESTION.test(query)) return locale==="en"
+      ? "The RM68 trial includes breast wellness assessment, gentle pulse wave care, daily care advice and complimentary moxibustion. It is not medical screening or diagnosis 😊"
+      : "Percubaan RM68 merangkumi penilaian kesejahteraan payudara, penjagaan gelombang denyutan lembut, nasihat penjagaan harian dan moksibusi percuma. Ini bukan saringan atau diagnosis perubatan 😊";
+    if(DURATION_QUESTION.test(query)&&!isCampaignAvailabilityQuestion(query)) return locale==="en"
+      ? "Breast care takes about 45 minutes, or about 1 hour 30 minutes in total including complimentary moxibustion 😊"
+      : "Penjagaan payudara mengambil sekitar 45 minit, atau kira-kira 1 jam 30 minit termasuk moksibusi percuma 😊";
+    if(AMOUNT_QUESTION.test(query)&&!isCampaignAvailabilityQuestion(query)) return locale==="en"
+      ? "The first trial is RM68 only on "+dates+". Availability must be confirmed by the clinic 😊"
+      : "Percubaan pertama RM68 hanya pada "+dates+". Kekosongan perlu disahkan oleh pusat 😊";
     if(locale==="en") return "The RM68 breast wellness assessment and gentle pulse wave care event is on "+dates+", with complimentary moxibustion. Total duration is about 1 hour 30 minutes. It is not medical screening or diagnosis. Availability must be confirmed by the clinic 😊";
     return "Acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada "+dates+", termasuk moksibusi percuma. Jumlah tempoh sekitar 1 jam 30 minit. Ini bukan saringan atau diagnosis perubatan. Kekosongan perlu disahkan oleh pusat 😊";
   }
@@ -256,49 +303,65 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
     dates + "，全程约1小时30分钟。名额需要由门店确认哦 😊";
 }
 
-// Keep a natural model answer only when it is compatible with the verified
-// campaign and its current date window. Uncertain commercial or clinical
-// claims fall back to localized verified copy, never a second AI call.
+// Extract dates by meaning rather than allowing individual numeric tokens.
+// Cover common written and numeric dates in all three supported languages.
+function campaignDatesInText(text) {
+  const value=String(text||"").normalize("NFKC");
+  const out=[];
+  const months="january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|januari|februari|mac|mei|julai|ogos|oktober|disember";
+  const monthNumber=m=>({jan:1,feb:2,mar:3,mac:3,apr:4,may:5,mei:5,jun:6,jul:7,aug:8,ogo:8,sep:9,oct:10,okt:10,nov:11,dec:12,dis:12})[m.toLowerCase().slice(0,3)];
+  const push=(month,days)=>{for(const n of String(days).match(/\d+/g)||[])out.push({month:Number(month),day:Number(n)});};
+  const list="\\d{1,2}(?:st|nd|rd|th)?(?:\\s*(?:and|dan|&|,|to|[-–])\\s*\\d{1,2}(?:st|nd|rd|th)?)*";
+  for(const m of value.matchAll(new RegExp("\\b("+months+")\\s+("+list+")\\b","giu")))push(monthNumber(m[1]),m[2]);
+  for(const m of value.matchAll(new RegExp("\\b("+list+")\\s+("+months+")\\b","giu")))push(monthNumber(m[2]),m[1]);
+  for(const m of value.matchAll(/(\d{1,2})\s*月\s*(\d{1,2})(?:\s*[日号號]?\s*(?:和|及|与|與|&|、|至|[-–])\s*(\d{1,2})(?!\s*月))?/gu))push(m[1],m[2]+(m[3]?" "+m[3]:""));
+  for(const m of value.matchAll(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/gu))push(m[2],m[3]);
+  for(const m of value.matchAll(/(?<![\d/-])(\d{1,2})[/-](\d{1,2})(?:[/-]20\d{2})?(?![\d/-])/gu))push(m[2],m[1]);
+  return out;
+}
+function campaignClaimsSafe(value, now=Date.now()) {
+  const text=String(value||"").normalize("NFKC");
+  const day=campaignDay(now);
+  const amounts=[...text.matchAll(/(?:\b(?:RM|MYR)\s*|马币\s*|令吉\s*)(\d[\d,]*(?:\.\d+)?)/giu)].map(m=>Number(m[1].replace(/,/g,"")));
+  if(amounts.some(n=>n!==68)|| (day==="expired"&&amounts.length))return false;
+  const dates=campaignDatesInText(text);
+  if(dates.some(d=>d.month!==12||![5,6].includes(d.day)||(day==="dec6"&&d.day!==6)))return false;
+  if(/\b20\d{2}\b/u.test(text)&&/\b20(?!26)\d{2}\b/u.test(text))return false;
+  // Unverified slot, clinical equipment, guarantees and unrelated prices
+  // cannot be authorised by a fluent answer.
+  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia)\b/iu.test(text))return false;
+  if(amounts.length && (!dates.length||/\b(?:any day|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
+  const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
+  for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
+    const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
+    if(![45,90].includes(mins))return false;
+  }
+  return true;
+}
 function selectCampaignReply({reply, fallback, history, customerText, language, now=Date.now()}={}) {
-  if(!fallback) return reply;
-  const value=String(reply||"").trim();
-  const locale=localeFor(history,customerText,language);
-  const prior=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user").slice(-5);
-  if(!value || alternativeDateRequest(customerText,now) ||
-      (AMOUNT_QUESTION.test(String(customerText||"")) && prior.some(r=>alternativeDateRequest(r.content,now)))) return fallback;
-  if(campaignDay(now)==="expired" || campaignDay(now)==="dec6") return fallback;
+  if(!fallback)return reply;
+  const value=String(reply||"").trim(), locale=localeFor(history,customerText,language);
+  if(!value||alternativeDateRequest(customerText,now)||
+      (AMOUNT_QUESTION.test(String(customerText||""))&&alternativeDateContext(history,customerText,now)))return fallback;
+  if(campaignDay(now)==="expired")return fallback;
   const {clearReplyLanguageMismatch}=require("./replyLanguageGuard");
-  if(clearReplyLanguageMismatch(value,locale)) return fallback;
-  if ((value.match(/\d+(?:\.\d+)?/gu)||[]).some(n=>!["68","45","90","1","30","5","6","12","2026","1.5"].includes(n))) return fallback;
-  // An arbitrary number, unsupported diagnostic statement, or confirmation
-  // is not authorized merely because Gemini mentioned RM68.
-  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow)\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin)\b/iu.test(value)) return fallback;
-  if(/\b(?:RM|MYR)\s*(?!68\b)\d/iu.test(value) ||
-      /\b(?:2\s*(?:hours?|jam)\s*15|2h\s*15)\b|2\s*(?:小时|小時)\s*15/iu.test(value)) return fallback;
-  if(AMOUNT_QUESTION.test(String(customerText||"")) && !/\bRM\s*68\b/iu.test(value)) return fallback;
-  if(isCampaignAvailabilityQuestion(customerText) &&
-     (!/(?:December|Dec\b|Disember|12月)/iu.test(value) ||
-      !/(?:check|confirm|semak|sahkan|确认|確認)/iu.test(value))) return fallback;
-  if(DURATION_QUESTION.test(String(customerText||"")) &&
-     !/(?:90\s*(?:minutes|minit|分钟|分鐘)|1\s*(?:hour|jam|小时|小時)\s*30|1\.5\s*(?:hours?|jam|小时|小時))/iu.test(value)) return fallback;
-  // Avoid a generic reply that has lost the event context.
-  if(!/(?:RM\s*68|breast|payudara|胸部|乳腺|乳房|December|Disember|12月|moxibustion|moksibusi|艾灸)/iu.test(value)) return fallback;
+  if(clearReplyLanguageMismatch(value,locale)||!campaignClaimsSafe(value,now))return fallback;
+  if(AMOUNT_QUESTION.test(String(customerText||""))&&!/\bRM\s*68\b/iu.test(value))return fallback;
+  if(isCampaignAvailabilityQuestion(customerText)&&
+     (!campaignDatesInText(value).length||!/(?:check|confirm|semak|sahkan|确认|確認)/iu.test(value)))return fallback;
+  if(DURATION_QUESTION.test(String(customerText||""))&&
+     !/(?:90\s*(?:minutes|minit|分钟|分鐘)|1\s*(?:hour|jam|小时|小時)\s*30|1\.5\s*(?:hours?|jam|小时|小時)|45\s*(?:minutes|minit|分钟|分鐘))/iu.test(value))return fallback;
+  if(!/(?:RM\s*68|breast|payudara|胸部|乳腺|乳房|December|Disember|12月|moxibustion|moksibusi|艾灸)/iu.test(value))return fallback;
   return value;
 }
-function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.now(), language } = {}) {
-  const original = String(reply || "");
-  if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
-      isOtherTreatmentQuery(customerText)) return original;
-  if (/(?:RM\s*(?:388|688)|2\s*(?:小时|小時|hours?)\s*15|2h\s*15)/iu.test(original) ||
-      (campaignDay(now) === "expired" && /\bRM\s*68\b/iu.test(original)) ||
-      (campaignDay(now) === "dec6" && /12月5日/u.test(original))) {
-    const query = CAMPAIGN_QUERY.test(String(customerText || ""))
-      ? customerText
-      : campaignDay(now) === "dec6" && /12月5日/u.test(original)
-        ? "活动日期" : "RM68优惠";
-    return campaignContextReply({ history, customerText: query, now, language }) || original;
-  }
-  return original;
+function guardCampaignPriceConflicts({history,customerText,reply,now=Date.now(),language}={}) {
+  const original=String(reply||"");
+  if(!hasCampaignConversation(history)||!stillDiscussingCampaign(history)||isOtherTreatmentQuery(customerText))return original;
+  // Only police commercial/event claims here, not unrelated clinical replies.
+  if(!/(?:\b(?:RM|MYR)\s*\d|December|Disember|12月|2\s*(?:hours?|jam|小时|小時)\s*15|2h\s*15)/iu.test(original))return original;
+  if(campaignClaimsSafe(original,now))return original;
+  return campaignContextReply({history,customerText,now,language})||
+    campaignContextReply({history,customerText:"RM68优惠",now,language:localeFor(history,customerText,language)})||original;
 }
 function candidateIsCampaign(candidate) {
   const trigger = String(candidate?.trigger_message_content || "");
@@ -330,7 +393,11 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   const day = campaignDay(now);
   if (day === "expired") return { expired: true, message: null };
   // Do not keep selling the same dates when the customer has rejected them.
-  if ((candidate.recent_inbound_messages || []).slice(0,5).some(value=>alternativeDateRequest(value,now))) return { expired: false, message: alternativeDateReply(detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"),now) };
+  const recent=(candidate.recent_inbound_messages||[]).slice(0,5);
+  const times=candidate.recent_inbound_times||[];
+  if(recent.some((value,i)=>alternativeDateRequest(value,historicalTime({created_at:times[i]}))) ||
+     /(?:applicable charges|caj yang berkenaan|当天的收费|當天的收費)/iu.test(String(candidate.trigger_message_content||"")))
+    return {expired:false,stop:true,message:null};
   const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
   const dates=localizedDates(now,locale);
   if(locale==="en" || locale==="ms") return {expired:false,message:locale==="en" ? "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on "+dates+", with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊" : "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada "+dates+", termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"};
@@ -371,6 +438,6 @@ module.exports = {
   isNeutro, isExactPrefill, isSimpleRm68Enquiry, campaignCreativeMatches, campaignDay,
   firstReply, configuredFirstReplyImage, isCampaignOpening, hasCampaignConversation,
   isOtherTreatmentQuery, stillDiscussingCampaign, isCampaignAvailabilityQuestion,
-  campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateReply, selectCampaignReply,
+  campaignContextReply, guardCampaignPriceConflicts, alternativeDateRequest, alternativeDateContext, alternativeDateReply, selectCampaignReply, campaignClaimsSafe, campaignDatesInText,
   candidateIsCampaign, campaignFollowUp, recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
 };
