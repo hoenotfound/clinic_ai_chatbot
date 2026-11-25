@@ -166,11 +166,19 @@ function stillDiscussingCampaign(history) {
   );
 }
 function isCampaignAvailabilityQuestion(text) {
-  return DATE_QUESTION.test(String(text || ""));
+  return DATE_QUESTION.test(String(text || "")) || /(?:\btoday\b|\btomorrow\b|\b(?:hari ini|esok|temu janji|kekosongan|tarikh|Disember)\b|今天|明天)/iu.test(String(text||""));
 }
 // Detect an explicit request outside the event, not a request to confirm an event slot.
-function alternativeDateRequest(text) {
-  return /(?:\b(?:today|tomorrow|other (?:day|date)s?|another (?:day|date)|next week|not available|unavailable|cannot attend|can['’]t (?:come|attend|make it))\b|今天|明天|其他(?:日子|日期|时间)|改天|下周|下星期|不方便|没空|沒空|来不了|來不了|\b(?:hari ini|esok|hari lain|tarikh lain|minggu depan|tak (?:lapang|boleh)|tidak (?:lapang|boleh))\b)/iu.test(String(text||""));
+function alternativeDateRequest(text, now=Date.now()) {
+  const value=String(text||"");
+  const day=new Date(Number(now)+8*3600000).toISOString().slice(0,10);
+  const tomorrow=new Date(Number(now)+32*3600000).toISOString().slice(0,10);
+  const eventDates=["2026-12-05","2026-12-06"];
+  const rejection=/(?:\b(?:cannot attend|can['’]t (?:come|attend|make it)|not available|unavailable)\b|不方便|没空|沒空|来不了|來不了|\b(?:tak (?:lapang|boleh)|tidak (?:lapang|boleh))\b)/iu;
+  return /(?:\b(?:other (?:day|date)s?|another (?:day|date)|next week)\b|其他(?:日子|日期|时间)|改天|下周|下星期|\b(?:hari lain|tarikh lain|minggu depan)\b)/iu.test(value) ||
+    (rejection.test(value) && /(?:December|Dec\b|5th|6th|event|12月|这两天|這兩天|活动|活動|Disember|acara|tarikh)/iu.test(value)) ||
+    (!eventDates.includes(day) && /(?:\btoday\b|今天|\bhari ini\b)/iu.test(value)) ||
+    (!eventDates.includes(tomorrow) && /(?:\btomorrow\b|明天|\besok\b)/iu.test(value));
 }
 function alternativeDateReply(language, now=Date.now()) {
   const expired=campaignDay(now)==="expired";
@@ -184,12 +192,12 @@ function alternativeDateReply(language, now=Date.now()) {
 }
 function campaignContextReply({ history, customerText, now = Date.now(), language } = {}) {
   if (!hasCampaignConversation(history) || !stillDiscussingCampaign(history) ||
-      (!CAMPAIGN_QUERY.test(String(customerText || "")) && !alternativeDateRequest(customerText)) ||
+      (!CAMPAIGN_QUERY.test(String(customerText || "")) && !isCampaignAvailabilityQuestion(customerText) && !alternativeDateRequest(customerText,now)) ||
       isOtherTreatmentQuery(customerText)) return null;
   const locale=localeFor(history,customerText,language);
-  if (alternativeDateRequest(customerText)) return alternativeDateReply(locale,now);
+  if (alternativeDateRequest(customerText,now)) return alternativeDateReply(locale,now);
   const priorUser=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user" && String(r.content||"").trim()!==String(customerText||"").trim()).slice(-4);
-  if (AMOUNT_QUESTION.test(String(customerText||"")) && priorUser.some(r=>alternativeDateRequest(r.content)))
+  if (AMOUNT_QUESTION.test(String(customerText||"")) && priorUser.some(r=>alternativeDateRequest(r.content,now)))
     return alternativeDateReply(locale,now);
   if(locale!=="zh") {
     if(campaignDay(now)==="expired") return locale==="en"
@@ -224,7 +232,7 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
         "请问你是想了解活动当天的 RM68 优惠，还是其他日期的护理收费呢？";
     }
   }
-  if (DATE_QUESTION.test(text)) {
+  if (isCampaignAvailabilityQuestion(text)) {
     // Never imply that a date, place, or appointment is confirmed.
     return "RM68 胸部健康评估 + 脉冲波舒缓护理的活动日期是" + dates +
       "，全程约1小时30分钟。具体名额需要由门店确认哦 😊 " + dayQuestion(now);
@@ -256,18 +264,19 @@ function selectCampaignReply({reply, fallback, history, customerText, language, 
   const value=String(reply||"").trim();
   const locale=localeFor(history,customerText,language);
   const prior=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user").slice(-5);
-  if(!value || alternativeDateRequest(customerText) ||
-      (AMOUNT_QUESTION.test(String(customerText||"")) && prior.some(r=>alternativeDateRequest(r.content)))) return fallback;
+  if(!value || alternativeDateRequest(customerText,now) ||
+      (AMOUNT_QUESTION.test(String(customerText||"")) && prior.some(r=>alternativeDateRequest(r.content,now)))) return fallback;
   if(campaignDay(now)==="expired" || campaignDay(now)==="dec6") return fallback;
   const {clearReplyLanguageMismatch}=require("./replyLanguageGuard");
   if(clearReplyLanguageMismatch(value,locale)) return fallback;
+  if ((value.match(/\d+(?:\.\d+)?/gu)||[]).some(n=>!["68","45","90","1","30","5","6","12","2026","1.5"].includes(n))) return fallback;
   // An arbitrary number, unsupported diagnostic statement, or confirmation
   // is not authorized merely because Gemini mentioned RM68.
   if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow)\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin)\b/iu.test(value)) return fallback;
   if(/\b(?:RM|MYR)\s*(?!68\b)\d/iu.test(value) ||
       /\b(?:2\s*(?:hours?|jam)\s*15|2h\s*15)\b|2\s*(?:小时|小時)\s*15/iu.test(value)) return fallback;
   if(AMOUNT_QUESTION.test(String(customerText||"")) && !/\bRM\s*68\b/iu.test(value)) return fallback;
-  if(DATE_QUESTION.test(String(customerText||"")) &&
+  if(isCampaignAvailabilityQuestion(customerText) &&
      (!/(?:December|Dec\b|Disember|12月)/iu.test(value) ||
       !/(?:check|confirm|semak|sahkan|确认|確認)/iu.test(value))) return fallback;
   if(DURATION_QUESTION.test(String(customerText||"")) &&
@@ -321,7 +330,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   const day = campaignDay(now);
   if (day === "expired") return { expired: true, message: null };
   // Do not keep selling the same dates when the customer has rejected them.
-  if (alternativeDateRequest(latest)) return { expired: false, message: alternativeDateReply(detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"),now) };
+  if (alternativeDateRequest(latest,now)) return { expired: false, message: alternativeDateReply(detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"),now) };
   const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
   const dates=localizedDates(now,locale);
   if(locale==="en" || locale==="ms") return {expired:false,message:locale==="en" ? "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on "+dates+", with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊" : "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada "+dates+", termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"};
