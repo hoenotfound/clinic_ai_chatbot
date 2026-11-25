@@ -95,6 +95,20 @@ function normalizeOptions(reasonOrOptions) {
   };
 }
 
+// Both duplicate suppression and re-open eligibility use the same reset
+// evidence. Merely writing the same appointment status is not a new attempt.
+function unresolvedBookingSql(activityAlias, leadAlias) {
+  return `NOT EXISTS (
+    SELECT 1 FROM lead_activities reset
+    WHERE reset.lead_id = ${leadAlias}.id
+      AND reset.id > ${activityAlias}.id
+      AND (reset.metadata->>'outcome' = 'booking_hold_resolved'
+        OR (reset.metadata ? 'previousAppointmentStatus'
+          AND reset.metadata->>'appointmentStatus' IN ('none','cancelled','reschedule','set','visited')
+          AND reset.metadata->>'previousAppointmentStatus' IS DISTINCT FROM reset.metadata->>'appointmentStatus'))
+  )`;
+}
+
 function createBookingReadyOutcomeService({
   database = pool,
   publish = realtimeEvents.publish,
@@ -210,13 +224,7 @@ function createBookingReadyOutcomeService({
                WHERE previous_request.metadata->>'appointmentPreference' = $5::text
                  AND ($3::text IS NULL OR previous_request.metadata->>'branch' = $3::text)
                  AND ($4::text IS NULL OR previous_request.metadata->>'treatment' = $4::text)
-                 AND NOT EXISTS (
-                   SELECT 1 FROM lead_activities reset
-                   WHERE reset.lead_id = active_lead.id
-                     AND reset.id > previous_request.id
-                     AND (reset.metadata->>'outcome' = 'booking_hold_resolved'
-                       OR reset.metadata->>'appointmentStatus' IN ('none','cancelled','reschedule','set','visited'))
-                 )
+                 AND ${unresolvedBookingSql("previous_request","active_lead")}
              )
            )
            AND (
@@ -242,6 +250,7 @@ function createBookingReadyOutcomeService({
                    FROM lead_activities a
                    WHERE a.lead_id = current_lead.id
                      AND a.metadata->>'outcome' = 'booking_ready'
+                     AND ($9::boolean = false OR ${unresolvedBookingSql("a","current_lead")})
                    ORDER BY a.created_at DESC, a.id DESC
                    LIMIT 1
                  ) latest_booking ON true

@@ -1,5 +1,7 @@
 "use strict";
 
+const { detectExplicitLanguagePreference, detectMessageLanguage } = require("./chatLanguage");
+
 // Append *configured* business facts only when the current customer message
 // asks a second administrative question alongside verified treatment pricing.
 // Never derive an address from Gemini, an ad, CRM labels or older chat history.
@@ -22,30 +24,49 @@ function isBusinessLocationQuestion(customerText) {
     BUSINESS_LOCATION_MS.test(value);
 }
 
+// Full-question evidence for replacing a reply, separate from the broad
+// location mention detector used by append-only mixed-question handling.
+// No city list. Unknown phrasing remains with the AI rather than guessing.
+function standaloneLocationQuestion(customerText, modelLocationOnly = false) {
+  const input=String(customerText || "").trim();
+  if (!input || input.length>130) return false;
+  let q=input;
+  // Remove only an independently recognized leading language instruction.
+  const first=q.match(/^([^.!?。！？,，:：]+)[.!?。！？,，:：]\s*(.+)$/su);
+  if(first && detectExplicitLanguagePreference(first[1])) q=first[2].trim();
+  q=q.replace(/[?？。.!！\s]+$/gu,"").trim();
+  const zh=/^(?:请问|請問|想问|想問|你好|您好)?[\s，,]*(?:(?:你们|你們|你家|贵店|貴店|(?:你们|你們)?(?:的)?(?:诊所|診所|门店|門店|中心|分行|店面|店铺|店舖|店))?(?:的)?(?:地址|地点|地點)(?:是(?:什么|甚麼)|在哪(?:里|裡|儿|兒)?|在哪里|在哪裡|呢|在哪里呢)?|(?:你们|你們|你家|贵店|貴店|(?:你们|你們)?(?:的)?(?:诊所|診所|门店|門店|中心|分行|店面|店铺|店舖|店))(?:是)?(?:在哪(?:里|裡|儿|兒)?|哪里|哪裡|怎么去|怎麼去)(?:呢|呀|啊)?|(?:可以|能)(?:给|給|发|發)(?:我)?(?:你们的|你們的)?地址(?:吗|嗎)?)$/u;
+  const en=/^(?:hi[, ]+|hello[, ]+)?(?:(?:please |can you |could you )?(?:share|send|give)(?: me)? (?:your |the |clinic )?address(?: please)?|(?:your |the |clinic |our )?(?:address|location)(?: please)?|where (?:are you(?: located)?|is (?:your |the |this )?(?:clinic|centre|center|branch|outlet|shop|store|business)(?: located)?|can i find you)(?: please)?)$/iu;
+  const ms=/^(?:(?:boleh (?:tahu|share|bagi|beri|hantar) )?(?:alamat|lokasi)(?: (?:klinik|clinic|pusat|cawangan|kedai|anda|awak|kamu))?|(?:klinik|clinic|pusat|cawangan|kedai) (?:di mana|dimana|kat mana)|(?:di mana|dimana|kat mana) (?:klinik|clinic|pusat|cawangan|kedai))$/iu;
+  if(zh.test(q)||en.test(q)||ms.test(q)) return true;
+  // Contextual correction requires BOTH the model decision and a complete
+  // business-location question. No action for a bare model flag.
+  if(!modelLocationOnly) return false;
+  return /^(?:你们|你們|你家|贵店|貴店|(?:你们|你們)?(?:的)?(?:店|门店|門店|诊所|診所|中心|分行))\s*(?:不是|不|是)?在\s*[\p{L}][\p{L}\p{M} .'-]{0,48}\s*(?:吗|嗎|呢)$/u.test(q)
+    || /^(?:aren't|are|isn't|is)\s+(?:you|your (?:clinic|centre|center|branch|shop)|the (?:clinic|centre|center|branch|shop))\s+(?:located |based )?(?:in|at)\s+[\p{L}][\p{L}\p{M} .'-]{0,48}$/iu.test(q);
+}
+
 // Safe, standalone business-address response from Settings. Do not use a
 // treatment location ("my pain is located here") to authorize this response.
 // When a question also asks for a package price, leave the combined answer to
 // the normal verified pricing path.
 function confirmedSingleBranchLocationAnswer({
-  customerText = "", branches = [], language = "zh", modelLocationOnly = false,
+  customerText = "", branches = [], language = "zh", modelLocationOnly = false, resolvedLanguage = null,
 } = {}) {
   const question = String(customerText || "").trim();
-  if (!question || question.length > 130 || (!modelLocationOnly && !isBusinessLocationQuestion(question)) ||
+  if (!question || question.length > 130 || !standaloneLocationQuestion(question, modelLocationOnly) ||
       /(?:疼|痛|不舒服|症状|症狀|部位|身体|身體|[价價][钱錢格]|多少钱|多少錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|活动|活動|[预預]约|[病癌]|(?:\b(?:price|cost|fee|promo|package|treatment|pain|symptom|booking|appointment|rawatan|harga)\b))/iu.test(question)) return null;
   const valid = (Array.isArray(branches) ? branches : [])
     .filter(b => b && typeof b.address === "string" && b.address.trim());
   if (valid.length !== 1 || branches.length !== 1) return null;
   const name = String(valid[0].name || "").trim();
   const address = valid[0].address.trim();
-  const locale = String(language || "").toLowerCase();
-  // Follow the language of this question rather than inheriting a stale
-  // language from a previous ad or from another staff message.
-  const chineseQuestion = /[\u3400-\u9FFF]/u.test(question);
-  const explicitMalay = /\b(?:alamat|lokasi|klinik|cawangan|kedai|dimana|di mana|kat mana)\b/iu.test(question);
-  const explicitEnglish = /\b(?:where|address|location|shop|store|clinic|centre|center|branch|outlet)\b/iu.test(question);
-  const ms = modelLocationOnly ? locale.startsWith("ms") : !chineseQuestion && (explicitMalay || (!explicitEnglish && locale.startsWith("ms")));
-  const en = modelLocationOnly ? locale.startsWith("en") : !chineseQuestion && !ms &&
-    (explicitEnglish || locale.startsWith("en"));
+  // Production has already resolved the language for this turn; direct
+  // legacy callers can still infer it from the current message.
+  const locale = String(resolvedLanguage || detectExplicitLanguagePreference(question) ||
+    detectMessageLanguage(question) || language || "zh").toLowerCase();
+  const ms = locale.startsWith("ms");
+  const en = locale.startsWith("en");
   return {
     kind: "verified_location",
     verifiedAddress: address,
@@ -221,4 +242,4 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
 }
 
 module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply,
-  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft };
+  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft, standaloneLocationQuestion };

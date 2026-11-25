@@ -317,4 +317,6 @@ test("booking deduplication uses durable latest active-lead preference and expli
   assert.match(sql,/reset\.metadata->>'outcome' = 'booking_hold_resolved'/);
   assert.match(sql,/reset\.metadata->>'appointmentStatus' IN \('none','cancelled','reschedule','set','visited'\)/);
   assert.match(sql,/reset\.id > previous_request\.id/);
+  assert.match(sql,/reset\.id > a\.id/);
+  assert.match(sql,/previousAppointmentStatus\x27 IS DISTINCT FROM reset\.metadata->>\x27appointmentStatus/);
 });

@@ -3026,24 +3026,22 @@ async function processIncomingMessage(
     if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
         !urgentSafety && !isActiveSafetyConcern(text) &&
         !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !priceQuery && !packageQuery && !serviceQuery && !fixedAdFirstReply &&
+        !rm68CampaignContinuationTextOnly && !approvedPricingDecision && !rejectedModelPricing && !staffPriceConflict &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const verifiedLocation = confirmedSingleBranchLocationAnswer({
         customerText: text, branches: clinicConfig.branches,
         language: mediaLanguage,
-        modelLocationOnly: modelLocationOnly && !priceQuery && !packageQuery && !serviceQuery &&
-          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly &&
-          !approvedPricingDecision && !rejectedModelPricing && !staffPriceConflict,
+        resolvedLanguage: mediaLanguage,
+        modelLocationOnly,
       });
       if (verifiedLocation) {
         const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
         const finalStatus = verifyLocationDraft(reply, verifiedLocation);
-        // Only pass an independently verified, unchanged model answer. Keep
-        // existing exact-campaign, mixed pricing, clinical and media behavior.
-        const preserveModelLocation = originalStatus === "verified_address_only" &&
-          finalStatus === "verified_address_only" && reply === originalModelReply &&
-          !fixedAdFirstReply && !rm68CampaignContinuationTextOnly &&
-          !priceQuery && !packageQuery && !serviceQuery;
+        // Preserve an independently verified final location answer, including
+        // a legitimate language correction. Original draft accuracy is logged separately.
+        const preserveModelLocation = finalStatus === "verified_address_only";
         console.info("[Location facts] contact=" + contact.id +
           " original=" + originalStatus + " final=" + finalStatus +
           " decision=" + (preserveModelLocation ? "preserve" : "fallback"));
