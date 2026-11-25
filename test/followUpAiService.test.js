@@ -727,3 +727,29 @@ test("clinical-safety guard distinguishes recovery questions from absolute promi
     "不能保证没有恢复期，但做完不会有副作用哦",
   ]) assert.equal(hasUnsafeClinicalFollowUpClaim(promise), true, promise);
 });
+
+test("AI follow-up attachment authorization accepts matching topic and rejects incompatible or unknown topic", () => {
+  const {configuredVideoTreatment,validateFollowUpMediaDecision}=require("../src/services/followUpAiService");
+  const cfg={services:[{name:"Pelvic Care"},{name:"Face Lift"}],serviceAliases:[{alias:"3D",officialService:"Face Lift"}],
+    automatedFollowUp:{serviceOverrides:[{serviceName:"Pelvic Care",videoKey:"pelvic.mp4"}],
+      additionalSteps:[{serviceOverrides:[{serviceName:"Face Lift",videoKey:"face.mp4"}]}]}};
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg),"Pelvic Care");
+  assert.equal(configuredVideoTreatment("face.mp4",cfg),"Face Lift");
+  assert.equal(configuredVideoTreatment("face.mp4",cfg,"Pelvic Care"),"");
+  assert.equal(configuredVideoTreatment("unknown.mp4",cfg),null);
+  cfg.automatedFollowUp.additionalSteps[0].serviceOverrides.push({serviceName:"Face Lift",videoKey:"pelvic.mp4"});
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg,"Pelvic Care"),"Pelvic Care");
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg,"3D"),"Face Lift");
+  assert.equal(configuredVideoTreatment("pelvic.mp4",cfg), "");
+  assert.equal(validateFollowUpMediaDecision({action:"send",topic:"Pelvic Care",message:"Hello"},"",cfg).action,"skip");
+  const valid={action:"send",topic:"Pelvic Care",message:"Would you like to learn more?"};
+  assert.equal(validateFollowUpMediaDecision(valid,"Pelvic Care",cfg),valid);
+  for (const changed of [{topic:"Face Lift"},{topic:""},{message:"3D may interest you."}]) {
+    const result=validateFollowUpMediaDecision({...valid,...changed},"Pelvic Care",cfg);
+    assert.equal(result.action,"skip");
+    assert.equal(result.reason,"followup_media_topic_mismatch");
+  }
+  assert.equal(validateFollowUpMediaDecision(valid,null,cfg),valid);
+  const stop={action:"stop_sequence",reason:"customer deferred"};
+  assert.equal(validateFollowUpMediaDecision(stop,"Pelvic Care",cfg),stop);
+});

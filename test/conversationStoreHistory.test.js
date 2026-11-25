@@ -159,3 +159,30 @@ test("seven-day cut-off allows older historical pages without inheriting old sta
   assert.equal(history.length,3);
   assert.equal(history[0].content,"骨盆调理");
 });
+
+test("AI history preserves same-thread quoted message metadata without changing customer text or querying again",async t=>{
+ const original=messagesRepo.getMessagePageForContact;
+ t.after(()=>{messagesRepo.getMessagePageForContact=original;});
+ let calls=0;
+ const rows=[
+  {id:1,role:"user",content:"脸型、下巴",whatsapp_message_id:"wamid.target"},
+  {id:2,role:"assistant",content:"Which treatment?",whatsapp_message_id:"wamid.failed",delivery_status:"failed"},
+  {id:3,role:"user",content:"这个",reply_to_provider_message_id:"wamid.target"},
+ ];
+ messagesRepo.getMessagePageForContact=async()=>{calls++;return {rows,hasMore:false}};
+ const history=await conversationStore.getHistoryForContact(42,{throughMessageId:3});
+ assert.equal(calls,1);
+ assert.equal(history.at(-1).content,"这个");
+ assert.deepEqual(history.at(-1).verifiedQuotedMessage,{id:1,role:"user",content:"脸型、下巴"});
+ assert.equal(JSON.stringify(history).includes("verifiedQuotedMessage"),false);
+ const context=require("../src/utils/conversationPromptContext").buildConversationPromptContext(history);
+ assert.equal(context.verifiedQuotedMessage.content,"脸型、下巴");
+ const prompt=require("../src/utils/systemPrompt").buildSystemPrompt({conversationContext:context});
+ assert.match(prompt,/VERIFIED WHATSAPP REPLY REFERENCE/u);
+ assert.match(prompt,/脸型、下巴/u);
+ rows[2].reply_to_provider_message_id="wamid.failed";
+ assert.equal((await conversationStore.getHistoryForContact(42,{throughMessageId:3})).at(-1).verifiedQuotedMessage,undefined);
+ rows[2].reply_to_provider_message_id="wamid.target";
+ rows[0].whatsapp_customer_mutation="revoke";
+ assert.equal((await conversationStore.getHistoryForContact(42,{throughMessageId:3})).at(-1).verifiedQuotedMessage,undefined);
+});

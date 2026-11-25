@@ -32,7 +32,7 @@ function fixture() {
     businessType: "tcm_clinic",
     businessDescription: "Body-care consultations",
     services: [
-      {name: "骨盆调理", description: "Manual pelvic care only", duration: "TBD", priceRange: ""},
+      {name: "骨盆调理", description: "Manual pelvic care only. " + "Additional pelvic background. ".repeat(12) + "PELVIC_DETAILED_ONLY", duration: "PELVIC_DURATION_ONLY", priceRange: "PELVIC_PRICE_ONLY RM999"},
       {name: "脉冲波调理", description: pulseDescription, duration: "First-trial combined visit 2h15 including complimentary care", priceRange: ""},
     ],
     serviceAliases: [{alias: "pulse wave", officialService: "脉冲波调理"}],
@@ -46,7 +46,7 @@ function fixture() {
   };
 }
 
-test("scoped Pulse Wave benefits reach WhatsApp, Messenger and Instagram prompts in all customer languages", async () => {
+test("scoped Pulse Wave benefits and bounded alternative treatment knowledge reach all channels and customer languages", async () => {
   await withConfig(fixture(), () => {
     for (const channel of ["whatsapp", "facebook", "instagram"]) {
       for (const language of ["zh", "en", "ms"]) {
@@ -61,7 +61,14 @@ test("scoped Pulse Wave benefits reach WhatsApp, Messenger and Instagram prompts
         for (const fact of ["局部线条管理", "产后身体及骨盆护理", "肌肉紧绷僵硬", "经络养生", "水肿困扰"])
           assert.ok(prompt.includes(fact), `Missing ${fact} from ${channel}/${language}`);
         assert.match(prompt, /Do not claim 15cm tissue penetration/u);
-        assert.doesNotMatch(prompt, /Manual pelvic care only/u);
+        // Stage 3 intentionally gives the model a compact catalogue so
+        // natural topic changes do not require new keyword triggers.
+        // Only the selected treatment gets detailed facts; alternative
+        // treatment price, duration and description tail stay excluded.
+        assert.match(prompt, /Other configured treatments \(compact descriptions; detailed offer facts not supplied\)/u);
+        assert.match(prompt, /Manual pelvic care only/u);
+        assert.doesNotMatch(prompt, /PELVIC_DETAILED_ONLY|PELVIC_DURATION_ONLY|PELVIC_PRICE_ONLY|RM999/u);
+        assert.match(prompt, /First-trial combined visit 2h15 including complimentary care/u);
         assert.match(prompt, /ACTIVE PROMOTIONS/u);
         assert.match(prompt, /priceQuery/u);
       }

@@ -204,19 +204,30 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     if (media) photoMedia.set(i, media);
   }
 
+  const byProviderId = new Map(rows.filter(r => r.whatsapp_message_id).map(r => [r.whatsapp_message_id, r]));
   return rows.map((r, i) => {
     const media = photoMedia.get(i);
     const contextText = isVerifiedHumanStaffRow(r)
       ? `${STAFF_HISTORY_PREFIX}${aiContextTextForRow(r)}`
       : aiContextTextForRow(r);
-    if (!media) return withPricingHistoryMetadata({ role: r.role, content: contextText }, r);
-    return withPricingHistoryMetadata({
-      role: r.role,
-      content: [
-        { type: "text", text: contextText },
-        { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
-      ],
-    }, r);
+    const entry = withPricingHistoryMetadata({ role: r.role, content: media ? [
+      { type: "text", text: contextText },
+      { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
+    ] : contextText }, r);
+    const quoted = r.role === "user" && byProviderId.get(r.reply_to_provider_message_id);
+    // Same-contact, earlier, readable text only. Never authorize using an
+    // edited/revoked/unsent target, an unknown quote, or the quoted media itself.
+    if (quoted && Number(quoted.id) < Number(r.id) &&
+        !quoted.whatsapp_customer_mutation && !quoted.media_mime_type &&
+        !quoted.has_media_attachment && !quoted.media_url &&
+        (quoted.role === "user" || (quoted.role === "assistant" &&
+          ["delivered","read"].includes(quoted.delivery_status))) &&
+        typeof quoted.content === "string" && quoted.content.trim()) {
+      Object.defineProperty(entry, "verifiedQuotedMessage", {enumerable:false,
+        value:Object.freeze({id:Number(quoted.id),role:quoted.role,
+          content:quoted.content.slice(0,600)})});
+    }
+    return entry;
   });
 }
 

@@ -51,6 +51,7 @@ function allowedMessage(text,context){
 }
 async function createPersonalized20h({
  candidate,database=pool,env=process.env,
+ mediaTreatment=null,mediaAttached=false,
  generate=generator.generatePersonalizedFollowUp,
 }={}){
  const slot=Number(candidate?.slot_hours);
@@ -84,17 +85,18 @@ async function createPersonalized20h({
      treatmentInterest:clean(candidate.adFollowUpPolicy
        ? candidate.adFollowUpPolicy.treatment
        : lead.treatment_interest),
+     restrictTreatmentContext:candidate.recovery_topic_reset===true,
+     verifiedTreatment:clean(candidate.adFollowUpPolicy?.treatment),
+     staffDiscussedTreatment:Boolean(candidate.staff_discussed_followup_topic),
+     mediaTreatment,mediaAttached,
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
-     instruction:"Second WhatsApp number; " + slot + "-hour follow-up. Read the verified conversation and decide if this check-in is wanted. For deferrals, polite closing, customer intent to book later, booking confirmation, staff ownership or medical concern: choose skip, stop_sequence or human_review. Otherwise send a helpful, short, natural answer in the customer language. No prices unless the customer explicitly asks, and never invent a price, appointment or claim to attach a video." +
-       (candidate.recovery_topic_reset ? " The customer selected Other care and reset the treatment topic. Earlier conversation is available only for clinical safety, booking and stop/skip decisions; do not use it to identify treatment, price or promotions. The supplied current treatment is the only verified commercial topic." : "") +
-       (candidate.staff_discussed_followup_topic
-         ? " This treatment was suggested by staff in the conversation, not explicitly selected by the customer. Refer to the staff recommendation without claiming the customer chose or requested that treatment."
-         : ""),
+     instruction:"Second WhatsApp number; " + slot + "-hour follow-up. Read the verified conversation. No prices; never invent a price, appointment or claim to attach a video.",
      channel:"whatsapp",contactId:ids[0],leadId:lead.id||null,env,
    });
  }catch{return{ok:false,code:"secondary_20h_ai_unavailable"};}
+ decision=generator.validateFollowUpMediaDecision(decision,mediaTreatment);
  const message=clean(decision?.message);
  if(["skip","stop_sequence","human_review"].includes(decision?.action))
    return{ok:false,action:decision.action,code:"secondary_contextual_ai_"+decision.action};

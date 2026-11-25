@@ -442,7 +442,7 @@ function resolveAiPricingDecision({
     customerText: current, conversationHistory, services, serviceAliases, now,
   });
   const clarifiedPriceService = resolveClarifiedPriceService({
-    customerText: current, conversationHistory, services, serviceAliases,
+    customerText: current, conversationHistory, services, serviceAliases, now,
   });
   // Model intent alone must never turn a normal treatment question into an
   // unsolicited graphic. Clear keywords retain deterministic recovery if
@@ -489,6 +489,8 @@ function resolveAiPricingDecision({
           source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : established
       ? { treatment: established.name, source: "customer_established_treatment" }
+    : clarifiedPriceService && conversationHistory.at(-1)?.verifiedQuotedMessage
+      ? { treatment: clarifiedPriceService, source: "customer_price_clarification" }
     : (() => {
         const customer = verifiedServiceAnchor({
           customerText: current, conversationHistory, services, serviceAliases,
@@ -668,9 +670,14 @@ function staleCommercialIntent({customerText,conversationHistory=[],services=[],
     (allowOfferEnquiries && isCurrentOfferEnquiry(value,
       {modelOfferQuery:modelIntent.packageQuery===true}));
   if (requested(current)) return false;
+  // Independently named current selections and verified quoted references
+  // retain normal model-led authorization. Never infer stale intent merely
+  // from the clock when a newer treatment discussion has begun.
+  const candidates=serviceCandidates(services,serviceAliases);
+  if (safeServiceFromCustomer(current,services,serviceAliases)) return false;
   // Existing independently verified price clarifications and selected
   // relative package options still go through their original validators.
-  if (resolveClarifiedPriceService({customerText,conversationHistory:turns,services,serviceAliases}) &&
+  if (resolveClarifiedPriceService({customerText,conversationHistory:turns,services,serviceAliases,now}) &&
       !hasTreatmentPriceContent(pricingMessageText(turns.at(-2)))) return false;
   if (modelIntent.promotionOption!=null &&
       Object.values(relativePackageReference(current)).some(Boolean)) return false;
@@ -680,8 +687,14 @@ function staleCommercialIntent({customerText,conversationHistory=[],services=[],
         isVerifiedStaffTurn(t)) break;
     // Require an actual earlier customer price request, not the model's
     // inherited offer flag or an isolated package mention.
-    if(t.role==="user" && (hasCurrentPriceAmountRequest(pricingMessageText(t)) ||
-        isStandalonePriceQuestion(pricingMessageText(t)))) return true;
+    if(t.role!=="user") continue;
+    const previousText=pricingMessageText(t);
+    const named=[...new Set(findServicesInText(previousText,candidates))];
+    if(named.length>1 || (named.length===1 && named[0]!==modelIntent.treatment)) break;
+    if(hasCurrentPriceAmountRequest(previousText) || isStandalonePriceQuestion(previousText)) return true;
+    // A new explicit selection separates a later genuine price paraphrase
+    // from a commercial request about an earlier discussion.
+    if(named.length===1) break;
   }
   return false;
 }
@@ -729,6 +742,8 @@ function resolveModelLedPricingDecision({
   if (staleCommercialIntent({customerText:original,conversationHistory:turns,services,
     serviceAliases,allowOfferEnquiries,modelIntent:intent,now})) return null;
   const candidates = serviceCandidates(services, serviceAliases);
+  const clarified = resolveClarifiedPriceService({customerText:original,conversationHistory:turns,services,serviceAliases,now});
+  if (clarified && clarified !== intent.treatment) return null;
   const direct = safeServiceFromCustomer(current, services, serviceAliases);
   const names = [...new Set(findServicesInText(current, candidates))];
   const bareKey=value=>String(value||"").normalize("NFKC").replace(/[\s?？.!！。]+/gu,"").toLowerCase();

@@ -26,7 +26,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
-const { guardAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
+const { guardAppointmentReply, guardAiAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -51,7 +51,7 @@ const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPa
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
-  confirmedSingleBranchLocationAnswer, isBusinessLocationQuestion } =
+  confirmedSingleBranchLocationAnswer, verifyLocationDraft, isBusinessLocationQuestion } =
   require("./utils/verifiedPricingBusinessFacts");
 const { administrativeReviewReply,
   isStandalonePriceQuestion: isStandaloneNeutroPriceQuestion } =
@@ -1377,6 +1377,8 @@ async function processIncomingMessage(
       console.info("[Pricing test contact] contact="+contact.id+" inbound="+savedInbound.id+" mode=enabled");
     }
     let aiReply;
+    let originalModelReply = null;
+    let modelLocationOnly = false;
     let flagged = false;
     let reviewRequired = false;
     let reviewType = null;
@@ -1537,6 +1539,7 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        originalModelReply = parsedReply.text; // Before language, pricing, location or other rewrites.
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
@@ -1551,6 +1554,11 @@ async function processIncomingMessage(
         );
         // Only the accepted response may provide intent. A language
         // fallback explicitly clears pricing authority, not just its text.
+        modelLocationOnly = !languageCheckedReply.languageCorrectionFailed &&
+          languageCheckedReply.structured === true && languageCheckedReply.outcome === "normal" &&
+          languageCheckedReply.details?.businessLocationOnly === true &&
+          !languageCheckedReply.serviceQuery && !languageCheckedReply.priceQuery && !languageCheckedReply.packageQuery &&
+          languageCheckedReply.details?.appointmentScheduling !== true;
         modelPricingStage = languageCheckedReply.languageCorrectionFailed
           ? null : languageCheckedReply.pricingStage || null;
         modelPricingIntent = languageCheckedReply.languageCorrectionFailed
@@ -1677,9 +1685,14 @@ async function processIncomingMessage(
             packageQuery = false;
             details = null;
           } else if (plan?.reply && !flagged && plan.alreadyInvited) {
-            // Do not send the same assessment invitation again when a patient
-            // lists several treatments in separate WhatsApp messages.
-            aiReply = plan.reply;
+            // The existing evidence lookup still protects clinical reviews.
+            // A correctly identified current service enquiry is conversational:
+            // let Gemini answer it instead of unconditionally replacing its draft.
+            // Preserve the legacy recovery for missing/conflicting model metadata.
+            const modelIdentifiedTreatment = plan.treatment &&
+              serviceQuery && serviceQuerySource === "customer_message" &&
+              details?.treatment === plan.treatment && !priceQuery && !packageQuery;
+            if (!modelIdentifiedTreatment) aiReply = plan.reply;
           }
         } else {
           // A failed clinical-review lookup must not permit recovery.
@@ -1911,6 +1924,19 @@ async function processIncomingMessage(
         }
       }
     }
+
+    const verifiedQuotedPriceClarification = aiPricingEnabled &&
+      flagged && reviewRequired && !keywordReason && !urgentSafety &&
+      !bookingReady && !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+      commercialHistory.at(-1)?.verifiedQuotedMessage
+      ? resolveClarifiedPriceService({customerText:text,conversationHistory:commercialHistory,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases}) : null;
+    // A quoted reply to a verified open monetary clarification is commercial
+    // information, not clinical suitability. Existing durable review evidence
+    // still decides whether recovery is permitted.
+    if (verifiedQuotedPriceClarification && shadowPriceException?.treatment === verifiedQuotedPriceClarification)
+      reviewType = "information";
 
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
@@ -3034,14 +3060,26 @@ async function processIncomingMessage(
     if (!flagged && !bookingReady && !keywordReason && !marketingStopQuestion &&
         !urgentSafety && !isActiveSafetyConcern(text) &&
         !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+        !priceQuery && !packageQuery && !serviceQuery && !fixedAdFirstReply &&
+        !rm68CampaignContinuationTextOnly && !approvedPricingDecision && !rejectedModelPricing && !staffPriceConflict &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const verifiedLocation = confirmedSingleBranchLocationAnswer({
         customerText: text, branches: clinicConfig.branches,
         language: mediaLanguage,
+        resolvedLanguage: mediaLanguage,
+        modelLocationOnly,
       });
       if (verifiedLocation) {
-        reply = verifiedLocation.reply;
+        const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
+        const finalStatus = verifyLocationDraft(reply, verifiedLocation);
+        // Preserve an independently verified final location answer, including
+        // a legitimate language correction. Original draft accuracy is logged separately.
+        const preserveModelLocation = finalStatus === "verified_address_only";
+        console.info("[Location facts] contact=" + contact.id +
+          " original=" + originalStatus + " final=" + finalStatus +
+          " decision=" + (preserveModelLocation ? "preserve" : "fallback"));
+        if (!preserveModelLocation) reply = verifiedLocation.reply;
         reviewContinuationTextOnly = true;
         priceQuery = false;
         packageQuery = false;
@@ -3080,6 +3118,7 @@ async function processIncomingMessage(
 
     let bookingDurationMinutes = 0;
     let appointmentCustomerHistory = [];
+    let appointmentStaffHistory = [];
     const verifiedExistingBooking = Boolean(
       verifiedBookingForHours?.acceptedStaffOffer ||
       (verifiedBookingForHours?.appointmentAt &&
@@ -3097,9 +3136,12 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         clinicConfig.hours?.weekly &&
         (!verifiedExistingBooking || explicitRescheduleForHours)) {
-      appointmentCustomerHistory = (Array.isArray(history) ? history : [])
+      // Reuse the bounded AI snapshot: no additional Neon read or model call.
+      const priorAppointmentHistory = (Array.isArray(history) ? history : [])
+        .filter(item => item?.contextMessageId !== Number(savedInbound.id));
+      appointmentCustomerHistory = priorAppointmentHistory
         .filter(item => item?.role === "user")
-        .slice(-8)
+        .slice(-20)
         .reverse()
         .map(item => ({
           content: typeof item.content === "string" ? item.content : "",
@@ -3108,14 +3150,24 @@ async function processIncomingMessage(
           createdAt: item.pricingCreatedAtMs ?? null,
         }))
         .filter(item => item.content && item.createdAt);
+      appointmentStaffHistory = priorAppointmentHistory
+        .filter(item => item?.role === "assistant" && item.pricingVerifiedStaffText === true)
+        .slice(-20).reverse().map(item => ({
+          content: String(item.content || "").replace(/^\[Verified STAFF message\] /u,""),
+          createdAt: item.pricingCreatedAtMs ?? null,
+        })).filter(item => item.content && item.createdAt);
       bookingDurationMinutes = durationMinutesForPackage({
         config: clinicConfig,
         customerTexts: [text, ...appointmentCustomerHistory.map(item => item.content)],
         treatment: details?.treatment || "",
       });
-      const checked = guardAppointmentReply({
+      const appointmentMode = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+      const checkAppointment = appointmentMode ? guardAiAppointmentReply : guardAppointmentReply;
+      const checked = checkAppointment({
         hours: clinicConfig.hours, reply, customerText: text,
+        appointmentScheduling: details?.appointmentScheduling,
         recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
         appointmentPreference: details?.appointmentPreference || "",
         receivedAt: savedInbound.created_at || new Date(),
         now: new Date(), language: mediaLanguage,
@@ -3138,10 +3190,10 @@ async function processIncomingMessage(
       }
       if (checked.blocked) {
         bookingReady = false;
-        if (details && ["closed","past","outside_hours","invalid_date","invalid_time"].includes(checked.issue?.status)) {
+        if (details && ["closed","past","outside_hours","invalid_date","invalid_time","not_appointment","unverified_confirmation"].includes(checked.issue?.status)) {
           details = {...details, appointmentPreference:null};
         }
-        console.info("[Appointment hours] corrected invalid booking preference contact=" +
+        console.info("[Appointment hours] blocked invalid booking or confirmation contact=" +
           contact.id + " inbound=" + savedInbound.id + " reason=" + checked.issue?.status);
       }
     }
@@ -3256,6 +3308,7 @@ async function processIncomingMessage(
           receivedAt: savedInbound.created_at || new Date(),
           durationMinutes: bookingDurationMinutes,
           recentCustomerMessages: appointmentCustomerHistory,
+          recentStaffMessages: appointmentStaffHistory,
           allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {

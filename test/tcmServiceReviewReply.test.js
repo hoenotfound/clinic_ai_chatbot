@@ -276,3 +276,32 @@ test("verified evidence overrides stale AI history and rejects unsent invitation
   assert.equal(accepted.alreadyInvited,true);
   assert.doesNotMatch(accepted.reply,/arrange a 1-to-1 assessment/i);
 });
+
+test("existing evidence plan identifies the verified treatment but preserves pending clinical review", () => {
+  const ordinary = planFor("Pelvic adjustment");
+  assert.equal(ordinary.treatment, "骨盆调理");
+  assert.equal(ordinary.preserveReview, false);
+  const pending = planTcmReviewReply({
+    ...options("Pelvic adjustment"),
+    conversationHistory: [{role:"user",content:"Pelvic adjustment"}],
+    pendingClinicalReview:true,
+  });
+  assert.equal(pending.treatment, "骨盆调理");
+  assert.equal(pending.preserveReview, true);
+});
+
+test("normal repeated-invitation branch preserves model draft only for the verified current treatment", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const start = source.indexOf("const modelIdentifiedTreatment = plan.treatment");
+  const end = source.indexOf("if (!modelIdentifiedTreatment) aiReply = plan.reply;", start);
+  assert.ok(start > 0 && end > start);
+  const run = new Function("plan", "serviceQuery", "serviceQuerySource", "details", "priceQuery", "packageQuery", "aiReply",
+    source.slice(start, end + "if (!modelIdentifiedTreatment) aiReply = plan.reply;".length) + "\nreturn aiReply;");
+  const plan = { treatment:"骨盆调理", reply:"verified fallback" };
+  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},false,false,"natural"),"natural");
+  assert.equal(run(plan,true,"customer_message",{treatment:"3D 小颜术"},false,false,"natural"),"verified fallback");
+  assert.equal(run(plan,true,"conversation",{treatment:"骨盆调理"},false,false,"natural"),"verified fallback");
+  assert.equal(run(plan,false,null,null,false,false,"natural"),"verified fallback");
+  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},true,false,"natural"),"verified fallback");
+  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},false,true,"natural"),"verified fallback");
+});

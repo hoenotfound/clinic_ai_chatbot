@@ -30,24 +30,32 @@ function shortChineseAcknowledgement(text) {
   return CHINESE_ACKNOWLEDGEMENTS.has(plain);
 }
 
+function factualLabels() {
+  return [
+    clinicConfig.businessName, clinicConfig.clinicName,
+    ...(clinicConfig.branches || []).flatMap(branch => [branch?.name, branch?.address]),
+  ].filter(value => typeof value === "string" && value.trim().length >= 3);
+}
 function protectedNames() {
   return [
     ...(clinicConfig.services || []).flatMap(item => [item?.name]),
     ...(clinicConfig.serviceAliases || []).flatMap(item => [item?.alias, item?.officialService]),
-    clinicConfig.businessName,
   ].filter(value => typeof value === "string" &&
     (value.match(CHINESE_TEXT) || []).length >= 3);
 }
 
 function removeConfiguredNames(text, names = protectedNames()) {
   let result = String(text || "");
-  for (const name of [...new Set(names)].sort((a, b) => b.length - a.length)) {
+  for (const name of [...new Set([...names, ...factualLabels()])].sort((a, b) => b.length - a.length)) {
     const normalizedName = String(name || "").trim();
     if (normalizedName.length < 3) continue;
     const escaped = normalizedName
       .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       .replace(/\s+/g, "\\s*");
-    result = result.replace(new RegExp(escaped, "giu"), " ");
+    // Avoid stripping a Latin label from inside another word.
+    const left=/^[a-z0-9]/iu.test(normalizedName)?"(?<![a-z0-9])":"";
+    const right=/[a-z0-9]$/iu.test(normalizedName)?"(?![a-z0-9])":"";
+    result = result.replace(new RegExp(left+escaped+right, "giu"), " ");
   }
   return result;
 }
@@ -86,7 +94,7 @@ function sameBookingFacts(original, replacement) {
   if (original.bookingReady !== replacement.bookingReady) return false;
   const a = original.details || {};
   const b = replacement.details || {};
-  const keys = ["branch", "treatment", "appointmentPreference", "projectLocation", "projectSummary", "nextStep"];
+  const keys = ["branch", "treatment", "appointmentPreference", "appointmentScheduling", "businessLocationOnly", "projectLocation", "projectSummary", "nextStep"];
   return keys.every(key => (a[key] ?? null) === (b[key] ?? null));
 }
 

@@ -105,10 +105,17 @@ function shortChoice(text, services, aliases, preceding) {
 function recentTurns(session, now) {
   if (!Array.isArray(session) || session.length < 3) return null;
   const last = session.at(-1);
-  if (last?.role !== "user" || !isRecentPricingThread(session,0,now) ||
-      session.some(turn => isVerifiedStaffTurn(turn) ||
+  if (last?.role !== "user") return null;
+  // Ignore only a demonstrably stale prefix. Unknown timestamps or a
+  // non-chronological recent suffix still fail closed.
+  let start=0;
+  while(start<session.length && Number.isFinite(session[start]?.pricingCreatedAtMs) &&
+      session[start].pricingCreatedAtMs < now-24*60*60*1000) start++;
+  const fresh=session.slice(start);
+  if (!fresh.length || !isRecentPricingThread(fresh,0,now) ||
+      fresh.some(turn => isVerifiedStaffTurn(turn) ||
         (turn.role === "user" && hasClinicalMediaRisk(pricingMessageText(turn))))) return null;
-  const bounded = session.filter(turn => turn.pricingCreatedAtMs >= now - MAX_CONTEXT_MS);
+  const bounded = fresh.filter(turn => turn.pricingCreatedAtMs >= now - MAX_CONTEXT_MS);
   // No orphan assistant menu may authorize a quote after the 3h cutoff.
   const firstUser = bounded.findIndex(turn => turn.role === "user");
   return firstUser < 0 ? null : bounded.slice(firstUser);
