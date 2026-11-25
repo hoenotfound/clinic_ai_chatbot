@@ -182,7 +182,7 @@ function resolveFixedAdFirstReply({
       (unattributedRm68FirstTurn || (liveMetaAd ? liveRm68Ad :
         freshSavedAttribution && campaignCreativeMatches(metaAdContext)))) {
     return {
-      reply: firstReply(now),
+      reply: firstReply(now, language),
       treatment: null,
       serviceQuery: false,
       serviceQuerySource: null,
