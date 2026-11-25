@@ -2056,7 +2056,7 @@ export default function Inbox() {
         />
       )}
       <InboxMascot hostRef={mascotHostRef} activity={mascotActivity} selectedId={selectedId}
-        searching={mascotSearching && inboxPageLoading && !visibleMobileThreadOpen}
+        searching={mascotSearching && inboxPageLoading} mobileThreadOpen={visibleMobileThreadOpen}
         busy={messagesLoading || actionPending || conversationStatePending || Boolean(outboundPendingByContact[String(selectedId)]) || Boolean(mascotWork?.busy)}
         suspended={contactDetailsOpen || whatsappTemplateOpen || Boolean(mascotWork?.modal)}
         layoutKey={String(selectedId) + ":" + visibleMobileThreadOpen + ":" + Boolean(selectedContactIsFilteredOut)} />

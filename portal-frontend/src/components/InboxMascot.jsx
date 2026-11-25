@@ -121,12 +121,13 @@ function useWorkspace(hostRef, layoutKey, enabled) {
   return space;
 }
 
-export default function InboxMascot({ hostRef, activity, selectedId, searching = false, busy = false,
-  suspended = false, layoutKey }) {
+export default function InboxMascot({ hostRef, activity, selectedId, searching: searchLoading = false, busy = false,
+  suspended = false, layoutKey, mobileThreadOpen = false }) {
   const [mode, setMode] = useMascotMode();
   const [placement, updatePlacement] = useDashyPlacement();
   const reduced = useMedia("(prefers-reduced-motion: reduce)");
   const desktop = useMedia("(min-width: 1024px)");
+  const searching = searchLoading && (desktop || !mobileThreadOpen);
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const [ambient, setAmbient] = useState("idle");
   const [reaction, setReaction] = useState(null);

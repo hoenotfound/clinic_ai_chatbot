@@ -40,6 +40,7 @@ test("Dashy preserves Inbox controls and offers personal appearance modes", asyn
   await page.mouse.down();
   await page.mouse.move(before.x + before.width / 2 - 100, before.y + before.height / 2 - 30, { steps: 8 });
   await page.mouse.up();
+  await expect(page.getByRole("button", { name: "Pause animation" })).toHaveCount(0);
   await expect.poll(async () => Math.abs((await mascot.boundingBox()).x - before.x)).toBeGreaterThan(20);
   const moved = await mascot.boundingBox();
   await page.reload();
