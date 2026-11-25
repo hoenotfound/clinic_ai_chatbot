@@ -562,3 +562,54 @@ test("a fallback model with a positive but unusably short remaining window is no
     assert.deepEqual(calls, ["gemini-3.8-flash", "claude"]);
   });
 });
+
+test("corrective Flash-Lite quota and authentication failures record key health without rotating", async () => {
+  for (const scenario of [
+    { status: 429, message: "requests per day quota exhausted", failure: "quota_exhausted", health: "rate_limited" },
+    { status: 403, message: "permission denied", failure: "authentication", health: "invalid" },
+  ]) {
+    const calls = [];
+    await withReplyMocks(async (_m, _o, key, model, control) => {
+      calls.push([key, model, control.correctiveRetry === true]);
+      if (model === "gemini-3.8-flash") throw capacityError();
+      if (!control.correctiveRetry) return '{"reply":';
+      const err = new Error(scenario.message);
+      err.status = scenario.status;
+      throw err;
+    }, async () => { throw Error("Claude not configured"); }, async () => {
+      await assert.rejects(() => getReplyWithEnv([], testReplyOptions,
+        flashLiteEnv({ ANTHROPIC_API_KEY: "" })));
+      assert.deepEqual(calls, [
+        ["key-a", "gemini-3.8-flash", false],
+        ["key-a", "gemini-3.5-flash-lite", false],
+        ["key-a", "gemini-3.5-flash-lite", true],
+      ]);
+      const health = getRuntimeCandidateHealth();
+      assert.equal(health.length, 1);
+      assert.equal(health[0].last_failure_kind, scenario.failure);
+      assert.equal(health[0].last_status, scenario.health);
+      assert.ok(new Date(health[0].cooldown_until).getTime() > Date.now());
+    });
+  }
+});
+
+test("a corrective Flash-Lite timeout stops recovery without penalizing credential health", async () => {
+  const calls = [];
+  await withReplyMocks(async (_m, _o, key, model, control) => {
+    calls.push([key, model, control.correctiveRetry === true]);
+    if (model === "gemini-3.8-flash") throw capacityError();
+    if (!control.correctiveRetry) return '{"reply":';
+    const err = new Error("generation timed out");
+    err.code = "AI_TIMEOUT";
+    throw err;
+  }, async () => { throw Error("Claude not configured"); }, async () => {
+    await assert.rejects(() => getReplyWithEnv([], testReplyOptions,
+      flashLiteEnv({ ANTHROPIC_API_KEY: "" })));
+    assert.deepEqual(calls, [
+      ["key-a", "gemini-3.8-flash", false],
+      ["key-a", "gemini-3.5-flash-lite", false],
+      ["key-a", "gemini-3.5-flash-lite", true],
+    ]);
+    assert.deepEqual(getRuntimeCandidateHealth(), []);
+  });
+});
