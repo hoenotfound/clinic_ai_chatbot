@@ -1167,7 +1167,7 @@ async function runOnce({
           ? env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"
           : env.WHATSAPP_SECONDARY_EARLY_AI_FOLLOWUPS_ENABLED==="true");
       if(contextualAiEnabled){
-        const mediaTreatment=key ? configuredVideoTreatment(key,clinicConfig) : null;
+        const mediaTreatment=key ? configuredVideoTreatment(key,clinicConfig,followupTreatment) : null;
         const personalized=await personalize20h({candidate,database,env,mediaTreatment,mediaAttached:Boolean(key)});
         if(!personalized?.ok){
           const code=personalized?.code||"secondary_contextual_ai_unavailable";
