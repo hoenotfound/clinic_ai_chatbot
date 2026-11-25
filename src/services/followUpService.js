@@ -1321,12 +1321,12 @@ async function sendCandidate(candidate) {
   if (!step) return;
 
   const rm68FollowUp = campaignFollowUp({ candidate });
-  if (rm68FollowUp?.expired) {
+  if (rm68FollowUp?.expired || rm68FollowUp?.stop) {
     // End only this expired ad's follow-up sequence; avoid repeatedly
     // attempting to send an obsolete offer after 6 December.
     const decision = normalizeFollowUpDecision({
       action: "stop_sequence",
-      reason: "neutro_rm68_campaign_expired",
+      reason: rm68FollowUp.expired ? "neutro_rm68_campaign_expired" : "neutro_rm68_alternative_date_requested",
     });
     return Boolean(await followUpRepo.recordAiDecisionIfStillEligible({
       contactId: candidate.contact_id,
@@ -1334,7 +1334,7 @@ async function sendCandidate(candidate) {
       stepIndex,
       action: decision.action,
       reason: decision.reason,
-      topic: "expired_rm68_event",
+      topic: rm68FollowUp.expired ? "expired_rm68_event" : "rm68_alternative_date",
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,

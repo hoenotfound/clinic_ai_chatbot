@@ -93,14 +93,14 @@ const {
 const { isContextualAdServiceEnquiry, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const recoveryContinuationQueue = require("./services/whatsapp131060ContinuationQueue");
-const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement,
+const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgement, alternativeDateRequest, campaignDateScope, campaignDay,
   recoveryBreastOfferInvitation, recoveryBreastCampaignOpening,
   configuredFirstReplyImage, isCampaignAvailabilityQuestion,
   hasCampaignConversation,stillDiscussingCampaign,campaignContinuationPolicy,campaignHasVerifiedNewService } =
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const { correctReplyLanguage } = require("./utils/replyLanguageGuard");
+const { correctReplyLanguage, clearReplyLanguageMismatch } = require("./utils/replyLanguageGuard");
 const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -1489,7 +1489,7 @@ async function processIncomingMessage(
           !hasClinicalMediaRisk(text) && !isRm68ClinicalConcern(text) &&
           !acceptedStaffOffer && !bookingContext?.appointmentAt &&
           !/^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))) {
-        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig});
+        fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig,language:mediaLanguage});
       }
       if (recoveryOther && !keywordReason && !marketingStopQuestion) {
         aiReply = "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。";
@@ -1530,6 +1530,10 @@ async function processIncomingMessage(
           channel,
           metaAdContext,
           replyLanguage: mediaLanguage,
+          rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" &&
+            /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+            hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory,text) &&
+            !campaignHasVerifiedNewService({history:commercialHistory,customerText:text,services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer}) ? campaignDay() : null,
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
@@ -2685,7 +2689,7 @@ async function processIncomingMessage(
         isCampaignAvailabilityQuestion(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text,
+      const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
@@ -2775,7 +2779,7 @@ async function processIncomingMessage(
         !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
-      const screeningAnswer = screeningAcknowledgement({history:commercialHistory,customerText:text});
+      const screeningAnswer = screeningAcknowledgement({history:commercialHistory,customerText:text,language:mediaLanguage});
       if (screeningAnswer && !clinicalAcknowledgement) {
         if (!flagged) reviewType = "information";
         flagged = true;
@@ -2803,6 +2807,35 @@ async function processIncomingMessage(
         `Skipping AI reply for ${channel}:${from} — staff replied before the AI send.`
       );
       return { wasFirstMessage, keywordReason };
+    }
+
+    // An alternative date needs actual staff confirmation of ordinary charges
+    // and availability. Keep earlier clinical reviews intact, record this
+    // separate inbound as an information review, and acknowledge safely.
+    if ((!flagged || (reviewRequired && reviewType === "information")) &&
+        !clinicalAcknowledgement && !keywordReason && !urgentSafety && !marketingStopQuestion &&
+        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+        !isExplicitStaffRequest(text) && !isDefiniteAppointmentCancellation(text) &&
+        !fixedAdFirstReply && !staffPriceConflict &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+        hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory,text) &&
+        !campaignHasVerifiedNewService({history:commercialHistory,customerText:text,services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer}) &&
+        campaignDateScope(commercialHistory,text,Date.parse(savedInbound.created_at)||Date.now())==="ordinary" &&
+        (alternativeDateRequest(text,Date.parse(savedInbound.created_at)||Date.now()) || hasExplicitPriceRequest(text) || bookingReady)) {
+      const ordinaryReply=campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage,now:Date.parse(savedInbound.created_at)||Date.now()});
+      if (ordinaryReply) {
+        flagged = true;
+        reviewRequired = true;
+        reviewType = "information";
+        clinicalAcknowledgement = ordinaryReply;
+        bookingReady = false;
+        serviceQuery = false;
+        serviceQuerySource = null;
+        priceQuery = false;
+        packageQuery = false;
+        details = null;
+      }
     }
 
     // Final clinical safety backstop: do not let a normal sales draft, price
@@ -2953,7 +2986,7 @@ async function processIncomingMessage(
         serviceAliases:clinicConfig.serviceAliases,resolveService:safeServiceFromCustomer,
       });
       const campaign = campaignContinuationPolicy({
-        history:commercialHistory,customerText:text,reply,verifiedNewService,
+        history:commercialHistory,customerText:text,reply,verifiedNewService,language:mediaLanguage,
       });
       if (campaign) {
         reply=campaign.reply;
@@ -3128,6 +3161,14 @@ async function processIncomingMessage(
         reviewContinuationTextOnly=true;
         priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
       }
+    }
+    // Campaign-specific final language validation, including downstream overrides.
+    if (!flagged && !bookingReady && (rm68CampaignContinuationTextOnly || reviewContinuationTextOnly || fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") &&
+        clearReplyLanguageMismatch(reply,mediaLanguage)) {
+      reply = (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026" ? fixedAdFirstReply.reply : null) ||
+        campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
+        (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
+          mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
     }
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
