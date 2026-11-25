@@ -1320,8 +1320,11 @@ async function setAttention(
   id,
   needsAttention,
   reason = null,
-  { notifyWebPush: shouldNotifyWebPush = true } = {}
+  { notifyWebPush: shouldNotifyWebPush = true, unansweredInboundId = null } = {}
 ) {
+  const guarded=unansweredInboundId!=null;
+  if(guarded&&(!needsAttention||!Number.isSafeInteger(Number(unansweredInboundId))||Number(unansweredInboundId)<1))
+    throw new Error("Manual attention requires a valid inbound ID.");
   const result = await pool.query(
     `UPDATE contacts c
      SET needs_attention = $1, attention_reason = $2,
@@ -1330,11 +1333,22 @@ async function setAttention(
          delivery_attention_message_id = NULL,
          updated_at = now()
      WHERE c.id = $3
+     ${guarded?`AND c.needs_attention IS NOT TRUE AND EXISTS (
+         SELECT 1 FROM messages inbound
+         WHERE inbound.id=$4 AND inbound.contact_id=c.id AND inbound.role='user'
+         AND NOT EXISTS (
+           SELECT 1 FROM messages staff
+           WHERE staff.contact_id=c.id AND staff.role='assistant'
+             AND staff.sent_by_username IS NOT NULL
+             AND COALESCE(staff.delivery_status,'pending')<>'failed'
+             AND (staff.created_at,staff.id)>(inbound.created_at,inbound.id)
+         )
+       )`:""}
      RETURNING c.*,
-       (SELECT m.id FROM messages m
+       ${guarded?"$4::integer":`(SELECT m.id FROM messages m
         WHERE m.contact_id = c.id AND m.role = 'user'
-        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
-    [needsAttention, needsAttention ? reason : null, id]
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1)`} AS attention_message_id`,
+    [needsAttention, needsAttention ? reason : null, id, ...(guarded?[Number(unansweredInboundId)]:[])]
   );
   const updated = result.rows[0] || null;
   if (updated) {
@@ -1362,7 +1376,7 @@ async function setAttention(
 // Every unresolved question gets one durable row keyed by its inbound message.
 // Keep the contact AI-owned. Concurrent duplicate webhook jobs cannot create
 // duplicate questions or trigger another staff alert.
-async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical") {
+async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical", { unansweredOnly = false } = {}) {
   if (!Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) < 1) {
     throw new Error("AI review requires the original inbound message ID.");
   }
@@ -1381,6 +1395,17 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
     `WITH eligible AS MATERIALIZED (
        SELECT c.id FROM contacts c
        WHERE c.id = $1 AND c.mode = 'ai'
+       ${unansweredOnly?`AND EXISTS (
+         SELECT 1 FROM messages inbound
+         WHERE inbound.id=$2 AND inbound.contact_id=c.id AND inbound.role='user'
+         AND NOT EXISTS (
+           SELECT 1 FROM messages staff
+           WHERE staff.contact_id=c.id AND staff.role='assistant'
+             AND staff.sent_by_username IS NOT NULL
+             AND COALESCE(staff.delivery_status,'pending')<>'failed'
+             AND (staff.created_at,staff.id)>(inbound.created_at,inbound.id)
+         )
+       )`:""}
        FOR UPDATE
      ), previous_same_concern AS MATERIALIZED (
        SELECT EXISTS (
