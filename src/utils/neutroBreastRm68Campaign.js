@@ -209,6 +209,7 @@ function historicalTime(row) {
 }
 function alternativeDateContext(history, customerText, now=Date.now()) {
   if(alternativeDateRequest(customerText,now))return true;
+  if(VISIT_ACTION.test(String(customerText||""))&&campaignDatesInText(customerText).some(d=>d.month===12&&[5,6].includes(d.day)))return false;
   const prior=(Array.isArray(history)?history:[]).filter(r=>r?.role==="user"&&String(r.content||"").trim()!==String(customerText||"").trim()).slice(-4).reverse();
   for(const row of prior) {
     if(isOtherTreatmentQuery(row.content))return false;
@@ -400,7 +401,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   const recent=(candidate.recent_inbound_messages||[]).slice(0,5);
   const times=candidate.recent_inbound_times||[];
   if(recent.some((value,i)=>alternativeDateRequest(value,historicalTime({created_at:times[i]}))) ||
-     /(?:applicable charges|caj yang berkenaan|当天的收费|當天的收費)/iu.test(String(candidate.trigger_message_content||"")))
+     /(?:applicable charges|caj yang berkenaan|当天的收费|當天的收費|收费需要先请门店确认)/iu.test(String(candidate.trigger_message_content||"")))
     return {expired:false,stop:true,message:null};
   const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
   const dates=localizedDates(now,locale);
