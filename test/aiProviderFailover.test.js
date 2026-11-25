@@ -9,6 +9,8 @@ const {
   computeProviderBudgetMs,
   getAiReplyPolicy,
   getReplyWithEnv,
+  getRuntimeGeminiModelHealth,
+  resetGeminiModelHealth,
   runCandidate,
   runClaudeReply,
 } = require("../src/services/aiService");
@@ -421,4 +423,142 @@ test("fallback-provider retries cannot extend beyond their assigned provider bud
 
   assert.equal(requestControl.signal.aborted, true);
   assert.equal(calls, 1);
+});
+
+function flashLiteEnv(overrides = {}) {
+  return baseEnv({
+    GEMINI_API_KEY: "",
+    GEMINI_API_KEYS: "key-a,key-b",
+    GEMINI_MODEL: "gemini-3.8-flash",
+    GEMINI_FALLBACK_MODEL: "gemini-3.5-flash-lite",
+    GEMINI_REPLY_GLOBAL_BUDGET_MS: "1000",
+    GEMINI_REPLY_PREFERRED_TIMEOUT_MS: "40",
+    GEMINI_REPLY_FALLBACK_TIMEOUT_MS: "100",
+    GEMINI_REPLY_FALLBACK_MODEL_RESERVE_MS: "100",
+    GEMINI_REPLY_MIN_KEY_WINDOW_MS: "10",
+    GEMINI_REPLY_5XX_RETRY_COUNT: "1",
+    AI_REPLY_GLOBAL_BUDGET_MS: "1000",
+    AI_REPLY_FALLBACK_PROVIDER_RESERVE_MS: "200",
+    ...overrides,
+  });
+}
+function capacityError() {
+  const err = new Error("This model is currently experiencing high demand.");
+  err.status = 503;
+  return err;
+}
+async function withReplyMocks(geminiMock, claudeMock, run) {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const oldGemini = geminiService.getReply;
+  const oldClaude = claudeService.getReply;
+  geminiService.getReply = geminiMock;
+  claudeService.getReply = claudeMock;
+  try { await run(); } finally {
+    geminiService.getReply = oldGemini;
+    claudeService.getReply = oldClaude;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+}
+const testReplyOptions = { channel: "whatsapp", privateSetupCheck: true };
+
+test("primary timeout followed by valid Flash-Lite output never calls Claude", async () => {
+  const calls = [];
+  await withReplyMocks(async (_m, _o, _key, model) => {
+    calls.push(model);
+    if (model === "gemini-3.8-flash") return new Promise(() => {});
+    return VALID_REPLY;
+  }, async () => { calls.push("claude"); return VALID_REPLY; }, async () => {
+    assert.equal(await getReplyWithEnv([], testReplyOptions, flashLiteEnv()), VALID_REPLY);
+    assert.deepEqual(calls, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
+  });
+});
+
+test("two failed Gemini models fall through once to Claude without Flash-Lite pool cooldown", async () => {
+  const calls = [];
+  const env = flashLiteEnv();
+  await withReplyMocks(async (_m, _o, key, model) => {
+    calls.push([key, model]);
+    throw capacityError();
+  }, async () => { calls.push(["claude"]); return VALID_REPLY; }, async () => {
+    assert.equal(await getReplyWithEnv([], testReplyOptions, env), VALID_REPLY);
+    assert.deepEqual(calls, [["key-a", "gemini-3.8-flash"], ["key-a", "gemini-3.5-flash-lite"], ["claude"]]);
+    assert.equal(getRuntimeGeminiModelHealth(env).find(x => x.model === "gemini-3.5-flash-lite").status, "available");
+  });
+});
+
+test("known unavailable Claude allows one corrective Flash-Lite attempt on the same key", async () => {
+  const calls = [];
+  const env = flashLiteEnv();
+  await withReplyMocks(async (_m, _o, key, model, control) => {
+    calls.push([key, model, control.correctiveRetry === true]);
+    if (model === "gemini-3.8-flash") throw capacityError();
+    return control.correctiveRetry ? VALID_REPLY : '{"reply":';
+  }, async () => {
+    calls.push(["claude"]);
+    const err = new Error("rate limit exceeded"); err.status = 429; throw err;
+  }, async () => {
+    await assert.rejects(() => runClaudeReply([], testReplyOptions, 100, 0, env, { globalBudgetMs: 100 }));
+    calls.length = 0;
+    assert.equal(await getReplyWithEnv([], testReplyOptions, env), VALID_REPLY);
+    assert.deepEqual(calls, [["key-a", "gemini-3.8-flash", false], ["key-a", "gemini-3.5-flash-lite", false], ["key-a", "gemini-3.5-flash-lite", true]]);
+  });
+});
+
+test("Flash-Lite corrective failure never triggers a second credential sweep", async () => {
+  const calls = [];
+  await withReplyMocks(async (_m, _o, key, model, control) => {
+    calls.push([key, model, control.correctiveRetry === true]);
+    if (model === "gemini-3.8-flash") throw capacityError();
+    return '{"reply":';
+  }, async () => { throw Error("Claude not configured"); }, async () => {
+    await assert.rejects(() => getReplyWithEnv([], testReplyOptions, flashLiteEnv({ ANTHROPIC_API_KEY: "" })));
+    assert.deepEqual(calls, [["key-a", "gemini-3.8-flash", false], ["key-a", "gemini-3.5-flash-lite", false], ["key-a", "gemini-3.5-flash-lite", true]]);
+  });
+});
+
+test("confirmed Flash-Lite capacity failures across two keys cool the model", async () => {
+  const env = flashLiteEnv({ ANTHROPIC_API_KEY: "", GEMINI_REPLY_5XX_RETRY_COUNT: "0" });
+  const calls = [];
+  await withReplyMocks(async (_m, _o, key, model) => {
+    calls.push([key, model]);
+    throw capacityError();
+  }, async () => { throw Error("Claude not configured"); }, async () => {
+    await assert.rejects(() => getReplyWithEnv([], testReplyOptions, env));
+    assert.deepEqual(calls, [["key-a", "gemini-3.8-flash"], ["key-a", "gemini-3.5-flash-lite"], ["key-b", "gemini-3.5-flash-lite"]]);
+    assert.equal(getRuntimeGeminiModelHealth(env).find(x => x.model === "gemini-3.5-flash-lite").status, "cooling_down");
+  });
+});
+
+test("insufficient remaining budget skips the first attempt of a fallback model and provider", async () => {
+  const calls = [];
+  let nowMs = 0;
+  const env = flashLiteEnv({
+    AI_REPLY_GLOBAL_BUDGET_MS: "1000", AI_REPLY_FALLBACK_PROVIDER_RESERVE_MS: "100",
+    GEMINI_REPLY_MIN_KEY_WINDOW_MS: "40", GEMINI_REPLY_PREFERRED_TIMEOUT_MS: "1000",
+  });
+  await withReplyMocks(async (_m, _o, _key, model) => {
+    calls.push(model);
+    nowMs = 995;
+    throw capacityError();
+  }, async () => { calls.push("claude"); return VALID_REPLY; }, async () => {
+    await assert.rejects(() => getReplyWithEnv([], testReplyOptions, env, { clock: () => nowMs }),
+      err => err.failures.some(f => f.provider === "claude" && f.code === "AI_GLOBAL_BUDGET_EXCEEDED"));
+    assert.deepEqual(calls, ["gemini-3.8-flash"]);
+  });
+});
+
+test("a fallback model with a positive but unusably short remaining window is not called", async () => {
+  const calls = [];
+  let nowMs = 0;
+  await withReplyMocks(async (_m, _o, _key, model) => {
+    calls.push(model);
+    nowMs = 890;
+    throw capacityError();
+  }, async () => { calls.push("claude"); return VALID_REPLY; }, async () => {
+    const env = flashLiteEnv({ AI_REPLY_FALLBACK_PROVIDER_RESERVE_MS: "100", GEMINI_REPLY_MIN_KEY_WINDOW_MS: "40", GEMINI_REPLY_PREFERRED_TIMEOUT_MS: "1000" });
+    assert.equal(await getReplyWithEnv([], testReplyOptions, env, { clock: () => nowMs }), VALID_REPLY);
+    assert.deepEqual(calls, ["gemini-3.8-flash", "claude"]);
+  });
 });
