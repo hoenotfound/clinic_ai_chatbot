@@ -507,7 +507,7 @@ function dateValue(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
-async function updateLead(id, patch, actor) {
+async function updateLead(id, patch, actor, { expectedBookingRecovery = null } = {}) {
   const updatedLead = await withTransaction(async (client) => {
     const currentResult = await client.query(
       `SELECT l.*, s.name AS stage_name, s.stage_type, s.system_key
@@ -517,6 +517,32 @@ async function updateLead(id, patch, actor) {
     );
     const current = currentResult.rows[0];
     if (!current) return null;
+    // One-off reconciliation may only update the exact unchanged unbooked
+    // lead and source snapshot. Ordinary staff edits use the existing path.
+    if(expectedBookingRecovery){
+      const proof=expectedBookingRecovery;
+      if(patch.appointmentStatus!=="set"||current.is_closed||
+        !["none",null].includes(current.appointment_status)||current.appointment_at||
+        Number(current.contact_id)!==Number(proof.contactId)||
+        dateValue(current.updated_at)!==dateValue(proof.updatedAt))return null;
+      const fresh=await client.query(
+        `SELECT 1 FROM messages source
+         WHERE source.id=$1 AND source.contact_id=$2 AND source.role='assistant'
+           AND source.content=$3 AND source.whatsapp_message_id LIKE 'wamid.%'
+           AND source.whatsapp_customer_mutation IS NULL AND source.is_forwarded IS DISTINCT FROM TRUE
+           AND source.sent_by_username IS NOT NULL
+           AND source.sent_by_username NOT IN ('Follow-up automation','Consent request automation')
+           AND source.is_automated_follow_up IS DISTINCT FROM TRUE
+           AND source.media_mime_type IS NULL AND source.media_url IS NULL
+           AND COALESCE(source.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+           AND NOT EXISTS(SELECT 1 FROM messages newer WHERE newer.contact_id=$2 AND newer.id>$4)
+           AND NOT EXISTS(SELECT 1 FROM leads newer WHERE newer.contact_id=$2 AND
+             (newer.created_at,newer.id)>($5::timestamptz,$6::bigint))
+           AND NOT EXISTS(SELECT 1 FROM lead_activities a WHERE a.lead_id=$6
+              AND a.created_at>=source.created_at AND a.metadata->>'outcome'='booking_hold_resolved')`,
+        [proof.staffMessageId,proof.contactId,proof.staffText,proof.latestMessageId,current.created_at,id]);
+      if(!fresh.rows.length)return null;
+    }
 
     const changes = { ...patch };
     const temperatureChanged =
