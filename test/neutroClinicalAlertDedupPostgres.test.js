@@ -12,7 +12,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const alerts = require("../src/services/telegramImmediateAlertService");
 const push = require("../src/services/webPushNotificationService");
 
-test("Postgres groups repeat urinary reviews until they are resolved, but keeps all questions", {
+test("Postgres deduplicates identical pending clinical questions but alerts on different disclosures", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const client = new Client({connectionString:process.env.TEST_DATABASE_URL,ssl:false});
@@ -54,15 +54,15 @@ test("Postgres groups repeat urinary reviews until they are resolved, but keeps 
 
     await contactsRepo.setAiReviewAttention(9006,2,"尿失禁问题","clinical");
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(alertsSent,1,"same unresolved urinary concern should not alert again");
-    assert.equal(pushesSent,1);
+    assert.equal(alertsSent,2,"distinct wording must not hide a potentially new clinical disclosure");
+    assert.equal(pushesSent,2);
 
     await contactsRepo.setAiReviewAttention(9006,3,"怀孕是否适合治疗？","clinical");
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(alertsSent,2,"a separate medical issue still alerts");
+    assert.equal(alertsSent,3,"a separate medical issue still alerts");
     await contactsRepo.setAiReviewAttention(9006,5,"怀孕是否适合治疗？","clinical");
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(alertsSent,2,"repeat identical clinical question stays quiet");
+    assert.equal(alertsSent,3,"repeat identical clinical question stays quiet");
 
     const persisted = await client.query(
       "SELECT inbound_message_id,category,status FROM ai_review_items ORDER BY inbound_message_id");
@@ -75,8 +75,8 @@ test("Postgres groups repeat urinary reviews until they are resolved, but keeps 
     );
     await contactsRepo.setAiReviewAttention(9006,4,"还是有漏尿","clinical");
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(alertsSent,3,"new clinical issue after resolution alerts normally");
-    assert.equal(pushesSent,3);
+    assert.equal(alertsSent,4,"new clinical issue after resolution alerts normally");
+    assert.equal(pushesSent,4);
     const reviews=await client.query(
       "SELECT count(*)::int AS n FROM ai_review_items WHERE contact_id=9006");
     assert.equal(reviews.rows[0].n,5,"all messages remain individually reviewable");
