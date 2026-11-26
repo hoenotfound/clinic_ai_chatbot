@@ -97,7 +97,7 @@ function confirmedSingleBranchLocationAnswer({
 // Any unrecognized extra prose stays on the established safe fallback path.
 // The full configured address must occur exactly once; contradictory claims,
 // unsupported directions/landmarks, pricing and scheduling claims cannot pass.
-function verifyLocationDraft(reply, facts) {
+function verifyLocationDraft(reply, facts, {allowNeutralCourtesy=false} = {}) {
   if (typeof reply !== "string" || !reply.trim()) return "no_draft";
   if (!facts?.verifiedAddress) return "unconfigured";
   const norm = value => String(value || "").normalize("NFKC")
@@ -112,6 +112,17 @@ function verifyLocationDraft(reply, facts) {
   // statement. Do not globally erase it from arbitrary prose.
   const name=clean(norm(facts.verifiedName));
   const endings={zh:["哦","呀","呢","啦"],en:[""],ms:["ya"]};
+  // A bounded, non-factual courtesy is not an invented location or booking.
+  // Keep exact address verification and reject all other additional claims.
+  if(allowNeutralCourtesy){
+    const greetings={zh:["您好 ","你好 ","亲爱的 "],en:["hello ","hi "],ms:["hai ","helo "]};
+    for(const greeting of greetings[facts.language]||[]){
+      if(prefix.startsWith(greeting)){prefix=prefix.slice(greeting.length).trim();break;}
+    }
+    endings.zh.push("谢谢","谢谢您","谢谢你","哦 谢谢您");
+    endings.en.push("thank you","thanks");
+    endings.ms.push("terima kasih","ya terima kasih");
+  }
   if (suffix && !(endings[facts.language]||[]).includes(suffix)) return "extra_or_unverified_text";
   const wrappers={
     zh:["","地址","我们的地址","门店地址","我们在","我们位于","我们只有一间店在","我们目前在","我们坐落在","我们的门店在","门店位于","亲爱的 我们在","您好 我们在","你好 我们在"],

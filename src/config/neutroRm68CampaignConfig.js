@@ -64,4 +64,17 @@ function rm68CampaignSettings(config=clinicConfig){
     ? {valid:true,source:"neon",campaign}
     : {valid:false,source:"invalid",campaign:defaults};
 }
-module.exports={rm68CampaignSettings,validRm68CampaignSettings};
+// Use only validated structured settings as prompt facts. The approved
+// copy remains separate; no arbitrary stored prose becomes model instructions.
+function rm68CampaignPromptFacts(day,config=clinicConfig){
+  if(!["both","dec6","expired"].includes(day))return "";
+  const {valid,campaign}=rm68CampaignSettings(config);
+  if(!valid||day==="expired")return "The breast-care event is no longer available; do not offer it.";
+  const dates=day==="dec6"?campaign.eventDates.slice(-1):campaign.eventDates;
+  const format=new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"});
+  const names=dates.map(date=>format.format(new Date(date+"T00:00:00Z")));
+  return "RM"+campaign.priceMYR+" first trial is restricted to "+names.join(" and ")+
+    ". Breast wellness assessment, gentle pulse wave care and daily care advice; complimentary moxibustion; "+
+    campaign.careMinutes+" minutes breast care, "+campaign.totalMinutes+" minutes total. All slots require clinic confirmation.";
+}
+module.exports={rm68CampaignSettings,validRm68CampaignSettings,rm68CampaignPromptFacts};

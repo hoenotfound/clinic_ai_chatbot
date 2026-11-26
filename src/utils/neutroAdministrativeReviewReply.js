@@ -20,7 +20,7 @@ function isStandalonePriceQuestion(text) {
 }
 
 function administrativeReviewReply({
-  customerText, history, branches, language, services, serviceAliases, promotions, now,
+  customerText, history, branches, language, services, serviceAliases, promotions, now, omitInvitation=false,
 } = {}) {
   const message = String(customerText || "").trim();
   if (!message || message.length > 150) return null;
@@ -40,7 +40,7 @@ function administrativeReviewReply({
         language: replyLanguage,
       }) : answer;
   const location = confirmedSingleBranchLocationAnswer({
-    customerText: message, branches, language: replyLanguage, resolvedLanguage: replyLanguage,
+    customerText: message, branches, language: replyLanguage, resolvedLanguage: replyLanguage, omitInvitation,
   });
   if (location) return location;
   // Only factual price/availability requests are eligible for the campaign

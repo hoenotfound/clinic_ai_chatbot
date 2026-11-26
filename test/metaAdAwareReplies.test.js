@@ -426,7 +426,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
   assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
   assert.match(serverSource, /const modelReplyHistory = verifiedFirstReadableAd[\s\S]*?const replyOptions = \{[\s\S]*?generateFirstIntro/);
   assert.match(serverSource, /isFirstMessage && !flagged && !generateFirstIntro/);
-  assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply\)/);
+  assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply,\s*naturalReplyAuthority \? \{language:mediaLanguage\} : \{\}\)/);
 });
 
 test("a delayed Meta ad name becomes available on the next local read without blocking on Graph", async () => {
