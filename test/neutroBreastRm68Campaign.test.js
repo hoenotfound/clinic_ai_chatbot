@@ -501,3 +501,21 @@ test("actual server review boundary routes Hui's alternative date for staff even
     assert.doesNotMatch(result.clinicalAcknowledgement,/[\u3400-\u9fff]/);
   }
 });
+
+
+test("Stage 21 preserves qualified campaign availability but not unconfirmed bookings",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const [language,customerText,reply] of [
+    ["en","How much?","The first trial is RM68 for the December 5 and 6 event. Availability must be confirmed by the clinic."],
+    ["ms","Berapa harga?","Promosi RM68 pada 5 dan 6 Disember. Slot perlu disahkan oleh pusat."],
+    ["zh","多少钱？","12月5日及6日活动首次体验 RM68，具体名额需要由门店确认。"],
+  ]){
+    assert.equal(campaignClaimsSafe(reply,early),true,reply);
+    assert.equal(campaignContinuationPolicy({history,customerText,reply,language,now:early}).reply,reply);
+  }
+  for(const reply of ["Your appointment is confirmed.","The breast care takes 5 hours.",
+    "Availability must be confirmed by the clinic, but your appointment is confirmed."]){
+    assert.notEqual(guardCampaignPriceConflicts({history,customerText:"Can you tell me more about breast care?",
+      reply,language:"en",now:early}),reply);
+  }
+});
