@@ -566,3 +566,39 @@ test("a whole-visit duration question cannot pass with only the care component",
   assert.notEqual(result.reply,draft);
   assert.match(result.reply,/90/);
 });
+
+
+test("RM68 history does not reinterpret verified addresses, postcodes or business hours as event facts",()=>{
+  const branches=[{name:"Petaling Jaya (PJ)",address:"C-12-6, Dataran 3 Two Business Centre, Jalan 19, Section 19/1, 46300 Petaling Jaya, Selangor"}];
+  const hours={weekly:{monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}}};
+  for(const now of [early,dec6,expired]){
+    for(const [customerText,language] of [["at where ya","en"],["店在哪里","zh"],["Where is your clinic?","en"],["alamat klinik?","ms"]]){
+      assert.equal(campaignContextReply({history,customerText,now,language}),null);
+      const outcome=campaignContinuationPolicy({history,customerText,now,language,branches,hours,reply:"The clinic will need to confirm the details of this breast-care enquiry."});
+      assert.equal(outcome.administrativeKind,"location",customerText);
+      assert.ok(outcome.reply.includes(branches[0].address),customerText);
+      assert.doesNotMatch(outcome.reply,/RM68|RM388/);
+      assert.equal(outcome.blocksBooking,true);
+      assert.equal(outcome.textOnly,true);
+    }
+    for(const [customerText,language] of [["营业时间","zh"],["What time do you open?","en"],["Waktu operasi?","ms"]]){
+      const outcome=campaignContinuationPolicy({history,customerText,now,language,branches,hours,reply:"The trial takes 90 minutes."});
+      assert.equal(outcome.administrativeKind,"hours");
+      assert.match(outcome.reply,/10:00-20:00/);
+      assert.match(outcome.reply,/10:00-18:00/);
+      assert.doesNotMatch(outcome.reply,/RM68|90 minutes/);
+      assert.equal(outcome.blocksBooking,true);
+      assert.equal(outcome.textOnly,true);
+    }
+  }
+  const reply="Our address: "+branches[0].address;
+  assert.equal(campaignContinuationPolicy({history,customerText:"at where ya",reply,language:"en",branches,hours,now:early}).reply,reply);
+  assert.equal(campaignContinuationPolicy({history,customerText:"店在哪里",reply:"RM68, your appointment is confirmed.",language:"zh",branches,hours,now:early}).reply.includes(branches[0].address),true);
+  assert.equal(campaignContinuationPolicy({history,customerText:"What do you accept for payment?",reply:"Please check with our staff about payment options.",language:"en",now:early}),null);
+  assert.equal(campaignContinuationPolicy({history,customerText:"谢谢",reply:"不客气 😊",language:"zh",now:expired}),null);
+  for(const customerText of ["胸部哪里痛","How long is the treatment?","RM68 还有名额吗？","店在哪里，多少钱？"]){
+    const result=campaignContinuationPolicy({history,customerText,reply:"RM68 every day",language:"zh",branches,hours,now:early});
+    assert.notEqual(result?.administrativeKind,"location",customerText);
+    assert.notEqual(result?.administrativeKind,"hours",customerText);
+  }
+});
