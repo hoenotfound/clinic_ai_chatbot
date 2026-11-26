@@ -11,7 +11,27 @@ const SAFETY_WINDOW_MINUTES = 10;
 
 // This is an auxiliary one-shot request. It is not an additional sequence step.
 // The same inbox conversation, lead and last customer message must remain active.
+// An eligible candidate MUST already have a provider-accepted FU3 linked
+// to an anchor at or after activation. Start with that indexed event cohort,
+// not every contact. This is only a necessary-condition prefilter: keep the
+// original latest-message, consent, appointment and delivery checks below.
+// No age cutoff on FU3 or on stored inbound timestamps: delayed/imported
+// events must still be evaluated using the existing source-time rules.
 const CANDIDATES_SQL = `
+WITH consent_seed AS MATERIALIZED (
+ SELECT DISTINCT step3.contact_id
+ FROM messages step3
+ JOIN messages seed_anchor ON seed_anchor.id=step3.automated_follow_up_for_message_id
+  AND seed_anchor.contact_id=step3.contact_id
+ WHERE step3.role='assistant'
+  AND step3.is_automated_follow_up=true
+  AND step3.automated_follow_up_for_message_id IS NOT NULL
+  AND step3.automated_follow_up_step=3
+  AND step3.whatsapp_accepted_at IS NOT NULL
+  AND step3.whatsapp_message_id IS NOT NULL
+  AND step3.delivery_status IN ('pending','sent','delivered','read')
+  AND seed_anchor.created_at >= $1::timestamptz
+)
 SELECT
  c.id AS contact_id,c.whatsapp_number, lead.id AS lead_id,
  lead.treatment_interest AS service_name, inbound.id AS inbound_id,
@@ -27,7 +47,8 @@ SELECT
      WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
        AND price.whatsapp_message_id IS NOT NULL),
      final.whatsapp_accepted_at) + interval '5 minutes') AS due_at
-FROM contacts c
+FROM consent_seed seed
+JOIN contacts c ON c.id=seed.contact_id
 JOIN LATERAL (
  SELECT m.id,m.created_at,COALESCE(m.source_created_at,m.created_at) AS source_at
  FROM messages m WHERE m.contact_id=c.id AND m.role='user'
