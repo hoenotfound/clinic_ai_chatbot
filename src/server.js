@@ -1578,7 +1578,7 @@ async function processIncomingMessage(
         // Preserve the latest 131060 first-ad history boundary and all
         // downstream booking, clinical, pricing and takeover safeguards.
         const languageCheckedReply = await correctReplyLanguage(
-          parsedReply, modelReplyHistory, replyOptions, {
+          parsedReply, modelReplyHistory, {...replyOptions,preserveNaturalReply:naturalReplyAuthority}, {
             getReply: ai.getReply,
             parseReply: parseAiReplyResult,
             onCorrectionError: (error) => console.warn(
@@ -1751,7 +1751,7 @@ async function processIncomingMessage(
       // that no independent clinical review is pending.
       if (verifiedFreeIntroFee &&
           (!flagged || (reviewRequired && reviewType === "information")) &&
-          (!naturalReplyAuthority || (flagged &&
+          (!naturalReplyAuthority || ((flagged || isUnanswerableCustomerReply(aiReply, text)) &&
             (await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id))?.pendingClinicalReview === false))) {
         aiReply = replyOverrideAudit.change("complimentaryAssessmentFeeReply",aiReply,complimentaryAssessmentFeeReply(mediaLanguage));
         flagged = false;
@@ -2426,7 +2426,8 @@ async function processIncomingMessage(
       : aiReply;
     replyOverrideAudit.change("configuredIntroduction",aiReply,reply);
     if (isFirstMessage && !flagged && generateFirstIntro && !fixedAdFirstReply) {
-      const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
+      const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply,
+        naturalReplyAuthority ? {language:mediaLanguage} : {});
       replyOverrideAudit.change("preserveOriginalIntroFacts",reply,guardedIntro.reply);
       reply = guardedIntro.reply;
       if (guardedIntro.usedOriginalFallback) {
@@ -2534,7 +2535,7 @@ async function processIncomingMessage(
       // text. Recover independently configured branch/hours details when the
       // same customer turn also asks for them (e.g. location + RM488).
       // Never append administrative facts to rejected/unverified pricing.
-      const approvedPriceQuoted = Boolean(approvedPricingDecision && priced.restored &&
+      const approvedPriceQuoted = Boolean(approvedPricingDecision && (priced.restored || naturalReplyAuthority) &&
         (approvedPricingDecision.prices?.some(item =>
           item.price && reply.includes(item.price)) ||
           (approvedPricingDecision.servicePrice &&
@@ -2609,7 +2610,7 @@ async function processIncomingMessage(
     // A later delivery failure must never turn an AI promise into a lie.
     // Even when a verified price is quoted, do not claim graphics are sent
     // before the separate media selector and provider confirm acceptance.
-    if (!flagged && !marketingStopQuestion) {
+    if (!flagged && !marketingStopQuestion && !naturalReplyAuthority) {
       const mediaPromise = guardUnconfirmedMediaPromise(reply, mediaLanguage);
       if (mediaPromise.changed) {
         console.warn("[Reply guard] Removed unconfirmed outbound media claim.");
@@ -2641,7 +2642,12 @@ async function processIncomingMessage(
     // Never send a draft that offers a price list but omits all amounts.
     // Only a separately approved pricing decision may supply a monetary quote.
     if (!flagged && !marketingStopQuestion) {
-      const completeQuote = guardUnfulfilledPriceQuote(reply, mediaLanguage);
+      const completeQuote = guardUnfulfilledPriceQuote(reply, mediaLanguage,
+        {validateMediaPromise:naturalReplyAuthority});
+      if (completeQuote.mediaChanged) {
+        replyOverrideAudit.change("guardUnconfirmedMediaPromise",reply,completeQuote.afterMediaReply);
+        reply = completeQuote.afterMediaReply;
+      }
       if (completeQuote.changed) {
         console.warn("[Reply guard] Replaced unfulfilled price-list promise.");
         replyOverrideAudit.change("guardUnfulfilledPriceQuote",reply,completeQuote.reply);
@@ -3165,12 +3171,12 @@ async function processIncomingMessage(
         omitInvitation: clinicConfig.aiPricingIntentMode === "enabled",
       });
       if (verifiedLocation) {
-        const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
-        const finalStatus = verifyLocationDraft(reply, verifiedLocation);
+        const locationValidationOptions={allowNeutralCourtesy:naturalReplyAuthority};
+        const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation, locationValidationOptions);
+        const finalStatus = verifyLocationDraft(reply, verifiedLocation, locationValidationOptions);
         // Preserve an independently verified final location answer, including
         // a legitimate language correction. Original draft accuracy is logged separately.
-        const preserveModelLocation = finalStatus === "verified_address_only" ||
-          (naturalReplyAuthority && verifyLocationDraft(reply, verifiedLocation, {allowNeutralCourtesy:true}) === "verified_address_only");
+        const preserveModelLocation = finalStatus === "verified_address_only";
         console.info("[Location facts] contact=" + contact.id +
           " original=" + originalStatus + " final=" + finalStatus +
           " decision=" + (preserveModelLocation ? "preserve" : "fallback"));

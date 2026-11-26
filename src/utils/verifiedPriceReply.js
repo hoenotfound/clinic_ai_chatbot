@@ -380,7 +380,7 @@ function ensureVerifiedPriceReply({
     conversationHistory
   )) {
     const verifiedFee = complimentaryAssessmentFeeReply(language);
-    return { reply: verifiedFee, restored: original !== verifiedFee };
+    return { reply: verifiedFee, restored: !preserveNaturalReply || original !== verifiedFee };
   }
   const aiLed = pricingDecision !== undefined;
   // In enabled mode the same independently verified decision drives text and
@@ -469,7 +469,8 @@ function ensureVerifiedPriceReply({
           : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
       const recovery = recoveryPeriodGuidance(customerText, language);
       // A simple exact configured service-price answer can retain model wording.
-      const preserved = preserveNaturalReply && !recovery && !hasClinicalMediaRisk(customerText)
+      const preserved = preserveNaturalReply && !recovery && !hasClinicalMediaRisk(customerText) &&
+        !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))
         ? preserveVerifiedModelQuote({reply:original,treatment,prices:[{name:"Main offer",price:pricingDecision.servicePrice}],firstTrialQuote:false})
         : null;
       if(preserved) return {reply:preserved,restored:false};
@@ -682,7 +683,7 @@ function hasVerifiedAmountForHeading(section, heading) {
     return true;
   });
 }
-function guardUnfulfilledPriceQuote(reply, language = "zh") {
+function checkUnfulfilledPriceQuote(reply, language = "zh") {
   const original = String(reply || "").trim();
   const headings = [...original.matchAll(PRICE_HEADING_PATTERN)];
   if (!headings.length) return { reply: original, changed: false };
@@ -710,6 +711,18 @@ function guardUnfulfilledPriceQuote(reply, language = "zh") {
         ? "明白，你想先了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你说的两项，是想比较两种疗程，还是同一疗程针对两个部位呢？"
         : "明白，你想了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你想查询哪项疗程的价格呢？");
   return { reply: safe, changed: true };
+}
+
+// Neutro's commercial output boundary runs the existing delivery-claim and
+// empty-quote checks together, in their established order. Separate audit
+// reasons are retained; legacy clients keep the original two call sites.
+function guardUnfulfilledPriceQuote(reply,language="zh",{validateMediaPromise=false}={}){
+  if(!validateMediaPromise)return checkUnfulfilledPriceQuote(reply,language);
+  const {guardUnconfirmedMediaPromise}=require("./unconfirmedMediaPromiseGuard");
+  const media=guardUnconfirmedMediaPromise(reply,language);
+  const afterMediaReply=media.changed?media.reply:reply;
+  const quote=checkUnfulfilledPriceQuote(afterMediaReply,language);
+  return {...quote,mediaChanged:media.changed,afterMediaReply};
 }
 
 module.exports = { staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };

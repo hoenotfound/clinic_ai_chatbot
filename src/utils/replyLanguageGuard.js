@@ -174,8 +174,15 @@ function staffLanguageHandoff(original, language) {
 // A nonclinical translation failure is not itself a request for staff. Do not
 // release the rejected draft or its price/media/booking intentions. The
 // customer's next message still goes through the ordinary guarded AI path.
-function ordinaryLanguageFallback(original, language) {
-  const message = language === "ms"
+function ordinaryLanguageFallback(original, language, options={}) {
+  // Do not ask the customer to repeat an already supplied question after a
+  // provider/translation failure. Preserve normal AI ownership and keep all
+  // rejected action metadata cleared.
+  const naturalMessage=language==="ms"
+    ? "Maaf, saya belum dapat memberikan jawapan yang tepat dalam Bahasa Malaysia buat masa ini 😊"
+    : language==="zh" ? "不好意思，刚才没能准确地用中文回复您哦 😊"
+      : "Sorry, I couldn't provide an accurate English reply just now 😊";
+  const message = options.preserveNaturalReply ? naturalMessage : language === "ms"
     ? "Baik 😊 Saya akan balas dalam Bahasa Malaysia. Boleh beritahu apa yang anda ingin tahu?"
     : language === "zh"
       ? "好的 😊 接下来我会用中文回复您。请问您想进一步了解什么呢？"
@@ -236,7 +243,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
         clearReplyLanguageMismatch(correction.text, language, options)) {
       // A second response that is still in the wrong language is a benign
       // formatting failure, not proof that a human must take over.
-      return ordinaryLanguageFallback(original, language);
+      return ordinaryLanguageFallback(original, language, options);
     }
     if (typeof onCorrectionError === "function") {
       const error = new Error("Language correction failed intent or fact validation.");
@@ -245,7 +252,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
     }
   } catch (error) {
     if (typeof onCorrectionError === "function") onCorrectionError(error);
-    return ordinaryLanguageFallback(original, language);
+    return ordinaryLanguageFallback(original, language, options);
   }
 
   // Unlike information review, a true handoff cannot be silently cleared by

@@ -100,7 +100,7 @@ function missingProtectedIntroFacts(configuredIntro, generatedReply) {
   return [...new Set([...missingLiterals, ...missingProtectedOfferClaims(intro, generatedReply)])];
 }
 
-function preserveOriginalIntroFacts(configuredIntro, generatedReply) {
+function preserveOriginalIntroFacts(configuredIntro, generatedReply, {language=null} = {}) {
   const original = String(configuredIntro || "").trim();
   const reply = String(generatedReply || "").trim();
   const missing = missingProtectedIntroFacts(original, reply);
@@ -120,7 +120,7 @@ function preserveOriginalIntroFacts(configuredIntro, generatedReply) {
   // Fail-safe for unverifiable AI translation: facts remain accessible without
   // inventing a translated price, voucher condition, contact or treatment.
   return {
-    reply: [reply, "Original clinic introduction:", original].join("\n\n"),
+    reply: [reply, language==="zh" ? "门店原始介绍：" : language==="ms" ? "Pengenalan asal pusat:" : "Original clinic introduction:", original].join("\n\n"),
     usedOriginalFallback: true,
     missingCount: missing.length,
   };
