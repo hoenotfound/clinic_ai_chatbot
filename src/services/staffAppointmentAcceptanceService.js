@@ -200,6 +200,7 @@ function createStaffAppointmentAcceptanceService({
           "  AND NOT EXISTS (SELECT 1 FROM messages later",
           "    WHERE later.contact_id = inbound.contact_id",
           "      AND later.id > staff.id AND later.id < inbound.id)",
+          ...(modelStaffEvidence?["  AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)"]:[]),
           "LIMIT 1",
         ].join("\n"),
         [contactId, inboundMessageId]
@@ -247,7 +248,7 @@ function createStaffAppointmentAcceptanceService({
           sameSpecificOfferedSlot(row.staff_text, row.relay_text));
       }
       if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text) ||
-          (modelStaffEvidence && (!modelAccepted || Number(offer.staff_message_id)!==modelStaffEvidence.id ||
+          (modelStaffEvidence && (!modelAccepted || ["set","visited","cancelled","reschedule"].includes(offer.appointment_status) || Number(offer.staff_message_id)!==modelStaffEvidence.id ||
            String(offer.staff_text||"").trim()!==modelStaffEvidence.text.trim()))) {
         await client.query("COMMIT");
         return null;
