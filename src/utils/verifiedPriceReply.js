@@ -7,6 +7,8 @@ const { hasTreatmentPriceContent, hasCommercialReplyContent, safeServiceFromCust
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 const clinicConfig = require("../config/clinicConfig");
+const {normalizeMoneyText,scanMyrAmounts}=require("./myrAmountClaims");
+const {serviceCandidates,findServicesInText}=require("./conversationPromptContext");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("./complimentaryAssessmentExperience");
 
 // A voucher, discount, original price or bare amount is never a sale price.
@@ -318,9 +320,7 @@ function containsApprovedPriceAmount(reply,decision){
   if(!decision)return false;
   const amounts=new Set([...(Array.isArray(decision.prices)?decision.prices:[]).map(item=>item?.price),
     decision.servicePrice].filter(value=>/^RM[1-9]\d{0,5}$/u.test(String(value||""))).map(value=>Number(value.slice(2))));
-  const text=String(reply||"").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
-  return [...text.matchAll(/\b(?:RM|MYR)\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d,]|\.\d)/giu)]
-    .some(match=>amounts.has(Number(match[1].replace(/,/gu,"")+(match[2]?"."+match[2]:""))));
+  return scanMyrAmounts(reply).some(claim=>amounts.has(claim.amount));
 }
 
 function safeNonPriceExplanation(customerText, original, language) {
@@ -343,25 +343,20 @@ function safeNonPriceExplanation(customerText, original, language) {
 // claims can be verified locally. More elaborate wording, additional terms,
 // unsupported clinical claims or missing conditions use the existing formatter.
 // This is a text validation step, not another intent classifier.
-function quoteAmounts(value){
-  // Accept complete whole-ringgit amounts in equivalent formats, including
-  // a trailing sentence period, but never truncate a fractional quote.
-  return [...value.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,2}(?:,\d{3})+|[1-9]\d{0,5})(?:\.00)?(?!\d|[.,]\d)/giu)];
-}
 function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={}) {
   const original=String(reply||"").trim();
   if (!original || original.length>400 || !prices?.length ||
       hasClinicalMediaRisk(original) || MEDIA_SEND_PROMISE.test(original)) return null;
-  const normalized=original.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
-  const amounts=quoteAmounts(normalized);
+  const normalized=normalizeMoneyText(original);
+  const amounts=scanMyrAmounts(normalized);
   if(amounts.length!==prices.length ||
      !normalized.includes(treatment.normalize("NFKC"))) return null;
   let residual=normalized.replace(treatment.normalize("NFKC")," ");
   // A package quotation must name each approved option next to its exact
   // amount. Do not retain a menu just because the numeric set matches.
   if(prices.length===1 && prices[0].name==="Main offer"){
-    if("RM"+amounts[0][1].replace(/,/g,"")!==prices[0].price || prices[0].afterVoucher)return null;
-    residual=residual.replace(amounts[0][0]," ");
+    if(amounts[0].amount===null || "RM"+amounts[0].amount!==prices[0].price || prices[0].afterVoucher)return null;
+    residual=residual.replace(amounts[0].raw," ");
   }else{
     if(prices.some(p=>p.name==="Main offer" || p.afterVoucher))return null;
     const lines=normalized.split(/\n+/u);
@@ -371,9 +366,9 @@ function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={})
       if(matches.length!==1)return null;
       const line=matches[0];
       if(prices.filter(other=>line.includes(other.name.normalize("NFKC"))).length!==1)return null;
-      const money=quoteAmounts(line);
-      if(money.length!==1 || "RM"+money[0][1].replace(/,/g,"")!==p.price)return null;
-      residual=residual.replace(name," ").replace(money[0][0]," ");
+      const money=scanMyrAmounts(line);
+      if(money.length!==1 || money[0].amount===null || "RM"+money[0].amount!==p.price)return null;
+      residual=residual.replace(name," ").replace(money[0].raw," ");
     }
   }
   // Preserve natural connectors around verified facts. Unverified gifts,
@@ -390,15 +385,24 @@ function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={})
 // Preserve a bounded multi-service quote only when every line independently
 // passes the same fact validator as a single quote. No inferred price, voucher
 // condition, combined package or treatment identity can be added by the model.
-function preserveVerifiedTwoTreatmentDraft({reply,quote,customerText,promotions,conversationHistory}={}){
+function preserveVerifiedTwoTreatmentDraft({reply,quote,customerText,promotions,conversationHistory,services=[],serviceAliases=[]}={}){
   if(quote?.source!=="verified_two_separate_treatments" ||
      !Array.isArray(quote.prices) || quote.prices.length!==2 ||
      new Set(quote.prices.map(p=>p.treatment)).size!==2 ||
      hasSeparateNonPriceEnquiry(customerText) || hasClinicalMediaRisk(customerText))return null;
   const value=String(reply||"");
   if(!value.trim() || value.length>400)return null;
-  const lines=value.split(/\r?\n/u).filter(line=>line.trim());
-  if(lines.length!==2)return null;
+  const normalized=normalizeMoneyText(value);
+  if(scanMyrAmounts(normalized).length!==2)return null;
+  // Only split at genuine clause separators, not decimal points or grouped
+  // monetary commas. Each price must remain paired with one configured service.
+  const candidates=serviceCandidates(services.length?services:quote.prices.map(p=>({name:p.treatment})),serviceAliases);
+  const parts=normalized.split(/\r?\n|[;；。！!?？]|(?<!\d)[,，]|[,，](?!\d)|\b(?:and|dan)\b|以及|还有|還有|而|(?<=\d)\.(?!\d)/giu)
+    .map(part=>part.trim()).filter(Boolean);
+  const monetary=parts.filter(part=>scanMyrAmounts(part).length);
+  if(monetary.length!==2)return null;
+  const nonFact=/^(?:(?:hi|hello|dear|yes|of course|sure|here are (?:the )?(?:prices|offers)(?: for (?:both|the two) (?:separate )?treatments)?|these are (?:separate|individual) (?:prices|offers|treatment offers)|both prices are separate|not a (?:combo|combination) (?:package|offer)|hai|baik|boleh|harga (?:untuk )?(?:kedua-dua )?rawatan(?: berasingan)?|ini harga (?:rawatan )?berasingan|bukan pakej gabungan|您好|你好|亲爱的|親愛的|好的|可以的|当然可以|當然可以|两项(?:护理|療程|疗程|護理)?(?:分开|分開|各自)的?价格|兩項(?:護理|療程)?(?:分開|各自)的?價格|以上是(?:两项|兩項)?(?:分开|分開|各自)的?优惠|不是组合配套|不是組合配套)[\s\p{P}\p{S}]*|[\s\p{P}\p{S}]+)$/iu;
+  if(parts.some(part=>!scanMyrAmounts(part).length&&!nonFact.test(part)))return null;
   const used=new Set();
   for(const entry of quote.prices){
     if(!["first_trial","current_offer"].includes(entry.label))return null;
@@ -406,11 +410,30 @@ function preserveVerifiedTwoTreatmentDraft({reply,quote,customerText,promotions,
       {allowTextOnlyOffers:true});
     if(verified?.length!==1 || verified[0].afterVoucher ||
        verified[0].price!==entry.amount || verified[0].sessionsIncluded>1)return null;
-    const matches=lines.filter(line=>line.normalize("NFKC").includes(entry.treatment.normalize("NFKC")));
-    if(matches.length!==1 || used.has(matches[0]))return null;
-    if(!preserveVerifiedModelQuote({reply:matches[0],treatment:entry.treatment,
+    const candidate=candidates.find(item=>item.name===entry.treatment);
+    if(!candidate)return null;
+    const matches=monetary.filter(part=>{
+      const names=findServicesInText(part,candidates);
+      return names.length===1&&names[0]===entry.treatment;
+    });
+    if(matches.length!==1||used.has(matches[0]))return null;
+    // Replace a single unambiguous configured alias only for validation;
+    // return the untouched original wording if all facts are approved.
+    const part=matches[0];
+    const terms=candidate.terms.map(item=>item.value.normalize("NFKC")).sort((a,b)=>b.length-a.length);
+    let canonical=null;
+    for(const term of terms){
+      const escaped=term.replace(/[.*+?^$(){}|[\]\\]/gu,"\\$&");
+      const pattern=new RegExp((/^[a-z0-9]/iu.test(term)?"(?<![a-z0-9])":"")+escaped+
+        (/[a-z0-9]$/iu.test(term)?"(?![a-z0-9])":""),"iu");
+      if(pattern.test(part)){
+        canonical=part.replace(pattern,()=>entry.treatment);
+        break;
+      }
+    }
+    if(!canonical || !preserveVerifiedModelQuote({reply:canonical,treatment:entry.treatment,
       prices:[{name:"Main offer",price:entry.amount}],firstTrialQuote:entry.label==="first_trial"}))return null;
-    used.add(matches[0]);
+    used.add(part);
   }
   return value;
 }
@@ -442,7 +465,7 @@ function ensureVerifiedPriceReply({
   }
   if(preserveNaturalReply && verifiedTwoTreatmentQuote?.source==="verified_two_separate_treatments"){
     const natural=preserveVerifiedTwoTreatmentDraft({reply,quote:verifiedTwoTreatmentQuote,
-      customerText,promotions,conversationHistory});
+      customerText,promotions,conversationHistory,services,serviceAliases});
     return {reply:natural ?? verifiedTwoTreatmentQuote.reply,
       restored:natural===null,verifiedQuote:true};
   }
