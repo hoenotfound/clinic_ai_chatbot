@@ -3268,7 +3268,14 @@ async function processIncomingMessage(
     if ((staffPriceConflict || rejectedModelPricing) && !flagged && !bookingReady &&
         !rm68CampaignContinuationTextOnly && !repeatVisitPriceReply &&
         !marketingStopQuestion && !reviewContinuationTextOnly) {
-      reply = staffPriceConflict
+      const beforeRejectedPricing = reply;
+      // A rejected commercial action remains text-only. It need not replace
+      // a safe answer to a demonstrably noncommercial question.
+      if (!naturalReplyAuthority || shouldRewriteRejectedPricingReply({
+        reply, customerText: text, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+      })) {
+        reply = staffPriceConflict
         ? (mediaLanguage === "ms"
           ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
           : mediaLanguage === "en"
@@ -3279,7 +3286,11 @@ async function processIncomingMessage(
           : mediaLanguage === "en"
             ? "Which package or treatment do you mean? I can check the correct price for you 😊"
             : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
-      // No stale package/result image may accompany this clarification.
+        replyOverrideAudit.change(staffPriceConflict ? "conflictingStaffPriceFallback" : "rejectedModelPricingFallback",
+          beforeRejectedPricing, reply);
+      }
+      // Rejected pricing never authorizes stale package or result media,
+      // even when the model's safe noncommercial wording is preserved.
       reviewContinuationTextOnly = true;
     }
 
