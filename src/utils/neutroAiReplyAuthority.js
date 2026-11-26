@@ -56,10 +56,10 @@ function canHonorNoReply({config,parsed,customerText,history=[],contact,isFirstM
   if(priorIndex!==turns.length-2&&!closing)return false;
   // A broad emoji/OK is safe only after a verified, explicit social ending.
   // Preserve the older strict acceptance boundary for all other turns.
-  if(closing && closingAck(text))return true;
   // Even without a question mark a prior scheduling or payment invitation
   // may make an emoji an acceptance rather than a social closing.
   if (/(?:预约|預約|安排|确认空档|確認空檔|付款|订金|訂金|押金|\b(?:book(?:ing)?|appointment|slot|payment|deposit|temujanji|janji temu|bayaran)\b)/iu.test(String(previous.content||"")))return false;
+  if(closing && closingAck(text))return true;
   // Require a short social closing, not arbitrary message content. This is
   // a restrictive safety boundary, never a standalone keyword ignore rule.
   return /^(?:(?:thanks|thank you|terima kasih|谢谢|謝謝|多谢|多謝|tq|thx)(?:\s*(?:very much|so much|很多|您|你|ya))?|[👍👌🙏❤️💚😊☺️\s]+)[.!。！\s]*$/iu.test(text);
@@ -114,7 +114,7 @@ function createClinicalReviewEvidenceReader(read,{reuseVeto=false}={}){
 // Model intent changes sales eligibility only. It cannot change consent,
  // ownership, appointments or delivery permission. Source evidence is the
  // exact current inbound, and reopened interest must be a real new enquiry.
-function salesFollowUpIntent({config,parsed,customerText,keywordReason,urgentSafety,marketingStopQuestion}={}){
+function salesFollowUpIntent({config,parsed,customerText,keywordReason,urgentSafety,marketingStopQuestion,verifiedReopen=false}={}){
   if(!usesNaturalReplyAuthority(config)||parsed?.structured!==true||parsed.flagged||
     parsed.reviewRequired||parsed.languageCorrectionFailed||
     !["normal","no_reply"].includes(parsed.outcome)||keywordReason||urgentSafety||marketingStopQuestion)return null;
@@ -130,7 +130,7 @@ function salesFollowUpIntent({config,parsed,customerText,keywordReason,urgentSaf
     if(/^(?:ok(?:ay)?|yes|no|can|sure|thanks|thank you|好的?|嗯|可以|谢谢|謝謝|boleh|baik|ya|[\p{Extended_Pictographic}\uFE0F\u200D\s]+)[.!。！\s]*$/iu.test(text))return null;
     return intent;
   }
-  if(intent==="reopened"&&(parsed.serviceQuery||parsed.priceQuery||parsed.packageQuery))return intent;
+  if(intent==="reopened"&&verifiedReopen&&(parsed.serviceQuery||parsed.priceQuery||parsed.packageQuery))return intent;
   return null;
 }
 const SALES_STATE_INSERT_SQL=`
@@ -140,31 +140,28 @@ const SALES_STATE_INSERT_SQL=`
   FROM messages inbound
   JOIN LATERAL (SELECT l.id,l.created_at FROM leads l WHERE l.contact_id=inbound.contact_id
     AND l.is_closed=false ORDER BY l.created_at DESC,l.id DESC LIMIT 1) lead ON true
-  LEFT JOIN LATERAL (
-    SELECT a.metadata->>'state' AS state
-    FROM lead_activities a JOIN messages source
-      ON source.id=CASE WHEN a.metadata->>'inboundMessageId' ~ '^[1-9][0-9]{0,17}$'
-        THEN (a.metadata->>'inboundMessageId')::bigint END AND source.contact_id=inbound.contact_id
-    WHERE a.lead_id=lead.id AND a.metadata->>'outcome'='customer_sales_followup_state'
-      AND source.role='user' AND source.whatsapp_customer_mutation IS NULL
-      AND source.is_forwarded IS DISTINCT FROM TRUE AND source.id<inbound.id
-    ORDER BY source.id DESC,a.id DESC LIMIT 1
-  ) previous ON true
   WHERE inbound.id=$2 AND inbound.contact_id=$1 AND inbound.role='user'
     AND BTRIM(inbound.content)=BTRIM($3)
     AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE
     AND inbound.created_at>=lead.created_at-INTERVAL '30 minutes'
-    AND NOT EXISTS(SELECT 1 FROM messages newer WHERE newer.contact_id=$1 AND newer.role='user' AND newer.id>inbound.id)
     AND NOT EXISTS(SELECT 1 FROM lead_activities existing WHERE existing.lead_id=lead.id
       AND existing.metadata->>'outcome'='customer_sales_followup_state' AND existing.metadata->>'inboundMessageId'=inbound.id::text)
-    AND (($4::text IN ('declined','deferred') AND previous.state IS DISTINCT FROM $4::text)
-      OR ($4::text='reopened' AND previous.state IN ('declined','deferred')))
+    AND $4::text IN ('declined','deferred','reopened')
   RETURNING id`;
 async function persistSalesFollowUpIntent({contactId,inboundId,customerText,intent,database}={}){
   if(!["declined","deferred","reopened"].includes(intent)||
     ![contactId,inboundId].every(id=>Number.isSafeInteger(Number(id))&&Number(id)>0))return false;
   const db=database||require("../db/db").pool;
-  const result=await db.query(SALES_STATE_INSERT_SQL,[contactId,inboundId,String(customerText).trim(),intent]);
-  return Boolean(result.rows?.length);
+  const client=await db.connect();
+  try{
+    await client.query("BEGIN");
+    await require("../db/conversationLock").lockConversation(client,contactId);
+    const result=await client.query(SALES_STATE_INSERT_SQL,[contactId,inboundId,String(customerText).trim(),intent]);
+    await client.query("COMMIT");
+    return Boolean(result.rows?.length);
+  }catch(error){
+    await client.query("ROLLBACK").catch(()=>{});
+    throw error;
+  }finally{client.release();}
 }
 module.exports={salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};

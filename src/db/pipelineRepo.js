@@ -509,6 +509,8 @@ function dateValue(value) {
 
 async function updateLead(id, patch, actor, { expectedBookingRecovery = null } = {}) {
   const updatedLead = await withTransaction(async (client) => {
+    // Same lock as inbound edits/echo processing; acquire before the lead row.
+    if(expectedBookingRecovery?.contactId)await require("./conversationLock").lockConversation(client,expectedBookingRecovery.contactId);
     const currentResult = await client.query(
       `SELECT l.*, s.name AS stage_name, s.stage_type, s.system_key
        FROM leads l JOIN pipeline_stages s ON s.id = l.stage_id
@@ -547,7 +549,7 @@ async function updateLead(id, patch, actor, { expectedBookingRecovery = null } =
         [proof.staffMessageId,proof.contactId,proof.staffText,proof.latestMessageId,current.created_at,id]);
       if(!fresh.rows.length)return null;
       if(reschedule){
-        if(!Array.isArray(proof.priorEvidence)||!proof.priorEvidence.length||proof.priorEvidence.length>50||
+        if(!Array.isArray(proof.priorEvidence)||!proof.priorEvidence.length||proof.priorEvidence.length>150||
           !proof.priorEvidence.every(e=>Number.isSafeInteger(Number(e.id))&&typeof e.content==="string"))return null;
         const evidence=await client.query(
           `SELECT COUNT(*)::integer AS verified FROM jsonb_to_recordset($1::jsonb)

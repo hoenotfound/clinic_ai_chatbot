@@ -236,6 +236,45 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  return staffOfferMatches(previous,appointmentAt);
 }
 
+// Split scheduling exchange: a verified staff date, adjacent staff time
+// offer, customer acceptance, and a complete final staff slot. Do not infer
+// from a farewell alone. Every source is rechecked before a CRM update.
+function isSplitStaffRescheduleCorroborated(staffText,appointmentAt,turns=[],staffAt){
+ const final=String(staffText||"").trim();
+ if(!/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(final)||
+   /[?？]|\b(?:if|maybe|cancel|not|pending|unless)\b/iu.test(final))return false;
+ const at=Date.parse(staffAt),target=Date.parse(appointmentAt);
+ if(!Number.isFinite(at)||!Number.isFinite(target)||!Array.isArray(turns))return false;
+ const relevant=turns.map(t=>({...t,at:Date.parse(t.created_at)}))
+  .filter(t=>Number.isFinite(t.at)&&t.at<at&&at-t.at<=30*60000)
+  .sort((a,b)=>a.at-b.at||Number(a.id)-Number(b.id));
+ const customer=t=>t?.role==="user"&&!t.is_forwarded&&!t.whatsapp_customer_mutation&&!t.media_mime_type&&!t.media_url;
+ const normalized=t=>String(t?.content||"").normalize("NFKC").trim();
+ const local=new Date(target+8*3600000);
+ const minute=local.getUTCHours()*60+local.getUTCMinutes();
+ const datePattern=/\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/gu;
+ const targetDate=t=>{
+   const ds=[...normalized(t).matchAll(datePattern)];
+   return ds.length===1&&Number(ds[0][1])===local.getUTCDate()&&Number(ds[0][2])===local.getUTCMonth()+1&&
+    (!ds[0][3]||Number(ds[0][3])===local.getUTCFullYear());
+ };
+ const clean=s=>s.replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]/gu,"").trim();
+ const accept=t=>customer(t)&&/^(?:can|yes(?:,\s*can)?|ok(?:ay)?|sure|boleh|可以|好的?|没问题|沒問題)(?:[,，.!！]\s*)?(?:i can (?:go|come) earlier too)?[.!！。]*$/iu.test(clean(normalized(t)));
+ const optionalEarlier=t=>customer(t)&&/^(?:pls|please)\s+let\s+me\s+know\s+if\s+(?:you\s+)?(?:wanna|want to)\s+change\s+to\s+earlier[.!]*$/iu.test(clean(normalized(t)));
+ const offer=t=>trustedStaffTurn(t)&&/\b(?:can (?:u|you) make it|can (?:u|you) come|would (?:you|u) be able to come)\b/iu.test(normalized(t))&&
+  bookingTimeMinutes(normalized(t))===minute&&!/\b(?:not|cannot|cancel|or|maybe)\b/iu.test(normalized(t));
+ const reaffirm=t=>trustedStaffTurn(t)&&
+  new RegExp("\\b(?:i|we)\\s+will\\s+arrange\\s+"+String((local.getUTCHours()%12)||12)+"(?::"+String(local.getUTCMinutes()).padStart(2,"0")+")?\\s*"+(local.getUTCHours()>=12?"pm":"am")+"\\s+(?:to|for)\\s+(?:u|you)\\b","iu").test(normalized(t))&&
+  (local.getUTCMinutes()===0||normalized(t).includes(":"+String(local.getUTCMinutes()).padStart(2,"0")));
+ for(let i=relevant.length-2;i>=1;i--){
+   if(!offer(relevant[i])||!trustedStaffTurn(relevant[i-1])||!targetDate(relevant[i-1])||
+     /[?？]|\b(?:cancel|not available|maybe)\b/iu.test(normalized(relevant[i-1]))||
+     relevant[i].at-relevant[i-1].at>5*60000||!accept(relevant[i+1]))continue;
+   const rest=relevant.slice(i+2);
+   if(rest.every(t=>optionalEarlier(t)||reaffirm(t))&&rest.some(reaffirm))return true;
+ }
+ return false;
+}
 function isStaffVisitAcknowledgement(message) {
   const value = String(message || "").trim();
   if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
@@ -305,7 +344,25 @@ function createStaffBookingConfirmationService({
     // raise a discrepancy, never sufficient to auto-confirm a new booking.
     const farewellSlot=neutro&&/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(String(staffText||"").trim())&&
       !/[?？]/u.test(staffText) ? verifiedStaffSlot(staffText,now(),now(),config.hours) : null;
-    if(farewellSlot)return persistStaffHold(true,messageId,farewellSlot);
+    if(farewellSlot){
+      const lead=await pipeline.getActiveLeadForContact(contactId);
+      if(lead?.appointment_status==="set"&&!lead.is_closed&&lead.appointment_at&&
+        new Date(lead.appointment_at).toISOString()!==farewellSlot&&Number.isSafeInteger(Number(messageId))&&Number(messageId)>0){
+        const proof=await readStaffProof();
+        if(proof&&isSplitStaffRescheduleCorroborated(staffText,farewellSlot,proof.prior_turns,proof.created_at)){
+          const changed=await pipeline.updateLead(lead.id,{appointmentStatus:"set",appointmentAt:farewellSlot},"Verified staff reschedule",{
+            expectedBookingRecovery:{contactId,staffMessageId:proof.id,staffText,latestMessageId:proof.id,
+              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at,
+              priorEvidence:proof.prior_turns.map(t=>({id:t.id,content:t.content,mutation:t.whatsapp_customer_mutation??null}))}});
+          if(changed)return changed;
+        }
+        return persistStaffHold(true,messageId,farewellSlot);
+      }
+      // For an unbooked lead retain the original confirmation review path.
+      if(!lead?.is_closed&&lead&&!["set","visited","cancelled"].includes(lead.appointment_status))
+        return persistStaffHold(true,messageId);
+      return null;
+    }
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) return persistStaffHold();
     async function readStaffProof(){
       const proof=await database.query(
@@ -441,6 +498,7 @@ module.exports = {
   parseNaturalStaffConfirmedSlot,
   isContextualStaffBookingConfirmed,
   isTerseBookingCorroborated,
+  isSplitStaffRescheduleCorroborated,
   isStaffVisitAcknowledgement,
   isProactiveAppointmentReminder,
   createStaffBookingConfirmationService,

@@ -328,9 +328,29 @@ function containsApprovedPriceAmount(reply,decision){
   return scanMyrAmounts(reply).some(claim=>amounts.has(claim.amount));
 }
 
-function safeNonPriceExplanation(customerText, original, language) {
+function configuredDurationAnswer(customerText,service,language,prices){
+ const q=String(customerText||"");
+ if(!/(?:疗程多久|療程多久|护理多久|護理多久|做多久|一次多久|需要多久|需要多长时间|需要多長時間|疗程时间|療程時間|\b(?:how long|duration|berapa lama|tempoh rawatan)\b)/iu.test(q)||
+   /(?:恢复|恢復|修复|修復|多久见效|多久見效|downtime|recover|results?|pemulihan)/iu.test(q)||
+   !service||!Array.isArray(prices)||prices.some(p=>p.name!=="Main offer"))return "";
+ // Only exact, unqualified configured durations can be localized here.
+ // Package-specific, promotional or qualified durations stay on their
+ // existing verified copy path rather than being reinterpreted.
+ const raw=String(service.duration||"").trim();
+ const m=raw.match(/^(约|約)?(?:(\d{1,2})\s*(?:小时|小時))?(?:(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s*(?:分钟|分鐘))?$/u);
+ if(!m||(!m[2]&&!m[3])||m[4]&&m[2])return "";
+ const hr=Number(m[2]||0),min=Number(m[3]||0),end=m[4]?Number(m[4]):null;
+ if(hr>12||min>180||end!==null&&(end<min||end>180))return "";
+ const en=String(language).startsWith("en"),ms=String(language).startsWith("ms");
+ const amount=en?[hr?hr+" hour"+(hr!==1?"s":""):"",min?(end!==null?min+"–"+end:min)+" minutes":""].filter(Boolean).join(" "):
+  ms?[hr?hr+" jam":"",min?(end!==null?min+"–"+end:min)+" minit":""].filter(Boolean).join(" "):raw;
+ return en?"The configured treatment duration is "+(m[1]?"about ":"")+amount+".":ms?"Tempoh rawatan "+(m[1]?"kira-kira ":"ialah ")+amount+".":"这项护理的时间"+amount+"。";
+}
+function safeNonPriceExplanation(customerText, original, language, service=null,prices=[]) {
   const recovery = recoveryPeriodGuidance(customerText, language);
   if (recovery) return recovery;
+  const duration=configuredDurationAnswer(customerText,service,language,prices);
+  if(duration)return duration;
   if (!SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))) {
     return nonPriceExplanation(original);
   }
@@ -569,7 +589,7 @@ function ensureVerifiedPriceReply({
       if(preserved) return {reply:preserved,restored:false,verifiedQuote:true};
       const otherAnswer=preserveNaturalReply && !hasClinicalMediaRisk(customerText) &&
         (hasSeparateNonPriceEnquiry(customerText)||SESSION_OR_DURATION_QUESTION.test(String(customerText||"")))
-        ? safeNonPriceExplanation(customerText,original,language) : "";
+        ? safeNonPriceExplanation(customerText,original,language,services.find(s=>s.name===treatment),[]) : "";
       return { reply: [text, recovery||otherAnswer].filter(Boolean).join("\n\n"), restored: true };
     }
     const safeInfo = recoveryPeriodGuidance(customerText, language) ||
@@ -694,7 +714,7 @@ function ensureVerifiedPriceReply({
     (hasClinicalMediaRisk(customerText) ||
       ((priceOnlyResponse === true ||
         (aiLed && ["meta_ad", "customer_current_offer"].includes(pricingDecision.source))) && !independentServiceQuestion)
-      ? "" : safeNonPriceExplanation(customerText, original, language));
+      ? "" : safeNonPriceExplanation(customerText, original, language,preserveNaturalReply?services.find(s=>s.name===treatment):null,prices));
   const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
     ? (locale.startsWith("ms")
       ? "Saya boleh sahkan harga rawatan ini dahulu. Bila sebut kedua-dua, adakah anda maksudkan dua rawatan berbeza atau dua bahagian yang ingin diperbaiki?"
@@ -824,4 +844,4 @@ function guardUnfulfilledPriceQuote(reply,language="zh",{validateMediaPromise=fa
   return {...quote,mediaChanged:media.changed,afterMediaReply};
 }
 
-module.exports = { preserveVerifiedTwoTreatmentDraft, containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { configuredDurationAnswer, preserveVerifiedTwoTreatmentDraft, containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };

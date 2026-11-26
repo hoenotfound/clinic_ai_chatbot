@@ -1403,6 +1403,7 @@ async function processIncomingMessage(
       {reuseVeto:naturalReplyAuthority}
     );
     let originalModelReply = null;
+    let acceptedSalesDecision = null;
     let languageCheckedModelReply = null;
     let languageReviewRequired = false;
     let modelLocationOnly = false;
@@ -1603,6 +1604,7 @@ async function processIncomingMessage(
           }
         );
         languageCheckedModelReply = languageCheckedReply.languageCorrectionFailed ? null : languageCheckedReply.text;
+        acceptedSalesDecision=languageCheckedReply;
         // Use the existing model call to understand natural appointment
         // agreement. Only verified staff source messages can authorize a
         // hold; the model itself cannot mark a booking as confirmed.
@@ -3393,6 +3395,22 @@ async function processIncomingMessage(
         (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
           mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
       replyOverrideAudit.change("finalLanguageFallback",beforeFinalLanguage,reply);
+    }
+    // Reopening sales is a positive action: use the independently approved
+    // pricing decision or an explicit customer-named current service enquiry.
+    // Never reopen on an unverified model service/price flag, or on review.
+    if(acceptedSalesDecision?.details?.salesFollowUpIntent==="reopened"&&
+      !flagged&&!reviewRequired&&!bookingReady&&!reviewContinuationTextOnly&&!rm68CampaignContinuationTextOnly&&
+      !staffPriceConflict&&!rejectedModelPricing&&(!canSendAutomatedReply||canSendAutomatedReply())){
+      const namedService=safeServiceFromCustomer(text,clinicConfig.services,clinicConfig.serviceAliases);
+      const verifiedReopen=Boolean(approvedPricingDecision||twoTreatmentQuote||
+        (serviceQuery&&serviceQuerySource==="customer_message"&&namedService?.name&&
+          namedService.name===details?.treatment&&require("./utils/customerEnquiryEvidence").hasCustomerServiceEnquiry(text)));
+      if(salesFollowUpIntent({config:clinicConfig,parsed:acceptedSalesDecision,customerText:text,
+        keywordReason,urgentSafety,marketingStopQuestion,verifiedReopen})==="reopened"){
+        try{await persistSalesFollowUpIntent({contactId:contact.id,inboundId:savedInbound.id,customerText:text,intent:"reopened"});}
+        catch(error){console.warn("[Sales follow-up] unable to reopen customer preference contact="+contact.id,error?.code||"unknown");}
+      }
     }
     // Final append-only recovery: a later verified price formatter may have
     // discarded an earlier address or hours answer. Do not alter commercial
