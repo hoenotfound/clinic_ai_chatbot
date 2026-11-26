@@ -343,19 +343,24 @@ function safeNonPriceExplanation(customerText, original, language) {
 // claims can be verified locally. More elaborate wording, additional terms,
 // unsupported clinical claims or missing conditions use the existing formatter.
 // This is a text validation step, not another intent classifier.
+function quoteAmounts(value){
+  // Accept complete whole-ringgit amounts in equivalent formats, including
+  // a trailing sentence period, but never truncate a fractional quote.
+  return [...value.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,2}(?:,\d{3})+|[1-9]\d{0,5})(?:\.00)?(?!\d|[.,]\d)/giu)];
+}
 function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={}) {
   const original=String(reply||"").trim();
   if (!original || original.length>400 || !prices?.length ||
       hasClinicalMediaRisk(original) || MEDIA_SEND_PROMISE.test(original)) return null;
   const normalized=original.normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
-  const amounts=[...normalized.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
+  const amounts=quoteAmounts(normalized);
   if(amounts.length!==prices.length ||
      !normalized.includes(treatment.normalize("NFKC"))) return null;
   let residual=normalized.replace(treatment.normalize("NFKC")," ");
   // A package quotation must name each approved option next to its exact
   // amount. Do not retain a menu just because the numeric set matches.
   if(prices.length===1 && prices[0].name==="Main offer"){
-    if("RM"+amounts[0][1]!==prices[0].price || prices[0].afterVoucher)return null;
+    if("RM"+amounts[0][1].replace(/,/g,"")!==prices[0].price || prices[0].afterVoucher)return null;
     residual=residual.replace(amounts[0][0]," ");
   }else{
     if(prices.some(p=>p.name==="Main offer" || p.afterVoucher))return null;
@@ -366,8 +371,8 @@ function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={})
       if(matches.length!==1)return null;
       const line=matches[0];
       if(prices.filter(other=>line.includes(other.name.normalize("NFKC"))).length!==1)return null;
-      const money=[...line.matchAll(/\b(?:RM|MYR)\s*([1-9]\d{0,5})(?![\d.,])/giu)];
-      if(money.length!==1 || "RM"+money[0][1]!==p.price)return null;
+      const money=quoteAmounts(line);
+      if(money.length!==1 || "RM"+money[0][1].replace(/,/g,"")!==p.price)return null;
       residual=residual.replace(name," ").replace(money[0][0]," ");
     }
   }
