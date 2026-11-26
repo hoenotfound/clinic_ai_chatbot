@@ -55,4 +55,15 @@ function createReplyOverrideAudit(log=console.info) {
     }
   };
 }
-module.exports={usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit};
+// Reuse a confirmed clinical-review veto only for this inbound turn.
+// Never cache clearance or an unavailable read.
+function createClinicalReviewEvidenceReader(read,{reuseVeto=false}={}){
+  let pending=null;
+  return async()=>{
+    if(reuseVeto&&pending)return pending;
+    const evidence=await read();
+    if(reuseVeto&&evidence?.pendingClinicalReview===true)pending=evidence;
+    return evidence;
+  };
+}
+module.exports={usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};

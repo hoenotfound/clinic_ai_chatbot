@@ -87,3 +87,20 @@ test("migration only seeds Neutro, preserves other clinic settings and existing 
     await db.end();
   }
 });
+
+test("early campaign expiry never claims the scheduled final day has already passed",()=>{
+  const {campaignContextReply}=require("../src/utils/neutroBreastRm68Campaign");
+  const old=config.neutroRm68Campaign,had=Object.hasOwn(config,"neutroRm68Campaign");
+  try{
+    const history=[{role:"user",content:PREFILL},{role:"assistant",content:firstReply(early)}];
+    config.neutroRm68Campaign={...clone(),expiresAt:"2026-12-03T00:00:00Z"};
+    const now=Date.parse("2026-12-04T00:00:00Z");
+    assert.equal(campaignDay(now),"expired");
+    for(const language of ["zh","en","ms"]){
+      const reply=campaignContextReply({history,customerText:"RM68 还有吗？",now,language});
+      assert.ok(reply);
+      assert.doesNotMatch(reply,/12月6日|6 December|6 Disember|RM68/iu);
+      assert.doesNotMatch(firstReply(now,language),/12月6日|6 December|6 Disember|RM68/iu);
+    }
+  }finally{if(had)config.neutroRm68Campaign=old;else delete config.neutroRm68Campaign;}
+});

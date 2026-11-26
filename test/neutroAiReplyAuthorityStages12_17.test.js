@@ -162,3 +162,26 @@ test("intro fallback restores only an isolated missing contact line, not unrelat
   const offer="首次体验优惠 RM488，仅限新客户";
   assert.ok(preserveOriginalIntroFacts(offer,draft,{language:"en"}).reply.includes(offer));
 });
+
+test("routine review evidence only reuses an affirmative clinical veto, never clearance or a failed read",async()=>{
+  const {createClinicalReviewEvidenceReader}=require("../src/utils/neutroAiReplyAuthority");
+  let reads=0;
+  const evidence=[null,{pendingClinicalReview:false},{pendingClinicalReview:true}];
+  const read=createClinicalReviewEvidenceReader(async()=>{return evidence[reads++]},{reuseVeto:true});
+  assert.equal(await read(),null);
+  assert.equal((await read()).pendingClinicalReview,false);
+  assert.equal((await read()).pendingClinicalReview,true);
+  assert.equal((await read()).pendingClinicalReview,true);
+  assert.equal(reads,3);
+  let legacyReads=0;
+  const legacy=createClinicalReviewEvidenceReader(async()=>({pendingClinicalReview:++legacyReads===1}));
+  assert.equal((await legacy()).pendingClinicalReview,true);
+  assert.equal((await legacy()).pendingClinicalReview,false);
+});
+test("natural administrative location recovery does not add a sales invitation",()=>{
+  const {administrativeReviewReply}=require("../src/utils/neutroAdministrativeReviewReply");
+  const input={customerText:"Where is your clinic?",branches:[{name:"PJ",address:"Example Street, Petaling Jaya"}],language:"en",history:[]};
+  const result=administrativeReviewReply({...input,omitInvitation:true});
+  assert.ok(result?.reply.includes("Example Street"));
+  assert.doesNotMatch(result.reply,/appointment|schedule|assessment|book/i);
+});

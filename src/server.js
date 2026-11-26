@@ -82,7 +82,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit}=require("./utils/neutroAiReplyAuthority");
+const {usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -1395,6 +1395,10 @@ async function processIncomingMessage(
     let aiReply;
     const naturalReplyAuthority=usesNaturalReplyAuthority(clinicConfig);
     const replyOverrideAudit=createReplyOverrideAudit();
+    const readRoutineReviewEvidence=createClinicalReviewEvidenceReader(
+      ()=>contactsRepo.getTcmReviewEvidence(contact.id,savedInbound.id),
+      {reuseVeto:naturalReplyAuthority}
+    );
     let originalModelReply = null;
     let languageReviewRequired = false;
     let modelLocationOnly = false;
@@ -1690,9 +1694,7 @@ async function processIncomingMessage(
           clinicConfig.businessType === "tcm_clinic" &&
           (bareServiceName(text, clinicConfig.services, clinicConfig.serviceAliases) ||
            isStandaloneSpinalConcern(text))) {
-        const verifiedEvidence = await contactsRepo.getTcmReviewEvidence(
-          contact.id, savedInbound.id
-        );
+        const verifiedEvidence = await readRoutineReviewEvidence();
         if (verifiedEvidence) {
           const plan = planTcmReviewReply({
             businessType: clinicConfig.businessType,
@@ -1765,7 +1767,7 @@ async function processIncomingMessage(
       if (verifiedFreeIntroFee &&
           (!flagged || (reviewRequired && reviewType === "information")) &&
           (!naturalReplyAuthority || ((flagged || isUnanswerableCustomerReply(aiReply, text)) &&
-            (await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id))?.pendingClinicalReview === false))) {
+            (await readRoutineReviewEvidence())?.pendingClinicalReview === false))) {
         aiReply = replyOverrideAudit.change("complimentaryAssessmentFeeReply",aiReply,complimentaryAssessmentFeeReply(mediaLanguage));
         flagged = false;
         reviewRequired = false;
@@ -1791,7 +1793,7 @@ async function processIncomingMessage(
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
         isSimpleGreeting(text)) {
-      const greetingEvidence = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+      const greetingEvidence = await readRoutineReviewEvidence();
       if (greetingEvidence?.pendingClinicalReview === false) {
         flagged = false;
         reviewRequired = false;
@@ -1820,7 +1822,7 @@ async function processIncomingMessage(
         services: clinicConfig.services, language: mediaLanguage,
       });
       const deviceEvidence = deviceReview
-        ? await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id) : null;
+        ? await readRoutineReviewEvidence() : null;
       if (deviceReview && deviceEvidence?.pendingClinicalReview === false) {
         flagged = true;
         reviewRequired = true;
@@ -1846,7 +1848,7 @@ async function processIncomingMessage(
        (!naturalReplyAuthority || (!isActiveSafetyConcern(text) &&
          !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
          !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
-         (await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id))?.pendingClinicalReview === false))){
+         (await readRoutineReviewEvidence())?.pendingClinicalReview === false))){
       aiReply = replyOverrideAudit.change("safeVisitTimingReply",aiReply,safeVisitTimingReply(mediaLanguage));
       flagged=false;reviewRequired=false;reviewType=null;
       clinicalAcknowledgement=null;
@@ -2821,6 +2823,7 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         !isDefiniteAppointmentCancellation(text) && !bookingReady &&
         isCampaignAvailabilityQuestion(text) &&
+        (!naturalReplyAuthority || String(text||"").trim().length>150) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
@@ -2863,7 +2866,7 @@ async function processIncomingMessage(
         customerText: text, history: commercialHistory, branches: clinicConfig.branches,
         language: mediaLanguage, services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
-        promotions: clinicConfig.promotions,
+        promotions: clinicConfig.promotions, omitInvitation:naturalReplyAuthority,
       });
       if (adminAnswer) {
         const evidence = await contactsRepo.getTcmReviewEvidence(
@@ -3219,7 +3222,7 @@ async function processIncomingMessage(
         customerText: text, history: commercialHistory, branches: clinicConfig.branches,
         language: mediaLanguage, services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
-        promotions: clinicConfig.promotions,
+        promotions: clinicConfig.promotions, omitInvitation:naturalReplyAuthority,
       });
       if (verifiedMixed &&
           /(?:mixed_price_location_clarification|verified_rm68_campaign|explicit_verified_price|explicit_price_needs_confirmation)/u.test(verifiedMixed.kind)) {

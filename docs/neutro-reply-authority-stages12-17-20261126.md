@@ -10,3 +10,11 @@ Scope: Neutro Sense TCM with AI-led pricing enabled. Legacy client paths remain 
 - 17: Audit pre-model deterministic paths and previously unlabelled combo, business-fact, pricing-recovery, marketing-stop, intro and final language/recovery replacements. No message body or pricing amount is added to the audit log.
 
 This is an incremental safe consolidation, not wholesale removal of the remaining two-treatment, pelvic comparison, subsequent-session, campaign, clinical or appointment fallbacks. Before broader removal, run the complete CI, inspect post-deploy override counts and controlled multilingual price, location, campaign, booking and safety conversations. No new recurring worker or extra AI request is introduced.
+
+
+### Review follow-up
+- Fee-only enquiries clear stale booking intent; failed language correction enters the existing durable information-review workflow rather than discarding the question.
+- Approved amount matching recognizes equivalent MYR formatting and rejects numeric substrings. Compound enquiries cannot pass on a price-only draft when a separate question is detected; known service/duration questions retain the existing safe answer path.
+- Introduction recovery restores isolated missing contact lines where possible; commercial/eligibility clauses still require the original source when their scope cannot safely be isolated.
+- Reuse only a confirmed pending clinical veto within the early routine recovery sequence, never clearance. Later independent review and send-ownership checks remain fresh.
+- Bounded RM68 availability review shares the administrative recovery path in natural-authority mode. Natural location recovery omits the scripted invitation. Early campaign expiry no longer claims the scheduled final day already passed. Historic RM68 recognition and approved fixed copy remain intentionally stable.

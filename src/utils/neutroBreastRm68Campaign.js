@@ -91,7 +91,7 @@ function localeFor(history, customerText, language) {
 function firstReply(now = Date.now(), language = "zh") {
   const locale=["zh","en","ms"].includes(language)?language:"zh";
   const {valid,campaign}=rm68CampaignSettings();
-  if(!valid) return locale==="en"
+  if(!valid || (campaignDay(now)==="expired" && Number(now)<MYT_CAMPAIGN_END)) return locale==="en"
     ? "Hello 😊 The clinic needs to confirm the current breast-care offer and appointment details."
     : locale==="ms"
       ? "Hai 😊 Pihak pusat perlu mengesahkan tawaran penjagaan payudara dan butiran temu janji semasa."
@@ -291,10 +291,21 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
   if (screening) return screening;
   if (!CAMPAIGN_QUERY.test(text) && !askedAmount && !currentScope && !INCLUDES_QUESTION.test(text) && !DURATION_QUESTION.test(text)) return null;
   if (day === "expired") {
+    const {valid,campaign}=rm68CampaignSettings();
+    // An operator may stop the offer early; do not claim its scheduled
+    // final day has already occurred. Invalid settings also fail closed.
+    if(!valid || Number(now)<MYT_CAMPAIGN_END)return localized(language,
+      "您之前咨询的胸部护理体验活动目前已不再开放。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
+      "The breast-care event is no longer available. Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
+      "Acara penjagaan payudara tidak lagi tersedia. Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
+    const last=new Date(campaign.eventDates.at(-1)+"T00:00:00Z");
+    const zhDate=(last.getUTCMonth()+1)+"月"+last.getUTCDate()+"日";
+    const enDate=new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",timeZone:"UTC"}).format(last);
+    const msDate=new Intl.DateTimeFormat("ms-MY",{day:"numeric",month:"long",timeZone:"UTC"}).format(last);
     return localized(language,
-      "您之前咨询的"+(askedAmount?" RM68 ":"")+"胸部护理体验活动已于12月6日结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
-      "The breast-care event ended on 6 December. Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
-      "Acara penjagaan payudara telah tamat pada 6 Disember. Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
+      "您之前咨询的"+(askedAmount?" RM"+campaign.priceMYR+" ":"")+"胸部护理体验活动已于"+zhDate+"结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
+      "The breast-care event ended on "+enDate+". Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
+      "Acara penjagaan payudara telah tamat pada "+msDate+". Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
   }
   const dates=dayLine(now);
   const enDates=day==="dec6"?"6 December":"5 and 6 December";
