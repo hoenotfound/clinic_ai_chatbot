@@ -6,6 +6,7 @@ const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL } = require
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("./staffAppointmentAcceptanceService");
+const realtimeEvents=require("../utils/realtimeEvents");
 const {detectDate,localParts,parseClockPreference,intervals}=require("../utils/appointmentHoursGuard");
 
 // Only explicit staff confirmations with a complete calendar date can
@@ -211,6 +212,7 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  const latest=history.find(t=>t.role==="user");
  if(!latest||at-latest.at>30*60*1000||
     /(?:cannot|can't|not|no\s|cancel|取消|改期|不行|不要|不能)/iu.test(String(latest.content||"")))return false;
+ if(latest.is_forwarded||latest.whatsapp_customer_mutation||latest.media_mime_type)return false;
  const date=String(staffText||"").match(/\b(\d{1,2})\/(\d{1,2})(?:\/20\d{2})?\b/u);
  const day=String(staffText||"").match(/\bthis\s+(mon|tue|wed|thu|fri|sat|sun)(?:day)?\b/iu);
  if(!date&&!day)return false;
@@ -241,7 +243,6 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  // The agreement must answer the immediately preceding real staff offer.
  // A later promotion, alternative time, bot message or forwarded message
  // cannot corroborate an older offer.
- if(latest.is_forwarded||latest.whatsapp_customer_mutation||latest.media_mime_type)return false;
  if(history.some(t=>t.at>latest.at&&trustedStaffTurn(t)&&
    verifiedStaffSlot(t.content,new Date(t.at),new Date(t.at),null,{allowUnconfigured:true})!==null&&
    verifiedStaffSlot(t.content,new Date(t.at),new Date(t.at),null,{allowUnconfigured:true})!==appointmentAt))return false;
@@ -286,8 +287,8 @@ function createStaffBookingConfirmationService({
     // permission to fabricate a CRM appointment or send a booking alert.
     // The provider-authenticated original message ID is required for a
     // recoverable, replay-safe follow-up hold.
-    const persistStaffHold=async(confirmation=false)=>{
-      const sourceId=Number(messageId);
+    const persistStaffHold=async(confirmation=false,sourceMessageId=messageId)=>{
+      const sourceId=Number(sourceMessageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
       const holdSql=confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
       const args=[contactId,sourceId,staffText];
@@ -298,14 +299,16 @@ function createStaffBookingConfirmationService({
         try{
           await client.query("BEGIN");
           await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[contactId]);
-          await client.query(holdSql,args);
+          const held=await client.query(holdSql,args);
           await client.query("COMMIT");
+          if(confirmation&&held.rows?.length)realtimeEvents.publish("conversation_changed",{contactId,reason:"booking_confirmation_pending"});
         }catch(error){
           await client.query("ROLLBACK").catch(()=>{});
           throw error;
         }finally{client.release();}
       }else{
-        await database.query(holdSql,args);
+        const held=await database.query(holdSql,args);
+        if(confirmation&&held.rows?.length)realtimeEvents.publish("conversation_changed",{contactId,reason:"booking_confirmation_pending"});
       }
       return null;
     };
@@ -358,7 +361,7 @@ function createStaffBookingConfirmationService({
         // Staff explicitly confirmed a visit but the exact slot lacks enough
         // corroboration. Keep sales paused even if booking-ready hours cannot
         // yet validate the full preference. This never creates a CRM booking.
-        if(config.businessType==="tcm_clinic"&&terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))await persistStaffHold(true);
+        if(config.businessType==="tcm_clinic"&&(contextualCandidate||terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim())))await persistStaffHold(true,recorded.id);
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
           activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
@@ -402,6 +405,7 @@ async function recordModelConfirmationHold(contactId,inboundId,evidence,{databas
     await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[contactId]);
     const result=await client.query(MODEL_CONFIRMATION_HOLD_SQL,[contactId,evidence.id,evidence.text,inboundId]);
     await client.query("COMMIT");
+    if(result.rows?.length)realtimeEvents.publish("conversation_changed",{contactId,reason:"booking_confirmation_pending"});
     return Boolean(result.rows?.length);
   }catch(error){
     await client.query("ROLLBACK").catch(()=>{});
