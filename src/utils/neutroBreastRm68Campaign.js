@@ -359,7 +359,11 @@ function campaignDurationClaims(value){
     const prefix=text.slice(i?claims[i-1].index+claims[i-1][0].length:0,m.index);
     const clause=prefix.split(/[;；。！？!?，,\n]|\.(?!\d)|\b(?:or|and|atau|dan)\b|或者|以及/iu).at(-1);
     const suffix=text.slice(m.index+m[0].length,claims[i+1]?.index??text.length);
-    const totalScope=total.test(clause)||trailingTotal.test(suffix);
+    // A comma followed by a total-scope label and another duration starts
+    // a new claim, rather than retroactively qualifying the care duration.
+    const nextTotalClause=Boolean(claims[i+1])&&
+      /^[\s,，]*(?:(?:keseluruhan)\b|全程|总时长|總時長|总共|總共|合计|合計|整体|整體)[\s]*(?:(?:约|約|大约|大約|为|為|是|kira-kira|sekitar|ialah|adalah)\s*)*$/iu.test(suffix);
+    const totalScope=total.test(clause)||(!nextTotalClause&&trailingTotal.test(suffix));
     const careScope=care.test(clause);
     return {minutes,scope:!totalScope&&careScope?"care":"total",valid:m[3]===undefined||(Number(m[3])<60&&!m[1].includes("."))};
   });
