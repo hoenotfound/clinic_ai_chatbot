@@ -2,17 +2,32 @@
 
 const clinicConfig=require("./clinicConfig");
 const defaults=require("./neutroRm68Campaign.default.json");
+const {campaignDatesInText}=require("../utils/neutroRm68DateEvidence");
 const languages=["zh","en","ms"];
 const liveStates=["both","dec6"];
 
 function finiteTimestamp(value){
   return typeof value==="string" && Number.isFinite(Date.parse(value));
 }
-function hasValidCopy(value,active){
-  return typeof value==="string" && value.trim().length>0 && value.length<=3000 &&
-    (active ? /\bRM\s*68\b/iu.test(value) &&
-      [...value.matchAll(/\b(?:RM|MYR)\s*(\d+(?:\.\d+)?)/giu)].every(m=>Number(m[1])===defaults.priceMYR)
-      : !/\b(?:RM|MYR)\s*\d/iu.test(value));
+function hasValidCopy(value,active,state){
+  if(typeof value!=="string" || !value.trim() || value.length>3000)return false;
+  const amounts=[...value.normalize("NFKC").matchAll(/(?:\b(?:RM|MYR)\s*|马币\s*|令吉\s*)(\d[\d,]*(?:\.\d+)?)/giu)]
+    .map(m=>Number(m[1].replace(/,/g,"")));
+  if(!active)return amounts.length===0;
+  if(!amounts.length || amounts.some(n=>n!==defaults.priceMYR))return false;
+  const dates=campaignDatesInText(value);
+  const expected=state==="dec6"?[6]:[5,6];
+  if(!dates.length || dates.some(d=>d.month!==12 || !expected.includes(d.day)) ||
+    expected.some(day=>!dates.some(d=>d.day===day)))return false;
+  if(/\b20(?!26)\d{2}\b/u.test(value))return false;
+  // Do not accept a different package duration, a clinical guarantee, or
+  // an already-confirmed appointment in operator-configured campaign copy.
+  const normalized=value.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
+  for(const m of normalized.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)){
+    const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
+    if(![defaults.careMinutes,defaults.totalMinutes].includes(mins))return false;
+  }
+  return !/(?:保证治愈|保證治癒|保证有效|保證有效|已预约成功|已預約成功|\b(?:guaranteed cure|guaranteed results|your (?:booking|appointment) is confirmed|we have booked you|dijamin sembuh|temu janji anda telah disahkan)\b)/iu.test(value);
 }
 // This is a versioned historical offer, not a generic campaign editor.
 // Changing dates, price, package or identity requires a new campaign ID.
@@ -28,8 +43,8 @@ function validRm68CampaignSettings(value){
     !finiteTimestamp(value.expiresAt) ||
     Date.parse(value.expiresAt)>Date.parse(defaults.expiresAt))return false;
   return liveStates.every(state=>languages.every(lang=>
-    hasValidCopy(value.firstReply?.[state]?.[lang],true) &&
-    hasValidCopy(value.followUp?.[state]?.[lang],true))) &&
+    hasValidCopy(value.firstReply?.[state]?.[lang],true,state) &&
+    hasValidCopy(value.followUp?.[state]?.[lang],true,state))) &&
     languages.every(lang=>hasValidCopy(value.firstReply?.expired?.[lang],false));
 }
 function rm68CampaignSettings(config=clinicConfig){
