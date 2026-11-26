@@ -675,7 +675,7 @@ test("AI-led appointment validation preserves treatment frequency and generic in
 test("AI-led appointment gate retains actual booking and unverified confirmation protection",()=>{
   const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
   const args={hours,receivedAt:monday,now:laterMonday,language:"en"};
-  const proposal=guardAiAppointmentReply({...args,appointmentScheduling:true,customerText:"Can I visit next week?",reply:"Would Monday afternoon 2pm work for you?"});
+  const proposal=guardAiAppointmentReply({...args,appointmentScheduling:true,customerText:"Can I visit next week?",appointmentProposal:"Monday 2pm",reply:"Would Monday afternoon 2pm work for you?"});
   assert.equal(proposal.blocked,true);
   assert.equal(proposal.issue.status,"closed");
   const inconsistent=guardAiAppointmentReply({...args,appointmentScheduling:false,requireValidPreference:true,customerText:"How often?",reply:"Once a week."});
@@ -687,4 +687,36 @@ test("AI-led appointment gate retains actual booking and unverified confirmation
   const actualBooking=guardAiAppointmentReply({...args,appointmentScheduling:true,requireValidPreference:true,customerText:"Tuesday 2pm",appointmentPreference:"2026-11-24 14:00",reply:"I'll check Tuesday 2pm with the clinic."});
   assert.equal(actualBooking.blocked,false);
   assert.equal(actualBooking.issue.status,"valid_preference");
+});
+
+test("AI-led appointment guard does not mistake opening hours for appointment times",()=>{
+  const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-25T23:55:25Z";
+  for(const customerText of ["如果今天呢","这个星期四","What about today?","Hari ini boleh?"]){
+    for(const reply of ["今天是星期四，我们营业时间是早上10点到晚上8点，您想安排几点过来呢？","Today we open at 10am and close at 8pm. What time would suit you?","Hari ini buka pukul 10am hingga 8pm. Pukul berapa sesuai?"]){
+      const result=guardAiAppointmentReply({hours,customerText,reply,receivedAt:now,now,appointmentScheduling:true,appointmentProposal:null,durationMinutes:135});
+      assert.equal(result.reply,reply,customerText);
+      assert.equal(result.blocked,false);
+      assert.equal(result.issue.status,"valid_day");
+    }
+  }
+});
+test("AI-led appointment guard validates structured proposals and actual customer requests, not opening-hour prose",()=>{
+  const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-25T23:55:25Z";
+  const args={hours,now,receivedAt:now,appointmentScheduling:true,durationMinutes:135};
+  const invalid=guardAiAppointmentReply({...args,customerText:"这个星期四",appointmentProposal:"2026-11-26 20:00",reply:"今晚8点可以来吗？"});
+  assert.equal(invalid.blocked,true);
+  assert.equal(invalid.issue.status,"outside_hours");
+  assert.doesNotMatch(invalid.reply,/星期五/);
+  const customer=guardAiAppointmentReply({...args,customerText:"今天早上8点",reply:"好的，我帮您确认哦"});
+  assert.equal(customer.blocked,true);
+  assert.equal(customer.issue.status,"outside_hours");
+  assert.doesNotMatch(customer.reply,/星期五/);
+  const valid=guardAiAppointmentReply({...args,customerText:"今天下午3点",appointmentPreference:"2026-11-26 15:00",requireValidPreference:true,reply:"好的，我帮您确认今天下午3点的空档哦"});
+  assert.equal(valid.blocked,false);
+  assert.equal(valid.issue.status,"valid_preference");
+  const incomplete=guardAiAppointmentReply({...args,customerText:"这个星期四",requireValidPreference:true,reply:"好的"});
+  assert.equal(incomplete.blocked,true);
+  assert.equal(incomplete.issue.status,"valid_day");
 });

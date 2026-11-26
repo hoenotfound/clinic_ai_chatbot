@@ -690,15 +690,66 @@ function guardAppointmentReply({hours,reply,customerText="",recentCustomerTexts=
 function guardAiAppointmentReply(options={}){
   const original=String(options.reply||"");
   const {appointmentScheduling,requireValidPreference=false,language="zh"}=options;
-  if(appointmentScheduling===true||(requireValidPreference&&appointmentScheduling!==false)){
-    return guardAppointmentReply(options);
-  }
+  // Natural-language output is not an appointment payload. In particular,
+  // opening/closing hours and service duration are not proposed start times.
+  // Keep the narrow unverified confirmation backstop independently of intent.
   if(claimsConfirmedAppointment(original)){
     const lang=String(language).toLowerCase().slice(0,2);
     const safe=lang==="en"?"Our team needs to check availability before confirming any appointment.":lang==="ms"?"Pihak pusat perlu semak kekosongan sebelum janji temu disahkan.":"预约需要由门店同事核实空档后才能确认哦。";
     return {reply:safe,blocked:true,issue:{status:"unverified_confirmation"}};
   }
-  return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+  if(appointmentScheduling!==true&&!(requireValidPreference&&appointmentScheduling!==false))
+    return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
+  const {hours,now=new Date(),durationMinutes=0}=options;
+  const issue=evaluateAppointmentHours(options);
+  const lang=String(language||"zh").toLowerCase().slice(0,2);
+  const askTime=()=>lang==="en"?"What time on that day would suit you? I can check with the clinic 😊":
+    lang==="ms"?"Pukul berapa pada hari itu yang sesuai? Kami boleh semak dengan pusat 😊":
+    "那一天大概几点方便呢？我帮您向诊所确认空档哦☺️";
+  const askDate=()=>lang==="en"?"Which date would suit you? I can check with the clinic 😊":
+    lang==="ms"?"Tarikh mana yang sesuai? Kami boleh semak dengan pusat 😊":
+    "请问您哪一天方便呢？我帮您向诊所确认空档哦☺️";
+  const askBoth=()=>lang==="en"?"Which date and time would you prefer? I can check with the clinic 😊":
+    lang==="ms"?"Tarikh dan masa mana yang sesuai? Kami boleh semak kekosongan dahulu 😊":
+    "请问您想预约哪一天、几点呢？我帮您向诊所确认空档哦☺️";
+  const invalid=["closed","past","outside_hours"];
+  if(invalid.includes(issue.status)){
+    // Correct objective customer evidence only, not words in a model draft.
+    // An invalid start on an otherwise open day does not make the whole day closed.
+    const sameDay=issue.date&&evaluateAppointmentHours({hours,customerText:issue.date,receivedAt:now,now,durationMinutes});
+    const local=localParts(now);
+    const remaining=local&&sameDay?.status==="valid_day"&&intervals(hours,sameDay.weekday)?.some(([open,close])=>{
+      const start=Math.max(open,issue.date===local.date?local.minute+1:0);
+      return start<close&&start+Math.max(0,Math.min(480,Number(durationMinutes)||0))<=close;
+    });
+    const sameDayQuestion=lang==="en"?"That time is outside the available appointment window. What other time that day suits you? I'll check with the clinic 😊":
+      lang==="ms"?"Masa itu di luar waktu yang sesuai. Pukul berapa lagi pada hari itu yang sesuai? Kami akan semak dengan pusat 😊":
+      "这个时间不适合安排护理哦～当天其他什么时间方便呢？我帮您向诊所确认空档☺️";
+    return {reply:remaining?sameDayQuestion:issueReply(issue,{hours,language}),blocked:true,issue};
+  }
+  // A proposal is explicit structured model data, not inferred by scanning
+  // the customer-facing reply. It can never authorize a CRM booking.
+  const proposal=String(options.appointmentProposal||"").trim();
+  if(proposal&&hours?.weekly){
+    const checked=evaluateAppointmentHours({hours,customerText:proposal,receivedAt:now,now,durationMinutes});
+    if(invalid.includes(checked.status)||!["valid_day","valid_preference"].includes(checked.status)){
+      // Prefer the customer's already verified date over an invalid model proposal.
+      const knownDay=["valid_day","valid_preference"].includes(issue.status);
+      const fallback=knownDay?(issue.status==="valid_preference"
+        ? (lang==="en"?"I'll check your preferred date and time with the clinic 😊":
+          lang==="ms"?"Kami akan semak tarikh dan masa pilihan anda dengan pusat 😊":
+          "我帮您向诊所确认您选择的日期和时间哦☺️"):askTime()):
+        invalid.includes(checked.status)?issueReply(checked,{hours,language}):askDate();
+      return {reply:fallback,blocked:true,issue:checked};
+    }
+  }
+  // Only executable booking-ready outcomes need independent complete evidence.
+  // Ordinary enquiries remain in the model's own words, including questions
+  // about a valid day with no time. The CRM boundary validates again.
+  if(requireValidPreference&&issue.status!=="valid_preference"){
+    return {reply:issue.status==="valid_day"?askTime():issue.hasTime?askDate():askBoth(),blocked:true,issue};
+  }
+  return {reply:original,blocked:false,issue};
 }
 
 function describeWeeklyHours(hours){

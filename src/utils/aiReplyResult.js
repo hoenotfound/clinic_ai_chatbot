@@ -169,7 +169,7 @@ function containsInternalAiScaffolding(value) {
   return (
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
-    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|businessLocationOnly|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|appointmentProposal|businessLocationOnly|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
     || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
@@ -336,6 +336,10 @@ function parseStructuredReply(raw) {
   };
   if (conversion.mode === "appointment" && typeof parsed.appointmentScheduling === "boolean") {
     details.appointmentScheduling = parsed.appointmentScheduling;
+  }
+  if (conversion.mode === "appointment" && typeof parsed.appointmentProposal === "string") {
+    const proposal = cleanOptionalText(parsed.appointmentProposal);
+    if (proposal && proposal.length <= 160) details.appointmentProposal = proposal;
   }
   if (typeof parsed.businessLocationOnly === "boolean") details.businessLocationOnly = parsed.businessLocationOnly;
   if (isProjectMode && projectLocation) details.projectLocation = projectLocation;

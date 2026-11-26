@@ -1699,16 +1699,11 @@ async function processIncomingMessage(
             priceQuery = false;
             packageQuery = false;
             details = null;
-          } else if (plan?.reply && !flagged && plan.alreadyInvited) {
-            // The existing evidence lookup still protects clinical reviews.
-            // A correctly identified current service enquiry is conversational:
-            // let Gemini answer it instead of unconditionally replacing its draft.
-            // Preserve the legacy recovery for missing/conflicting model metadata.
-            const modelIdentifiedTreatment = plan.treatment &&
-              serviceQuery && serviceQuerySource === "customer_message" &&
-              details?.treatment === plan.treatment && !priceQuery && !packageQuery;
-            if (!modelIdentifiedTreatment) aiReply = plan.reply;
           }
+          // An unflagged ordinary treatment reply is model-owned. Missing
+          // optional treatment metadata can restrict media authorization but
+          // must not replace useful conversational text. Clinical/review
+          // recovery above remains authoritative.
         } else {
           // A failed clinical-review lookup must not permit recovery.
           flagged = true;
@@ -2560,7 +2555,9 @@ async function processIncomingMessage(
     // invitation without replacing the answer or altering result-media intent.
     if (!flagged && !marketingStopQuestion &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-        !fixedAdFirstReply) {
+        !fixedAdFirstReply &&
+        !/^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+      // Neutro's AI owns the decision to invite; preserve legacy clients.
       // A fixed reply is a staff-authored complete message; do not append a
       // second sales question. Price/safety/billing guards still run normally.
       const invited = ensureFirstAssessmentInvitation({
@@ -3165,6 +3162,7 @@ async function processIncomingMessage(
       const checked = checkAppointment({
         hours: clinicConfig.hours, reply, customerText: text,
         appointmentScheduling: details?.appointmentScheduling,
+        appointmentProposal: details?.appointmentProposal,
         recentCustomerMessages: appointmentCustomerHistory,
           recentStaffMessages: appointmentStaffHistory,
         appointmentPreference: details?.appointmentPreference || "",

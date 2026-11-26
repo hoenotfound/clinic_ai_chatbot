@@ -70,6 +70,7 @@ const conversationReplySchema = {
     branch: nullableString,
     appointmentPreference: nullableString,
     appointmentScheduling: { type: "boolean" },
+    appointmentProposal: nullableString,
     businessLocationOnly: { type: "boolean" },
     projectLocation: nullableString,
     projectSummary: nullableString,
@@ -77,7 +78,7 @@ const conversationReplySchema = {
     staffSummary: nullableString,
   },
   required: ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery",
-    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "businessLocationOnly",
+    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "appointmentProposal", "businessLocationOnly",
     "projectLocation", "projectSummary", "nextStep", "staffSummary"],
 };
 const followUpReplySchema = {
