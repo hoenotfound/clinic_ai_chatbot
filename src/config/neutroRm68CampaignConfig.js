@@ -5,6 +5,14 @@ const defaults=require("./neutroRm68Campaign.default.json");
 const {campaignDatesInText}=require("../utils/neutroRm68DateEvidence");
 const languages=["zh","en","ms"];
 const liveStates=["both","dec6"];
+ // Existing SQL exclusions and delivered-history recognition intentionally
+ // retain these approved markers. Editing them would let an unrelated
+ // standard promotion re-enter a campaign conversation.
+const firstReplyMarkers={
+  zh:["我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】","首次体验只需 RM68","全程约 1小时30分钟"],
+  en:["Our limited-time breast wellness assessment + gentle pulse wave care offer","First trial: RM68","1 hour 30 minutes"],
+  ms:["Promosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut","Percubaan pertama: RM68","1 jam 30 minit"],
+};
 
 function finiteTimestamp(value){
   return typeof value==="string" && Number.isFinite(Date.parse(value));
@@ -44,6 +52,7 @@ function validRm68CampaignSettings(value){
     Date.parse(value.expiresAt)>Date.parse(defaults.expiresAt))return false;
   return liveStates.every(state=>languages.every(lang=>
     hasValidCopy(value.firstReply?.[state]?.[lang],true,state) &&
+    firstReplyMarkers[lang].every(marker=>value.firstReply[state][lang].includes(marker)) &&
     hasValidCopy(value.followUp?.[state]?.[lang],true,state))) &&
     languages.every(lang=>hasValidCopy(value.firstReply?.expired?.[lang],false));
 }
