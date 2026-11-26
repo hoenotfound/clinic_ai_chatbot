@@ -65,7 +65,7 @@ function singleBranchLocationFacts(branches, language = "zh") {
 // When a question also asks for a package price, leave the combined answer to
 // the normal verified pricing path.
 function confirmedSingleBranchLocationAnswer({
-  customerText = "", branches = [], language = "zh", modelLocationOnly = false, resolvedLanguage = null,
+  customerText = "", branches = [], language = "zh", modelLocationOnly = false, resolvedLanguage = null, omitInvitation = false,
 } = {}) {
   const question = String(customerText || "").trim();
   if (!question || question.length > 130 || !standaloneLocationQuestion(question, modelLocationOnly) ||
@@ -83,12 +83,12 @@ function confirmedSingleBranchLocationAnswer({
     ...facts,
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
-        + (modelLocationOnly ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
+        + (modelLocationOnly || omitInvitation ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
       : en
         ? "We're located in " + (name || "our clinic") + " 😊\n📍 " + address
-          + (modelLocationOnly ? "" : "\nWhich day would be convenient for you? We can help check appointment arrangements.")
+          + (modelLocationOnly || omitInvitation ? "" : "\nWhich day would be convenient for you? We can help check appointment arrangements.")
         : "我们位于 " + (name || "门店") + " 😊\n📍 " + address
-          + (modelLocationOnly ? "" : "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️"),
+          + (modelLocationOnly || omitInvitation ? "" : "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️"),
   };
 }
 
