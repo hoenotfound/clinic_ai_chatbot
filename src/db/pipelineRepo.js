@@ -521,8 +521,11 @@ async function updateLead(id, patch, actor, { expectedBookingRecovery = null } =
     // lead and source snapshot. Ordinary staff edits use the existing path.
     if(expectedBookingRecovery){
       const proof=expectedBookingRecovery;
-      if(patch.appointmentStatus!=="set"||current.is_closed||
-        !["none",null].includes(current.appointment_status)||current.appointment_at||
+      const reschedule=proof.expectedAppointmentAt!=null;
+      const correctPriorState=reschedule
+        ? current.appointment_status==="set"&&dateValue(current.appointment_at)===dateValue(proof.expectedAppointmentAt)
+        : ["none",null].includes(current.appointment_status)&&!current.appointment_at;
+      if(patch.appointmentStatus!=="set"||current.is_closed||!correctPriorState||
         Number(current.contact_id)!==Number(proof.contactId)||
         dateValue(current.updated_at)!==dateValue(proof.updatedAt))return null;
       const fresh=await client.query(

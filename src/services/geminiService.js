@@ -74,13 +74,15 @@ const conversationReplySchema = {
     appointmentIntent: nullableString,
     appointmentStaffEvidence: nullableString,
     businessLocationOnly: { type: "boolean" },
+    salesFollowUpIntent: nullableString,
+    salesFollowUpEvidence: nullableString,
     projectLocation: nullableString,
     projectSummary: nullableString,
     nextStep: nullableString,
     staffSummary: nullableString,
   },
   required: ["reply", "outcome", "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery",
-    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "appointmentProposal", "appointmentIntent", "appointmentStaffEvidence", "businessLocationOnly",
+    "pricingStage", "reviewType", "promotionOption", "treatment", "branch", "appointmentPreference", "appointmentScheduling", "appointmentProposal", "appointmentIntent", "appointmentStaffEvidence", "businessLocationOnly", "salesFollowUpIntent", "salesFollowUpEvidence",
     "projectLocation", "projectSummary", "nextStep", "staffSummary"],
 };
 const followUpReplySchema = {

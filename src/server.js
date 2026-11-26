@@ -85,7 +85,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -1573,6 +1573,12 @@ async function processIncomingMessage(
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
         originalModelReply = parsedReply.text; // Before language, pricing, location or other rewrites.
+        const salesState = salesFollowUpIntent({config:clinicConfig,parsed:parsedReply,customerText:text,keywordReason,urgentSafety,marketingStopQuestion});
+        if(salesState){
+          try{
+            await persistSalesFollowUpIntent({contactId:contact.id,inboundId:savedInbound.id,customerText:text,intent:salesState});
+          }catch(error){console.warn("[Sales follow-up] unable to record current customer preference contact="+contact.id,error?.code||"unknown");}
+        }
         if(canHonorNoReply({config:clinicConfig,parsed:parsedReply,customerText:text,
           history:commercialHistory,contact,isFirstMessage,keywordReason,marketingStopQuestion,
           bookingContext,recoveryPromptProof,urgentSafety})){
@@ -3387,6 +3393,17 @@ async function processIncomingMessage(
         (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
           mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
       replyOverrideAudit.change("finalLanguageFallback",beforeFinalLanguage,reply);
+    }
+    // Final append-only recovery: a later verified price formatter may have
+    // discarded an earlier address or hours answer. Do not alter commercial
+    // authorization, clinical review, exact campaign openings or bookings.
+    if(naturalReplyAuthority&&approvedPricingDecision&&containsApprovedPriceAmount(reply,approvedPricingDecision)&&
+      !flagged&&!bookingReady&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
+      !isActiveSafetyConcern(text)&&!hasClinicalMediaRisk(text)&&!isExplicitStaffRequest(text)&&
+      !staffPriceConflict&&!rejectedModelPricing&&!rm68CampaignContinuationTextOnly&&!reviewContinuationTextOnly&&!fixedAdFirstReply){
+      const beforeFacts=reply;
+      reply=appendRequestedBusinessFacts({customerText:text,reply,language:mediaLanguage,branches:clinicConfig.branches,hours:clinicConfig.hours});
+      replyOverrideAudit.change("finalRequestedBusinessFacts",beforeFacts,reply);
     }
     replyOverrideAudit.flush({contactId:contact.id,inboundId:savedInbound.id,
       original:originalModelReply,final:reply,outcome:flagged?"needs_human":bookingReady?"booking_ready":"normal"});

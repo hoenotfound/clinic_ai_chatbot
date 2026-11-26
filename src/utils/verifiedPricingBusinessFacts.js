@@ -20,7 +20,11 @@ const HOURS_QUESTION =
 
 function isBusinessLocationQuestion(customerText) {
   const value = String(customerText || "");
-  return BUSINESS_LOCATION_ZH.test(value) || BUSINESS_LOCATION_EN.test(value) ||
+  // A short, complete coordinated question such as "How much n location"
+  // asks about the business, not the location of pain. Do not match an
+  // arbitrary occurrence of "location" in a longer clinical sentence.
+  const mixedShort = /^(?:how\s+much|price|cost|harga|berapa\s+harga|价钱多少|多少钱|多少錢)\s*(?:[?,？、，]\s*|(?:and|n|&|dan|跟|和|还有|還有)\s+)(?:location|address|alamat|lokasi|地点|地點|地址)(?:\s+(?:please|ya|ah))?[\s?？.!！。]*$/iu.test(value.trim());
+  return mixedShort || BUSINESS_LOCATION_ZH.test(value) || BUSINESS_LOCATION_EN.test(value) ||
     BUSINESS_LOCATION_MS.test(value);
 }
 

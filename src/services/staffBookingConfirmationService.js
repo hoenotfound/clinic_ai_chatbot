@@ -2,7 +2,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
-const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
+const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL, RESCHEDULE_DISCREPANCY_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("./staffAppointmentAcceptanceService");
@@ -270,15 +270,17 @@ function createStaffBookingConfirmationService({
     const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
       ?parseTerseStaffConfirmedSlot(staffText,now()):null;
     let appointmentAt=strictSlot;
+    let recordedProof=null;
+    const neutro=config.businessType==="tcm_clinic"&&/^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||""))&&config.aiAppointmentRecognition!==false;
     // A routine staff reminder is evidence of a staff-managed visit, not
     // permission to fabricate a CRM appointment or send a booking alert.
     // The provider-authenticated original message ID is required for a
     // recoverable, replay-safe follow-up hold.
-    const persistStaffHold=async(confirmation=false,sourceMessageId=messageId)=>{
+    const persistStaffHold=async(confirmation=false,sourceMessageId=messageId,discrepancySlot=null)=>{
       const sourceId=Number(sourceMessageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
-      const holdSql=confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
-      const args=[contactId,sourceId,staffText];
+      const holdSql=discrepancySlot?RESCHEDULE_DISCREPANCY_SQL:confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
+      const args=discrepancySlot?[contactId,sourceId,staffText,discrepancySlot]:[contactId,sourceId,staffText];
       // Serialize duplicate webhook deliveries on the existing conversation
       // lock. The NOT EXISTS check then becomes race-safe without a migration.
       if(typeof database.connect === "function"){
@@ -299,6 +301,11 @@ function createStaffBookingConfirmationService({
       }
       return null;
     };
+    // A colloquial staff farewell with a full future slot is sufficient to
+    // raise a discrepancy, never sufficient to auto-confirm a new booking.
+    const farewellSlot=neutro&&/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(String(staffText||"").trim())&&
+      !/[?？]/u.test(staffText) ? verifiedStaffSlot(staffText,now(),now(),config.hours) : null;
+    if(farewellSlot)return persistStaffHold(true,messageId,farewellSlot);
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) return persistStaffHold();
     if(!strictSlot) {
       const contextualCandidate=config.businessType==="tcm_clinic" &&
@@ -337,6 +344,7 @@ function createStaffBookingConfirmationService({
       );
       const recorded=proof.rows?.[0];
       if(!recorded?.id)return null;
+      recordedProof=recorded;
       if(terseSlot&&isTerseBookingCorroborated(
         staffText,terseSlot,recorded.prior_turns,recorded.created_at)){
         appointmentAt=terseSlot;
@@ -348,7 +356,10 @@ function createStaffBookingConfirmationService({
         // Staff explicitly confirmed a visit but the exact slot lacks enough
         // corroboration. Keep sales paused even if booking-ready hours cannot
         // yet validate the full preference. This never creates a CRM booking.
-        if(config.businessType==="tcm_clinic"&&(contextualCandidate||terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim())))await persistStaffHold(true,recorded.id);
+        if(config.businessType==="tcm_clinic"&&(contextualCandidate||terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))){
+          await persistStaffHold(true,recorded.id);
+          if(neutro&&terseSlot)await persistStaffHold(true,recorded.id,terseSlot);
+        }
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
           activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
@@ -363,6 +374,21 @@ function createStaffBookingConfirmationService({
     if(lead.appointment_status==="set"){
       if(lead.appointment_at &&
          new Date(lead.appointment_at).getTime()===new Date(appointmentAt).getTime())return lead;
+      if(neutro){
+        const verified=verifiedStaffSlot(staffText,new Date(recordedProof?.created_at||now()),now(),config.hours);
+        // Automatic replacement requires explicit staff confirmation, an
+        // independently corroborated exact customer agreement, a provider
+        // source and compare-and-set protection against a changed CRM row.
+        if(verified===appointmentAt&&recordedProof&&
+          /^(?:confirm(?:ed)?|comfirm(?:ed)?)\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim())&&
+          isTerseBookingCorroborated(staffText,appointmentAt,recordedProof.prior_turns,recordedProof.created_at)){
+          const changed=await pipeline.updateLead(lead.id,{appointmentStatus:"set",appointmentAt},"Verified staff reschedule",{
+            expectedBookingRecovery:{contactId,staffMessageId:recordedProof.id,staffText,latestMessageId:recordedProof.id,
+              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at}});
+          if(changed)return changed;
+        }
+        if(verified)await persistStaffHold(true,recordedProof?.id||messageId,verified);
+      }
       return null;
     }
     // For a new TCM booking, require a future slot inside configured hours.
