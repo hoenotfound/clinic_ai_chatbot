@@ -10,7 +10,7 @@ const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
-const { scanMyrAmounts } = require("./myrAmountClaims");
+const { scanMyrAmounts,configuredPackageMoney,verifyPackageMoney } = require("./myrAmountClaims");
 
 const TREATMENT = "骨盆调理";
 const COMPARE = /(?:分别|分別|差别|差別|区别|區別|不同|比较|比較|对比|對比|有何不同|difference|different|compar(?:e|ison)|beza|berbeza|banding)/iu;
@@ -37,8 +37,9 @@ function containsVerifiedPackagePair(value,a,b){
     const scope=text.slice(names[i].index+names[i][0].length,end);
     const amounts=scanMyrAmounts(scope);
     if(!amounts.length)continue;
-    if(amounts.length!==1||amounts[0].amount!==safeOffer(name==="A"?a:b))return false;
-    seen.add(name);
+    const facts=configuredPackageMoney(name==="A"?a:b);
+    if(!verifyPackageMoney(scope,facts,{requireOffer:false}))return false;
+    if(verifyPackageMoney(scope,facts))seen.add(name);
   }
   return seen.size===2;
 }
@@ -90,7 +91,13 @@ function verifiedComparisonSessionWithStaffNote({
   // is a reason to leave the customer with staff. Package inclusions are not
   // an independent treatment switch.
   const amounts = scanMyrAmounts(noteText).map(c => c.amount);
-  if (amounts.some(n => n !== safeOffer(a) && n !== safeOffer(b))) return null;
+  if (amounts.length && !containsVerifiedPackagePair(TREATMENT+" "+noteText,a,b)) {
+    // A single staff package price is acceptable only when its label and
+    // complete monetary claims agree with that package, not the other one.
+    const labels=[...noteText.matchAll(/\bPackage\s+([AB])\b/giu)];
+    if(labels.length!==1 || scanMyrAmounts(noteText.slice(0,labels[0].index)).length ||
+       !verifyPackageMoney(noteText.slice(labels[0].index),configuredPackageMoney(labels[0][1].toUpperCase()==="A"?a:b)))return null;
+  }
   const permittedInclusions = [a, b].flatMap(item =>
     ["zh", "en", "ms"].flatMap(locale => includedItems(item, locale) || [])
   ).join("\n").toLocaleLowerCase();
@@ -208,8 +215,8 @@ function resolveNeutroPelvicPackageComparison({
       format(b, itemsB) + "\n\n" + ending,
     type: "text_only",
     heading:lead,conclusion:ending,
-    verifiedPackages:[{name:a.name,price:safeOffer(a),title:a.title,includedItems:itemsA},
-      {name:b.name,price:safeOffer(b),title:b.title,includedItems:itemsB}],
+    verifiedPackages:[{name:a.name,price:safeOffer(a),title:a.title,includedItems:itemsA,money:configuredPackageMoney(a)},
+      {name:b.name,price:safeOffer(b),title:b.title,includedItems:itemsB,money:configuredPackageMoney(b)}],
   });
 }
 module.exports = { resolveNeutroPelvicPackageComparison };
