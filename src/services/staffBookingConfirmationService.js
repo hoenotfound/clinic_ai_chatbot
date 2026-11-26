@@ -7,26 +7,13 @@ const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentRem
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("./staffAppointmentAcceptanceService");
 const realtimeEvents=require("../utils/realtimeEvents");
-const {detectDate,localParts,parseClockPreference,intervals}=require("../utils/appointmentHoursGuard");
+const {verifiedStaffSlot}=require("../utils/verifiedStaffAppointmentSlot");
 
 // Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
 // proposed time, "Ok", or a date without a year is never an auto-confirmation.
 // Calendar validation is separate from model intent. Require one future
 // concrete slot (not a range or a choice), and check clinic hours when known.
-function verifiedStaffSlot(text,sourceAt,now=sourceAt,hours,{allowUnconfigured=false}={}){
- const anchor=localParts(sourceAt);
- if(!anchor)return null;
- const date=detectDate(text,anchor.date);
- const clock=parseClockPreference(text);
- if(!date?.date||date.ambiguous||clock.invalid||clock.range||clock.times.length!==1)return null;
- const minute=clock.times[0];
- const instant=Date.parse(date.date+"T00:00:00+08:00")+minute*60000;
- if(!Number.isFinite(instant)||instant<=new Date(now).getTime())return null;
- const open=intervals(hours,new Date(date.date+"T12:00:00Z").getUTCDay());
- if(open===null&&!allowUnconfigured||open!==null&&!open.some(([a,b])=>minute>=a&&minute<b))return null;
- return new Date(instant).toISOString();
-}
 function trustedStaffTurn(t){
  return t?.role==="assistant"&&!!t.sent_by_username&&
   !["Follow-up automation","Consent request automation"].includes(t.sent_by_username)&&
