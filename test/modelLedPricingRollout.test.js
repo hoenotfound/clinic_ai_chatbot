@@ -603,3 +603,18 @@ test("new treatment selection separates rapid fresh budget questions from old pr
  assert.equal(staleCommercialIntent(a),false);
  assert.equal(resolveModelLedPricingDecision(a)?.treatment,"骨盆调理");
 });
+
+test("rejected pricing preserves clear ordinary answers but never an unverified quote",()=>{
+ const {shouldRewriteRejectedPricingReply}=require("../src/utils/aiPricingIntentDecision");
+ const decision=(customerText,reply)=>shouldRewriteRejectedPricingReply({customerText,reply,services,serviceAliases});
+ for(const [question,reply] of [
+  ["How long does it take?","The session takes about 90 minutes."],
+  ["Where is your branch?","We are in Petaling Jaya."],
+  ["要做几次？","护理安排因个人情况而异。"],
+  ["I want to know more about 3D","I can explain how the treatment works."],
+ ]) assert.equal(decision(question,reply),false,question);
+ for(const question of ["How much is 3D?","价钱呢？","What would I be paying?","Package B","The cheaper one","Berapa harga?"])
+  assert.equal(decision(question,"Let me help you."),true,question);
+ for(const reply of ["RM388", "骨盆 388 / 268","Free trial","I can send the promotion"])
+  assert.equal(decision("How long does it take?",reply),true,reply);
+});
