@@ -97,3 +97,32 @@ test("old, forwarded, or unrelated staff offers cannot corroborate an appointmen
   }
   assert.equal(isTerseBookingCorroborated(confirmation,slot,[accepted,{...source,is_forwarded:true}],new Date(now).toISOString()),false);
 });
+
+
+test("historical reconciliation is dry-run by default and never overwrites changed appointment evidence",async()=>{
+  const {reconcileStaffAppointment}=require("../src/services/staffAppointmentReconciliationService");
+  const row={lead_id:1792,contact_id:123,appointment_status:"none",appointment_at:null,is_closed:false,
+    updated_at:new Date(now-120000).toISOString(),staff_message_id:12,staff_text:confirmation,staff_at:new Date(now).toISOString(),
+    latest_message_id:20,prior_turns:[
+      {role:"assistant",content:"已记下",created_at:new Date(now-20000).toISOString()},
+      {role:"user",content:"o k",created_at:new Date(now-37000).toISOString()},
+      {role:"assistant",content:offer,sent_by_username:"WhatsApp Business App",created_at:new Date(now-46000).toISOString()}
+    ],later_turns:[{role:"user",content:"谢谢",created_at:new Date(now+1000).toISOString()}]};
+  let current=row;
+  const updates=[];
+  const opts={config,now:new Date(now+60000),leadId:1792,staffMessageId:12,
+    database:{query:async()=>({rows:[current]})},
+    pipeline:{updateLead:async(...args)=>{updates.push(args);return {id:1792};}}};
+  const report=await reconcileStaffAppointment(opts);
+  assert.equal(report.status,"verified_dry_run");
+  assert.equal(report.appointmentAt,"2026-12-19T02:00:00.000Z");
+  assert.equal(updates.length,0);
+  const applied=await reconcileStaffAppointment({...opts,apply:true});
+  assert.equal(applied.status,"reconciled");
+  assert.equal(updates[0][3].expectedBookingRecovery.latestMessageId,20);
+  current={...row,later_turns:[...row.later_turns,{role:"user",content:"20/12 11am please",created_at:new Date(now+2000).toISOString()}]};
+  assert.equal((await reconcileStaffAppointment({...opts,apply:true})).status,"manual_review_required");
+  current={...row,appointment_status:"set"};
+  assert.equal((await reconcileStaffAppointment({...opts,apply:true})).status,"manual_review_required");
+  assert.equal(updates.length,1);
+});
