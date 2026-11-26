@@ -720,3 +720,15 @@ test("AI-led appointment guard validates structured proposals and actual custome
   assert.equal(incomplete.blocked,true);
   assert.equal(incomplete.issue.status,"valid_day");
 });
+
+test("structured proposal checks cannot be bypassed by contradictory scheduling metadata",()=>{
+  const {guardAiAppointmentReply}=require("../src/utils/appointmentHoursGuard");
+  const now="2026-11-25T23:55:25Z";
+  const args={hours,receivedAt:now,now,durationMinutes:135};
+  const invalid=guardAiAppointmentReply({...args,appointmentScheduling:false,appointmentProposal:"2026-11-26 20:00",customerText:"今天呢",reply:"8pm可以吗？"});
+  assert.equal(invalid.blocked,true);
+  assert.equal(invalid.issue.status,"outside_hours");
+  const newProposal=guardAiAppointmentReply({...args,appointmentScheduling:true,appointmentProposal:"2026-11-27 14:00",requireValidPreference:true,customerText:"今天下午3点",reply:"明天下午2点方便吗？"});
+  assert.equal(newProposal.blocked,true);
+  assert.equal(newProposal.issue.status,"unaccepted_proposal");
+});

@@ -698,10 +698,11 @@ function guardAiAppointmentReply(options={}){
     const safe=lang==="en"?"Our team needs to check availability before confirming any appointment.":lang==="ms"?"Pihak pusat perlu semak kekosongan sebelum janji temu disahkan.":"预约需要由门店同事核实空档后才能确认哦。";
     return {reply:safe,blocked:true,issue:{status:"unverified_confirmation"}};
   }
-  if(appointmentScheduling!==true&&!(requireValidPreference&&appointmentScheduling!==false))
+  const proposal=String(options.appointmentProposal||"").trim();
+  if(appointmentScheduling!==true&&!proposal&&!(requireValidPreference&&appointmentScheduling!==false))
     return {reply:original,blocked:requireValidPreference,issue:{status:"not_appointment"}};
   const {hours,now=new Date(),durationMinutes=0}=options;
-  const issue=evaluateAppointmentHours(options);
+  const issue=appointmentScheduling===false?{status:"not_appointment"}:evaluateAppointmentHours(options);
   const lang=String(language||"zh").toLowerCase().slice(0,2);
   const askTime=()=>lang==="en"?"What time on that day would suit you? I can check with the clinic 😊":
     lang==="ms"?"Pukul berapa pada hari itu yang sesuai? Kami boleh semak dengan pusat 😊":
@@ -729,7 +730,6 @@ function guardAiAppointmentReply(options={}){
   }
   // A proposal is explicit structured model data, not inferred by scanning
   // the customer-facing reply. It can never authorize a CRM booking.
-  const proposal=String(options.appointmentProposal||"").trim();
   if(proposal&&hours?.weekly){
     const checked=evaluateAppointmentHours({hours,customerText:proposal,receivedAt:now,now,durationMinutes});
     if(invalid.includes(checked.status)||!["valid_day","valid_preference"].includes(checked.status)){
@@ -743,6 +743,11 @@ function guardAiAppointmentReply(options={}){
       return {reply:fallback,blocked:true,issue:checked};
     }
   }
+  // A new proposal is not customer acceptance. Never execute booking_ready
+  // from an output that is simultaneously proposing a new time, even if the
+  // customer had previously supplied a valid preference.
+  if(requireValidPreference&&proposal)
+    return {reply:original,blocked:true,issue:{status:"unaccepted_proposal"}};
   // Only executable booking-ready outcomes need independent complete evidence.
   // Ordinary enquiries remain in the model's own words, including questions
   // about a valid day with no time. The CRM boundary validates again.
