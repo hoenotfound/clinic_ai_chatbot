@@ -9,7 +9,9 @@ const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
 
 function isBriefAcceptance(value) {
-  const text = String(value || "").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
+  let text = String(value || "").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu,"").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
+  // Normalize only known short affirmative words, not arbitrary sentences.
+  if(/^(?:o\s*k(?:\s*a\s*y)?|y\s*e\s*s)$/iu.test(text))text=text.replace(/\s+/gu,"");
   if (!text || text.length > 45) return false;
   return /^(?:ok(?:ay)?|yes|sure|can|confirmed?|alright|fine|好的?|可以(?:的)?|没问题|沒問題|行|嗯|好呀|可以呀|是的|boleh|baik|ya|setuju)$/iu.test(text);
 }
@@ -25,7 +27,7 @@ function hasSpecificStaffTimeOffer(value) {
   const text = String(value || "");
   const date = /(?:\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b)/iu;
   const time = /(?:\b(?:[01]?\d|2[0-3])[:：.][0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?)\b|(?:[一二三四五六七八九十]|\d{1,2})\s*[点點](?:半|[0-5]?\d\s*分)?)/iu;
-  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|合适吗|合適嗎|这个时间|這個時間|预约|預約|安排|时间你|時間你|works?\??|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
+  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|合适吗|合適嗎|这个时间|這個時間|预约|預約|安排|时间你|時間你|works?\??|\bok(?:ay)?\s*[?？]|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
   return date.test(text) && time.test(text) && isSchedulingOffer.test(text);
 }
 
