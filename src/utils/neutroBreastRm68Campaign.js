@@ -155,7 +155,7 @@ function stillDiscussingCampaign(history, customerText) {
 // Campaign history supplies context for a complete short location question,
 // never a symptom location, treatment duration, or mixed booking/price request.
 function campaignAdministrativeKind(text){
-  if(standaloneLocationQuestion(text,true))return "location";
+  if(standaloneLocationQuestion(text)||/^at where(?:\s+(?:ya|ah|lah|leh))?[?!.\s]*$/iu.test(String(text||"").trim()))return "location";
   if(standaloneBusinessHoursQuestion(text))return "hours";
   return null;
 }
@@ -409,7 +409,8 @@ function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.
   if(!activeCampaignThread(history,text))return original;
   // Administrative facts have their own verified source; do not interpret
   // an address, postcode or opening hours as event dates/durations.
-  if(campaignAdministrativeKind(text)&&!scanMyrAmounts(original).length)return original;
+  if(campaignAdministrativeKind(text)&&!scanMyrAmounts(original).length&&
+    !/(?:\b(?:appointment|booking|confirmed|booked|slot|ultrasound|screening|guarantee|cure)\b|预约|預約|已确认|已確認|名额|名額|超声|超聲|筛查|篩查|保证|保證)/iu.test(original))return original;
   const day=campaignDay(now);
   const ordinary=campaignDateScope(history,text,now)==="ordinary";
   const amounts=scanMyrAmounts(original);
