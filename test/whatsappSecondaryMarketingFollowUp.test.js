@@ -60,10 +60,11 @@ function fake({candidates=[row],extendedCandidates=[],claimed=true,approved=true
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
    return{rows:sql===svc.CANDIDATES_SQL?candidates:extendedCandidates};
   }
-  if(sql===svc.RECHECK_SQL || sql===svc.EXTENDED_RECHECK_SQL){
-   assert.equal(args.length,8,"pre-send recheck binds audience and both cutoffs");
+  if(sql===svc.SCOPED_RECHECK_SQL || sql===svc.SCOPED_EXTENDED_RECHECK_SQL){
+   assert.equal(args.length,9,"pre-send recheck binds audience, both cutoffs and contact");
+    assert.equal(Number(args[8]),Number(row.contact_id));
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
-   return{rows:sql===svc.RECHECK_SQL?candidates:extendedCandidates};
+   return{rows:sql===svc.SCOPED_RECHECK_SQL?candidates:extendedCandidates};
   }
   if(sql.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts"))
    return{rows:claimed?[{id:555}]:[]};
@@ -189,7 +190,7 @@ test("recheck rejects a changed customer language without sending to Meta",async
  const original=f.database.query;
  f.database.query=async(sql,args)=>{
   const result=await original(sql,args);
-  if(sql===svc.RECHECK_SQL && ++rechecks>=1)
+  if(sql===svc.SCOPED_RECHECK_SQL && ++rechecks>=1)
    return {rows:[{...row,customer_messages:["Please reply in English"]}]};
   return result;
  };
@@ -246,7 +247,7 @@ test("Day4/Day6 require separate rollout switch for sender's approved followups"
   const result=await svc.runOnce({...f,env:e});
   assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
   assert.ok(f.calls.some(x=>x.sql===svc.EXTENDED_CANDIDATES_SQL));
-  assert.ok(f.calls.some(x=>x.sql===svc.EXTENDED_RECHECK_SQL));
+  assert.ok(f.calls.some(x=>x.sql===svc.SCOPED_EXTENDED_RECHECK_SQL));
   assert.equal(f.calls.find(x=>x.send).send.templateRequest.languageCode,"zh_CN");
  }
 });
