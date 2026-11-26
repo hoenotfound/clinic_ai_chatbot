@@ -150,7 +150,8 @@ function createStaffAppointmentAcceptanceService({
     const modelAccepted = modelStaffEvidence && Number.isSafeInteger(modelStaffEvidence.id) &&
       typeof modelStaffEvidence.text==="string" && modelStaffEvidence.text.length>0 &&
       !/[?？]/u.test(String(customerText||"")) &&
-      !/(?:\b(?:no|not|cannot|can[’\']t|cancel|reschedule|maybe|not sure|later|tomorrow instead|bukan|tidak|tak|mungkin|tukar)\b|不行|不能|不要|取消|改期|改时间|改時間|可能|不确定|不確定|再看看)/iu.test(String(customerText||""));
+      !/(?:\b(?:no|not|cannot|can[’']t|cancel|reschedule|maybe|not sure|later|tomorrow instead|bukan|tidak|tak|mungkin|tukar)\b|不行|不能|不要|取消|改期|改时间|改時間|可能|不确定|不確定|再看看)/iu.test(String(customerText||""));
+    if (modelStaffEvidence && !modelAccepted) return null;
     if (!isBriefAcceptance(customerText) && !modelAccepted) {
       if (isDirectBookingIntent(customerText)) {
         await markPendingBooking(contactId,inboundMessageId,{
@@ -200,13 +201,17 @@ function createStaffAppointmentAcceptanceService({
           "  AND NOT EXISTS (SELECT 1 FROM messages later",
           "    WHERE later.contact_id = inbound.contact_id",
           "      AND later.id > staff.id AND later.id < inbound.id)",
-          ...(modelStaffEvidence?["  AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)"]:[]),
+          ...(modelStaffEvidence?[
+            "  AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE",
+            "  AND EXISTS (SELECT 1 FROM messages proof WHERE proof.id=staff.id AND proof.whatsapp_message_id LIKE 'wamid.%' AND proof.whatsapp_customer_mutation IS NULL AND proof.is_forwarded IS DISTINCT FROM TRUE AND proof.media_mime_type IS NULL AND proof.media_url IS NULL AND proof.sent_by_username NOT IN ('Follow-up automation','Consent request automation'))",
+            "  AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)",
+          ]:[]),
           "LIMIT 1",
         ].join("\n"),
         [contactId, inboundMessageId]
       );
       let offer = selected.rows[0];
-      if (!offer) {
+      if (!offer && !modelStaffEvidence) {
         // The immediately preceding message may be an AI relay of an actual
         // staff offer. Require a same-slot staff message within 24 hours.
         // Matching the date AND time avoids taking "ok" to an unrelated AI
