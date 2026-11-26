@@ -134,19 +134,19 @@ const adminRecoverySection = serverSection(
   "    // A non-urgent urinary symptom merits one staff review"
 );
 
-async function runRealRecoveryBoundary({ pending, sender = 1 }) {
+async function runRealRecoveryBoundary({ pending, sender = 1, natural=false, reviewType="clinical", question="价钱呢？", checkedDraft=null, language="zh" }) {
   const history = [
     { role: "user", content: PREFILL },
     { role: "assistant", content: firstReply(Date.parse("2026-11-22T00:00:00Z")) },
   ];
-  const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+  const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:natural, modelPricingIntent:null, languageCheckedModelReply:checkedDraft, verifyLocationDraft, 
     keywordReason: null, urgentSafety: false, flagged: true, reviewRequired: true,
-    reviewType: "clinical", bookingReady: false, text: "价钱呢？",
+    reviewType, bookingReady: false, text: question,
     marketingStopQuestion: null, clinicalAcknowledgement: null,
     priceQuery: true, packageQuery: true, serviceQuery: true,
     serviceQuerySource: "model", details: null,
     reply: "AI draft under review", reviewContinuationTextOnly: false,
-    channel: "whatsapp", history, commercialHistory:history, mediaLanguage: "zh",
+    channel: "whatsapp", history, commercialHistory:history, mediaLanguage: language,
     contact: { id: 24, whatsapp_sender_id: sender },
     savedInbound: { id: 999 },
     clinicConfig: {
@@ -158,6 +158,7 @@ async function runRealRecoveryBoundary({ pending, sender = 1 }) {
     isExplicitStaffRequest: () => false,
     isDefiniteAppointmentCancellation: () => false,
     administrativeReviewReply,
+    readRoutineReviewEvidence: async()=>pending===null?null:{pendingClinicalReview:pending},
     contactsRepo: {
       getTcmReviewEvidence: async () => pending === null ? null :
         { pendingClinicalReview: pending },
@@ -455,4 +456,19 @@ test("actual final boundary preserves mixed and unrelated answers even with erro
     assert.equal(result.reply,reply);
     assert.equal(result.reviewContinuationTextOnly,false);
   }
+});
+
+
+test("AI-led information recovery preserves language-checked location and never clears clinical review",async()=>{
+  const checkedDraft="Hi, our address is not supplied"; // Not a verified location.
+  const base={natural:true,reviewType:"information",question:"where are you located?",language:"en"};
+  const valid="Our address: "+PJ[0].address;
+  const recovered=await runRealRecoveryBoundary({...base,pending:false,checkedDraft:valid});
+  assert.equal(recovered.reply,valid);
+  assert.equal(recovered.reviewContinuationTextOnly,true);
+  const wrong=await runRealRecoveryBoundary({...base,pending:false,checkedDraft});
+  assert.ok(wrong.reply.includes(PJ[0].address));
+  assert.notEqual(wrong.reply,checkedDraft);
+  for(const pending of [true,null])assert.equal((await runRealRecoveryBoundary({...base,pending,checkedDraft:valid})).flagged,true);
+  assert.equal((await runRealRecoveryBoundary({...base,pending:false,reviewType:"clinical",checkedDraft:valid})).flagged,true);
 });
