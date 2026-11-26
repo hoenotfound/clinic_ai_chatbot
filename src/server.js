@@ -28,7 +28,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const { guardAppointmentReply, guardAiAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
-const {resolveModelAppointmentEvidence}=require("./utils/aiLedAppointmentEvidence");
+const {resolveModelAppointmentEvidence,appointmentRecognitionEnabled}=require("./utils/aiLedAppointmentEvidence");
 const {recordModelConfirmationHold}=require("./services/staffBookingConfirmationService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
@@ -1600,7 +1600,7 @@ async function processIncomingMessage(
         // Use the existing model call to understand natural appointment
         // agreement. Only verified staff source messages can authorize a
         // hold; the model itself cannot mark a booking as confirmed.
-        if(naturalReplyAuthority&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
+        if(appointmentRecognitionEnabled(clinicConfig)&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
           !isActiveSafetyConcern(text)&&!hasClinicalMediaRisk(text)&&!isExplicitStaffRequest(text)){
           const appointmentEvidence=resolveModelAppointmentEvidence({
             config:clinicConfig,history,parsed:languageCheckedReply,customerText:text,
