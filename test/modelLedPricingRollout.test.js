@@ -638,9 +638,11 @@ test("Stage 18 independently verified two-treatment drafts preserve exact wordin
     good.replace("RM388","RM388 only for three sessions"),
     good.replace("RM388","RM388 + RM100 voucher"),
     good.replace("RM388","RM388, guaranteed results"),
-    good.replace("RM388","RM388.00"),
+    good.replace("RM388","RM388.50"),
     good.replace("9D 逆龄抗衰","3D 小颜术"),
   ]) assert.equal(ensureVerifiedPriceReply({...input,reply:bad}).reply,quote.reply,bad);
+  for(const equivalent of [good.replace("RM388","MYR 388.00"),good.replace("RM488","RM488.")])
+    assert.equal(ensureVerifiedPriceReply({...input,reply:equivalent}).reply,equivalent);
   const voucherPromotions=promotions.map(p=>p.linkedService==="3D 小颜术"?
     {...p,caption:"RM100 voucher. After voucher RM388"}:p);
   assert.equal(ensureVerifiedPriceReply({...input,promotions:voucherPromotions,reply:good}).reply,quote.reply);
