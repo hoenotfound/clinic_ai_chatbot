@@ -7,6 +7,7 @@ const { rm68CampaignSettings } = require("../config/neutroRm68CampaignConfig");
 const {normalizeMoneyText,scanMyrAmounts,hasMyrAmount}=require("./myrAmountClaims");
 const defaultCampaign = require("../config/neutroRm68Campaign.default.json");
 const {campaignDatesInText}=require("./neutroRm68DateEvidence");
+const {standaloneLocationQuestion,confirmedSingleBranchLocationAnswer,verifyLocationDraft,standaloneBusinessHoursQuestion,confirmedBusinessHoursAnswer,verifyBusinessHoursDraft}=require("./verifiedPricingBusinessFacts");
 
 // Dedicated event package, intentionally separate from the standing RM388
 // full-body Pulse Wave offer. Nothing here changes configured service prices.
@@ -151,6 +152,13 @@ function stillDiscussingCampaign(history, customerText) {
   const opener=messages.findLastIndex(row=>row?.role==="assistant" && isCampaignOpening(row.content));
   return opener>=0 && !messages.slice(opener+1).some(row=>row?.role==="user" && isOtherTreatmentQuery(row.content));
 }
+// Campaign history supplies context for a complete short location question,
+// never a symptom location, treatment duration, or mixed booking/price request.
+function campaignAdministrativeKind(text){
+  if(standaloneLocationQuestion(text,true))return "location";
+  if(standaloneBusinessHoursQuestion(text))return "hours";
+  return null;
+}
 function activeCampaignThread(history, customerText) {
   return hasCampaignConversation(history) && stillDiscussingCampaign(history,customerText) &&
     !isOtherTreatmentQuery(customerText);
@@ -269,7 +277,7 @@ function screeningAcknowledgement({history,customerText,language:requestedLangua
 }
 function campaignContextReply({ history, customerText, now = Date.now(), language:requestedLanguage } = {}) {
   const text=String(customerText||"");
-  if (!activeCampaignThread(history,text) || hasClinicalMediaRisk(text)) return null;
+  if (!activeCampaignThread(history,text) || hasClinicalMediaRisk(text) || campaignAdministrativeKind(text)) return null;
   const language=localeFor(history,text,requestedLanguage || campaignLanguage(history,text));
   const day=campaignDay(now);
   const askedAmount=campaignAmountRequested(text);
@@ -399,6 +407,9 @@ function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.
   const original=String(reply||"");
   const text=String(customerText||"");
   if(!activeCampaignThread(history,text))return original;
+  // Administrative facts have their own verified source; do not interpret
+  // an address, postcode or opening hours as event dates/durations.
+  if(campaignAdministrativeKind(text)&&!scanMyrAmounts(original).length)return original;
   const day=campaignDay(now);
   const ordinary=campaignDateScope(history,text,now)==="ordinary";
   const amounts=scanMyrAmounts(original);
@@ -455,8 +466,21 @@ function selectCampaignReply({reply,fallback,history,customerText,language,now=D
   if(!hasMyrAmount(value,rm68CampaignSettings().campaign.priceMYR)&&!/(?:breast|payudara|胸部|乳腺|乳房|December|Disember|12月|moxibustion|moksibusi|艾灸)/iu.test(value))return fallback;
   return value;
 }
-function campaignContinuationPolicy({history,customerText,reply,now=Date.now(),verifiedNewService=false,language}={}) {
+function campaignContinuationPolicy({history,customerText,reply,now=Date.now(),verifiedNewService=false,language,branches,hours}={}) {
   if(verifiedNewService || !activeCampaignThread(history,customerText) || hasClinicalMediaRisk(customerText))return null;
+  const adminKind=campaignAdministrativeKind(customerText);
+  if(adminKind){
+    const locale=localeFor(history,customerText,language||campaignLanguage(history,customerText));
+    const facts=adminKind==="location"
+      ?confirmedSingleBranchLocationAnswer({customerText,branches,language:locale,resolvedLanguage:locale,modelLocationOnly:true,omitInvitation:true})
+      :confirmedBusinessHoursAnswer({customerText,hours,language:locale});
+    const valid=facts&&(adminKind==="location"?verifyLocationDraft(reply,facts,{allowNeutralCourtesy:true})==="verified_address_only":verifyBusinessHoursDraft(reply,facts));
+    const fallback=facts?.reply||localized(locale,
+      adminKind==="location"?"门店地址需要请同事确认哦 😊":"营业时间需要请门店确认哦 😊",
+      adminKind==="location"?"The clinic address needs to be confirmed by our staff. 😊":"Our staff will need to confirm the opening hours. 😊",
+      adminKind==="location"?"Alamat pusat perlu disahkan oleh staf. 😊":"Waktu operasi perlu disahkan oleh staf. 😊");
+    return {reply:valid?reply:fallback,textOnly:true,blocksBooking:true,administrativeKind:adminKind};
+  }
   const answer=campaignContextReply({history,customerText,now,language});
   const guarded=guardCampaignPriceConflicts({history,customerText,reply,now,language});
   const corrected=answer?selectCampaignReply({reply:guarded,fallback:answer,history,customerText,language,now}):guarded;
