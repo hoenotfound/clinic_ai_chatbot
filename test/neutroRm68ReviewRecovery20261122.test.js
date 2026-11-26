@@ -202,7 +202,7 @@ test("real final-send guard replaces Puchong on both sender paths", async () => 
       clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
       priceQuery:false, packageQuery:false, serviceQuery:false,
       serviceQuerySource:null,
-      contact:{id:24,whatsapp_sender_id:sender},
+      contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},
       console:{info:()=>{}},
       clinicConfig:{businessType:"tcm_clinic",
         businessName:"Neutro Sense TCM Centre",branches:PJ},
@@ -402,7 +402,7 @@ test("actual final boundary retains an unchanged verified AI reply and measures 
         rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,
         clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
         priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,
-        contact:{id:24,whatsapp_sender_id:sender},console:{info:(line)=>logs.push(line)},
+        contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info:(line)=>logs.push(line)},
         clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},
         isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,
         confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,
@@ -450,7 +450,7 @@ test("actual final boundary preserves mixed and unrelated answers even with erro
     ["你们店在哪里？一次需要多久？","我们在 PJ。一次约40分钟。",true],
     ["Can I come Tuesday at 3pm?","We can check your preferred time with the team.",true],
   ]){
-    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
+    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
     const result=await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\nreturn {reply,reviewContinuationTextOnly};\n})()",context);
     assert.equal(result.reply,reply);
     assert.equal(result.reviewContinuationTextOnly,false);
