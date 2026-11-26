@@ -643,6 +643,18 @@ test("Stage 18 independently verified two-treatment drafts preserve exact wordin
   ]) assert.equal(ensureVerifiedPriceReply({...input,reply:bad}).reply,quote.reply,bad);
   for(const equivalent of [good.replace("RM388","MYR 388.00"),good.replace("RM488","RM488.")])
     assert.equal(ensureVerifiedPriceReply({...input,reply:equivalent}).reply,equivalent);
+  const withAliases={...input,services,serviceAliases};
+  for(const natural of [
+    "Hi 😊\n3D First Trial: RM388; 9D First Trial: MYR 488.00",
+    "3D First Trial is RM388 and 9D First Trial is RM488.",
+    "您好😊\n3D 首次体验 RM388；9D 首次体验 RM488",
+  ]) assert.equal(ensureVerifiedPriceReply({...withAliases,reply:natural}).reply,natural,natural);
+  for(const invalid of [
+    "3D First Trial RM488; 9D First Trial RM388",
+    "3D First Trial RM388; 9D First Trial RM488; both include free gifts",
+    "3D First Trial RM388; 9D First Trial RM488; RM1,00",
+    "3D First Trial RM388; 9D First Trial RM488; suitable for everyone",
+  ]) assert.equal(ensureVerifiedPriceReply({...withAliases,reply:invalid}).reply,quote.reply,invalid);
   const voucherPromotions=promotions.map(p=>p.linkedService==="3D 小颜术"?
     {...p,caption:"RM100 voucher. After voucher RM388"}:p);
   assert.equal(ensureVerifiedPriceReply({...input,promotions:voucherPromotions,reply:good}).reply,quote.reply);
