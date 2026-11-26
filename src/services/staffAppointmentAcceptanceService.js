@@ -4,12 +4,16 @@ const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramAlertRepo = require("../db/telegramImmediateAlertRepo");
 const webPushNotifications = require("./webPushNotificationService");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
+const clinicConfig=require("../config/clinicConfig");
+const {verifiedStaffSlot}=require("../utils/verifiedStaffAppointmentSlot");
 
 const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
 
 function isBriefAcceptance(value) {
-  const text = String(value || "").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
+  let text = String(value || "").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu,"").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
+  // Normalize only known short affirmative words, not arbitrary sentences.
+  if(/^(?:o\s*k(?:\s*a\s*y)?|y\s*e\s*s)$/iu.test(text))text=text.replace(/\s+/gu,"");
   if (!text || text.length > 45) return false;
   return /^(?:ok(?:ay)?|yes|sure|can|confirmed?|alright|fine|好的?|可以(?:的)?|没问题|沒問題|行|嗯|好呀|可以呀|是的|boleh|baik|ya|setuju)$/iu.test(text);
 }
@@ -25,7 +29,7 @@ function hasSpecificStaffTimeOffer(value) {
   const text = String(value || "");
   const date = /(?:\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b)/iu;
   const time = /(?:\b(?:[01]?\d|2[0-3])[:：.][0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?)\b|(?:[一二三四五六七八九十]|\d{1,2})\s*[点點](?:半|[0-5]?\d\s*分)?)/iu;
-  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|合适吗|合適嗎|这个时间|這個時間|预约|預約|安排|时间你|時間你|works?\??|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
+  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|合适吗|合適嗎|这个时间|這個時間|预约|預約|安排|时间你|時間你|works?\??|\bok(?:ay)?\s*[?？]|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
   return date.test(text) && time.test(text) && isSchedulingOffer.test(text);
 }
 
@@ -142,10 +146,18 @@ function createStaffAppointmentAcceptanceService({
   wakeAlertQueue = telegramImmediateAlerts.wakeImmediateAlertQueue,
   sendWebPush = webPushNotifications.sendContactAlertBestEffort,
   markPendingBooking = markBookingReadyForContact,
+  config=clinicConfig,
+  now=()=>new Date(),
 } = {}) {
-  return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
+  return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText, { modelStaffEvidence = null } = {}) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
-    if (!isBriefAcceptance(customerText)) {
+    const strictEvidence=config.businessType==="tcm_clinic"&&/^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||""));
+    const modelAccepted = modelStaffEvidence && Number.isSafeInteger(modelStaffEvidence.id) &&
+      typeof modelStaffEvidence.text==="string" && modelStaffEvidence.text.length>0 &&
+      !/[?？]/u.test(String(customerText||"")) &&
+      !/(?:\b(?:no|not|cannot|can[’']t|cancel|reschedule|maybe|not sure|later|tomorrow instead|bukan|tidak|tak|mungkin|tukar)\b|不行|不能|不要|取消|改期|改时间|改時間|可能|不确定|不確定|再看看)/iu.test(String(customerText||""));
+    if (modelStaffEvidence && !modelAccepted) return null;
+    if (!isBriefAcceptance(customerText) && !modelAccepted) {
       if (isDirectBookingIntent(customerText)) {
         await markPendingBooking(contactId,inboundMessageId,{
           reason:"Booking ready: customer explicitly requested an appointment; staff should confirm availability.",
@@ -167,7 +179,7 @@ function createStaffAppointmentAcceptanceService({
       await client.query("SELECT id FROM contacts WHERE id = $1 FOR UPDATE", [contactId]);
       const selected = await client.query(
         [
-          "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
+          "SELECT staff.id AS staff_message_id, staff.content AS staff_text, staff.created_at AS staff_at,",
           "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id, lead.appointment_at",
           "FROM messages inbound",
           "JOIN LATERAL (",
@@ -194,19 +206,24 @@ function createStaffAppointmentAcceptanceService({
           "  AND NOT EXISTS (SELECT 1 FROM messages later",
           "    WHERE later.contact_id = inbound.contact_id",
           "      AND later.id > staff.id AND later.id < inbound.id)",
+          ...((strictEvidence||modelStaffEvidence)?[
+            "  AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE",
+            "  AND EXISTS (SELECT 1 FROM messages proof WHERE proof.id=staff.id AND proof.whatsapp_message_id LIKE 'wamid.%' AND proof.whatsapp_customer_mutation IS NULL AND proof.is_forwarded IS DISTINCT FROM TRUE AND proof.media_mime_type IS NULL AND proof.media_url IS NULL AND proof.sent_by_username NOT IN ('Follow-up automation','Consent request automation'))",
+            "  AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)",
+          ]:[]),
           "LIMIT 1",
         ].join("\n"),
         [contactId, inboundMessageId]
       );
       let offer = selected.rows[0];
-      if (!offer) {
+      if (!offer && !modelStaffEvidence) {
         // The immediately preceding message may be an AI relay of an actual
         // staff offer. Require a same-slot staff message within 24 hours.
         // Matching the date AND time avoids taking "ok" to an unrelated AI
         // suggestion as permission to record a booking.
         const relayed = await client.query(
           [
-            "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
+            "SELECT staff.id AS staff_message_id, staff.content AS staff_text, staff.created_at AS staff_at,",
             "  lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id,",
             "  lead.appointment_at, relay.id AS relay_message_id,",
             "  relay.content AS relay_text",
@@ -233,6 +250,13 @@ function createStaffAppointmentAcceptanceService({
             "    WHERE previous.contact_id=inbound.contact_id AND previous.id<inbound.id)",
             "  AND relay.created_at >= inbound.created_at - interval '24 hours'",
             "  AND staff.id<relay.id AND staff.created_at >= inbound.created_at - interval '24 hours'",
+            ...(strictEvidence?[
+              "  AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE",
+              "  AND staff.whatsapp_message_id LIKE 'wamid.%' AND staff.whatsapp_customer_mutation IS NULL AND staff.is_forwarded IS DISTINCT FROM TRUE AND staff.media_mime_type IS NULL AND staff.media_url IS NULL",
+              "  AND staff.sent_by_username NOT IN ('Follow-up automation','Consent request automation')",
+              "  AND staff.id=(SELECT MAX(previous.id) FROM messages previous WHERE previous.contact_id=inbound.contact_id AND previous.id<relay.id)",
+              "  AND NOT EXISTS(SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)",
+            ]:[]),
             "ORDER BY staff.id DESC LIMIT 25",
           ].join("\n"),
           [contactId, inboundMessageId]
@@ -240,13 +264,19 @@ function createStaffAppointmentAcceptanceService({
         offer = relayed.rows.find(row =>
           sameSpecificOfferedSlot(row.staff_text, row.relay_text));
       }
-      if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text)) {
+      if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text) ||
+          (modelStaffEvidence && (!modelAccepted || ["set","visited","cancelled","reschedule"].includes(offer.appointment_status) || Number(offer.staff_message_id)!==modelStaffEvidence.id ||
+           String(offer.staff_text||"").trim()!==modelStaffEvidence.text.trim()))) {
         await client.query("COMMIT");
         return null;
       }
+      if(strictEvidence&&(!verifiedStaffSlot(offer.staff_text,new Date(offer.staff_at),now(),config.hours)||
+        /\b(?:not available|unavailable|cannot|can[’']t|fully booked|cancel)\b|不能|没空|沒空|不可以|取消|已满|已滿/iu.test(offer.staff_text))){
+        await client.query("COMMIT");return null;
+      }
       const metadata = {
         outcome: "staff_time_accepted",
-        source: "authenticated_staff_offer",
+        source: modelAccepted ? "ai_interpreted_verified_staff_offer" : "authenticated_staff_offer",
         inboundMessageId: Number(inboundMessageId),
         staffMessageId: Number(offer.staff_message_id),
         ...(offer.relay_message_id ? { relayMessageId: Number(offer.relay_message_id) } : {}),

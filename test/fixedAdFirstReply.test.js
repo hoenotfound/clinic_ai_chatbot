@@ -632,6 +632,8 @@ test("actual server decision branch skips Gemini for valid first ad message and 
       businessName: "Neutro Sense TCM" },
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,
+    appointmentRecognitionEnabled: require("../src/utils/aiLedAppointmentEvidence").appointmentRecognitionEnabled,
+    resolveModelAppointmentEvidence: require("../src/utils/aiLedAppointmentEvidence").resolveModelAppointmentEvidence,
     correctReplyLanguage: async draft => draft,
     isRm68ClinicalConcern: () => false,
     isExplicitRm68Interest: () => false,

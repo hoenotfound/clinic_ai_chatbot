@@ -43,6 +43,62 @@ const HOLD_SQL=`
           )
         RETURNING id
       `;
+// A definite staff confirmation with an unresolved CRM slot stays on hold
+// until explicitly resolved or invalidated. The original reminder remains
+// temporary. Both use the existing mutation-aware evidence contract.
+const CONFIRMATION_HOLD_INSERT=HOLD_SQL
+  .replace("'Verified staff appointment reminder; sales follow-ups on hold.'",
+    "'Staff-confirmed visit needs CRM reconciliation; sales follow-ups on hold.'")
+  .replace("'source','verified_staff_send'","'source','verified_staff_send','holdKind','confirmation_pending'")
+  .replace("AND BTRIM(staff.content)=BTRIM($3)",`AND BTRIM(staff.content)=BTRIM($3)
+          AND staff.whatsapp_customer_mutation IS NULL
+          AND staff.media_url IS NULL
+          AND staff.media_key IS NULL
+          AND staff.delivery_status IS DISTINCT FROM 'unknown'
+          AND staff.delivery_status IS DISTINCT FROM 'cancelled'
+          AND NOT EXISTS (
+            SELECT 1 FROM leads newer
+            WHERE newer.contact_id=staff.contact_id AND
+              (newer.created_at,newer.id)>(SELECT created_at,id FROM leads WHERE id=lead.id)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_activities resolution
+            WHERE resolution.lead_id=lead.id
+              AND resolution.metadata->>'outcome'='booking_hold_resolved'
+              AND resolution.created_at>=staff.created_at
+          )`);
+// The model may discover a missed staff confirmation on an inbound turn.
+// Recheck that exact persisted inbound under the same conversation lock.
+// Insert and raise Inbox attention atomically. Never replace existing
+// clinical, delivery or human-handoff attention. The lead activity remains
+// visible even if a higher-priority attention already exists.
+function withConfirmationAttention(insert){
+  return `WITH held AS (${insert}), attention AS (
+    UPDATE contacts c SET needs_attention=true,
+      attention_reason='Booking ready: staff confirmed a visit; reconcile the appointment in CRM.',
+      updated_at=NOW()
+    WHERE c.id=$1 AND c.mode='ai'
+      AND (c.needs_attention IS DISTINCT FROM TRUE OR c.attention_reason IS NULL
+        OR c.attention_reason LIKE 'Booking ready:%')
+      AND EXISTS (SELECT 1 FROM held)
+    RETURNING c.id
+  ) SELECT id FROM held`;
+}
+const CONFIRMATION_HOLD_SQL=withConfirmationAttention(CONFIRMATION_HOLD_INSERT);
+const MODEL_CONFIRMATION_HOLD_SQL=withConfirmationAttention(CONFIRMATION_HOLD_INSERT.replace(
+  "AND BTRIM(staff.content)=BTRIM($3)",`AND BTRIM(staff.content)=BTRIM($3)
+          AND EXISTS (
+            SELECT 1 FROM messages inbound
+            WHERE inbound.id=$4 AND inbound.contact_id=staff.contact_id
+              AND inbound.role='user' AND inbound.id>staff.id
+              AND inbound.whatsapp_customer_mutation IS NULL
+              AND inbound.is_forwarded IS DISTINCT FROM TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM messages later
+                WHERE later.contact_id=inbound.contact_id AND later.role='user'
+                  AND later.id>inbound.id
+              )
+          )`));
 const INVALIDATE_SQL=`
   INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
   SELECT reminder.lead_id,'updated','Staff edited or deleted appointment reminder; automated sales hold invalidated.',
@@ -68,4 +124,4 @@ const INVALIDATE_SQL=`
     )
   LIMIT 1
 `;
-module.exports={HOLD_SQL,INVALIDATE_SQL};
+module.exports={HOLD_SQL,CONFIRMATION_HOLD_SQL,MODEL_CONFIRMATION_HOLD_SQL,INVALIDATE_SQL};

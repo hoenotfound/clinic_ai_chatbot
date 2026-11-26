@@ -35,6 +35,7 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
           )
           AND (
             booking_acceptance.metadata->>'outcome' <> 'staff_appointment_reminder'
+            OR booking_acceptance.metadata->>'holdKind' = 'confirmation_pending'
             OR (
               -- A reminder is a temporary SALES hold, not a booked CRM slot.
               -- Never wake an old follow-up sequence solely because this

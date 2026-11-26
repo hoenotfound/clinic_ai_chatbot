@@ -234,3 +234,21 @@ test("direct booking requests exclude exploratory and pricing questions",()=>{
  for(const s of ["How to book?","多少钱？","I want to book if there is a discount","I want to cancel booking"])
    assert.equal(isDirectBookingIntent(s),false,s);
 });
+
+
+test("model-interpreted acceptance requires the exact authenticated staff offer and never confirms CRM",async()=>{
+  const offerText="19/12-星期六-\n10am ok?";
+  const h=harness({offerText});
+  const agreement=await h.service(372,1476,"That works perfectly for me, thank you",{modelStaffEvidence:{id:1475,text:offerText}});
+  assert.equal(agreement?.leadId,116);
+  const activity=h.queries.find(q=>/INSERT INTO lead_activities/.test(q.sql));
+  assert.equal(JSON.parse(activity.params[1]).source,"ai_interpreted_verified_staff_offer");
+  assert.equal(h.queries.some(q=>/UPDATE leads.*appointment_status/i.test(q.sql)),false);
+  for(const evidence of [{id:1474,text:offerText},{id:1475,text:"another slot"}]){
+    const rejected=harness({offerText});
+    assert.equal(await rejected.service(372,1476,"That works perfectly",{modelStaffEvidence:evidence}),null);
+    assert.equal(rejected.queries.some(q=>/INSERT INTO lead_activities/.test(q.sql)),false);
+  }
+  const cancelled=harness({offerText,bookingStatus:"cancelled"});
+  assert.equal(await cancelled.service(372,1476,"That works perfectly",{modelStaffEvidence:{id:1475,text:offerText}}),null);
+});

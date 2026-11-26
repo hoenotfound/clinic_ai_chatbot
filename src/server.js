@@ -28,6 +28,8 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const { guardAppointmentReply, guardAiAppointmentReply, durationMinutesForPackage, canRecoverBookingReady } = require("./utils/appointmentHoursGuard");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
+const {resolveModelAppointmentEvidence,appointmentRecognitionEnabled}=require("./utils/aiLedAppointmentEvidence");
+const {recordModelConfirmationHold}=require("./services/staffBookingConfirmationService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
 const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply, staleCommercialIntent } = require("./utils/aiPricingIntentDecision");
@@ -1595,6 +1597,30 @@ async function processIncomingMessage(
           }
         );
         languageCheckedModelReply = languageCheckedReply.languageCorrectionFailed ? null : languageCheckedReply.text;
+        // Use the existing model call to understand natural appointment
+        // agreement. Only verified staff source messages can authorize a
+        // hold; the model itself cannot mark a booking as confirmed.
+        if(appointmentRecognitionEnabled(clinicConfig)&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
+          !isActiveSafetyConcern(text)&&!hasClinicalMediaRisk(text)&&!isExplicitStaffRequest(text)){
+          const appointmentEvidence=resolveModelAppointmentEvidence({
+            config:clinicConfig,history,parsed:languageCheckedReply,customerText:text,
+            inboundId:savedInbound.id,bookingContext:verifiedBookingForHours,
+          });
+          if(appointmentEvidence){
+            try{
+              if(appointmentEvidence.kind==="accepted"&&!acceptedStaffOffer){
+                acceptedStaffOffer=await recordStaffAppointmentAcceptance(contact.id,savedInbound.id,text,
+                  {modelStaffEvidence:appointmentEvidence});
+                if(acceptedStaffOffer&&verifiedBookingForHours)
+                  verifiedBookingForHours.acceptedStaffOffer=acceptedStaffOffer.agreedTimeText;
+              }else if(appointmentEvidence.kind==="confirmed"){
+                await recordModelConfirmationHold(contact.id,savedInbound.id,appointmentEvidence);
+              }
+            }catch(error){
+              console.warn("[AI appointment evidence] Unable to persist verified hold contact="+contact.id,error?.message);
+            }
+          }
+        }
         replyOverrideAudit.change("correctReplyLanguage",originalModelReply,languageCheckedReply.text);
         languageReviewRequired = naturalReplyAuthority &&
           languageCheckedReply.languageCorrectionFailed === true &&
