@@ -117,7 +117,14 @@ function resolveNeutroComboOfferReply({
     });
     if (standalone.some(item => !item || !/^RM[1-9]\d{0,5}$/u.test(item.price))) return null;
     const bothTrial=standalone.every(item=>item.firstTrial);
-    const reply = locale.startsWith("ms")
+    const mixedTrial=standalone.some(item=>item.firstTrial)&&!bothTrial;
+    const label=item=>item.firstTrial?"First Trial":locale.startsWith("ms")?"promosi semasa":locale.startsWith("en")?"current offer":"当前优惠价";
+    const reply = mixedTrial
+      ? standalone.map(item=>item.name+" ("+label(item)+"): "+item.price).join("\n")+"\n"+
+        (locale.startsWith("ms")? `Pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`:
+          locale.startsWith("en")? `The 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`:
+            `3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`)
+      : locale.startsWith("ms")
       ? `Harga ${bothTrial?"First Trial ":"promosi "}3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
       : locale.startsWith("en")
         ? `The separate 3D and 9D ${bothTrial?"First Trial ":"current "}offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
