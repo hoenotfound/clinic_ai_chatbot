@@ -135,7 +135,7 @@ const AMOUNT_QUESTION =
 const DURATION_QUESTION =
   /(?:多久|多长|多長|时间|時間|小时|小時|\b(?:duration|how long|hour|hours|lama)\b)/iu;
 const INCLUDES_QUESTION =
-  /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do|consist|termasuk|merangkumi|apa yang termasuk)\b)/iu;
+  /(?:包括|包含|赠送|贈送|艾灸|做什么|做什麼|什么项目|什麼項目|护理什么|護理什麼|\b(?:include|included|what do (?:i|we|you) (?:get|receive|include)|what do you do (?:during|in) (?:the|this) (?:session|treatment)|consist|termasuk|merangkumi|apa yang termasuk)\b)/iu;
 const DATE_QUESTION =
   /(?:只有这两天|只有這兩天|只有两天|只有兩天|就这两天|就這兩天|只有这两日|只有這兩日|日期|哪天|哪一天|哪日|几号|幾號|[56]\s*[号日]|星期[六日]|礼拜[六日]|禮拜[六日]|名额|名額|有位|空位|预约|預約|安排|还有吗|還有嗎|还有没有|還有沒有|\b(?:appointment|availability|slot|december [56]|5th|6th)\b)/iu;
 
@@ -482,6 +482,15 @@ function campaignContinuationPolicy({history,customerText,reply,now=Date.now(),v
     return {reply:valid?reply:fallback,textOnly:true,blocksBooking:true,administrativeKind:adminKind};
   }
   const answer=campaignContextReply({history,customerText,now,language});
+  // An old ad is context, not permission to control every later reply.
+  // Even outside the event topic, reject unsolicited money and unverified
+  // booking/campaign claims; ordinary unrelated prose remains AI-owned.
+  const value=String(reply||"");
+  const request=String(customerText||"");
+  const scoped=Boolean(answer)||campaignAmountRequested(request)||isCampaignAvailabilityQuestion(request)||
+    SCREENING.test(request)||VISIT_ACTION.test(request)||CAMPAIGN_QUERY.test(request);
+  const draftClaims=scanMyrAmounts(value).length||/(?:乳腺|胸部护理|胸部護理|乳房护理|乳房護理|\b(?:breast care|breast assessment|breast wellness|payudara|moxibustion|moksibusi|event|appointment|booking|confirmed|booked|slot|ultrasound|screening)\b|艾灸|名额|名額|预约|預約|已确认|已確認|超声|超聲|筛查|篩查)/iu.test(value);
+  if(!scoped&&!draftClaims)return null;
   const guarded=guardCampaignPriceConflicts({history,customerText,reply,now,language});
   const corrected=answer?selectCampaignReply({reply:guarded,fallback:answer,history,customerText,language,now}):guarded;
   const scope=campaignDateScope(history,customerText,now);
