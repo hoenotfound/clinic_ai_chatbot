@@ -5,6 +5,7 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const { HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
+const {isBriefAcceptance}=require("./staffAppointmentAcceptanceService");
 
 // Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
@@ -99,6 +100,8 @@ function parseTerseStaffConfirmedSlot(message, now = new Date()) {
  if(check.getUTCFullYear()!==year||check.getUTCMonth()+1!==month||
     check.getUTCDate()!==day||check.getUTCHours()!==hour||
     check.getUTCMinutes()!==minute)return null;
+ const namedDay=value.match(/\b(mon|tue|wed|thu|fri|sat|sun)(?:day)?\b/iu);
+ if(namedDay&&check.getUTCDay()!==({sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6}[namedDay[1].toLowerCase()]))return null;
  if(utc<new Date(now.getTime()-24*60*60*1000)||
     utc>new Date(now.getTime()+90*24*60*60*1000))return null;
  return utc.toISOString();
@@ -204,8 +207,7 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  if(date&&customerDate&&bookingTimeMinutes(latest.content)===target)return true;
  // Or the customer accepted a specific staff proposal, including the
  // identical time and date/weekday, before the staff confirmation.
- const agreed=/^(?:yes(?:,?\s+can)?|yes,?\s+sure|ok(?:ay)?|sure|can|boleh|可以|好|没问题|沒問題)[\s.!！。😊👌]*$/iu
-   .test(String(latest.content||"").trim());
+ const agreed=isBriefAcceptance(latest.content);
  if(!agreed)return false;
  return history.some(t=>t.role==="assistant"&&t.sent_by_username&&
    t.at<latest.at&&latest.at-t.at<=30*60*1000&&
@@ -252,7 +254,7 @@ function createStaffBookingConfirmationService({
     // permission to fabricate a CRM appointment or send a booking alert.
     // The provider-authenticated original message ID is required for a
     // recoverable, replay-safe follow-up hold.
-    if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) {
+    const persistStaffHold=async()=>{
       const sourceId=Number(messageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
       const holdSql=HOLD_SQL;
@@ -274,7 +276,8 @@ function createStaffBookingConfirmationService({
         await database.query(holdSql,args);
       }
       return null;
-    }
+    };
+    if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) return persistStaffHold();
     if(!strictSlot) {
       const contextualCandidate=config.businessType==="tcm_clinic" &&
          /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
@@ -316,6 +319,10 @@ function createStaffBookingConfirmationService({
           staffText,recorded.prior_turns,recorded.created_at,now()))){
         // Exact customer slot + prior staff offer + current staff confirmation.
       } else {
+        // Staff explicitly confirmed a visit but the exact slot lacks enough
+        // corroboration. Keep sales paused even if booking-ready hours cannot
+        // yet validate the full preference. This never creates a CRM booking.
+        if(config.businessType==="tcm_clinic"&&terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))await persistStaffHold();
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
           activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
@@ -331,6 +338,17 @@ function createStaffBookingConfirmationService({
       if(lead.appointment_at &&
          new Date(lead.appointment_at).getTime()===new Date(appointmentAt).getTime())return lead;
       return null;
+    }
+    // For a new TCM booking, require a future slot inside configured hours.
+    if(config.businessType==="tcm_clinic"&&config.hours?.weekly){
+      const instant=Date.parse(appointmentAt),local=new Date(instant+8*3600_000);
+      const day=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"][local.getUTCDay()];
+      const hours=config.hours.weekly[day];
+      const clock=String(local.getUTCHours()).padStart(2,"0")+":"+String(local.getUTCMinutes()).padStart(2,"0");
+      if(!Number.isFinite(instant)||instant<now().getTime()||!hours||!/^\d{2}:\d{2}$/u.test(hours.open)||!/^\d{2}:\d{2}$/u.test(hours.close)||clock<hours.open||clock>=hours.close){
+        await persistStaffHold();
+        return null;
+      }
     }
     // Existing updateLead handles validation, stage transition, booking alert
     // cleanup and the follow-up suppression for genuinely confirmed bookings.
