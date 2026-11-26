@@ -100,6 +100,8 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       const actual=await repo.listCandidates(opts,pool);
       const legacy=(await pool.query(legacySql,bindings)).rows;
       assert.deepEqual(actual,legacy);
+      const fresh=(await pool.query(repo.CLAIM_CANDIDATES_SQL,[...bindings,1])).rows;
+      assert.deepEqual(fresh,legacy.filter(row=>Number(row.contact_id)===1));
       assert.equal(actual.length,expected);
     };
     await assertSameCandidates(1);
@@ -114,7 +116,7 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     // A historical anchor outside activation cannot seed a candidate.
     await assertSameCandidates(0,{activatedAt:new Date(Date.now()-18*3600000).toISOString()});
     // A newer inbound supersedes the original anchor, even though FU3 exists.
-    await pool.query("INSERT INTO messages(id,contact_id,role,content,created_at) VALUES(90,1,'user','New question',now())");
+    await pool.query("INSERT INTO messages(id,contact_id,role,content,created_at) VALUES(90,1,'user','New question',now()-interval '2 hours')");
     await assertSameCandidates(0);
     await pool.query("DELETE FROM messages WHERE id=90");
     // Deduplication must not change the single eligible candidate or limit.
@@ -126,6 +128,39 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     await assertSameCandidates(1);
     await pool.query("DELETE FROM messages WHERE id=91");
     await assertSameCandidates(1);
+    // Verify old stored timestamps with a valid source timestamp remain eligible.
+    await pool.query("UPDATE messages SET created_at=now()-interval '48 hours',source_created_at=now()-interval '20 hours' WHERE id=10");
+    await assertSameCandidates(1);
+    await pool.query("UPDATE messages SET created_at=now()-interval '20 hours',source_created_at=NULL WHERE id=10");
+    // Synthetic historical population: report actual execution metrics in CI,
+    // not flaky wall-clock assertions or production reads.
+    await pool.query(`INSERT INTO contacts(id,channel,whatsapp_number,mode)
+      SELECT i,'whatsapp','fixture-'||i,'ai' FROM generate_series(200,2199) i`);
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at)
+      SELECT 10000+i,i,'user','Historical fixture',now()-interval '5 days' FROM generate_series(200,2199) i`);
+    await pool.query("CREATE INDEX ON messages(contact_id,created_at DESC,id DESC)");
+    await pool.query("CREATE INDEX ON messages(contact_id,COALESCE(source_created_at,created_at)) WHERE role='user'");
+    await pool.query("CREATE INDEX ON messages(automated_follow_up_step) WHERE is_automated_follow_up=true AND automated_follow_up_for_message_id IS NOT NULL");
+    await pool.query("ANALYZE contacts");
+    await pool.query("ANALYZE messages");
+    await assertSameCandidates(1);
+    const perfBindings=[settings.activatedAt,settings.triggerMode,settings.now.toISOString(),false,null];
+    for(const [label,sql,bindings] of [
+      ["legacy",legacySql,perfBindings],
+      ["discovery",repo.CANDIDATES_SQL,perfBindings],
+      ["claim",repo.CLAIM_CANDIDATES_SQL,[...perfBindings,1]]
+    ]){
+      const result=await pool.query("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql,bindings);
+      const plan=result.rows[0]["QUERY PLAN"][0];
+      assert.equal(plan.Plan["Actual Rows"],1);
+      console.log("consent synthetic benchmark",label,JSON.stringify({
+        executionMs:plan["Execution Time"],sharedHitBlocks:plan.Plan["Shared Hit Blocks"],
+        sharedReadBlocks:plan.Plan["Shared Read Blocks"]
+      }));
+    }
+    // Avoid affecting the subsequent existing fixture assertions.
+    await pool.query("DELETE FROM messages WHERE contact_id>=200");
+    await pool.query("DELETE FROM contacts WHERE id>=200");
     // A lead who declined marketing must NEVER receive a new opt-in prompt.
     await pool.query("UPDATE leads SET marketing_consent='opted_out' WHERE id=1");
     assert.equal((await repo.listCandidates(settings,pool)).length,0);
