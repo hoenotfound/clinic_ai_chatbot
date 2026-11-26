@@ -532,7 +532,7 @@ test("RM68 amounts obey one campaign disclosure policy across currency formats",
     const unsolicited=guardCampaignPriceConflicts({history,customerText:"How long?",reply:draft,language:"en",now:early});
     assert.notEqual(unsolicited,draft,draft);
   }
-  for(const amount of ["MYR 68.50","RM68.00.50","RM680","RM-68","RM6,8"]){
+  for(const amount of ["MYR 68.50","RM68.00.50","RM680","RM-68","RM6,8","RM68k","RM68-100","RM68 + 20"]){
     assert.equal(campaignClaimsSafe("The trial is "+amount+" on December 5.",early),false,amount);
   }
 });
@@ -544,7 +544,9 @@ test("RM68 duration claims distinguish the care component and whole visit",()=>{
     "The full visit takes 90 minutes.",
     "胸部护理约45分钟，全程约1小时30分钟。",
     "Penjagaan payudara sekitar 45 minit, keseluruhan 90 minit.",
-    "The event takes 1.5 hours."
+    "The event takes 1.5 hours.",
+    "The full visit takes 1h30.",
+    "The full visit takes 1 hour and 30 minutes."
   ]) assert.equal(campaignClaimsSafe(valid,early),true,valid);
   for(const invalid of [
     "Breast care takes 90 minutes.",
@@ -554,4 +556,13 @@ test("RM68 duration claims distinguish the care component and whole visit",()=>{
     "Penjagaan payudara 90 minit, keseluruhan 45 minit.",
     "The event takes 2h15."
   ]) assert.equal(campaignClaimsSafe(invalid,early),false,invalid);
+});
+
+
+test("a whole-visit duration question cannot pass with only the care component",()=>{
+  const draft="Breast care takes 45 minutes.";
+  const customerText="How long is the full visit?";
+  const result=campaignContinuationPolicy({history,customerText,reply:draft,language:"en",now:early});
+  assert.notEqual(result.reply,draft);
+  assert.match(result.reply,/90/);
 });
