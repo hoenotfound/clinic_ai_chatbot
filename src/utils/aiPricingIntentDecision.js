@@ -3,7 +3,7 @@
 // Existing AI intent flags classify the customer's request. Treatment identity
 // must come from customer evidence or an unambiguous verified Meta acquisition
 // context; all quoted prices must come from active configured offers.
-const { safeServiceFromCustomer, hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
+const { safeServiceFromCustomer, hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
@@ -1026,5 +1026,26 @@ function hasCustomerRequestedPriceReply({
       pricingDecision?.type === "package_options");
 }
 
+// Price/media authorization is separate from the conversational wording.
+// Preserve a safe ordinary answer when independent current-turn evidence
+// shows a noncommercial question; uncertain or contextual package requests
+// still get a clarification. Never use this to approve any price or image.
+function shouldRewriteRejectedPricingReply({reply,customerText,services=[],serviceAliases=[]}={}){
+  if (!String(reply||"").trim() || hasCommercialReplyContent(reply) ||
+      hasTreatmentPriceContent(reply)) return true;
+  const current=String(customerText||"").trim();
+  if (!current) return true;
+  if (hasCurrentPriceAmountRequest(current) || isStandalonePriceQuestion(current) ||
+      hasExplicitPackageOptionsRequest(current) ||
+      isCurrentOfferEnquiry(current) ||
+      Object.values(relativePackageReference(current)).some(Boolean)) return true;
+  if (isPurePriceObjection(current)) return false;
+  if (hasExplicitPriceRequest(current)) return true;
+  const candidate=serviceCandidates(services,serviceAliases).find(c=>
+    c.name===safeServiceFromCustomer(current,services,serviceAliases)?.name);
+  return !(NON_MONETARY_ONLY.test(current) || UNRELATED.test(current) ||
+    isPlainNamedTreatmentInterest(current,candidate));
+}
+
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { staleCommercialIntent, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { shouldRewriteRejectedPricingReply, staleCommercialIntent, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
