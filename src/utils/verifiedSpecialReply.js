@@ -71,8 +71,8 @@ function comboPriceClauseMatches(value,decision){
   text=text.replace(comboLabel," ");
   // Only connective language may remain; no free-text factual claim is
   // authorized by this check. Multiple treatment amounts are checked below.
-  const words=/\b(?:if|you|you'd|you’re|youre|would|like|to|experience|try|both|treatments?|together|our|the|current|currently|now|combo|combination|combined|offer|bundle|promo|promotional|price|is|are|at|for|only|just|also|have|has|we|can|there|there's|with|and|first|trial|ya|hai|kami|ada|harga|promosi|pakej|kombo|gabungan|kedua|dua|rawatan|sekarang|ialah|adalah|hanya|untuk|jika|anda|berminat|bersama|sekaligus|termasuk|dan|ini|boleh|juga)\b/giu;
-  const zh=/(?:如果|假如|亲爱的|親愛的|您好|你好|你|您|想|要|两项|兩項|两个|兩個|都|体验|體驗|一起|做|护理|護理|疗程|療程|我们|我們|目前|现在|現在|也|有|组合|組合|搭配|限时|限時|优惠|優惠|价格|價格|价钱|價錢|体验价|體驗價|只需|仅需|僅需|是|为|為|的|哦|呀|呢|啦|喔|加上|另|送)/gu;
+  const words=/\b(?:if|you'd|you’re|youre|you|would|like|to|experience|try|both|treatments?|together|our|the|current|currently|now|combo|combination|combined|offer|bundle|promotional|promo|price|is|are|at|for|only|just|also|have|has|we|can|there's|there|with|and|a|ya|hai|kami|ada|harga|promosi|pakej|kombo|gabungan|kedua|dua|rawatan|sekarang|ialah|adalah|hanya|untuk|jika|anda|berminat|bersama|sekaligus|termasuk|dan|ini|boleh|juga)\b/giu;
+  const zh=/(?:如果|假如|亲爱的|親愛的|您好|你好|你|您|想|要|两项|兩項|两个|兩個|都|体验价|體驗價|体验|體驗|一起|做|护理|護理|疗程|療程|我们|我們|目前|现在|現在|也|有|组合|組合|搭配|限时|限時|优惠价|優惠價|优惠|優惠|价格|價格|价钱|價錢|体验价|體驗價|只需|仅需|僅需|是|为|為|的|哦|呀|呢|啦|喔|加上|另|送)/gu;
   const remainder=text.replace(words," ").replace(zh," ").replace(/[\s,.!！。:：;；，、()（）-]+/gu,"");
   return remainder==="";
 }
