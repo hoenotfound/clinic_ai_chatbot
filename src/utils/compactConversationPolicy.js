@@ -39,14 +39,19 @@ function selectCompactFAQs(faqs, context, policy) {
 // Runtime opt-in is clinic-specific and fails closed when an administrator
 // edits any reviewed source section. Never write back to the stored config.
 function resolveProductionCompactPolicy(config, plan = require("../../scripts/config-proposals/neutro-prompt-consolidation-stage2.json"),
-  stage1 = require("../../scripts/config-proposals/neutro-prompt-consolidation-20261124.json")) {
+  stage1) {
   if (config.promptOptimization?.neutroCompactV2 !== true) return null;
-  if (stage1.clinic !== plan.clinic) return null;
   if (!resolveCompactConversationPolicy(config, plan)) return null;
-  for (const key of ["sop", "messagingStyle", "closingPlaybook"]) {
-    if (typeof config[key] !== "string" ||
-        fingerprint(config[key]) !== stage1.expectedMd5[key]) return null;
-  }
-  return {...plan, replacement: stage1.replacement};
+  // Explicit benchmark/test plans retain their exact contract. Production
+  // can choose a separately reviewed revision, never update hashes blindly.
+  const variants=stage1?[stage1]:[
+    require("../../scripts/config-proposals/neutro-prompt-consolidation-20261126.json"),
+    require("../../scripts/config-proposals/neutro-prompt-consolidation-20261124.json"),
+  ];
+  const keys=["sop","messagingStyle","closingPlaybook"];
+  const match=variants.find(candidate=>candidate.clinic===plan.clinic&&keys.every(key=>
+    typeof config[key]==="string"&&fingerprint(config[key])===candidate.expectedMd5?.[key]&&
+    typeof candidate.replacement?.[key]==="string"&&candidate.replacement[key].trim()));
+  return match?{...plan,replacement:match.replacement}:null;
 }
 module.exports = { resolveCompactConversationPolicy, selectCompactFAQs, resolveProductionCompactPolicy };
