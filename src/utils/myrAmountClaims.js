@@ -11,7 +11,11 @@ function scanMyrAmounts(value){
   return [...text.matchAll(/(?<![a-z0-9])(?:MYR|RM|马币|馬幣|令吉)\s*([+-]?\s*\d(?:[\d,.]*\d)?)/giu)].map(match=>{
     const raw=match[1].trim();
     const valid=/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/u.test(raw);
-    const amount=valid?Number(raw.replace(/,/gu,"")):NaN;
+    const suffix=text.slice(match.index+match[0].length);
+    // Do not interpret a range, arithmetic expression or magnitude shorthand
+    // as the approved single price (e.g. RM68-100, RM68k, RM68 + 20).
+    const compound=/^\s*(?:[-–—~～+＋至到/]\s*\d|(?:to|hingga)\s+\d|(?:k|m|b|thousand|million|billion)\b|[千万萬亿億])/iu.test(suffix);
+    const amount=valid&&!compound?Number(raw.replace(/,/gu,"")):NaN;
     return {raw:match[0],index:match.index,amount:Number.isFinite(amount)&&amount<=Number.MAX_SAFE_INTEGER?amount:null};
   });
 }
