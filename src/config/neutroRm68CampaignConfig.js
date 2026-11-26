@@ -3,6 +3,7 @@
 const clinicConfig=require("./clinicConfig");
 const defaults=require("./neutroRm68Campaign.default.json");
 const {campaignDatesInText}=require("../utils/neutroRm68DateEvidence");
+const {scanMyrAmounts}=require("../utils/myrAmountClaims");
 const languages=["zh","en","ms"];
 const liveStates=["both","dec6"];
  // Existing SQL exclusions and delivered-history recognition intentionally
@@ -19,8 +20,7 @@ function finiteTimestamp(value){
 }
 function hasValidCopy(value,active,state){
   if(typeof value!=="string" || !value.trim() || value.length>3000)return false;
-  const amounts=[...value.normalize("NFKC").matchAll(/(?:\b(?:RM|MYR)\s*|马币\s*|令吉\s*)(\d[\d,]*(?:\.\d+)?)/giu)]
-    .map(m=>Number(m[1].replace(/,/g,"")));
+  const amounts=scanMyrAmounts(value).map(claim=>claim.amount);
   if(!active)return amounts.length===0;
   if(!amounts.length || amounts.some(n=>n!==defaults.priceMYR))return false;
   const dates=campaignDatesInText(value);

@@ -113,6 +113,13 @@ test("both-treatment price enquiry quotes the two verified trials and the combo 
  assert.match(result.reply,/3D 和 9D 分开体验/u);
  assert.equal((result.reply.match(/RM488/gu)||[]).length,2);
  assert.equal((result.reply.match(/RM688/gu)||[]).length,1);
+ assert.equal(result.mediaAllowed,false);
+ const {comboDraftMatches}=require("../src/utils/verifiedSpecialReply");
+ const natural="3D First Trial RM488\n9D First Trial MYR 488.00\n3D + 9D 组合目前优惠价 RM688";
+ assert.equal(comboDraftMatches(natural,result),true);
+ for(const wrong of [natural.replace("9D First Trial MYR 488.00","9D First Trial RM688"),natural.replace("3D First Trial","3D"),natural.replace("3D First Trial RM488","❌ 3D First Trial RM488")])assert.equal(comboDraftMatches(wrong,result),false,wrong);
+ const mediaDecision=resolveNeutroComboMediaPricingDecision({comboOfferDecision:result,promotions:[...standalone,{...combo,imageUrl:"https://example.test/combo.png"}],customerText:current,session:[turn("user",current,60)],reply:natural,now});
+ assert.equal(mediaDecision,null);
 });
 
 test("customer refusing one treatment is never sold the combination",()=>{
@@ -204,4 +211,29 @@ test("combo image never sends for customer refusal or ordinary 9D-only prices",a
    const session=[turn("user",text,30)];
    assert.equal(comboMedia([mediaCombo],text,session).pricingDecision,null,text);
  }
+});
+
+
+test("combo media authorization follows validated promotion facts rather than exact wording",()=>{
+  for(const draft of [
+    "3D + 9D 组合目前优惠价 MYR 688.00 😊",
+    "If you'd like to experience both 3D and 9D together, our current combo is only RM688 ya 😊",
+    "Harga promosi kombo 3D + 9D sekarang hanya RM688",
+  ]) assert.equal(comboMedia([mediaCombo],comboQuery,comboSession,{reply:draft}).pricingDecision?.treatment,"3D + 9D 组合",draft);
+  for(const draft of [
+    "3D RM688",
+    "The 3D + 9D combo is not RM688",
+    "The 3D + 9D combo is RM688 each",
+    "The 3D + 9D combo is RM688 plus a free ultrasound",
+    "The 3D + 9D combo is RM6880",
+  ]) assert.equal(comboMedia([mediaCombo],comboQuery,comboSession,{reply:draft}).pricingDecision,null,draft);
+});
+
+test("equivalent currency formatting prevents repeating a previous combo suggestion",()=>{
+  const current="3d的多少钱？";
+  for(const amount of ["MYR 688.00","马币688","RM 6️⃣8️⃣8️⃣"]){
+    const session=[turn("user","9d",260),turn("assistant","9D RM488",245),
+      turn("assistant","3D + 9D combo "+amount,200),turn("user",current,80)];
+    assert.equal(check(current,session,{verifiedIndividualQuote:true}),null,amount);
+  }
 });

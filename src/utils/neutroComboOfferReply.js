@@ -7,6 +7,8 @@ const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { getActivePromotions, getPricePromotionBundle } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
+const {hasMyrAmount}=require("./myrAmountClaims");
+const {comboDraftMatches}=require("./verifiedSpecialReply");
 const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 
@@ -55,10 +57,11 @@ function verifiedComboOffer(promotions, now, current, session) {
     COMBO_SERVICE, promotions, current, session, { allowTextOnlyOffers: true }
   );
   if (prices?.length !== 1 || !/^RM[1-9]\d{0,5}$/u.test(String(prices[0]?.price || ""))) return null;
+  if(prices[0].afterVoucher || prices[0].sessionsIncluded>1)return null;
   const offer = matches[0];
   const text = String(offer.followUpMessage || "");
   const complimentaryMeridianHour = /(?:免费送|免費送|赠送|贈送).{0,15}(?:1\s*小时|1\s*小時|一小时|一小時).{0,20}(?:经络|經絡)/u.test(text);
-  return { treatment: COMBO_SERVICE, price: prices[0].price, complimentaryMeridianHour };
+  return { treatment: COMBO_SERVICE, price: prices[0].price, complimentaryMeridianHour, afterVoucher:false };
 }
 
 // '3D 和 9D 分别多少钱' remains two individual prices. Suggest the combo
@@ -106,15 +109,27 @@ function resolveNeutroComboOfferReply({
   if (ambiguousBothPrices) {
     const standalone = ["3D 小颜术", "9D 逆龄抗衰"].map(name => {
       const entries = verifiedPricesForService(name, promotions, current, turns);
-      return entries?.length === 1 ? { name, price:entries[0].price } : null;
+      if(entries?.length!==1||entries[0].afterVoucher||entries[0].sessionsIncluded>1)return null;
+      const offers=getActivePromotions(promotions,new Date(now)).filter(p=>p.linkedService===name&&p.sendOnPriceQuery===true);
+      if(offers.length!==1)return null;
+      const evidence=[offers[0].name,offers[0].caption,entries[0].title].filter(Boolean).join(" ");
+      return { name, price:entries[0].price,firstTrial:/first[\s-]*trial|首次(?:体验|體驗)|初次(?:体验|體驗)|percubaan pertama/iu.test(evidence) };
     });
     if (standalone.some(item => !item || !/^RM[1-9]\d{0,5}$/u.test(item.price))) return null;
-    const reply = locale.startsWith("ms")
-      ? `Harga First Trial 3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
+    const bothTrial=standalone.every(item=>item.firstTrial);
+    const mixedTrial=standalone.some(item=>item.firstTrial)&&!bothTrial;
+    const label=item=>item.firstTrial?"First Trial":locale.startsWith("ms")?"promosi semasa":locale.startsWith("en")?"current offer":"当前优惠价";
+    const reply = mixedTrial
+      ? standalone.map(item=>item.name+" ("+label(item)+"): "+item.price).join("\n")+"\n"+
+        (locale.startsWith("ms")? `Pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`:
+          locale.startsWith("en")? `The 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`:
+            `3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`)
+      : locale.startsWith("ms")
+      ? `Harga ${bothTrial?"First Trial ":"promosi "}3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
       : locale.startsWith("en")
-        ? `The separate 3D and 9D First Trial offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
-        : `3D 和 9D 分开体验的 First Trial 价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
-    return { ...offer, mode:"direct", reply };
+        ? `The separate 3D and 9D ${bothTrial?"First Trial ":"current "}offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
+        : `3D 和 9D 分开体验的 ${bothTrial?"First Trial ":"当前优惠"}价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
+    return { ...offer, mode:"direct", individualPrices:standalone, mediaAllowed:false, reply };
   }
 
   if (explicitlyJoint) {
@@ -123,7 +138,7 @@ function resolveNeutroComboOfferReply({
       : locale.startsWith("en")
         ? `The current 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner will assess whether both treatments are suitable.`
         : `3D + 9D 组合目前的体验优惠是 ${offer.price}${gift} 😊 是否适合一起安排，还是需要先让中医师评估哦。`;
-    return { ...offer, mode: "direct", reply };
+    return { ...offer, mode: "direct", mediaAllowed:true, reply };
   }
 
   const userTurns = turns.filter(turn => turn.role === "user");
@@ -135,7 +150,7 @@ function resolveNeutroComboOfferReply({
       (!currentNames.face && !currentNames.firming)) return null;
   // Never repeat an offer already made in this recent conversation.
   if (turns.some(turn => turn.role === "assistant" &&
-      String(turn.content || "").includes(offer.price) &&
+      hasMyrAmount(turn.content,Number(offer.price.slice(2))) &&
       (JOINT_INTENT.test(String(turn.content || "")) ||
        (/3\s*d/iu.test(turn.content) && /9\s*d/iu.test(turn.content))))) return null;
   const reply = locale.startsWith("ms")
@@ -143,7 +158,7 @@ function resolveNeutroComboOfferReply({
     : locale.startsWith("en")
       ? `If you're interested in both, there's also a 3D + 9D combination offer for ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
       : `如果你两项都想体验，我们目前也有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
-  return { ...offer, mode: "suggestion", reply };
+  return { ...offer, mode: "suggestion", mediaAllowed:true, reply };
 }
 
 // The customer may refer to "doing these together" after staff has shown 9D
@@ -195,10 +210,19 @@ function resolveNeutroComboMediaPricingDecision({
   comboOfferDecision, promotions = [], customerText = "", session = null,
   reply = "", now = Date.now(),
 } = {}) {
-  if (!comboOfferDecision ||
+  if (!comboOfferDecision || comboOfferDecision.mediaAllowed!==true ||
       !["direct", "suggestion"].includes(comboOfferDecision.mode) ||
       comboOfferDecision.treatment !== COMBO_SERVICE ||
-      !String(reply || "").includes(comboOfferDecision.price)) return null;
+      !hasMyrAmount(reply,Number(comboOfferDecision.price.slice(2)))) return null;
+  // An approved combo amount elsewhere in the text is not proof it was
+  // quoted for this combination. Direct replies must still match the facts
+  // approved by the combo resolver. Suggestion mode retains its exact appended
+  // block, which is independently checked below.
+  if(comboOfferDecision.mode==="direct" && !comboDraftMatches(reply,comboOfferDecision))return null;
+  if(comboOfferDecision.mode==="suggestion") {
+    const lastBlock=String(reply||"").split(/\n\s*\n/u).at(-1);
+    if(!comboDraftMatches(lastBlock,comboOfferDecision))return null;
+  }
 
   const bundle = getPricePromotionBundle(
     promotions, COMBO_SERVICE, null, new Date(now)

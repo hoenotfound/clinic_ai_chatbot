@@ -10,18 +10,38 @@ const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { scanMyrAmounts,configuredPackageMoney,verifyPackageMoney } = require("./myrAmountClaims");
 
 const TREATMENT = "骨盆调理";
 const COMPARE = /(?:分别|分別|差别|差別|区别|區別|不同|比较|比較|对比|對比|有何不同|difference|different|compar(?:e|ison)|beza|berbeza|banding)/iu;
 const PACKAGE = /(?:配套|套餐|package|pakej)/iu;
 const FORBIDDEN = /(?:不要|不用|不想|取消|退款|退费|退費|订金|訂金|押金|停止|退订|退訂|改聊|换成|換成|\b(?:stop|unsubscribe|refund|cancel|instead|deposit)\b)/iu;
-const AMOUNT = /\b(?:RM|MYR)\s*([1-9]\d{1,5})\b/giu;
 const MAX_QUOTE_AGE_MS = 3 * 60 * 60 * 1000;
 
 function safeOffer(item) {
   const price = item?.pricing?.offer;
   return Number.isSafeInteger(price) && price > 0 && price < 100000
     ? price : null;
+}
+// A numeric substring is not proof of an accepted A/B quote. Check
+// complete amounts in the scope of each package label.
+function containsVerifiedPackagePair(value,a,b){
+  const text=String(value||"").normalize("NFKC");
+  if(!text.includes(TREATMENT))return false;
+  const names=[...text.matchAll(/\bPackage\s+([AB])\b/giu)];
+  if(names.length<2)return false;
+  const seen=new Set();
+  for(let i=0;i<names.length;i++){
+    const name=names[i][1].toUpperCase();
+    const end=names[i+1]?.index??text.length;
+    const scope=text.slice(names[i].index+names[i][0].length,end);
+    const amounts=scanMyrAmounts(scope);
+    if(!amounts.length)continue;
+    const facts=configuredPackageMoney(name==="A"?a:b);
+    if(!verifyPackageMoney(scope,facts,{requireOffer:false}))return false;
+    if(verifyPackageMoney(scope,facts))seen.add(name);
+  }
+  return seen.size===2;
 }
 function includedItems(item, locale) {
   const localized = item?.mediaTranslations?.[locale]?.caption;
@@ -70,8 +90,14 @@ function verifiedComparisonSessionWithStaffNote({
   // A manual change to pricing, or a different paid-treatment discussion,
   // is a reason to leave the customer with staff. Package inclusions are not
   // an independent treatment switch.
-  const amounts = [...noteText.matchAll(AMOUNT)].map(m => Number(m[1]));
-  if (amounts.some(n => n !== safeOffer(a) && n !== safeOffer(b))) return null;
+  const amounts = scanMyrAmounts(noteText).map(c => c.amount);
+  if (amounts.length && !containsVerifiedPackagePair(TREATMENT+" "+noteText,a,b)) {
+    // A single staff package price is acceptable only when its label and
+    // complete monetary claims agree with that package, not the other one.
+    const labels=[...noteText.matchAll(/\bPackage\s+([AB])\b/giu)];
+    if(labels.length!==1 || scanMyrAmounts(noteText.slice(0,labels[0].index)).length ||
+       !verifyPackageMoney(noteText.slice(labels[0].index),configuredPackageMoney(labels[0][1].toUpperCase()==="A"?a:b)))return null;
+  }
   const permittedInclusions = [a, b].flatMap(item =>
     ["zh", "en", "ms"].flatMap(locale => includedItems(item, locale) || [])
   ).join("\n").toLocaleLowerCase();
@@ -101,11 +127,7 @@ function verifiedComparisonSessionWithStaffNote({
   if (!aiOnly) return null;
   const verifiedQuote = aiOnly.find(t => t.role === "assistant" &&
     t.pricingCreatedAtMs < note.pricingCreatedAtMs &&
-    String(t.content || "").includes(TREATMENT) &&
-    String(t.content || "").includes("Package A") &&
-    String(t.content || "").includes("Package B") &&
-    String(t.content || "").includes("RM" + safeOffer(a)) &&
-    String(t.content || "").includes("RM" + safeOffer(b)));
+    containsVerifiedPackagePair(t.content,a,b));
   if (!verifiedQuote) return null;
   const selectedBeforeQuote = aiOnly.some(t =>
     t.role === "user" && t.pricingCreatedAtMs < verifiedQuote.pricingCreatedAtMs &&
@@ -132,7 +154,7 @@ function resolveNeutroPelvicPackageComparison({
       !PACKAGE.test(current) || FORBIDDEN.test(current) ||
       hasClinicalMediaRisk(current)) return null;
 
-  const mentionedAmounts = [...current.matchAll(AMOUNT)].map(m => Number(m[1]));
+  const mentionedAmounts = scanMyrAmounts(current).map(c => c.amount);
   if (mentionedAmounts.length !== 2 ||
       new Set(mentionedAmounts).size !== 2) return null;
 
@@ -168,11 +190,7 @@ function resolveNeutroPelvicPackageComparison({
   if (!recentCustomerSelection) return null;
   const quoted = previous.some(t => t.role === "assistant" &&
     t.pricingCreatedAtMs >= now - MAX_QUOTE_AGE_MS &&
-    String(t.content || "").includes(TREATMENT) &&
-    String(t.content || "").includes("Package A") &&
-    String(t.content || "").includes("Package B") &&
-    String(t.content || "").includes("RM" + safeOffer(a)) &&
-    String(t.content || "").includes("RM" + safeOffer(b)));
+    containsVerifiedPackagePair(t.content,a,b));
   if (!quoted) return null;
   const locale = String(language || "zh").toLowerCase().startsWith("ms") ? "ms" :
     String(language || "zh").toLowerCase().startsWith("en") ? "en" : "zh";
@@ -196,6 +214,9 @@ function resolveNeutroPelvicPackageComparison({
     reply: lead + "\n\n" + format(a, itemsA) + "\n\n" +
       format(b, itemsB) + "\n\n" + ending,
     type: "text_only",
+    heading:lead,conclusion:ending,
+    verifiedPackages:[{name:a.name,price:safeOffer(a),title:a.title,includedItems:itemsA,money:configuredPackageMoney(a)},
+      {name:b.name,price:safeOffer(b),title:b.title,includedItems:itemsB,money:configuredPackageMoney(b)}],
   });
 }
 module.exports = { resolveNeutroPelvicPackageComparison };

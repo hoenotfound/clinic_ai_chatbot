@@ -59,6 +59,14 @@ function routineReviewRecoveryEligible({config,naturalReplyAuthority,flagged,rev
     config?.businessType==="tcm_clinic"&&
     /^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||"")));
 }
+// Late recovery is text-only. Keep the actual state transition centralized
+// and require affirmative evidence; pending or unknown is never clearance.
+function routineReviewTextOnlyState(evidence,reply){
+  if(evidence?.pendingClinicalReview!==false||typeof reply!=="string"||!reply.trim())return null;
+  return {reply,flagged:false,reviewRequired:false,reviewType:null,bookingReady:false,
+    serviceQuery:false,serviceQuerySource:null,priceQuery:false,packageQuery:false,
+    details:null,clinicalAcknowledgement:null,reviewContinuationTextOnly:true};
+}
 function createReplyOverrideAudit(log=console.info) {
   const reasons=new Set();
   return {
@@ -82,4 +90,4 @@ function createClinicalReviewEvidenceReader(read,{reuseVeto=false}={}){
     return evidence;
   };
 }
-module.exports={routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
