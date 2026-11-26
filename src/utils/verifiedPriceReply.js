@@ -368,13 +368,13 @@ function ensureVerifiedPriceReply({
   priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
-  allowContinuedPriceContext = false,
+  allowContinuedPriceContext = false, preserveNaturalReply = false,
 } = {}) {
   const original = String(reply || "").trim();
   // The clinic explicitly offers the introductory assessment + experience
   // free of charge. A normal service price fallback must never turn this
   // administrative question into a "please confirm the fee" response.
-  if (isComplimentaryAssessmentFeeQuestion(
+  if (!preserveNaturalReply && isComplimentaryAssessmentFeeQuestion(
     customerText,
     clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
     conversationHistory

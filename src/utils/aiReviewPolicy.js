@@ -121,7 +121,7 @@ function hasClinicalMediaRisk(customerText) {
 
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
-function categorizeAiReview(customerText, proposedCategory) {
+function categorizeAiReview(customerText, proposedCategory,{trustStructuredInformation=false}={}) {
   // A mixed promotional price enquiry does not downgrade a breast lump,
   // tumor or nodule concern to ordinary information.
   if (isBreastLumpConcern(customerText)) return "clinical";
@@ -149,6 +149,13 @@ function categorizeAiReview(customerText, proposedCategory) {
       !hasClinicalMediaRisk(text) && !MEDICAL_HISTORY.test(text) &&
       !checkKeywordTriggers(text)) return "information";
   if (proposedCategory !== "information") return "clinical";
+  // Generic practitioner titles alone do not constitute a clinical concern.
+  // Only accept an explicit structured information decision when independent
+  // clinical checks (including the broader non-title clinical signals) agree.
+  const withoutTitles=text.replace(/(?:中醫師|中医师|醫生|医生|醫師|医师|\\bdoktor\\b)/giu,"");
+  if(trustStructuredInformation && !hasClinicalMediaRisk(text) &&
+     !CLINICAL_QUESTION.test(withoutTitles) && !MEDICAL_HISTORY.test(text) &&
+     !CLINICAL_PROCEDURE_TIMING.test(text) && !checkKeywordTriggers(text)) return "information";
   if ((!ADMINISTRATIVE_QUESTION.test(text) && !TECHNICAL_DEVICE_QUESTION.test(text)) ||
       CLINICAL_QUESTION.test(text) ||
       isUrinaryLeakageConcern(text) ||
