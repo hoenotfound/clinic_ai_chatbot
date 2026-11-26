@@ -207,7 +207,8 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  if(date&&customerDate&&bookingTimeMinutes(latest.content)===target)return true;
  // Or the customer accepted a specific staff proposal, including the
  // identical time and date/weekday, before the staff confirmation.
- const agreed=isBriefAcceptance(latest.content);
+ const agreed=isBriefAcceptance(latest.content)||
+   /^(?:yes(?:,?\s+can)?|yes,?\s+sure|ok(?:ay)?|sure|can|boleh|可以|好|没问题|沒問題)[\s.!！。😊👌]*$/iu.test(String(latest.content||"").trim());
  if(!agreed)return false;
  return history.some(t=>t.role==="assistant"&&t.sent_by_username&&
    t.at<latest.at&&latest.at-t.at<=30*60*1000&&
