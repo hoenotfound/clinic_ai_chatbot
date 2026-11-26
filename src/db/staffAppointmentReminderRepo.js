@@ -67,6 +67,22 @@ const CONFIRMATION_HOLD_SQL=HOLD_SQL
               AND resolution.metadata->>'outcome'='booking_hold_resolved'
               AND resolution.created_at>=staff.created_at
           )`);
+// The model may discover a missed staff confirmation on an inbound turn.
+// Recheck that exact persisted inbound under the same conversation lock.
+const MODEL_CONFIRMATION_HOLD_SQL=CONFIRMATION_HOLD_SQL.replace(
+  "AND BTRIM(staff.content)=BTRIM($3)",`AND BTRIM(staff.content)=BTRIM($3)
+          AND EXISTS (
+            SELECT 1 FROM messages inbound
+            WHERE inbound.id=$4 AND inbound.contact_id=staff.contact_id
+              AND inbound.role='user' AND inbound.id>staff.id
+              AND inbound.whatsapp_customer_mutation IS NULL
+              AND inbound.is_forwarded IS DISTINCT FROM TRUE
+              AND NOT EXISTS (
+                SELECT 1 FROM messages later
+                WHERE later.contact_id=inbound.contact_id AND later.role='user'
+                  AND later.id>inbound.id
+              )
+          )`);
 const INVALIDATE_SQL=`
   INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
   SELECT reminder.lead_id,'updated','Staff edited or deleted appointment reminder; automated sales hold invalidated.',
@@ -92,4 +108,4 @@ const INVALIDATE_SQL=`
     )
   LIMIT 1
 `;
-module.exports={HOLD_SQL,CONFIRMATION_HOLD_SQL,INVALIDATE_SQL};
+module.exports={HOLD_SQL,CONFIRMATION_HOLD_SQL,MODEL_CONFIRMATION_HOLD_SQL,INVALIDATE_SQL};
