@@ -2816,7 +2816,7 @@ async function processIncomingMessage(
         promotions: clinicConfig.promotions,
       });
       if (continuity) {
-        const verified = await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id);
+        const verified = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
         if (verified?.pendingClinicalReview === false) {
           replyOverrideAudit.change("planNeutroReviewContinuation",reply,continuity.reply);
           reply = continuity.reply;
@@ -2848,9 +2848,7 @@ async function processIncomingMessage(
       const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (rm68AvailabilityAnswer) {
-        const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
-          contact.id, savedInbound.id
-        );
+        const reviewEvidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
         if (reviewEvidence?.pendingClinicalReview === false) {
           replyOverrideAudit.change("rm68AvailabilityAnswer",reply,rm68AvailabilityAnswer);
           reply = rm68AvailabilityAnswer;
@@ -2884,9 +2882,7 @@ async function processIncomingMessage(
         promotions: clinicConfig.promotions, omitInvitation:naturalReplyAuthority,
       });
       if (adminAnswer) {
-        const evidence = await contactsRepo.getTcmReviewEvidence(
-          contact.id, savedInbound.id
-        );
+        const evidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
         if (evidence?.pendingClinicalReview === false) {
           const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
             verifyLocationDraft(originalModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
