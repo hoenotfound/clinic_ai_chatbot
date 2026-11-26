@@ -89,6 +89,43 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     pool=new Pool({connectionString,options:"-c search_path="+schema,max:3});
     const activatedAt=new Date(Date.now()-21*60*60*1000).toISOString();
     const settings={activatedAt,triggerMode:"all",now:new Date()};
+    // Compare the indexed prefilter against the original contact-first
+    // selector, using precisely the same clock and original eligibility SQL.
+    const legacySql=repo.CANDIDATES_SQL.slice(repo.CANDIDATES_SQL.indexOf("\nSELECT\n c.id AS contact_id"))
+      .replace("FROM consent_seed seed\nJOIN contacts c ON c.id=seed.contact_id","FROM contacts c");
+    const assertSameCandidates=async(expected, overrides={})=>{
+      const opts={...settings,...overrides};
+      const bindings=[opts.activatedAt,opts.triggerMode,opts.now.toISOString(),
+        opts.pricingEnabled??false,opts.pricingActivation??null];
+      const actual=await repo.listCandidates(opts,pool);
+      const legacy=(await pool.query(legacySql,bindings)).rows;
+      assert.deepEqual(actual,legacy);
+      assert.equal(actual.length,expected);
+    };
+    await assertSameCandidates(1);
+    // A delayed provider timestamp must not be treated as a fresh inbound.
+    await pool.query("UPDATE messages SET source_created_at=now()-interval '25 hours' WHERE id=10");
+    await assertSameCandidates(0);
+    await pool.query("UPDATE messages SET source_created_at=NULL WHERE id=10");
+    // Step 3 without verified provider acceptance is not eligible.
+    await pool.query("UPDATE messages SET whatsapp_message_id=NULL WHERE id=12");
+    await assertSameCandidates(0);
+    await pool.query("UPDATE messages SET whatsapp_message_id='wamid.fu3' WHERE id=12");
+    // A historical anchor outside activation cannot seed a candidate.
+    await assertSameCandidates(0,{activatedAt:new Date(Date.now()-18*3600000).toISOString()});
+    // A newer inbound supersedes the original anchor, even though FU3 exists.
+    await pool.query("INSERT INTO messages(id,contact_id,role,content,created_at) VALUES(90,1,'user','New question',now())");
+    await assertSameCandidates(0);
+    await pool.query("DELETE FROM messages WHERE id=90");
+    // Deduplication must not change the single eligible candidate or limit.
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,
+      is_automated_follow_up,automated_follow_up_step,automated_follow_up_for_message_id,
+      whatsapp_accepted_at,whatsapp_message_id,delivery_status)
+      VALUES(91,1,'assistant','Earlier FU3',now()-interval '45 minutes',
+        true,3,11,now()-interval '40 minutes','wamid.earlier.fu3','delivered')`);
+    await assertSameCandidates(1);
+    await pool.query("DELETE FROM messages WHERE id=91");
+    await assertSameCandidates(1);
     // A lead who declined marketing must NEVER receive a new opt-in prompt.
     await pool.query("UPDATE leads SET marketing_consent='opted_out' WHERE id=1");
     assert.equal((await repo.listCandidates(settings,pool)).length,0);
