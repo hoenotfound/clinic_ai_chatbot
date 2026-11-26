@@ -229,3 +229,21 @@ test("branch correction distinguishes package choices from actual location choic
     assert.doesNotMatch(fixed.reply, /多个分行|哪一家分行|哪一个门店|哪个分店|哪家分行/u, reply);
   }
 });
+
+test("production mixed shorthand retains the configured address without duplicating it",()=>{
+ const input={customerText:"How much n location",reply:"The First Trial promotional price is RM388 😊",...configured,language:"en"};
+ const result=appendRequestedBusinessFacts(input);
+ assert.match(result,/RM388/u);
+ assert.match(result,/Address: C-12-6/u);
+ assert.equal(appendRequestedBusinessFacts({...input,reply:result}),result);
+ assert.equal(appendRequestedBusinessFacts({...input,customerText:"How much for pain at this location?"}),input.reply);
+});
+
+test("compound duration uses exact configured service duration and rejects package ambiguity",()=>{
+ const {configuredDurationAnswer}=require("../src/utils/verifiedPriceReply");
+ const service={name:"3D",duration:"约1小时30分钟"};
+ assert.match(configuredDurationAnswer("How much and how long?",service,"en",[{name:"Main offer"}]),/1 hour 30 minutes/);
+ assert.equal(configuredDurationAnswer("How much and how long?",service,"en",[{name:"Package A"}]),"");
+ assert.equal(configuredDurationAnswer("How long until results?",service,"en",[]),"");
+ assert.equal(configuredDurationAnswer("How much and how long?",{duration:"约2小时15分钟（仅首次体验）"},"en",[]),"");
+});

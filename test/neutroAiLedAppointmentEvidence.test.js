@@ -126,3 +126,22 @@ test("historical reconciliation is dry-run by default and never overwrites chang
   assert.equal((await reconcileStaffAppointment({...opts,apply:true})).status,"manual_review_required");
   assert.equal(updates.length,1);
 });
+
+test("historical reschedule dry run reports prior appointment and never writes without apply",async()=>{
+ const {reconcileStaffAppointment}=require("../src/services/staffAppointmentReconciliationService");
+ const date="2026-11-26T14:";
+ const prior_turns=[
+ ["assistant","Hi dear 11/12- is Selangor pH ☺️","14:39"],
+ ["assistant","We work half day ya\nCan u make it 12 pm? ☺️","15:22"],
+ ["user","Can, I can go earlier too","18:16"],
+ ["user","Pls let me know if wanna change to earlier","18:48"],
+ ["assistant","I got Customers at 10am so I will arrange 12pm to u ya ☺️💚","27:37"]
+ ].map(([role,content,time],i)=>({id:i+1,role,content,created_at:date+time+"Z",sent_by_username:role==="assistant"?"Staff":null,whatsapp_message_id:"wamid.test"+i}));
+ const row={lead_id:1,contact_id:2,appointment_status:"set",appointment_at:"2026-11-26T04:30:00Z",is_closed:false,
+ updated_at:date+"00:00Z",staff_message_id:6,staff_text:"C u on 11/12- 12pm",staff_at:date+"27:52Z",latest_message_id:7,prior_turns,
+ later_turns:[{id:7,role:"user",content:"Ok. Thanks ya 😊",created_at:date+"38:41Z"}]};
+ const report=await reconcileStaffAppointment({database:{query:async()=>({rows:[row]})},pipeline:{updateLead:async()=>{throw Error("dry run wrote");}},config,leadId:1,staffMessageId:6,now:new Date(date+"45:00Z")});
+ assert.equal(report.status,"verified_dry_run");
+ assert.equal(report.appointmentAt,"2026-12-11T04:00:00.000Z");
+ assert.equal(report.previousAppointmentAt,row.appointment_at);
+});

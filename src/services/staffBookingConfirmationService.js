@@ -2,7 +2,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
-const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
+const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL, RESCHEDULE_DISCREPANCY_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("./staffAppointmentAcceptanceService");
@@ -236,6 +236,45 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  return staffOfferMatches(previous,appointmentAt);
 }
 
+// Split scheduling exchange: a verified staff date, adjacent staff time
+// offer, customer acceptance, and a complete final staff slot. Do not infer
+// from a farewell alone. Every source is rechecked before a CRM update.
+function isSplitStaffRescheduleCorroborated(staffText,appointmentAt,turns=[],staffAt){
+ const final=String(staffText||"").trim();
+ if(!/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(final)||
+   /[?？]|\b(?:if|maybe|cancel|not|pending|unless)\b/iu.test(final))return false;
+ const at=Date.parse(staffAt),target=Date.parse(appointmentAt);
+ if(!Number.isFinite(at)||!Number.isFinite(target)||!Array.isArray(turns))return false;
+ const relevant=turns.map(t=>({...t,at:Date.parse(t.created_at)}))
+  .filter(t=>Number.isFinite(t.at)&&t.at<at&&at-t.at<=30*60000)
+  .sort((a,b)=>a.at-b.at||Number(a.id)-Number(b.id));
+ const customer=t=>t?.role==="user"&&!t.is_forwarded&&!t.whatsapp_customer_mutation&&!t.media_mime_type&&!t.media_url;
+ const normalized=t=>String(t?.content||"").normalize("NFKC").trim();
+ const local=new Date(target+8*3600000);
+ const minute=local.getUTCHours()*60+local.getUTCMinutes();
+ const datePattern=/\b(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/gu;
+ const targetDate=t=>{
+   const ds=[...normalized(t).matchAll(datePattern)];
+   return ds.length===1&&Number(ds[0][1])===local.getUTCDate()&&Number(ds[0][2])===local.getUTCMonth()+1&&
+    (!ds[0][3]||Number(ds[0][3])===local.getUTCFullYear());
+ };
+ const clean=s=>s.replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]/gu,"").trim();
+ const accept=t=>customer(t)&&/^(?:can|yes(?:,\s*can)?|ok(?:ay)?|sure|boleh|可以|好的?|没问题|沒問題)(?:[,，.!！]\s*)?(?:i can (?:go|come) earlier too)?[.!！。]*$/iu.test(clean(normalized(t)));
+ const optionalEarlier=t=>customer(t)&&/^(?:pls|please)\s+let\s+me\s+know\s+if\s+(?:you\s+)?(?:wanna|want to)\s+change\s+to\s+earlier[.!]*$/iu.test(clean(normalized(t)));
+ const offer=t=>trustedStaffTurn(t)&&/\b(?:can (?:u|you) make it|can (?:u|you) come|would (?:you|u) be able to come)\b/iu.test(normalized(t))&&
+  bookingTimeMinutes(normalized(t))===minute&&!/\b(?:not|cannot|cancel|or|maybe)\b/iu.test(normalized(t));
+ const reaffirm=t=>trustedStaffTurn(t)&&
+  new RegExp("\\b(?:i|we)\\s+will\\s+arrange\\s+"+String((local.getUTCHours()%12)||12)+"(?::"+String(local.getUTCMinutes()).padStart(2,"0")+")?\\s*"+(local.getUTCHours()>=12?"pm":"am")+"\\s+(?:to|for)\\s+(?:u|you)\\b","iu").test(normalized(t))&&
+  (local.getUTCMinutes()===0||normalized(t).includes(":"+String(local.getUTCMinutes()).padStart(2,"0")));
+ for(let i=relevant.length-2;i>=1;i--){
+   if(!offer(relevant[i])||!trustedStaffTurn(relevant[i-1])||!targetDate(relevant[i-1])||
+     /[?？]|\b(?:cancel|not available|maybe)\b/iu.test(normalized(relevant[i-1]))||
+     relevant[i].at-relevant[i-1].at>5*60000||!accept(relevant[i+1]))continue;
+   const rest=relevant.slice(i+2);
+   if(rest.every(t=>optionalEarlier(t)||reaffirm(t))&&rest.some(reaffirm))return true;
+ }
+ return false;
+}
 function isStaffVisitAcknowledgement(message) {
   const value = String(message || "").trim();
   if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
@@ -270,15 +309,17 @@ function createStaffBookingConfirmationService({
     const terseSlot=!strictSlot&&config.businessType==="tcm_clinic"
       ?parseTerseStaffConfirmedSlot(staffText,now()):null;
     let appointmentAt=strictSlot;
+    let recordedProof=null;
+    const neutro=config.businessType==="tcm_clinic"&&/^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||""))&&config.aiAppointmentRecognition!==false;
     // A routine staff reminder is evidence of a staff-managed visit, not
     // permission to fabricate a CRM appointment or send a booking alert.
     // The provider-authenticated original message ID is required for a
     // recoverable, replay-safe follow-up hold.
-    const persistStaffHold=async(confirmation=false,sourceMessageId=messageId)=>{
+    const persistStaffHold=async(confirmation=false,sourceMessageId=messageId,discrepancySlot=null)=>{
       const sourceId=Number(sourceMessageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
-      const holdSql=confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
-      const args=[contactId,sourceId,staffText];
+      const holdSql=discrepancySlot?RESCHEDULE_DISCREPANCY_SQL:confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
+      const args=discrepancySlot?[contactId,sourceId,staffText,discrepancySlot]:[contactId,sourceId,staffText];
       // Serialize duplicate webhook deliveries on the existing conversation
       // lock. The NOT EXISTS check then becomes race-safe without a migration.
       if(typeof database.connect === "function"){
@@ -299,14 +340,31 @@ function createStaffBookingConfirmationService({
       }
       return null;
     };
+    // A colloquial staff farewell with a full future slot is sufficient to
+    // raise a discrepancy, never sufficient to auto-confirm a new booking.
+    const farewellSlot=neutro&&/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(String(staffText||"").trim())&&
+      !/[?？]/u.test(staffText) ? verifiedStaffSlot(staffText,now(),now(),config.hours) : null;
+    if(farewellSlot){
+      const lead=await pipeline.getActiveLeadForContact(contactId);
+      if(lead?.appointment_status==="set"&&!lead.is_closed&&lead.appointment_at&&
+        new Date(lead.appointment_at).toISOString()!==farewellSlot&&Number.isSafeInteger(Number(messageId))&&Number(messageId)>0){
+        const proof=await readStaffProof();
+        if(proof&&isSplitStaffRescheduleCorroborated(staffText,farewellSlot,proof.prior_turns,proof.created_at)){
+          const changed=await pipeline.updateLead(lead.id,{appointmentStatus:"set",appointmentAt:farewellSlot},"Verified staff reschedule",{
+            expectedBookingRecovery:{contactId,staffMessageId:proof.id,staffText,latestMessageId:proof.id,
+              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at,
+              priorEvidence:proof.prior_turns.map(t=>({id:t.id,content:t.content,mutation:t.whatsapp_customer_mutation??null}))}});
+          if(changed)return changed;
+        }
+        return persistStaffHold(true,messageId,farewellSlot);
+      }
+      // For an unbooked lead retain the original confirmation review path.
+      if(!lead?.is_closed&&lead&&!["set","visited","cancelled"].includes(lead.appointment_status))
+        return persistStaffHold(true,messageId);
+      return null;
+    }
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) return persistStaffHold();
-    if(!strictSlot) {
-      const contextualCandidate=config.businessType==="tcm_clinic" &&
-         /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
-       if(!terseSlot&&!contextualCandidate&&!isStaffVisitAcknowledgement(staffText))return null;
-      // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
-      // provider-authenticated staff evidence and independent customer
-      // agreement on the same date and time. If missing, hold for review.
+    async function readStaffProof(){
       const proof=await database.query(
         `SELECT staff.id,staff.created_at,
            COALESCE((SELECT jsonb_agg(to_jsonb(prior_turn))
@@ -335,8 +393,18 @@ function createStaffBookingConfirmationService({
          ORDER BY staff.created_at DESC,staff.id DESC LIMIT 1`,
         [contactId,staffText,messageId]
       );
-      const recorded=proof.rows?.[0];
+      return proof.rows?.[0]||null;
+    }
+    if(!strictSlot) {
+      const contextualCandidate=config.businessType==="tcm_clinic" &&
+         /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
+       if(!terseSlot&&!contextualCandidate&&!isStaffVisitAcknowledgement(staffText))return null;
+      // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
+      // provider-authenticated staff evidence and independent customer
+      // agreement on the same date and time. If missing, hold for review.
+      const recorded=await readStaffProof();
       if(!recorded?.id)return null;
+      recordedProof=recorded;
       if(terseSlot&&isTerseBookingCorroborated(
         staffText,terseSlot,recorded.prior_turns,recorded.created_at)){
         appointmentAt=terseSlot;
@@ -348,7 +416,10 @@ function createStaffBookingConfirmationService({
         // Staff explicitly confirmed a visit but the exact slot lacks enough
         // corroboration. Keep sales paused even if booking-ready hours cannot
         // yet validate the full preference. This never creates a CRM booking.
-        if(config.businessType==="tcm_clinic"&&(contextualCandidate||terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim())))await persistStaffHold(true,recorded.id);
+        if(config.businessType==="tcm_clinic"&&(contextualCandidate||terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))){
+          await persistStaffHold(true,recorded.id);
+          if(neutro&&terseSlot)await persistStaffHold(true,recorded.id,terseSlot);
+        }
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
           activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
@@ -363,6 +434,26 @@ function createStaffBookingConfirmationService({
     if(lead.appointment_status==="set"){
       if(lead.appointment_at &&
          new Date(lead.appointment_at).getTime()===new Date(appointmentAt).getTime())return lead;
+      if(neutro){
+        if(!recordedProof&&Number.isSafeInteger(Number(messageId))&&Number(messageId)>0)
+          recordedProof=await readStaffProof();
+        const verified=verifiedStaffSlot(staffText,new Date(recordedProof?.created_at||now()),now(),config.hours);
+        // Automatic replacement requires explicit staff confirmation, an
+        // independently corroborated exact customer agreement, a provider
+        // source and compare-and-set protection against a changed CRM row.
+        if(verified===appointmentAt&&recordedProof&&
+          /^(?:confirm(?:ed)?|comfirm(?:ed)?)\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim())&&
+          isTerseBookingCorroborated(staffText,appointmentAt,recordedProof.prior_turns,recordedProof.created_at)){
+          const changed=await pipeline.updateLead(lead.id,{appointmentStatus:"set",appointmentAt},"Verified staff reschedule",{
+            expectedBookingRecovery:{contactId,staffMessageId:recordedProof.id,staffText,latestMessageId:recordedProof.id,
+              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at,
+              priorEvidence:(Array.isArray(recordedProof.prior_turns)?recordedProof.prior_turns:[]).map(t=>({
+                id:t.id,content:t.content,mutation:t.whatsapp_customer_mutation??null
+              }))}});
+          if(changed)return changed;
+        }
+        if(verified)await persistStaffHold(true,recordedProof?.id||messageId,verified);
+      }
       return null;
     }
     // For a new TCM booking, require a future slot inside configured hours.
@@ -407,6 +498,7 @@ module.exports = {
   parseNaturalStaffConfirmedSlot,
   isContextualStaffBookingConfirmed,
   isTerseBookingCorroborated,
+  isSplitStaffRescheduleCorroborated,
   isStaffVisitAcknowledgement,
   isProactiveAppointmentReminder,
   createStaffBookingConfirmationService,

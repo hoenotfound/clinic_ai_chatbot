@@ -72,6 +72,8 @@ function buildConversationOutputSchema() {
       appointmentIntent: { enum: ["accepted", "confirmed", null] },
       appointmentStaffEvidence: nullableString(),
       businessLocationOnly: { type: "boolean" },
+      salesFollowUpIntent: { enum: ["declined","deferred","reopened",null] },
+      salesFollowUpEvidence: nullableString(),
       projectLocation: nullableString(),
       projectSummary: nullableString(),
       nextStep: {
@@ -96,6 +98,8 @@ function buildConversationOutputSchema() {
       "appointmentIntent",
       "appointmentStaffEvidence",
       "businessLocationOnly",
+      "salesFollowUpIntent",
+      "salesFollowUpEvidence",
       "projectLocation",
       "projectSummary",
       "nextStep",

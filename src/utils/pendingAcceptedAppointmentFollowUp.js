@@ -6,6 +6,25 @@ const clinicConfig = require("../config/clinicConfig");
 function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
   if (!/^[a-z][a-z0-9_]*$/iu.test(contactAlias)) throw new Error("Invalid contact SQL alias");
   if (!["aesthetic_clinic","tcm_clinic"].includes(clinicConfig.businessType)) return "TRUE";
+  const neutro=clinicConfig.businessType==="tcm_clinic" &&
+    /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||"")) &&
+    clinicConfig.aiPricingIntentMode==="enabled";
+  // Shared candidate and final-send eligibility. Only the most recent valid
+  // customer decision on the current lead matters; deletion/edit invalidates
+  // its source. Reopening never bypasses existing opt-out or booking holds.
+  const salesState=neutro ? ` AND COALESCE((
+    SELECT a.metadata->>'state'
+    FROM lead_activities a JOIN messages source
+      ON source.id=CASE WHEN a.metadata->>'inboundMessageId' ~ '^[1-9][0-9]{0,17}$'
+        THEN (a.metadata->>'inboundMessageId')::bigint END
+      AND source.contact_id=${contactAlias}.id
+    WHERE a.lead_id=(SELECT l.id FROM leads l WHERE l.contact_id=${contactAlias}.id
+      ORDER BY l.created_at DESC,l.id DESC LIMIT 1)
+      AND a.metadata->>'outcome'='customer_sales_followup_state'
+      AND source.role='user' AND NULLIF(to_jsonb(source)->>'whatsapp_customer_mutation','') IS NULL
+      AND COALESCE((to_jsonb(source)->>'is_forwarded')::boolean,false)=false
+    ORDER BY source.id DESC,a.id DESC LIMIT 1
+  ),'reopened') NOT IN ('declined','deferred')` : "";
   return `NOT EXISTS (
     SELECT 1 FROM leads booking_lead
     LEFT JOIN lead_activities booking_acceptance ON booking_acceptance.lead_id=booking_lead.id
@@ -68,6 +87,6 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
               )
             )
           )))
-  )`;
+  )${salesState}`;
 }
 module.exports = { pendingAcceptedAppointmentAllowedSql };

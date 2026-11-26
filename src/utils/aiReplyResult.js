@@ -169,7 +169,7 @@ function containsInternalAiScaffolding(value) {
   return (
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
-    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|appointmentProposal|appointmentIntent|appointmentStaffEvidence|businessLocationOnly|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|appointmentProposal|appointmentIntent|appointmentStaffEvidence|businessLocationOnly|salesFollowUpIntent|salesFollowUpEvidence|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
     || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready|no_reply)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
@@ -351,6 +351,11 @@ function parseStructuredReply(raw) {
     }
   }
   if (typeof parsed.businessLocationOnly === "boolean") details.businessLocationOnly = parsed.businessLocationOnly;
+  if (["declined","deferred","reopened"].includes(parsed.salesFollowUpIntent) &&
+      typeof parsed.salesFollowUpEvidence==="string" && parsed.salesFollowUpEvidence.trim().length<=500) {
+    details.salesFollowUpIntent=parsed.salesFollowUpIntent;
+    details.salesFollowUpEvidence=parsed.salesFollowUpEvidence.trim();
+  }
   if (isProjectMode && projectLocation) details.projectLocation = projectLocation;
   if (isProjectMode && projectSummary) details.projectSummary = projectSummary;
   if (isProjectMode && nextStep) details.nextStep = nextStep;

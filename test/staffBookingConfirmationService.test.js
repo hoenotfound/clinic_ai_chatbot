@@ -339,3 +339,37 @@ test("real Neutro short staff confirmation needs recent customer slot and matchi
    appointmentStatus:"set",appointmentAt:"2026-11-24T04:00:00.000Z",
  }}]);
 });
+
+test("observed staff-only reschedule farewell raises a durable discrepancy, not a guessed booking",async()=>{
+ const now=new Date("2026-11-26T14:27:52Z");
+ const calls=[];
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",hours:{weekly:{
+  monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},
+  thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},
+  saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}}}};
+ const service=createStaffBookingConfirmationService({config,now:()=>now,
+  database:{query:async(sql,args)=>{calls.push({sql,args});return {rows:[]};}},
+  pipeline:{getActiveLeadForContact:async()=>({id:1,appointment_status:"set",appointment_at:"2026-11-26T04:30:00Z",is_closed:false}),
+   updateLead:async()=>{throw Error("must not overwrite");}}});
+ assert.equal(await service(9232,"C u on 11/12- 12pm",{providerAccepted:true,messageId:24706}),null);
+ assert.equal(calls.length,2);
+ assert.match(calls[1].sql,/proposedAppointmentAt/);
+ assert.match(calls[1].sql,/l.appointment_status='set'/);
+ assert.deepEqual(calls[1].args,[9232,24706,"C u on 11/12- 12pm","2026-12-11T04:00:00.000Z"]);
+});
+
+test("split staff scheduling evidence matches the actual December reschedule",()=>{
+ const {isSplitStaffRescheduleCorroborated}=require("../src/services/staffBookingConfirmationService");
+ const turns=[
+ ["assistant","Hi dear 11/12- is Selangor pH ☺️","14:14:39"],
+ ["assistant","We work half day ya\nCan u make it 12 pm? ☺️","14:15:22"],
+ ["user","Can, I can go earlier too","14:18:16"],
+ ["user","Pls let me know if wanna change to earlier","14:18:48"],
+ ["assistant","I got Customers at 10am so I will arrange 12pm to u ya ☺️💚","14:27:37"]
+ ].map(([role,content,time],id)=>({id:id+1,role,content,created_at:"2026-11-26T"+time+"Z",sent_by_username:role==="assistant"?"Staff":null,whatsapp_message_id:"wamid.test"+id}));
+ const final="C u on 11/12- 12pm",slot="2026-12-11T04:00:00.000Z",at="2026-11-26T14:27:52Z";
+ assert.equal(isSplitStaffRescheduleCorroborated(final,slot,turns,at),true);
+ assert.equal(isSplitStaffRescheduleCorroborated(final,slot,turns.filter(t=>t.id!==3),at),false);
+ assert.equal(isSplitStaffRescheduleCorroborated(final,slot,turns.map(t=>t.id===3?{...t,content:"Cannot make it"}:t),at),false);
+ assert.equal(isSplitStaffRescheduleCorroborated(final,slot,turns.map(t=>t.id===1?{...t,is_forwarded:true}:t),at),false);
+});

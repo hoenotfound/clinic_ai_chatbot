@@ -192,7 +192,7 @@ const finalLocationSection = serverSection(
 );
 test("real final-send guard replaces Puchong on both sender paths", async () => {
   for (const sender of [1, 2]) {
-    const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+    const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, acceptedSalesDecision:null, 
       flagged:false, bookingReady:false, verifiedBookingForHours:null, keywordReason:null,
       staffPriceConflict:false, rejectedModelPricing:false, approvedPricingDecision:null,
       marketingStopQuestion:null, urgentSafety:false,
@@ -395,7 +395,7 @@ test("actual final boundary retains an unchanged verified AI reply and measures 
     const good="我们的地址："+PJ[0].address+" 😊";
     for(const [original,final,expectedDecision] of [[good,good,"preserve"],["我们有多个分行。",good,"preserve"],["我们在 Puchong。"+PJ[0].address,good,"preserve"]]){
       const logs=[];
-      const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+      const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, acceptedSalesDecision:null, 
         flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,
         staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,
         text:"你们的店是在哪？",reply:final,originalModelReply:original,modelLocationOnly:false,
@@ -451,7 +451,7 @@ test("actual final boundary preserves mixed and unrelated answers even with erro
     ["你们店在哪里？一次需要多久？","我们在 PJ。一次约40分钟。",true],
     ["Can I come Tuesday at 3pm?","We can check your preferred time with the team.",true],
   ]){
-    const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
+    const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, acceptedSalesDecision:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
     const result=await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\nreturn {reply,reviewContinuationTextOnly};\n})()",context);
     assert.equal(result.reply,reply);
     assert.equal(result.reviewContinuationTextOnly,false);
@@ -471,4 +471,44 @@ test("AI-led information recovery preserves language-checked location and never 
   assert.notEqual(wrong.reply,checkedDraft);
   for(const pending of [true,null])assert.equal((await runRealRecoveryBoundary({...base,pending,checkedDraft:valid})).flagged,true);
   assert.equal((await runRealRecoveryBoundary({...base,pending:false,reviewType:"clinical",checkedDraft:valid})).flagged,true);
+});
+
+
+test("final send boundary reopens sales only for an independently approved current enquiry",async()=>{
+  const {salesFollowUpIntent}=require("../src/utils/neutroAiReplyAuthority");
+  const {containsApprovedPriceAmount}=require("../src/utils/verifiedPriceReply");
+  const {appendRequestedBusinessFacts}=require("../src/utils/verifiedPricingBusinessFacts");
+  const {safeServiceFromCustomer}=require("../src/utils/initialOfferReplyGuard");
+  const question="How much?";
+  const acceptedSalesDecision={structured:true,outcome:"normal",priceQuery:true,details:{
+    salesFollowUpIntent:"reopened",salesFollowUpEvidence:question}};
+  for(const [approved,allowSend,review,expected] of [
+    [true,true,false,1],[false,true,false,0],[true,false,false,0],[true,true,true,0],
+  ]){
+    const calls=[];
+    const reply="The current price is RM388.";
+    const context={
+      naturalReplyAuthority:true,modelPricingIntent:null,acceptedSalesDecision,
+      routineReviewTextOnlyState:require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState,
+      routineReviewRecoveryEligible:require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible,
+      replyOverrideAudit:require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+      flagged:false,reviewRequired:review,bookingReady:false,verifiedBookingForHours:null,
+      keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,
+      approvedPricingDecision:approved?{treatment:"脉冲波调理",prices:[{name:"Main offer",price:"RM388"}]}:null,
+      twoTreatmentQuote:null,marketingStopQuestion:null,urgentSafety:false,text:question,reply,
+      originalModelReply:reply,modelLocationOnly:false,channel:"whatsapp",mediaLanguage:"en",
+      reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,
+      clearReplyLanguageMismatch:()=>false,priceQuery:true,packageQuery:false,serviceQuery:false,serviceQuerySource:null,
+      contact:{id:24,whatsapp_sender_id:1},savedInbound:{id:999},console:{info(){},warn(){}},
+      clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",aiPricingIntentMode:"enabled",branches:PJ,services:[{name:"脉冲波调理"}],serviceAliases:[]},
+      isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,
+      confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,
+      recoveryPromptProof:null,recoveryOther:false,canSendAutomatedReply:()=>allowSend,
+      salesFollowUpIntent,safeServiceFromCustomer,containsApprovedPriceAmount,appendRequestedBusinessFacts,
+      persistSalesFollowUpIntent:async decision=>{calls.push(decision);return true;},
+    };
+    await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\n})()",context);
+    assert.equal(calls.length,expected);
+    if(expected)assert.equal(calls[0].intent,"reopened");
+  }
 });

@@ -1,7 +1,7 @@
 "use strict";
 // One-off reconciliation. No worker, no provider calls, no automatic CRM
 // writes. An operator must specify the exact lead and authenticated message.
-const {verifiedStaffSlot,isTerseBookingCorroborated}=require("./staffBookingConfirmationService");
+const {verifiedStaffSlot,isTerseBookingCorroborated,isSplitStaffRescheduleCorroborated}=require("./staffBookingConfirmationService");
 const {appointmentRecognitionEnabled}=require("../utils/aiLedAppointmentEvidence");
 
 const RECOVERY_SQL=`
@@ -23,7 +23,7 @@ SELECT l.id AS lead_id,l.contact_id,l.appointment_status,l.appointment_at,l.is_c
            ORDER BY m.id LIMIT 101) turn),'[]'::jsonb) AS later_turns
 FROM leads l JOIN messages staff ON staff.contact_id=l.contact_id
 WHERE l.id=$1 AND staff.id=$2 AND l.is_closed=false
-  AND COALESCE(l.appointment_status,'none')='none' AND l.appointment_at IS NULL
+  AND ((COALESCE(l.appointment_status,'none')='none' AND l.appointment_at IS NULL) OR (l.appointment_status='set' AND l.appointment_at IS NOT NULL))
   AND staff.created_at>=l.created_at AND staff.created_at>=NOW()-INTERVAL '30 days'
   AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
   AND staff.sent_by_username NOT IN ('Follow-up automation','Consent request automation')
@@ -37,15 +37,20 @@ WHERE l.id=$1 AND staff.id=$2 AND l.is_closed=false
     AND a.created_at>=staff.created_at AND a.metadata->>'outcome'='booking_hold_resolved')`;
 
 function reviewRecovery(row,config,now=new Date()){
-  if(!row||!appointmentRecognitionEnabled(config)||row.is_closed||
-    !["none",null].includes(row.appointment_status)||row.appointment_at)return null;
+  if(!row||!appointmentRecognitionEnabled(config)||row.is_closed)return null;
+  const reschedule=row.appointment_status==="set"&&Boolean(row.appointment_at);
+  if(!reschedule&&(!["none",null].includes(row.appointment_status)||row.appointment_at))return null;
   const text=String(row.staff_text||"");
   // Historical auto-write requires actual staff confirmation and independent
   // customer agreement. Never infer it from an assistant or a reminder alone.
-  if(!/^(?:confirm(?:ed)?|comfirm(?:ed)?)\s+(?:appointment|booking)\b|(?:预约|預約)(?:已确认|已確認|确认成功|確認成功)/iu.test(text.trim())||
+  const explicit=/^(?:confirm(?:ed)?|comfirm(?:ed)?)\s+(?:appointment|booking)\b|(?:预约|預約)(?:已确认|已確認|确认成功|確認成功)/iu.test(text.trim());
+  const split=reschedule&&/^(?:c\s*u|see\s+(?:you|u))\s+on\b/iu.test(text.trim());
+  if((!explicit&&!split)||
     /[?？]|\b(?:not|maybe|pending|if|cancel)\b|待确认|待確認|取消|尚未/iu.test(text))return null;
   const slot=verifiedStaffSlot(text,new Date(row.staff_at),now,config.hours);
-  if(!slot||!isTerseBookingCorroborated(text,slot,row.prior_turns,row.staff_at))return null;
+  if(!slot||(reschedule&&new Date(row.appointment_at).toISOString()===slot)||
+    !(explicit&&isTerseBookingCorroborated(text,slot,row.prior_turns,row.staff_at)||
+      split&&isSplitStaffRescheduleCorroborated(text,slot,row.prior_turns,row.staff_at)))return null;
   if(!Array.isArray(row.later_turns)||row.later_turns.length>100)return null;
   for(const t of row.later_turns){
     if(t.role!=="user"&&!t.sent_by_username)continue;
@@ -58,14 +63,15 @@ function reviewRecovery(row,config,now=new Date()){
     if(!newer&&/(?:\b\d{1,2}[/-]\d{1,2}\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|星期[一二三四五六日天]|(?:上午|下午|早上|晚上)\s*\d)/iu.test(value))return null;
   }
   return {leadId:Number(row.lead_id),contactId:Number(row.contact_id),staffMessageId:Number(row.staff_message_id),appointmentAt:slot,
-    expectedBookingRecovery:{contactId:Number(row.contact_id),staffMessageId:Number(row.staff_message_id),staffText:text,latestMessageId:Number(row.latest_message_id),updatedAt:row.updated_at}};
+    expectedBookingRecovery:{contactId:Number(row.contact_id),staffMessageId:Number(row.staff_message_id),staffText:text,latestMessageId:Number(row.latest_message_id),updatedAt:row.updated_at,
+      ...(reschedule?{expectedAppointmentAt:row.appointment_at,priorEvidence:[...row.prior_turns,...row.later_turns].map(t=>({id:t.id,content:t.content,mutation:t.whatsapp_customer_mutation??null}))}: {})}};
 }
 async function reconcileStaffAppointment({database,pipeline,config,leadId,staffMessageId,apply=false,now=new Date()}={}){
   if(![leadId,staffMessageId].every(id=>Number.isSafeInteger(id)&&id>0))throw new TypeError("Exact lead and staff message IDs required");
   const result=await database.query(RECOVERY_SQL,[leadId,staffMessageId]);
   const plan=reviewRecovery(result.rows[0],config,now);
   if(!plan)return {status:"manual_review_required"};
-  const summary={leadId:plan.leadId,staffMessageId:plan.staffMessageId,appointmentAt:plan.appointmentAt};
+  const summary={leadId:plan.leadId,staffMessageId:plan.staffMessageId,appointmentAt:plan.appointmentAt,...(plan.expectedBookingRecovery.expectedAppointmentAt?{previousAppointmentAt:plan.expectedBookingRecovery.expectedAppointmentAt}:{})};
   if(!apply)return {status:"verified_dry_run",...summary};
   const updated=await pipeline.updateLead(leadId,{appointmentStatus:"set",appointmentAt:plan.appointmentAt},
     "Verified staff appointment reconciliation",{expectedBookingRecovery:plan.expectedBookingRecovery});

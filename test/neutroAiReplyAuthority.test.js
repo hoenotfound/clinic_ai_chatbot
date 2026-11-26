@@ -75,3 +75,57 @@ test("AI-led location fallback supplies only verified branch facts without a scr
     assert.doesNotMatch(actual.reply,/\?|？/);
   }
 });
+
+test("model sales decisions require current evidence; reopening requires a genuine enquiry",()=>{
+ const {salesFollowUpIntent}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+ const decide=(text,state,extra={},verifiedReopen=false)=>salesFollowUpIntent({config,customerText:text,verifiedReopen,parsed:{
+   structured:true,outcome:"normal",details:{salesFollowUpIntent:state,salesFollowUpEvidence:text},...extra}});
+ assert.equal(decide("哦！太远了","declined"),"declined");
+ assert.equal(decide("等确定了，我再联系你","deferred"),"deferred");
+ assert.equal(decide("Ok","declined"),null);
+ assert.equal(decide("How much?","reopened",{priceQuery:true}),null);
+ assert.equal(decide("How much?","reopened",{priceQuery:true},true),"reopened");
+ assert.equal(decide("Thank you","reopened"),null);
+ assert.equal(decide("Too far, how much?","declined",{priceQuery:true}),null);
+ assert.equal(decide("太远了","declined",{details:{salesFollowUpIntent:"declined",salesFollowUpEvidence:"old"}}),null);
+});
+test("social OK and smile can end a delivered explicit closing, never an open invitation",()=>{
+ const {canHonorNoReply}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+ const check=(text,prior)=>canHonorNoReply({config,parsed:{structured:true,outcome:"no_reply",details:{}},customerText:text,
+   history:[{role:"assistant",content:prior,pricingDeliveredBotMessage:true},{role:"user",content:text}]});
+ assert.equal(check("Ok","好的，祝你有美好的一天，有过来随时找我们哦 😊"),true);
+ assert.equal(check("😄","随时欢迎你～祝你顺心！"),true);
+ assert.equal(check("Ok","你想安排预约吗？"),false);
+ assert.equal(check("Ok","我们的门店在PJ。"),false);
+ assert.equal(check("😄","请问哪天方便，祝你顺心"),false);
+});
+
+test("a second smile after a suppressed OK still closes, without skipping a new request",()=>{
+ const {canHonorNoReply}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+ const history=[{role:"assistant",content:"随时欢迎你～祝你顺心！",pricingDeliveredBotMessage:true},
+ {role:"user",content:"Ok"},{role:"user",content:"😄"}];
+ const args={config,parsed:{structured:true,outcome:"no_reply",details:{}},customerText:"😄",history};
+ assert.equal(canHonorNoReply(args),true);
+ assert.equal(canHonorNoReply({...args,history:[history[0],{role:"user",content:"How much?"},history[2]]}),false);
+});
+
+test("closure never bypasses open booking or payment restrictions",()=>{
+ const {canHonorNoReply}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+ for(const prior of ["You can arrange an appointment anytime, take care","随时欢迎你来预约","Feel free to contact us for booking"]){
+  assert.equal(canHonorNoReply({config,parsed:{structured:true,outcome:"no_reply",details:{}},customerText:"Ok",
+   history:[{role:"assistant",content:prior,pricingDeliveredBotMessage:true},{role:"user",content:"Ok"}]}),false,prior);
+ }
+});
+test("sales preference write locks conversation, accepts older decisions and is idempotent by source",async()=>{
+ const {persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL}=require("../src/utils/neutroAiReplyAuthority");
+ const calls=[];const db={connect:async()=>({query:async(sql,args)=>{calls.push({sql,args});return {rows:sql===SALES_STATE_INSERT_SQL?[{id:1}]:[]};},release(){}})};
+ assert.equal(await persistSalesFollowUpIntent({database:db,contactId:2,inboundId:3,customerText:"Too far",intent:"declined"}),true);
+ assert.equal(calls[0].sql,"BEGIN");assert.match(calls[1].sql,/pg_advisory_xact_lock/);
+ assert.doesNotMatch(SALES_STATE_INSERT_SQL,/newer\.id>inbound\.id/);
+ assert.match(SALES_STATE_INSERT_SQL,/existing\.metadata->>'inboundMessageId'/);
+ assert.equal(calls.at(-1).sql,"COMMIT");
+});
