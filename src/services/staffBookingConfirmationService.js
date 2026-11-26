@@ -5,11 +5,41 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
-const {isBriefAcceptance}=require("./staffAppointmentAcceptanceService");
+const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("./staffAppointmentAcceptanceService");
+const {detectDate,localParts,parseClockPreference,intervals}=require("../utils/appointmentHoursGuard");
 
 // Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
 // proposed time, "Ok", or a date without a year is never an auto-confirmation.
+// Calendar validation is separate from model intent. Require one future
+// concrete slot (not a range or a choice), and check clinic hours when known.
+function verifiedStaffSlot(text,sourceAt,now=sourceAt,hours,{allowUnconfigured=false}={}){
+ const anchor=localParts(sourceAt);
+ if(!anchor)return null;
+ const date=detectDate(text,anchor.date);
+ const clock=parseClockPreference(text);
+ if(!date?.date||date.ambiguous||clock.invalid||clock.range||clock.times.length!==1)return null;
+ const minute=clock.times[0];
+ const instant=Date.parse(date.date+"T00:00:00+08:00")+minute*60000;
+ if(!Number.isFinite(instant)||instant<=new Date(now).getTime())return null;
+ const open=intervals(hours,new Date(date.date+"T12:00:00Z").getUTCDay());
+ if(open===null&&!allowUnconfigured||open!==null&&!open.some(([a,b])=>minute>=a&&minute<b))return null;
+ return new Date(instant).toISOString();
+}
+function trustedStaffTurn(t){
+ return t?.role==="assistant"&&!!t.sent_by_username&&
+  !["Follow-up automation","Consent request automation"].includes(t.sent_by_username)&&
+  t.is_forwarded!==true&&t.is_automated_follow_up!==true&&!t.whatsapp_customer_mutation&&
+  !t.media_mime_type&&!t.media_url&&!["failed","unknown","cancelled"].includes(t.delivery_status)&&
+  // Older isolated unit fixtures omit the column; production always selects it.
+  (!Object.hasOwn(t,"whatsapp_message_id")||String(t.whatsapp_message_id||"").startsWith("wamid."));
+}
+function staffOfferMatches(t,appointmentAt){
+ if(!trustedStaffTurn(t)||!hasSpecificStaffTimeOffer(t.content)&&
+  !/\b(?:can\?|can\s*[?？])|(?:可以|方便)[?？]/iu.test(String(t.content||"")))return false;
+ if(/\b(?:not available|unavailable|cannot|can['’]t|cancel|fully booked)\b|不能|没空|沒空|不可以|取消|已满|已滿/iu.test(String(t.content||"")))return false;
+ return verifiedStaffSlot(t.content,new Date(t.at),new Date(t.at),null,{allowUnconfigured:true})===appointmentAt;
+}
 function parseStaffConfirmedSlot(message, now = new Date()) {
   const text = String(message || "").trim();
   if (!text || text.length > 500 || /[?？]/u.test(text)) return null;
@@ -154,11 +184,7 @@ function isContextualStaffBookingConfirmed(staffText,turns=[],staffAt,now=new Da
  }
  const selected=slot(last.content);
  if(!selected)return null;
- const proposal=prior.some(t=>
-   t.role==="assistant"&&t.sent_by_username&&t.at<last.at &&
-   !/(?:cannot|not available|cancel|不能|不可以|没办法|無法|无法)/iu.test(t.content||"") &&
-   /(?:可以吗|可以嗎|方便吗|方便嗎|安排|appointment|booking|confirm|slot|time)/iu.test(t.content||"") &&
-   slot(t.content)===selected);
+ const proposal=staffOfferMatches(prior.find(t=>t.at<last.at),selected);
  if(!proposal)return null;
  if(prior.some(t=>t.at>last.at &&
    (/(?:取消|改期|不能|不行|cancel|reschedul|not available)/iu.test(t.content||"") ||
@@ -210,11 +236,16 @@ function isTerseBookingCorroborated(staffText,appointmentAt,turns=[],staffAt) {
  const agreed=isBriefAcceptance(latest.content)||
    /^(?:yes(?:,?\s+can)?|yes,?\s+sure|ok(?:ay)?|sure|can|boleh|可以|好|没问题|沒問題)[\s.!！。😊👌]*$/iu.test(String(latest.content||"").trim());
  if(!agreed)return false;
- return history.some(t=>t.role==="assistant"&&t.sent_by_username&&
-   t.at<latest.at&&latest.at-t.at<=30*60*1000&&
-   bookingTimeMinutes(t.content)===target&&
-   (date?new RegExp("\\b0?"+Number(date[1])+"\\/0?"+Number(date[2])+"\\b","u").test(String(t.content||""))
-    :new RegExp("\\bthis\\s+"+day[1]+"(?:day)?\\b","iu").test(String(t.content||""))));
+ const previous=history.find(t=>t.at<latest.at);
+ if(!previous||latest.at-previous.at>30*60*1000)return false;
+ // The agreement must answer the immediately preceding real staff offer.
+ // A later promotion, alternative time, bot message or forwarded message
+ // cannot corroborate an older offer.
+ if(latest.is_forwarded||latest.whatsapp_customer_mutation||latest.media_mime_type)return false;
+ if(history.some(t=>t.at>latest.at&&trustedStaffTurn(t)&&
+   verifiedStaffSlot(t.content,new Date(t.at),new Date(t.at),null,{allowUnconfigured:true})!==null&&
+   verifiedStaffSlot(t.content,new Date(t.at),new Date(t.at),null,{allowUnconfigured:true})!==appointmentAt))return false;
+ return staffOfferMatches(previous,appointmentAt);
 }
 
 function isStaffVisitAcknowledgement(message) {
@@ -289,26 +320,30 @@ function createStaffBookingConfirmationService({
       const proof=await database.query(
         `SELECT staff.id,staff.created_at,
            COALESCE((SELECT jsonb_agg(to_jsonb(prior_turn))
-             FROM (SELECT prior.role,prior.content,prior.sent_by_username,prior.created_at
+             FROM (SELECT prior.id,prior.role,prior.content,prior.sent_by_username,prior.created_at,
+                 prior.is_forwarded,prior.is_automated_follow_up,prior.whatsapp_customer_mutation,
+                 prior.media_mime_type,prior.media_url,prior.delivery_status,prior.whatsapp_message_id
                FROM messages prior
                WHERE prior.contact_id=staff.contact_id
                  AND (prior.created_at,prior.id)<(staff.created_at,staff.id)
                  AND prior.created_at>=staff.created_at-INTERVAL '7 days'
-                 AND (prior.role='user' OR (prior.role='assistant'
-                   AND prior.sent_by_username IS NOT NULL))
+                 AND prior.role IN ('user','assistant')
                ORDER BY prior.created_at DESC,prior.id DESC LIMIT 50
              ) prior_turn),'[]'::jsonb) AS prior_turns
          FROM messages staff
          WHERE staff.contact_id=$1 AND staff.role='assistant'
            AND staff.sent_by_username IS NOT NULL
            AND staff.sent_by_username NOT IN('Follow-up automation','Consent request automation')
-           AND staff.whatsapp_message_id IS NOT NULL
+           AND staff.whatsapp_message_id LIKE 'wamid.%'
+           AND staff.is_forwarded IS DISTINCT FROM TRUE AND staff.whatsapp_customer_mutation IS NULL
+           AND staff.media_mime_type IS NULL AND staff.media_url IS NULL
            AND staff.is_automated_follow_up IS DISTINCT FROM TRUE
-           AND staff.delivery_status IS DISTINCT FROM 'failed'
+           AND COALESCE(staff.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+           AND ($3::bigint IS NULL OR staff.id=$3)
            AND BTRIM(staff.content)=BTRIM($2)
            AND staff.created_at>=NOW()-INTERVAL '30 minutes'
          ORDER BY staff.created_at DESC,staff.id DESC LIMIT 1`,
-        [contactId,staffText]
+        [contactId,staffText,messageId]
       );
       const recorded=proof.rows?.[0];
       if(!recorded?.id)return null;
@@ -375,6 +410,7 @@ async function recordModelConfirmationHold(contactId,inboundId,evidence,{databas
 }
 const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
+  verifiedStaffSlot,
   parseStaffConfirmedSlot,
   parseTerseStaffConfirmedSlot,
   parseNaturalStaffConfirmedSlot,
