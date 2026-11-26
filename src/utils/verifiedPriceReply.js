@@ -382,6 +382,34 @@ function preserveVerifiedModelQuote({reply,treatment,prices,firstTrialQuote}={})
   return original;
 }
 
+// Preserve a bounded multi-service quote only when every line independently
+// passes the same fact validator as a single quote. No inferred price, voucher
+// condition, combined package or treatment identity can be added by the model.
+function preserveVerifiedTwoTreatmentDraft({reply,quote,customerText,promotions,conversationHistory}={}){
+  if(quote?.source!=="verified_two_separate_treatments" ||
+     !Array.isArray(quote.prices) || quote.prices.length!==2 ||
+     new Set(quote.prices.map(p=>p.treatment)).size!==2 ||
+     hasSeparateNonPriceEnquiry(customerText) || hasClinicalMediaRisk(customerText))return null;
+  const value=String(reply||"");
+  if(!value.trim() || value.length>400)return null;
+  const lines=value.split(/\r?\n/u).filter(line=>line.trim());
+  if(lines.length!==2)return null;
+  const used=new Set();
+  for(const entry of quote.prices){
+    if(!["first_trial","current_offer"].includes(entry.label))return null;
+    const verified=verifiedPricesForService(entry.treatment,promotions,customerText,conversationHistory,
+      {allowTextOnlyOffers:true});
+    if(verified?.length!==1 || verified[0].afterVoucher ||
+       verified[0].price!==entry.amount || verified[0].sessionsIncluded>1)return null;
+    const matches=lines.filter(line=>line.normalize("NFKC").includes(entry.treatment.normalize("NFKC")));
+    if(matches.length!==1 || used.has(matches[0]))return null;
+    if(!preserveVerifiedModelQuote({reply:matches[0],treatment:entry.treatment,
+      prices:[{name:"Main offer",price:entry.amount}],firstTrialQuote:entry.label==="first_trial"}))return null;
+    used.add(matches[0]);
+  }
+  return value;
+}
+
 // If Gemini ignores an already verified price question, reply using active
 // configured package prices. Do not depend on optional images being sent: the
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
@@ -393,6 +421,7 @@ function ensureVerifiedPriceReply({
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
   allowContinuedPriceContext = false, preserveNaturalReply = false,
+  verifiedTwoTreatmentQuote = null,
 } = {}) {
   const original = String(reply || "").trim();
   // The clinic explicitly offers the introductory assessment + experience
@@ -405,6 +434,12 @@ function ensureVerifiedPriceReply({
   )) {
     const verifiedFee = complimentaryAssessmentFeeReply(language);
     return { reply: verifiedFee, restored: !preserveNaturalReply || original !== verifiedFee };
+  }
+  if(preserveNaturalReply && verifiedTwoTreatmentQuote?.source==="verified_two_separate_treatments"){
+    const natural=preserveVerifiedTwoTreatmentDraft({reply,quote:verifiedTwoTreatmentQuote,
+      customerText,promotions,conversationHistory});
+    return {reply:natural ?? verifiedTwoTreatmentQuote.reply,
+      restored:natural===null,verifiedQuote:true};
   }
   const aiLed = pricingDecision !== undefined;
   // In enabled mode the same independently verified decision drives text and
@@ -756,4 +791,4 @@ function guardUnfulfilledPriceQuote(reply,language="zh",{validateMediaPromise=fa
   return {...quote,mediaChanged:media.changed,afterMediaReply};
 }
 
-module.exports = { containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { preserveVerifiedTwoTreatmentDraft, containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
