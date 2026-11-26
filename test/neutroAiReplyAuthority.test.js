@@ -60,3 +60,18 @@ test("model closure is allowed only after verified delivery and never for an act
     assert.equal(canHonorNoReply({...args,customerText:text,history:[args.history[0],{role:"user",content:text}]}),false,text);
   }
 });
+
+test("AI-led location fallback supplies only verified branch facts without a scripted invitation",()=>{
+  const {confirmedSingleBranchLocationAnswer,verifyLocationDraft}=require("../src/utils/verifiedPricingBusinessFacts");
+  const branches=[{name:"Petaling Jaya",address:"12 Jalan 19, Petaling Jaya, Selangor"}];
+  for(const [lang,question] of [["zh","地址在哪里?"],["en","Where is your clinic?"],["ms","Di mana lokasi klinik?"]]){
+    const options={customerText:question,branches,language:lang,resolvedLanguage:lang,modelLocationOnly:true};
+    const expected=confirmedSingleBranchLocationAnswer(options);
+    const actual=confirmedSingleBranchLocationAnswer({...options,modelLocationOnly:false,omitInvitation:true});
+    assert.ok(expected,question);
+    assert.ok(actual,question);
+    assert.equal(actual.reply,expected.reply);
+    assert.ok(actual.reply.includes(branches[0].address));
+    assert.doesNotMatch(actual.reply,/\?|？/);
+  }
+});

@@ -37,7 +37,7 @@ function standaloneLocationQuestion(customerText, modelLocationOnly = false) {
   q=q.replace(/[?？。.!！\s]+$/gu,"").trim();
   const zh=/^(?:请问|請問|想问|想問|你好|您好)?[\s，,]*(?:(?:你们|你們|你家|贵店|貴店|(?:你们|你們)?(?:的)?(?:诊所|診所|门店|門店|中心|分行|店面|店铺|店舖|店))?(?:的)?(?:地址|地点|地點)(?:是(?:什么|甚麼)|在哪(?:里|裡|儿|兒)?|在哪里|在哪裡|呢|在哪里呢)?|(?:你们|你們|你家|贵店|貴店|(?:你们|你們)?(?:的)?(?:诊所|診所|门店|門店|中心|分行|店面|店铺|店舖|店))(?:是)?(?:在哪(?:里|裡|儿|兒)?|哪里|哪裡|怎么去|怎麼去)(?:呢|呀|啊)?|(?:可以|能)(?:给|給|发|發)(?:我)?(?:你们的|你們的)?地址(?:吗|嗎)?)$/u;
   const en=/^(?:hi[, ]+|hello[, ]+)?(?:(?:please |can you |could you )?(?:share|send|give)(?: me)? (?:your |the |clinic )?address(?: please)?|(?:your |the |clinic |our )?(?:address|location)(?: please)?|where (?:are you(?: located)?|is (?:your |the |this )?(?:clinic|centre|center|branch|outlet|shop|store|business)(?: located)?|can i find you)(?: please)?)$/iu;
-  const ms=/^(?:(?:boleh (?:tahu|share|bagi|beri|hantar) )?(?:alamat|lokasi)(?: (?:klinik|clinic|pusat|cawangan|kedai|anda|awak|kamu))?|(?:klinik|clinic|pusat|cawangan|kedai) (?:di mana|dimana|kat mana)|(?:di mana|dimana|kat mana) (?:klinik|clinic|pusat|cawangan|kedai))$/iu;
+  const ms=/^(?:(?:boleh (?:tahu|share|bagi|beri|hantar) )?(?:alamat|lokasi)(?: (?:klinik|clinic|pusat|cawangan|kedai|anda|awak|kamu))?|(?:klinik|clinic|pusat|cawangan|kedai) (?:di mana|dimana|kat mana)|(?:di mana|dimana|kat mana) (?:lokasi |alamat )?(?:klinik|clinic|pusat|cawangan|kedai))$/iu;
   if(zh.test(q)||en.test(q)||ms.test(q)) return true;
   // Contextual correction requires BOTH the model decision and a complete
   // business-location question. No action for a bare model flag.
@@ -65,7 +65,7 @@ function singleBranchLocationFacts(branches, language = "zh") {
 // When a question also asks for a package price, leave the combined answer to
 // the normal verified pricing path.
 function confirmedSingleBranchLocationAnswer({
-  customerText = "", branches = [], language = "zh", modelLocationOnly = false, resolvedLanguage = null,
+  customerText = "", branches = [], language = "zh", modelLocationOnly = false, resolvedLanguage = null, omitInvitation = false,
 } = {}) {
   const question = String(customerText || "").trim();
   if (!question || question.length > 130 || !standaloneLocationQuestion(question, modelLocationOnly) ||
@@ -83,12 +83,12 @@ function confirmedSingleBranchLocationAnswer({
     ...facts,
     reply: ms
       ? "Kami berada di " + (name || "klinik kami") + " 😊\n📍 " + address
-        + (modelLocationOnly ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
+        + (modelLocationOnly || omitInvitation ? "" : "\nBila masa yang sesuai untuk datang? Kami boleh bantu semak temujanji.")
       : en
         ? "We're located in " + (name || "our clinic") + " 😊\n📍 " + address
-          + (modelLocationOnly ? "" : "\nWhich day would be convenient for you? We can help check appointment arrangements.")
+          + (modelLocationOnly || omitInvitation ? "" : "\nWhich day would be convenient for you? We can help check appointment arrangements.")
         : "我们位于 " + (name || "门店") + " 😊\n📍 " + address
-          + (modelLocationOnly ? "" : "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️"),
+          + (modelLocationOnly || omitInvitation ? "" : "\n请问你哪一天比较方便过来呢？我可以帮你了解预约安排 ☺️"),
   };
 }
 
