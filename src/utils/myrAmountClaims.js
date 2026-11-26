@@ -58,7 +58,9 @@ function configuredPackageMoney(item){
 }
 function verifyPackageMoney(value,facts,{requireOffer=true}={}){
   const claims=monetaryClaims(value);
-  if(!facts||!claims.length||NEGATED_PRICE.test(normalizeMoneyText(value)))return false;
+  const text=normalizeMoneyText(value);
+  if(!facts||!claims.length||NEGATED_PRICE.test(text)||/[?？]/u.test(text)||
+    /(?:\b(?:maybe|perhaps|possibly|unconfirmed|estimated|tentative|mungkin|anggaran)\b|可能|大概|估计|估計|尚未确认|尚未確認|待确认|待確認)/iu.test(text))return false;
   if(claims.some(c=>c.negated||c.amount===null||c.role==="unknown"||facts[c.role]!==c.amount||(c.afterVoucher&&!facts.afterVoucher)))return false;
   return !requireOffer||claims.some(c=>c.role==="offer");
 }
