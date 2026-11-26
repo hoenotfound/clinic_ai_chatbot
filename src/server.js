@@ -3157,7 +3157,6 @@ async function processIncomingMessage(
       });
       const campaign = campaignContinuationPolicy({
         history:commercialHistory,customerText:text,reply,verifiedNewService,language:mediaLanguage,
-        now:Date.parse(savedInbound.created_at)||Date.now(),
       });
       if (campaign) {
         replyOverrideAudit.change("campaignContinuationPolicy",reply,campaign.reply);
