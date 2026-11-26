@@ -321,7 +321,7 @@ test("actual reply correction runs ahead of downstream pricing, booking and outb
   const options = src.slice(optionsStart, draft);
   assert.match(options, /replyLanguage:\s*mediaLanguage\s*,/);
   assert.match(src.slice(draft, guard), /ai\.getReply\(modelReplyHistory, replyOptions\)/);
-  assert.match(src.slice(guard, assembled), /parsedReply, modelReplyHistory, replyOptions/);
+  assert.match(src.slice(guard, assembled), /parsedReply, modelReplyHistory, \{\.\.\.replyOptions,preserveNaturalReply:naturalReplyAuthority\}/);
 });
 
 test("configured address is neutral factual data, not Malay or English prose", () => {

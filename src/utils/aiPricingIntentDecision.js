@@ -3,7 +3,7 @@
 // Existing AI intent flags classify the customer's request. Treatment identity
 // must come from customer evidence or an unambiguous verified Meta acquisition
 // context; all quoted prices must come from active configured offers.
-const { safeServiceFromCustomer, hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
+const { safeServiceFromCustomer, hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
@@ -652,6 +652,53 @@ function engagedRecommendationAnchor({turns, treatment, candidates, current, now
   return -1;
 }
 
+// Narrow duplicate-intent safeguard for a burst of separate customer
+// messages. A recent customer-authored commercial request is required;
+// old quotes, ad copy and automated reminders cannot activate this gate.
+// Outside the burst, the ordinary model-led resolver remains unchanged.
+const RAPID_PRICE_BURST_MS = 15_000;
+function staleCommercialIntent({customerText,conversationHistory=[],services=[],
+  serviceAliases=[],allowOfferEnquiries=false,modelIntent,now=Date.now()}={}) {
+  if (!modelIntent?.priceQuery && !modelIntent?.packageQuery) return false;
+  const current=String(customerText||"").trim();
+  const turns=Array.isArray(conversationHistory)?conversationHistory:[];
+  const last=turns.at(-1), at=last?.pricingCreatedAtMs;
+  if (!current || last?.role!=="user" || pricingMessageText(last).trim()!==current ||
+      !Number.isFinite(at) || !isRecentPricingThread(turns,turns.length-1,now)) return false;
+  const requested=value=>hasExplicitPriceRequest(value) ||
+    isStandalonePriceQuestion(value) || hasExplicitPackageOptionsRequest(value) ||
+    (allowOfferEnquiries && isCurrentOfferEnquiry(value,
+      {modelOfferQuery:modelIntent.packageQuery===true}));
+  if (requested(current)) return false;
+  // Independently named current selections and verified quoted references
+  // retain normal model-led authorization. Never infer stale intent merely
+  // from the clock when a newer treatment discussion has begun.
+  const candidates=serviceCandidates(services,serviceAliases);
+  if (safeServiceFromCustomer(current,services,serviceAliases)) return false;
+  // Existing independently verified price clarifications and selected
+  // relative package options still go through their original validators.
+  if (resolveClarifiedPriceService({customerText,conversationHistory:turns,services,serviceAliases,now}) &&
+      !hasTreatmentPriceContent(pricingMessageText(turns.at(-2)))) return false;
+  if (modelIntent.promotionOption!=null &&
+      Object.values(relativePackageReference(current)).some(Boolean)) return false;
+  for(let i=turns.length-2;i>=Math.max(0,turns.length-9);i--){
+    const t=turns[i], priorAt=t?.pricingCreatedAtMs;
+    if(!Number.isFinite(priorAt)||priorAt>at||at-priorAt>RAPID_PRICE_BURST_MS ||
+        isVerifiedStaffTurn(t)) break;
+    // Require an actual earlier customer price request, not the model's
+    // inherited offer flag or an isolated package mention.
+    if(t.role!=="user") continue;
+    const previousText=pricingMessageText(t);
+    const named=[...new Set(findServicesInText(previousText,candidates))];
+    if(named.length>1 || (named.length===1 && named[0]!==modelIntent.treatment)) break;
+    if(hasCurrentPriceAmountRequest(previousText) || isStandalonePriceQuestion(previousText)) return true;
+    // A new explicit selection separates a later genuine price paraphrase
+    // from a commercial request about an earlier discussion.
+    if(named.length===1) break;
+  }
+  return false;
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -692,6 +739,8 @@ function resolveModelLedPricingDecision({
   if (last?.role !== "user" || typeof last.content !== "string" ||
       last.content.trim() !== original ||
       !isRecentPricingThread(turns, turns.length - 1, now)) return null;
+  if (staleCommercialIntent({customerText:original,conversationHistory:turns,services,
+    serviceAliases,allowOfferEnquiries,modelIntent:intent,now})) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const clarified = resolveClarifiedPriceService({customerText:original,conversationHistory:turns,services,serviceAliases,now});
   if (clarified && clarified !== intent.treatment) return null;
@@ -977,5 +1026,26 @@ function hasCustomerRequestedPriceReply({
       pricingDecision?.type === "package_options");
 }
 
+// Price/media authorization is separate from the conversational wording.
+// Preserve a safe ordinary answer when independent current-turn evidence
+// shows a noncommercial question; uncertain or contextual package requests
+// still get a clarification. Never use this to approve any price or image.
+function shouldRewriteRejectedPricingReply({reply,customerText,services=[],serviceAliases=[]}={}){
+  if (!String(reply||"").trim() || hasCommercialReplyContent(reply) ||
+      hasTreatmentPriceContent(reply)) return true;
+  const current=String(customerText||"").trim();
+  if (!current) return true;
+  if (hasCurrentPriceAmountRequest(current) || isStandalonePriceQuestion(current) ||
+      hasExplicitPackageOptionsRequest(current) ||
+      isCurrentOfferEnquiry(current) ||
+      Object.values(relativePackageReference(current)).some(Boolean)) return true;
+  if (isPurePriceObjection(current)) return false;
+  if (hasExplicitPriceRequest(current)) return true;
+  const candidate=serviceCandidates(services,serviceAliases).find(c=>
+    c.name===safeServiceFromCustomer(current,services,serviceAliases)?.name);
+  return !(NON_MONETARY_ONLY.test(current) || UNRELATED.test(current) ||
+    isPlainNamedTreatmentInterest(current,candidate));
+}
+
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
+module.exports = { shouldRewriteRejectedPricingReply, staleCommercialIntent, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, shouldApplyModelLedPricing, resolveModelLedPricingDecision, resolveAiPricingDecision, verifiedServiceAnchor, verifiedMetaAdPriceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };

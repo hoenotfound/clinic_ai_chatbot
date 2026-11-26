@@ -1320,8 +1320,11 @@ async function setAttention(
   id,
   needsAttention,
   reason = null,
-  { notifyWebPush: shouldNotifyWebPush = true } = {}
+  { notifyWebPush: shouldNotifyWebPush = true, unansweredInboundId = null } = {}
 ) {
+  const guarded=unansweredInboundId!=null;
+  if(guarded&&(!needsAttention||!Number.isSafeInteger(Number(unansweredInboundId))||Number(unansweredInboundId)<1))
+    throw new Error("Manual attention requires a valid inbound ID.");
   const result = await pool.query(
     `UPDATE contacts c
      SET needs_attention = $1, attention_reason = $2,
@@ -1330,11 +1333,22 @@ async function setAttention(
          delivery_attention_message_id = NULL,
          updated_at = now()
      WHERE c.id = $3
+     ${guarded?`AND c.needs_attention IS NOT TRUE AND EXISTS (
+         SELECT 1 FROM messages inbound
+         WHERE inbound.id=$4 AND inbound.contact_id=c.id AND inbound.role='user'
+         AND NOT EXISTS (
+           SELECT 1 FROM messages staff
+           WHERE staff.contact_id=c.id AND staff.role='assistant'
+             AND staff.sent_by_username IS NOT NULL
+             AND COALESCE(staff.delivery_status,'pending')<>'failed'
+             AND (staff.created_at,staff.id)>(inbound.created_at,inbound.id)
+         )
+       )`:""}
      RETURNING c.*,
-       (SELECT m.id FROM messages m
+       ${guarded?"$4::integer":`(SELECT m.id FROM messages m
         WHERE m.contact_id = c.id AND m.role = 'user'
-        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
-    [needsAttention, needsAttention ? reason : null, id]
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1)`} AS attention_message_id`,
+    [needsAttention, needsAttention ? reason : null, id, ...(guarded?[Number(unansweredInboundId)]:[])]
   );
   const updated = result.rows[0] || null;
   if (updated) {
@@ -1362,25 +1376,30 @@ async function setAttention(
 // Every unresolved question gets one durable row keyed by its inbound message.
 // Keep the contact AI-owned. Concurrent duplicate webhook jobs cannot create
 // duplicate questions or trigger another staff alert.
-async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical") {
+async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical", { unansweredOnly = false } = {}) {
   if (!Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) < 1) {
     throw new Error("AI review requires the original inbound message ID.");
   }
   const safeSummary = String(summary || "Unanswered customer question").trim().slice(0, 350);
   const safeCategory = category === "information" ? "information" : "clinical";
-  // Group same-worded pending clinical questions, plus recognised variations
-  // of one high-confidence symptom. Other/new concerns and informational
-  // reviews still generate independent alerts.
-  // No schema change: compare the existing pending message summaries.
-  const urinaryReviewTopic = safeCategory === "clinical" &&
-    /(?:漏尿|尿失禁|尿漏|漏小便|憋不住尿|urinary\s+(?:leakage|incontinence)|urine\s+leak|leak(?:ing|age)?\s+urine|kencing\s+(?:bocor|tak\s+tahan)|tak\s+tahan\s+kencing)/iu.test(safeSummary);
-  const existingConcernPattern = urinaryReviewTopic
-    ? "(漏尿|尿失禁|尿漏|漏小便|憋不住尿|urinary[[:space:]]+(leakage|incontinence)|urine[[:space:]]+leak|leak(ing|age)?[[:space:]]+urine|kencing[[:space:]]+(bocor|tak[[:space:]]+tahan)|tak[[:space:]]+tahan[[:space:]]+kencing)"
-    : null;
+  // Only suppress alerts for an identical full inbound clinical disclosure.
+  // Sharing a symptom, or a truncated summary, does not establish that new
+  // medical history is a duplicate. Every inbound retains its own review.
   const result = await pool.query(
     `WITH eligible AS MATERIALIZED (
        SELECT c.id FROM contacts c
        WHERE c.id = $1 AND c.mode = 'ai'
+       ${unansweredOnly?`AND EXISTS (
+         SELECT 1 FROM messages inbound
+         WHERE inbound.id=$2 AND inbound.contact_id=c.id AND inbound.role='user'
+         AND NOT EXISTS (
+           SELECT 1 FROM messages staff
+           WHERE staff.contact_id=c.id AND staff.role='assistant'
+             AND staff.sent_by_username IS NOT NULL
+             AND COALESCE(staff.delivery_status,'pending')<>'failed'
+             AND (staff.created_at,staff.id)>(inbound.created_at,inbound.id)
+         )
+       )`:""}
        FOR UPDATE
      ), previous_same_concern AS MATERIALIZED (
        SELECT EXISTS (
@@ -1388,10 +1407,16 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
          JOIN ai_review_items earlier ON earlier.contact_id = e.id
          WHERE earlier.status = 'pending'
            AND earlier.category = 'clinical'
-           AND (
-             ($5::text IS NOT NULL AND earlier.summary ~* $5::text)
-             OR ($5::text IS NULL AND
-               lower(btrim(earlier.summary)) = lower(btrim($3::text)))
+           AND $4 = 'clinical'
+           AND earlier.inbound_message_id < $2
+           AND EXISTS (
+             SELECT 1 FROM messages previous_message
+             JOIN messages current_message ON current_message.id = $2
+               AND current_message.contact_id = e.id AND current_message.role = 'user'
+             WHERE previous_message.id = earlier.inbound_message_id
+               AND previous_message.contact_id = e.id AND previous_message.role = 'user'
+               AND NULLIF(btrim(current_message.content), '') IS NOT NULL
+               AND btrim(previous_message.content) = btrim(current_message.content)
            )
        ) AS already_pending
      ), inserted AS (
@@ -1426,7 +1451,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
             NOT previous_same_concern.already_pending AS notify_ai_review
      FROM updated JOIN inserted ON inserted.contact_id = updated.id
      CROSS JOIN previous_same_concern`,
-    [id, Number(inboundMessageId), safeSummary, safeCategory, existingConcernPattern]
+    [id, Number(inboundMessageId), safeSummary, safeCategory]
   );
   const updated = result.rows[0] || null;
   if (!updated) return getContactById(id);
@@ -1434,7 +1459,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
   delete updated.notify_ai_review;
   publishContactChange(updated.id, { contact: updated });
   // A new message always creates its own Inbox review row, but a repeated
-  // urinary-leakage concern already pending does not create another alert.
+  // identical full clinical disclosure already pending does not create another alert.
   if (notifyStaff) {
     notifyTelegram(
       telegramImmediateAlerts.sendAiReviewAlert({

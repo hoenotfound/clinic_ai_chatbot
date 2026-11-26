@@ -505,10 +505,14 @@ function guardAssessmentFirstPricingReply({
   verifiedPricingIntent = false,
   resultMedia = [], conversationHistory = [], promotions = [],
   allowContinuedPriceContext = false, isFirstMessage = true,
+  preserveNaturalReply = false,
 } = {}) {
   const original = String(reply || "");
   if (flagged) return { reply: original, replaced: false };
-  const continuing = continuedConversationFallback({
+  // A verified normal draft without a price claim is not a pricing task.
+  if(preserveNaturalReply && !hasTreatmentPriceContent(original))
+    return {reply:original,replaced:false};
+  const continuing = preserveNaturalReply ? null : continuedConversationFallback({
     customerText, conversationHistory, services, serviceAliases,
     promotions, language, isFirstMessage,
   });
@@ -560,7 +564,7 @@ function guardAssessmentFirstPricingReply({
       : locale.startsWith("ms")
         ? "Harga rawatan ini perlu disahkan oleh pihak pusat berdasarkan rawatan yang sesuai."
         : "The centre will confirm the price for the specific treatment.";
-    const invitation = assessmentFirstInvitation({
+    const invitation = preserveNaturalReply ? "" : assessmentFirstInvitation({
       treatment: primary, customerText, language, services, serviceAliases,
     });
     return { reply: [clarification, invitation].filter(Boolean).join("\n"), replaced: true };
@@ -585,9 +589,11 @@ function guardAssessmentFirstPricingReply({
     return { reply: continuing?.treatment ? continuing.reply : clarification, replaced: true };
   }
   const retained = stripUnsolicitedTreatmentPrice(original);
-  const fallback = hasClinicalMediaRisk(customerText)
-    ? safeIntroReply({ customerText, language, services, serviceAliases })
-    : assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
+  const fallback = preserveNaturalReply
+    ? (String(language).startsWith("ms")?"Pihak pusat boleh semak harga rawatan yang tepat.":String(language).startsWith("en")?"Our centre can confirm the correct treatment price.":"这项护理的准确费用需要由门店确认哦。")
+    : hasClinicalMediaRisk(customerText)
+      ? safeIntroReply({ customerText, language, services, serviceAliases })
+      : assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
   return { reply: retained && !isRepeatedWelcome(retained)
     ? retained : continuing?.reply || retained || fallback, replaced: true };
 }

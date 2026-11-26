@@ -3,16 +3,18 @@ const { detectConversationLanguage } = require("./chatLanguage");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { detectDate, localParts } = require("./appointmentHoursGuard");
+const { rm68CampaignSettings } = require("../config/neutroRm68CampaignConfig");
+const defaultCampaign = require("../config/neutroRm68Campaign.default.json");
+const {campaignDatesInText}=require("./neutroRm68DateEvidence");
 
 // Dedicated event package, intentionally separate from the standing RM388
 // full-body Pulse Wave offer. Nothing here changes configured service prices.
-const CAMPAIGN_KEY = "neutro_breast_rm68_2026";
+const CAMPAIGN_KEY = defaultCampaign.campaignKey;
 const PREFILL = "你好！我想了解【胸部专业检查 RM68体验优惠】，请问还有名额吗？";
 // Keep the legacy Meta ad live while the copy is gradually updated.
 // This is only campaign recognition; promotional consent is verified separately.
 const FOLLOWUP_PREFILL = "Hi～我对 Neutro Sense TCM【胸部专业检查 RM68体验优惠】有兴趣，请问还有名额吗？可以跟进我，有优惠也发我看看 😊";
-const MYT_DEC_6_START = Date.parse("2026-12-05T16:00:00.000Z");
-const MYT_CAMPAIGN_END = Date.parse("2026-12-06T16:00:00.000Z");
+const MYT_CAMPAIGN_END = Date.parse(defaultCampaign.expiresAt);
 const INTRO_MARKER = "我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠";
 
 function normalize(value) {
@@ -58,9 +60,10 @@ function campaignCreativeMatches(metaAdContext) {
 }
 function campaignDay(now = Date.now()) {
   const time = now instanceof Date ? now.getTime() : Number(now);
-  if (!Number.isFinite(time)) return "expired";
-  if (time >= MYT_CAMPAIGN_END) return "expired";
-  if (time >= MYT_DEC_6_START) return "dec6";
+  const {valid,campaign}=rm68CampaignSettings();
+  if (!valid || !Number.isFinite(time)) return "expired";
+  if (time >= Date.parse(campaign.expiresAt)) return "expired";
+  if (time >= Date.parse(campaign.lastDayStartsAt)) return "dec6";
   return "both";
 }
 function dayLine(now = Date.now()) {
@@ -85,50 +88,22 @@ function localeFor(history, customerText, language) {
   return ["en","ms","zh"].includes(language) ? language :
     detectConversationLanguage([customerText, ...(Array.isArray(history) ? history.slice().reverse().filter(r=>r?.role==="user").map(r=>r.content) : [])], "zh");
 }
-function localizedDates(now, language) {
-  const day=campaignDay(now);
-  return language==="ms" ? (day==="dec6"?"6 Disember":"5 dan 6 Disember") :
-    language==="en" ? (day==="dec6"?"December 6":"December 5 and 6") : dayLine(now);
-}
 function firstReply(now = Date.now(), language = "zh") {
-  if (language==="en" || language==="ms") {
-    const dates=localizedDates(now,language);
-    if(campaignDay(now)==="expired") return language==="en"
-      ? "Hello 💕 Welcome to Neutro Sense TCM! The December 5 and 6 event has ended. The clinic can confirm current breast-care options and appointments 😊"
-      : "Hai 💕 Selamat datang ke Neutro Sense TCM! Acara 5 dan 6 Disember telah tamat. Pihak pusat boleh mengesahkan pilihan penjagaan payudara dan temu janji semasa 😊";
-    return language==="en"
-      ? "Hello 💕 Welcome to Neutro Sense TCM!\n\nOur limited-time breast wellness assessment + gentle pulse wave care offer 🌸\n✨ First trial: RM68 (regular price subject to clinic announcement)\n📅 Event dates: "+dates+"\n⏰ Breast care takes about 45 minutes; about 1 hour 30 minutes including complimentary moxibustion.\n✅ Breast wellness assessment, gentle pulse wave care and daily care advice.\n💗 Availability must be confirmed by the clinic. Would the event date(s) suit you? 😊"
-      : "Hai 💕 Selamat datang ke Neutro Sense TCM!\n\nPromosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut 🌸\n✨ Percubaan pertama: RM68 (harga biasa tertakluk pada pengumuman pusat)\n📅 Tarikh acara: "+dates+"\n⏰ Penjagaan payudara sekitar 45 minit; sekitar 1 jam 30 minit termasuk moksibusi percuma.\n✅ Penilaian kesejahteraan payudara, penjagaan gelombang denyutan lembut dan nasihat penjagaan harian.\n💗 Kekosongan perlu disahkan oleh pusat. Adakah tarikh acara sesuai untuk anda? 😊";
-  }
-  if (campaignDay(now) === "expired") {
-    return [
-      "您好💕 欢迎咨询 Neutro Sense TCM！",
-      "",
-      "12月5日及6日的体验活动已经结束了。如想了解目前的胸部护理项目或预约安排，我们可以帮您向门店确认哦 😊",
-    ].join("\n");
-  }
-  return [
-    "您好💕 欢迎咨询 Neutro Sense TCM！",
-    "",
-    INTRO_MARKER + " 🌸",
-    "",
-    "✨ 首次体验只需 RM68（原价以门店公告为准）",
-    "📅 活动日期：" + dayLine(now),
-    "⏰ RM68胸部护理约45分钟；加上赠送护理，全程约 1小时30分钟",
-    "🎁 免费赠送艾灸护理",
-    "",
-    "护理包含：",
-    "✅ 专业胸部健康评估",
-    "✅ 脉冲波舒缓护理，帮助放松胸部周围组织",
-    "✅ 胸部日常护理建议",
-    "",
-    "💗 具体名额需要由门店确认，建议提前预约哦！",
-    "",
-    dayQuestion(now),
-  ].join("\n");
+  const locale=["zh","en","ms"].includes(language)?language:"zh";
+  const {valid,campaign}=rm68CampaignSettings();
+  if(!valid || (campaignDay(now)==="expired" && Number(now)<MYT_CAMPAIGN_END)) return locale==="en"
+    ? "Hello 😊 The clinic needs to confirm the current breast-care offer and appointment details."
+    : locale==="ms"
+      ? "Hai 😊 Pihak pusat perlu mengesahkan tawaran penjagaan payudara dan butiran temu janji semasa."
+      : "您好 😊 目前的胸部护理优惠及预约安排需要由门店确认哦。";
+  return campaign.firstReply[campaignDay(now)][locale];
 }
 function isCampaignOpening(text) {
   const raw = String(text || "");
+  const {valid,campaign}=rm68CampaignSettings();
+  // Retain legacy recognition for already delivered campaign conversations.
+  if(valid && ["both","dec6"].some(day=>
+    Object.values(campaign.firstReply[day]).some(copy=>normalize(copy)===normalize(raw))))return true;
   return (raw.includes(INTRO_MARKER) && raw.includes("首次体验只需 RM68") &&
     raw.includes("全程约 1小时30分钟")) ||
     (raw.includes("Our limited-time breast wellness assessment + gentle pulse wave care offer") && raw.includes("First trial: RM68") && raw.includes("1 hour 30 minutes")) ||
@@ -200,6 +175,11 @@ function schedulingQuestion(text) {
     (VISIT_ACTION.test(value) && (TODAY.test(value)||TOMORROW.test(value)||OTHER_DATE.test(value)||
        /\b(?:temu janji|kekosongan|tarikh|Disember)\b/iu.test(value)));
 }
+function configuredEventDateMatches(date,day="both"){
+  const {campaign}=rm68CampaignSettings();
+  const dates=day==="dec6"?campaign.eventDates.slice(-1):campaign.eventDates;
+  return dates.some(iso=>Number(iso.slice(5,7))===date.month&&Number(iso.slice(8,10))===date.day);
+}
 function alternativeDateRequest(text, now=Date.now()) {
   const value=String(text||"");
   if(eventDateRejection(value)) return true;
@@ -207,12 +187,12 @@ function alternativeDateRequest(text, now=Date.now()) {
   if(OTHER_DATE.test(value)) return true;
   // Explicit December dates outside the advertised days.
   const dates=campaignDatesInText(value);
-  if(dates.some(d=>d.month!==12||![5,6].includes(d.day))) return true;
+  if(dates.some(d=>!configuredEventDateMatches(d))) return true;
   const at=now===null?NaN:Number(now);
   if(!Number.isFinite(at)) return false;
   const day=new Date(at+8*3600000).toISOString().slice(0,10);
   const tomorrow=new Date(at+32*3600000).toISOString().slice(0,10);
-  const eventDates=["2026-12-05","2026-12-06"];
+  const eventDates=rm68CampaignSettings().campaign.eventDates;
   return (!eventDates.includes(day)&&TODAY.test(value))||
     (!eventDates.includes(tomorrow)&&TOMORROW.test(value));
 }
@@ -228,11 +208,11 @@ function dateScope(text,now) {
   if(eventDateRejection(value)||alternativeDateRequest(value,now))return "ordinary";
   if(!VISIT_ACTION.test(value)&&!DATE_QUESTION.test(value)&&!/(?:[56]\s*日(?:方便|可以)|\b(?:5th|6th|both days|those days)\b)/iu.test(value))return null;
   const dates=campaignDatesInText(value);
-  if(dates.length) return dates.every(d=>d.month===12&&[5,6].includes(d.day))?"event":"ordinary";
+  if(dates.length) return dates.every(d=>configuredEventDateMatches(d))?"event":"ordinary";
   const at=now===null?NaN:Number(now);
   const local=Number.isFinite(at)?localParts(at):null;
   const date=local&&detectDate(value,local.date);
-  if(date?.date)return ["2026-12-05","2026-12-06"].includes(date.date)?"event":"ordinary";
+  if(date?.date)return rm68CampaignSettings().campaign.eventDates.includes(date.date)?"event":"ordinary";
   if(/(?:这两天|這兩天|那两天|那兩天|[56]\s*[号日]|\b(?:both days|those days|5th|6th)\b)/iu.test(value))return "event";
   return null;
 }
@@ -311,10 +291,21 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
   if (screening) return screening;
   if (!CAMPAIGN_QUERY.test(text) && !askedAmount && !currentScope && !INCLUDES_QUESTION.test(text) && !DURATION_QUESTION.test(text)) return null;
   if (day === "expired") {
+    const {valid,campaign}=rm68CampaignSettings();
+    // An operator may stop the offer early; do not claim its scheduled
+    // final day has already occurred. Invalid settings also fail closed.
+    if(!valid || Number(now)<MYT_CAMPAIGN_END)return localized(language,
+      "您之前咨询的胸部护理体验活动目前已不再开放。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
+      "The breast-care event is no longer available. Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
+      "Acara penjagaan payudara tidak lagi tersedia. Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
+    const last=new Date(campaign.eventDates.at(-1)+"T00:00:00Z");
+    const zhDate=(last.getUTCMonth()+1)+"月"+last.getUTCDate()+"日";
+    const enDate=new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",timeZone:"UTC"}).format(last);
+    const msDate=new Intl.DateTimeFormat("ms-MY",{day:"numeric",month:"long",timeZone:"UTC"}).format(last);
     return localized(language,
-      "您之前咨询的"+(askedAmount?" RM68 ":"")+"胸部护理体验活动已于12月6日结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
-      "The breast-care event ended on 6 December. Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
-      "Acara penjagaan payudara telah tamat pada 6 Disember. Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
+      "您之前咨询的"+(askedAmount?" RM"+campaign.priceMYR+" ":"")+"胸部护理体验活动已于"+zhDate+"结束。若想了解现在的护理安排，可以由门店帮您确认哦 😊",
+      "The breast-care event ended on "+enDate+". Our staff can confirm current care arrangements"+(askedAmount?" and prices":"")+". 😊",
+      "Acara penjagaan payudara telah tamat pada "+msDate+". Staf boleh mengesahkan aturan penjagaan semasa"+(askedAmount?" dan harga":"")+". 😊");
   }
   const dates=dayLine(now);
   const enDates=day==="dec6"?"6 December":"5 and 6 December";
@@ -352,28 +343,17 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
 
 // Extract dates by meaning rather than allowing individual numeric tokens.
 // Cover common written and numeric dates in all three supported languages.
-function campaignDatesInText(text) {
-  const value=String(text||"").normalize("NFKC");
-  const out=[];
-  const months="january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|januari|februari|mac|mei|julai|ogos|oktober|disember";
-  const monthNumber=m=>({jan:1,feb:2,mar:3,mac:3,apr:4,may:5,mei:5,jun:6,jul:7,aug:8,ogo:8,sep:9,oct:10,okt:10,nov:11,dec:12,dis:12})[m.toLowerCase().slice(0,3)];
-  const push=(month,days)=>{for(const n of String(days).match(/\d+/g)||[])out.push({month:Number(month),day:Number(n)});};
-  const list="\\d{1,2}(?:st|nd|rd|th)?(?:\\s*(?:and|dan|&|,|to|[-–])\\s*\\d{1,2}(?:st|nd|rd|th)?)*";
-  for(const m of value.matchAll(new RegExp("\\b("+months+")\\s+("+list+")\\b","giu")))push(monthNumber(m[1]),m[2]);
-  for(const m of value.matchAll(new RegExp("\\b("+list+")\\s+("+months+")\\b","giu")))push(monthNumber(m[2]),m[1]);
-  for(const m of value.matchAll(/(\d{1,2})\s*月\s*(\d{1,2})(?:\s*[日号號]?\s*(?:和|及|与|與|&|、|至|[-–])\s*(\d{1,2})(?!\s*月))?/gu))push(m[1],m[2]+(m[3]?" "+m[3]:""));
-  for(const m of value.matchAll(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/gu))push(m[2],m[3]);
-  for(const m of value.matchAll(/(?<![\d/-])(\d{1,2})[/-](\d{1,2})(?:[/-]20\d{2})?(?![\d/-])/gu))push(m[2],m[1]);
-  return out;
-}
+
 function campaignClaimsSafe(value, now=Date.now()) {
   const text=String(value||"").normalize("NFKC");
   const day=campaignDay(now);
   const amounts=[...text.matchAll(/(?:\b(?:RM|MYR)\s*|马币\s*|令吉\s*)(\d[\d,]*(?:\.\d+)?)/giu)].map(m=>Number(m[1].replace(/,/g,"")));
-  if(amounts.some(n=>n!==68)|| (day==="expired"&&amounts.length))return false;
+  const {campaign}=rm68CampaignSettings();
+  if(amounts.some(n=>n!==campaign.priceMYR)|| (day==="expired"&&amounts.length))return false;
   const dates=campaignDatesInText(text);
-  if(dates.some(d=>d.month!==12||![5,6].includes(d.day)||(day==="dec6"&&d.day!==6)))return false;
-  if(/\b20\d{2}\b/u.test(text)&&/\b20(?!26)\d{2}\b/u.test(text))return false;
+  if(dates.some(d=>!configuredEventDateMatches(d,day)))return false;
+  const allowedYears=new Set(campaign.eventDates.map(date=>date.slice(0,4)));
+  if([...text.matchAll(/\b20\d{2}\b/gu)].some(m=>!allowedYears.has(m[0])))return false;
   // Unverified slot, clinical equipment, guarantees and unrelated prices
   // cannot be authorised by a fluent answer.
   if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(text))return false;
@@ -381,7 +361,7 @@ function campaignClaimsSafe(value, now=Date.now()) {
   const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
   for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
     const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
-    if(![45,90].includes(mins))return false;
+    if(![campaign.careMinutes,campaign.totalMinutes].includes(mins))return false;
   }
   // Prices must be explicitly event-scoped, not just coexist with a valid date.
   if(amounts.length && !/(?:\bevent\b|\bpromotion\b|\btrial\b|\bonly\b|\bpromo\b|活动|活動|体验|體驗|限时|限時|优惠|優惠|\bacara\b|\bpromosi\b|\bpercubaan\b)/iu.test(text))return false;
@@ -495,12 +475,9 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
      /(?:applicable charges|regular-care price|requested date|clinic will need to confirm whether|caj yang berkenaan|tarikh yang anda minta|当天的收费|當天的收費|收费需要先请门店确认|其他日期是否可以安排)/iu.test(String(candidate.trigger_message_content||"")))
     return {expired:false,stop:true,message:null};
   const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
-  const dates=localizedDates(now,locale);
-  if(locale==="en" || locale==="ms") return {expired:false,message:locale==="en" ? "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on "+dates+", with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊" : "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada "+dates+", termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"};
-  const message = day === "both"
-    ? "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，额外免费赠送艾灸护理，活动日期为12月5日和6日，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊"
-    : "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】RM68 活动只剩今天12月6日，额外免费赠送艾灸护理，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊";
-  return { expired: false, message };
+  const {valid,campaign}=rm68CampaignSettings();
+  if(!valid)return {expired:true,message:null};
+  return {expired:false,message:campaign.followUp[day][locale]};
 }
 
 // A generic breast-care selection is not explicit event interest. Invite a

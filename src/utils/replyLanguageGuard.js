@@ -94,7 +94,7 @@ function sameBookingFacts(original, replacement) {
   if (original.bookingReady !== replacement.bookingReady) return false;
   const a = original.details || {};
   const b = replacement.details || {};
-  const keys = ["branch", "treatment", "appointmentPreference", "appointmentScheduling", "businessLocationOnly", "projectLocation", "projectSummary", "nextStep"];
+  const keys = ["branch", "treatment", "appointmentPreference", "appointmentScheduling", "appointmentProposal", "businessLocationOnly", "projectLocation", "projectSummary", "nextStep"];
   return keys.every(key => (a[key] ?? null) === (b[key] ?? null));
 }
 
@@ -174,8 +174,16 @@ function staffLanguageHandoff(original, language) {
 // A nonclinical translation failure is not itself a request for staff. Do not
 // release the rejected draft or its price/media/booking intentions. The
 // customer's next message still goes through the ordinary guarded AI path.
-function ordinaryLanguageFallback(original, language) {
-  const message = language === "ms"
+function ordinaryLanguageFallback(original, language, options={}) {
+  // A failed translation leaves the original question unresolved. In natural
+  // authority mode, create an information review rather than closing the turn
+  // with an apology or requiring the customer to repeat their question.
+  // The runtime persists the review before acknowledging it; AI ownership stays active.
+  const naturalMessage=language==="ms"
+    ? "Maaf, saya belum dapat memberikan jawapan yang tepat dalam Bahasa Malaysia buat masa ini 😊"
+    : language==="zh" ? "不好意思，刚才没能准确地用中文回复您哦 😊"
+      : "Sorry, I couldn't provide an accurate English reply just now 😊";
+  const message = options.preserveNaturalReply ? naturalMessage : language === "ms"
     ? "Baik 😊 Saya akan balas dalam Bahasa Malaysia. Boleh beritahu apa yang anda ingin tahu?"
     : language === "zh"
       ? "好的 😊 接下来我会用中文回复您。请问您想进一步了解什么呢？"
@@ -183,9 +191,10 @@ function ordinaryLanguageFallback(original, language) {
   return {
     ...original,
     text: message,
-    outcome: "normal",
-    flagged: false,
-    reviewRequired: false,
+    outcome: options.preserveNaturalReply ? "review_required" : "normal",
+    flagged: options.preserveNaturalReply === true,
+    reviewRequired: options.preserveNaturalReply === true,
+    ...(options.preserveNaturalReply ? {reviewType:"information"} : {}),
     bookingReady: false,
     serviceQuery: false,
     serviceQuerySource: null,
@@ -236,7 +245,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
         clearReplyLanguageMismatch(correction.text, language, options)) {
       // A second response that is still in the wrong language is a benign
       // formatting failure, not proof that a human must take over.
-      return ordinaryLanguageFallback(original, language);
+      return ordinaryLanguageFallback(original, language, options);
     }
     if (typeof onCorrectionError === "function") {
       const error = new Error("Language correction failed intent or fact validation.");
@@ -245,7 +254,7 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
     }
   } catch (error) {
     if (typeof onCorrectionError === "function") onCorrectionError(error);
-    return ordinaryLanguageFallback(original, language);
+    return ordinaryLanguageFallback(original, language, options);
   }
 
   // Unlike information review, a true handoff cannot be silently cleared by

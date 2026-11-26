@@ -76,7 +76,7 @@ test("AI prompt chooses review_required for nonurgent unknowns and takeover for 
   const prompt = source("src/utils/systemPrompt.js");
   assert.match(prompt, /Use "review_required" when a missing\/unverified business-specific fact/);
   assert.match(prompt, /Use "needs_human" for an explicit request for human\/staff\/manager assistance/);
-  assert.match(prompt, /"normal \| review_required \| needs_human \| booking_ready"/);
+  assert.match(prompt, /"normal \| review_required \| needs_human \| booking_ready \| no_reply"/);
 });
 
 
@@ -100,7 +100,7 @@ test("review-only question is persisted and notified exactly once without takeov
     assert.match(sql, /INSERT INTO ai_review_items/);
     assert.match(sql, /ON CONFLICT \(contact_id, inbound_message_id\) DO NOTHING/);
     assert.match(sql, /AND c.mode = 'ai'/);
-    assert.deepEqual(params, [37, 88, "Can I pay with card?", "information", null]);
+    assert.deepEqual(params, [37, 88, "Can I pay with card?", "information"]);
     return { rows: [{
       id: 37, mode: "ai", needs_attention: true, ai_review_id: 8,
       attention_reason: "AI review requested: [#88] Can I pay with card?",
@@ -159,7 +159,7 @@ test("duplicate inbound review does not alert again or overwrite existing attent
   assert.equal(count, 2);
 });
 
-test("same unresolved urinary concern creates review but suppresses duplicate staff alerts", async (t) => {
+test("identical full unresolved clinical disclosure creates review but suppresses duplicate staff alerts", async (t) => {
   const { pool } = require("../src/db/db");
   const contacts = require("../src/db/contactsRepo");
   const alerts = require("../src/services/telegramImmediateAlertService");
@@ -180,7 +180,11 @@ test("same unresolved urinary concern creates review but suppresses duplicate st
     assert.match(sql, /NOT previous_same_concern\.already_pending AS notify_ai_review/);
     assert.equal(params[2], "漏尿问题");
     assert.equal(params[3], "clinical");
-    assert.match(params[4], /漏尿/);
+    assert.equal(params.length, 4);
+    assert.match(sql, /btrim\(previous_message\.content\) = btrim\(current_message\.content\)/);
+    assert.match(sql, /earlier\.inbound_message_id < \$2/);
+    assert.match(sql, /AND \$4 = 'clinical'/);
+    assert.doesNotMatch(sql, /earlier\.summary ~\*/);
     return { rows: [{
       id: 81, mode: "ai", needs_attention: true, attention_reason:
         "AI review requested: [#91] 漏尿问题", attention_message_id: 91,
@@ -195,6 +199,39 @@ test("same unresolved urinary concern creates review but suppresses duplicate st
   assert.equal(result.needs_attention, true);
   assert.equal(alerted, 0);
   assert.equal(pushed, 0);
+});
+
+test("new clinical disclosure with existing symptom still alerts staff", async (t) => {
+  const { pool } = require("../src/db/db");
+  const contacts = require("../src/db/contactsRepo");
+  const alerts = require("../src/services/telegramImmediateAlertService");
+  const pushes = require("../src/services/webPushNotificationService");
+  const previousQuery = pool.query;
+  const previousAlert = alerts.sendAiReviewAlert;
+  const previousPush = pushes.sendContactAlertBestEffort;
+  t.after(() => {
+    pool.query = previousQuery;
+    alerts.sendAiReviewAlert = previousAlert;
+    pushes.sendContactAlertBestEffort = previousPush;
+  });
+  let alerted = 0;
+  let pushed = 0;
+  pool.query = async (sql, params) => {
+    assert.match(sql, /btrim\(previous_message\.content\) = btrim\(current_message\.content\)/);
+    assert.doesNotMatch(sql, /earlier\.summary ~\*/);
+    assert.deepEqual(params, [81, 92, "漏尿问题，最近也有出血", "clinical"]);
+    return { rows: [{
+      id: 81, mode: "ai", needs_attention: true,
+      attention_message_id: 92, ai_review_id: 13, notify_ai_review: true,
+    }] };
+  };
+  alerts.sendAiReviewAlert = async () => { alerted++; };
+  pushes.sendContactAlertBestEffort = () => { pushed++; };
+  const result = await contacts.setAiReviewAttention(81, 92, "漏尿问题，最近也有出血", "clinical");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(result.ai_review_id, 13);
+  assert.equal(alerted, 1);
+  assert.equal(pushed, 1);
 });
 
 test("multiple reviews remain individually durable until explicit Inbox dismissal", () => {

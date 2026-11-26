@@ -1,0 +1,52 @@
+-- Seed only the existing Neutro TCM client; do not replace any other setting.
+-- Existing operator configuration takes precedence. No new table or worker.
+UPDATE clinic_config
+SET data = jsonb_set(data, '{neutroRm68Campaign}', $rm68_config${
+  "version": 1,
+  "campaignKey": "neutro_breast_rm68_2026",
+  "timezone": "Asia/Kuala_Lumpur",
+  "eventDates": [
+    "2026-12-05",
+    "2026-12-06"
+  ],
+  "lastDayStartsAt": "2026-12-05T16:00:00.000Z",
+  "expiresAt": "2026-12-06T16:00:00.000Z",
+  "priceMYR": 68,
+  "careMinutes": 45,
+  "totalMinutes": 90,
+  "firstReply": {
+    "both": {
+      "zh": "您好💕 欢迎咨询 Neutro Sense TCM！\n\n我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠 🌸\n\n✨ 首次体验只需 RM68（原价以门店公告为准）\n📅 活动日期：12月5日 & 6日\n⏰ RM68胸部护理约45分钟；加上赠送护理，全程约 1小时30分钟\n🎁 免费赠送艾灸护理\n\n护理包含：\n✅ 专业胸部健康评估\n✅ 脉冲波舒缓护理，帮助放松胸部周围组织\n✅ 胸部日常护理建议\n\n💗 具体名额需要由门店确认，建议提前预约哦！\n\n请问您比较方便 12月5日（星期六）还是12月6日（星期日） 呢？😊",
+      "en": "Hello 💕 Welcome to Neutro Sense TCM!\n\nOur limited-time breast wellness assessment + gentle pulse wave care offer 🌸\n✨ First trial: RM68 (regular price subject to clinic announcement)\n📅 Event dates: December 5 and 6\n⏰ Breast care takes about 45 minutes; about 1 hour 30 minutes including complimentary moxibustion.\n✅ Breast wellness assessment, gentle pulse wave care and daily care advice.\n💗 Availability must be confirmed by the clinic. Would the event date(s) suit you? 😊",
+      "ms": "Hai 💕 Selamat datang ke Neutro Sense TCM!\n\nPromosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut 🌸\n✨ Percubaan pertama: RM68 (harga biasa tertakluk pada pengumuman pusat)\n📅 Tarikh acara: 5 dan 6 Disember\n⏰ Penjagaan payudara sekitar 45 minit; sekitar 1 jam 30 minit termasuk moksibusi percuma.\n✅ Penilaian kesejahteraan payudara, penjagaan gelombang denyutan lembut dan nasihat penjagaan harian.\n💗 Kekosongan perlu disahkan oleh pusat. Adakah tarikh acara sesuai untuk anda? 😊"
+    },
+    "dec6": {
+      "zh": "您好💕 欢迎咨询 Neutro Sense TCM！\n\n我们目前推出【胸部专业检查 + 脉冲波疏通乳腺护理】限时体验优惠 🌸\n\n✨ 首次体验只需 RM68（原价以门店公告为准）\n📅 活动日期：12月6日\n⏰ RM68胸部护理约45分钟；加上赠送护理，全程约 1小时30分钟\n🎁 免费赠送艾灸护理\n\n护理包含：\n✅ 专业胸部健康评估\n✅ 脉冲波舒缓护理，帮助放松胸部周围组织\n✅ 胸部日常护理建议\n\n💗 具体名额需要由门店确认，建议提前预约哦！\n\n请问您12月6日（星期日）方便吗？😊",
+      "en": "Hello 💕 Welcome to Neutro Sense TCM!\n\nOur limited-time breast wellness assessment + gentle pulse wave care offer 🌸\n✨ First trial: RM68 (regular price subject to clinic announcement)\n📅 Event dates: December 6\n⏰ Breast care takes about 45 minutes; about 1 hour 30 minutes including complimentary moxibustion.\n✅ Breast wellness assessment, gentle pulse wave care and daily care advice.\n💗 Availability must be confirmed by the clinic. Would the event date(s) suit you? 😊",
+      "ms": "Hai 💕 Selamat datang ke Neutro Sense TCM!\n\nPromosi terhad penilaian kesejahteraan payudara + penjagaan gelombang denyutan lembut 🌸\n✨ Percubaan pertama: RM68 (harga biasa tertakluk pada pengumuman pusat)\n📅 Tarikh acara: 6 Disember\n⏰ Penjagaan payudara sekitar 45 minit; sekitar 1 jam 30 minit termasuk moksibusi percuma.\n✅ Penilaian kesejahteraan payudara, penjagaan gelombang denyutan lembut dan nasihat penjagaan harian.\n💗 Kekosongan perlu disahkan oleh pusat. Adakah tarikh acara sesuai untuk anda? 😊"
+    },
+    "expired": {
+      "zh": "您好💕 欢迎咨询 Neutro Sense TCM！\n\n12月5日及6日的体验活动已经结束了。如想了解目前的胸部护理项目或预约安排，我们可以帮您向门店确认哦 😊",
+      "en": "Hello 💕 Welcome to Neutro Sense TCM! The December 5 and 6 event has ended. The clinic can confirm current breast-care options and appointments 😊",
+      "ms": "Hai 💕 Selamat datang ke Neutro Sense TCM! Acara 5 dan 6 Disember telah tamat. Pihak pusat boleh mengesahkan pilihan penjagaan payudara dan temu janji semasa 😊"
+    }
+  },
+  "followUp": {
+    "both": {
+      "zh": "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】首次体验 RM68，额外免费赠送艾灸护理，活动日期为12月5日和6日，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊",
+      "en": "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on December 5 and 6, with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊",
+      "ms": "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada 5 dan 6 Disember, termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"
+    },
+    "dec6": {
+      "zh": "您好💕 温馨提醒：您之前了解的【胸部健康评估 + 脉冲波舒缓护理】RM68 活动只剩今天12月6日，额外免费赠送艾灸护理，全程约1小时30分钟（含赠送护理）。具体名额以门店确认为准，如需安排欢迎回复我们 😊",
+      "en": "Hi 💕 A friendly reminder: the RM68 breast wellness assessment and gentle pulse wave care event is on December 6, with complimentary moxibustion (about 1 hour 30 minutes in total). Availability must be confirmed by the clinic 😊",
+      "ms": "Hai 💕 Peringatan mesra: acara penilaian kesejahteraan payudara dan penjagaan gelombang denyutan lembut RM68 pada 6 Disember, termasuk moksibusi percuma (sekitar 1 jam 30 minit). Kekosongan perlu disahkan oleh pusat 😊"
+    }
+  }
+}
+$rm68_config$::jsonb, true),
+    updated_at = now()
+WHERE id = 1
+  AND data->>'businessType' = 'tcm_clinic'
+  AND COALESCE(data->>'businessName', data->>'clinicName', '') ~* '^neutro[[:space:]]+sense[[:space:]]+tcm([[:space:]]+centre)?$'
+  AND NOT (data ? 'neutroRm68Campaign');

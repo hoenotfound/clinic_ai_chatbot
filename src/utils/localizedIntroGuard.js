@@ -100,7 +100,25 @@ function missingProtectedIntroFacts(configuredIntro, generatedReply) {
   return [...new Set([...missingLiterals, ...missingProtectedOfferClaims(intro, generatedReply)])];
 }
 
-function preserveOriginalIntroFacts(configuredIntro, generatedReply) {
+// Restore isolated contact details without repeating an entire translated
+// introduction. Commercial/eligibility claims and ambiguous source clauses
+// still require the full trusted source to preserve the offer's meaning.
+function missingContactLines(original,missing){
+  const contacts=[PROTECTED_FACT_PATTERNS[0],PROTECTED_FACT_PATTERNS[1],PROTECTED_FACT_PATTERNS[3]];
+  const lines=original.split(/\n+/u).map(line=>line.trim()).filter(Boolean);
+  const selected=new Set();
+  for(const fact of missing){
+    if(!contacts.some(pattern=>[...String(fact).matchAll(pattern)].some(m=>m[0]===fact)))return null;
+    const matches=lines.filter(line=>line.includes(fact)&&!OFFER_CLAIM.test(line)&&!FIRST_TRIAL_SOURCE.test(line));
+    if(matches.length!==1)return null;
+    const remainder=contacts.reduce((value,pattern)=>value.replace(pattern," "),matches[0])
+      .replace(/[\p{P}\p{S}\p{Extended_Pictographic}\uFE0F\s]+/gu," ").trim();
+    if(!/^(?:|contact|contact us|whatsapp|phone|telephone|tel|email|e mail|website|web|link|联系方式|聯絡方式|电话|電話|网址|網址|网站|網站|电邮|電郵|hubungi kami|telefon|emel|laman web)$/iu.test(remainder))return null;
+    selected.add(matches[0]);
+  }
+  return selected.size?[...selected].join("\n"):null;
+}
+function preserveOriginalIntroFacts(configuredIntro, generatedReply, {language=null} = {}) {
   const original = String(configuredIntro || "").trim();
   const reply = String(generatedReply || "").trim();
   const missing = missingProtectedIntroFacts(original, reply);
@@ -120,7 +138,8 @@ function preserveOriginalIntroFacts(configuredIntro, generatedReply) {
   // Fail-safe for unverifiable AI translation: facts remain accessible without
   // inventing a translated price, voucher condition, contact or treatment.
   return {
-    reply: [reply, "Original clinic introduction:", original].join("\n\n"),
+    reply: [reply, language==="zh" ? "门店原始介绍：" : language==="ms" ? "Pengenalan asal pusat:" : "Original clinic introduction:",
+      (language&&missingContactLines(original,missing))||original].join("\n\n"),
     usedOriginalFallback: true,
     missingCount: missing.length,
   };

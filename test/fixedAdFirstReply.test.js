@@ -608,6 +608,8 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const contact = { id: 7 };
     const savedInbound = { id: 100 };
     const aiPricingMode = resolveContactPricingMode({baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,env:{}});
+    const naturalReplyAuthority = usesNaturalReplyAuthority(clinicConfig);
+    let languageReviewRequired = false;
     const keywordReason = null;
     const marketingStopQuestion = null;
     const numberedPricingSelection = null;
@@ -620,6 +622,9 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ${source}
     return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
   })`, {
+    ...require("../src/utils/neutroAiReplyAuthority"),
+    replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+    urgentSafety: false,
     resolveContactPricingMode: require("../src/utils/pricingTestContact").resolveContactPricingMode,
     // Pin the synthetic attribution clock so this test does not expire after 7 real days.
     resolveFixedAdFirstReply: options => resolveFixedAdFirstReply({ ...options, now }),

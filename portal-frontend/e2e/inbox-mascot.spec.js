@@ -210,35 +210,26 @@ test("Dashy controls use the local theme palette", async ({ page }) => {
   const controls = page.getByRole("group", { name: "Dashy controls" });
   await expect(controls).toBeVisible();
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  // Exercise real local CSS inheritance, without toggling a stylesheet's
-  // disabled flag (which did not remove its rules in iPhone WebKit).
-  // Preserve and restore the original inline values and their priorities.
+  // A React render can replace inline styles on the Inbox shell while
+  // the theme test is running. Use a scoped stylesheet so the local palette
+  // survives a render, and verify the real computed control colors.
   const originalTextColor = await controls.evaluate(el => getComputedStyle(el).color);
-  const palette = {
-    "--color-surface": "#182521", "--color-text": "#f1f5f3",
-    "--color-text-muted": "#c2d0c9", "--color-bg": "#101a17",
-    "--color-border": "#40534b", "--color-primary": "#84c5b2",
-  };
-  const originalPalette = await controls.evaluate((el, values) => {
-    const shell = el.closest(".wa-inbox-shell");
-    if (!shell) throw new Error("Dashy controls must inherit from the Inbox shell");
-    const previous = Object.keys(values).map(key => ({
-      key, value: shell.style.getPropertyValue(key),
-      priority: shell.style.getPropertyPriority(key),
-    }));
-    for (const [key, value] of Object.entries(values)) shell.style.setProperty(key, value);
-    return previous;
-  }, palette);
-  await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
-  await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
-  await controls.evaluate((el, previous) => {
-    const shell = el.closest(".wa-inbox-shell");
-    if (!shell) throw new Error("Dashy controls must inherit from the Inbox shell");
-    for (const { key, value, priority } of previous) {
-      if (value) shell.style.setProperty(key, value, priority);
-      else shell.style.removeProperty(key);
+  const theme = await page.addStyleTag({ content: `
+    .wa-inbox-shell {
+      --color-surface: #182521 !important;
+      --color-text: #f1f5f3 !important;
+      --color-text-muted: #c2d0c9 !important;
+      --color-bg: #101a17 !important;
+      --color-border: #40534b !important;
+      --color-primary: #84c5b2 !important;
     }
-  }, originalPalette);
+  ` });
+  try {
+    await expect(controls).toHaveCSS("background-color", "rgb(24, 37, 33)");
+    await expect(controls).toHaveCSS("color", "rgb(241, 245, 243)");
+  } finally {
+    await theme.evaluate(el => el.remove());
+  }
   await expect(controls).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(controls).toHaveCSS("color", originalTextColor);
   // Menu dismissal and focus restoration are covered by the interaction test.
