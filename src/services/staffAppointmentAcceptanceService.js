@@ -145,9 +145,13 @@ function createStaffAppointmentAcceptanceService({
   sendWebPush = webPushNotifications.sendContactAlertBestEffort,
   markPendingBooking = markBookingReadyForContact,
 } = {}) {
-  return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
+  return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText, { modelStaffEvidence = null } = {}) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
-    if (!isBriefAcceptance(customerText)) {
+    const modelAccepted = modelStaffEvidence && Number.isSafeInteger(modelStaffEvidence.id) &&
+      typeof modelStaffEvidence.text==="string" && modelStaffEvidence.text.length>0 &&
+      !/[?？]/u.test(String(customerText||"")) &&
+      !/(?:\b(?:no|not|cannot|can[’\']t|cancel|reschedule|maybe|not sure|later|tomorrow instead|bukan|tidak|tak|mungkin|tukar)\b|不行|不能|不要|取消|改期|改时间|改時間|可能|不确定|不確定|再看看)/iu.test(String(customerText||""));
+    if (!isBriefAcceptance(customerText) && !modelAccepted) {
       if (isDirectBookingIntent(customerText)) {
         await markPendingBooking(contactId,inboundMessageId,{
           reason:"Booking ready: customer explicitly requested an appointment; staff should confirm availability.",
@@ -242,13 +246,15 @@ function createStaffAppointmentAcceptanceService({
         offer = relayed.rows.find(row =>
           sameSpecificOfferedSlot(row.staff_text, row.relay_text));
       }
-      if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text)) {
+      if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text) ||
+          (modelStaffEvidence && (!modelAccepted || Number(offer.staff_message_id)!==modelStaffEvidence.id ||
+           String(offer.staff_text||"").trim()!==modelStaffEvidence.text.trim()))) {
         await client.query("COMMIT");
         return null;
       }
       const metadata = {
         outcome: "staff_time_accepted",
-        source: "authenticated_staff_offer",
+        source: modelAccepted ? "ai_interpreted_verified_staff_offer" : "authenticated_staff_offer",
         inboundMessageId: Number(inboundMessageId),
         staffMessageId: Number(offer.staff_message_id),
         ...(offer.relay_message_id ? { relayMessageId: Number(offer.relay_message_id) } : {}),
