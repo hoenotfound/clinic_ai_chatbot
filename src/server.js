@@ -49,6 +49,7 @@ const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPul
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { resolveNeutroPelvicPackageComparison } = require("./utils/neutroPelvicPackageComparison");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
+const {selectVerifiedSpecialReply}=require("./utils/verifiedSpecialReply");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts,correctUnsupportedBranchReply,
   confirmedSingleBranchLocationAnswer, verifyLocationDraft, isBusinessLocationQuestion } =
@@ -2619,7 +2620,7 @@ async function processIncomingMessage(
           language: mediaLanguage,
           verifiedIndividualQuote: Boolean(twoTreatmentQuote) ||
             Boolean(approvedPricingDecision?.prices?.some(item =>
-              item.price && reply.includes(item.price))),
+              item.price && containsApprovedPriceAmount(reply,{prices:[item]}))),
         }) || resolveContextualNeutroComboQuestion({
           customerText:text,history:commercialHistory,
           services:clinicConfig.services,
@@ -2630,7 +2631,9 @@ async function processIncomingMessage(
     if (comboOfferDecision) {
       const beforeCombo=reply;
       reply = ["direct","contextual"].includes(comboOfferDecision.mode)
-        ? comboOfferDecision.reply
+        ? naturalReplyAuthority && !fixedAdFirstReply && !isFirstMessage
+          ? selectVerifiedSpecialReply({draft:originalModelReply,decision:comboOfferDecision,language:mediaLanguage,kind:"combo"})
+          : comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
       replyOverrideAudit.change("resolveNeutroComboOfferReply",beforeCombo,reply);
       console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
@@ -2710,8 +2713,11 @@ async function processIncomingMessage(
     // comparison AFTER all model price-heading and repeated-clarification
     // guards have run. It must not license any fresh promo-media selection.
     if (pelvicPackageComparison && !flagged && !bookingReady) {
-      replyOverrideAudit.change("resolveNeutroPelvicPackageComparison",reply,pelvicPackageComparison.reply);
-      reply = pelvicPackageComparison.reply;
+      const comparisonReply=naturalReplyAuthority&&!fixedAdFirstReply&&!isFirstMessage
+        ? selectVerifiedSpecialReply({draft:originalModelReply,decision:pelvicPackageComparison,language:mediaLanguage,kind:"pelvic"})
+        : pelvicPackageComparison.reply;
+      replyOverrideAudit.change("resolveNeutroPelvicPackageComparison",reply,comparisonReply);
+      reply = comparisonReply;
       console.info("[Package comparison] contact=" + contact.id +
         " inbound=" + savedInbound.id + " decision=verified_text_only");
     }
@@ -2755,8 +2761,11 @@ async function processIncomingMessage(
       }
     }
     if (repeatVisitPriceReply) {
-      replyOverrideAudit.change("resolveRepeatVisitPriceReply",reply,repeatVisitPriceReply.reply);
-      reply = repeatVisitPriceReply.reply;
+      const subsequentReply=naturalReplyAuthority&&!fixedAdFirstReply&&!isFirstMessage&&!flagged
+        ? selectVerifiedSpecialReply({draft:originalModelReply,decision:repeatVisitPriceReply,language:mediaLanguage,kind:"subsequent"})
+        : repeatVisitPriceReply.reply;
+      replyOverrideAudit.change("resolveRepeatVisitPriceReply",reply,subsequentReply);
+      reply = subsequentReply;
       if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
         flagged = true;
         reviewRequired = false;
@@ -2879,8 +2888,11 @@ async function processIncomingMessage(
           contact.id, savedInbound.id
         );
         if (evidence?.pendingClinicalReview === false) {
-          replyOverrideAudit.change("administrativeReviewReply",reply,adminAnswer.reply);
-          reply = adminAnswer.reply;
+          const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
+            verifyLocationDraft(originalModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
+            ? originalModelReply : adminAnswer.reply;
+          replyOverrideAudit.change("administrativeReviewReply",reply,administrativeReply);
+          reply = administrativeReply;
           flagged = false;
           reviewRequired = false;
           reviewType = null;
