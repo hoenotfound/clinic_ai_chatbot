@@ -4,7 +4,12 @@ function verifiedStaffSlot(text,sourceAt,now=sourceAt,hours,{allowUnconfigured=f
  const anchor=localParts(sourceAt);
  if(!anchor)return null;
  const date=detectDate(text,anchor.date);
- const clock=parseClockPreference(text);
+ // Mask numeric calendar spans before reading clocks: "24/11-12pm"
+ // contains a date followed by a time, not an 11-to-12 time range.
+ const clockText=String(text||"").normalize("NFKC")
+   .replace(/\b20\d{2}[/-]\d{1,2}[/-]\d{1,2}\b/gu,m=>" ".repeat(m.length))
+   .replace(/\b\d{1,2}[/-]\d{1,2}(?:[/-]20\d{2})?\b/gu,m=>" ".repeat(m.length));
+ const clock=parseClockPreference(clockText);
  if(!date?.date||date.ambiguous||clock.invalid||clock.range||clock.times.length!==1)return null;
  const minute=clock.times[0];
  const instant=Date.parse(date.date+"T00:00:00+08:00")+minute*60000;

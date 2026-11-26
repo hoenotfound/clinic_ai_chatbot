@@ -92,3 +92,20 @@ test("ambiguous and multi-treatment context keeps all FAQs",()=>{
     {...context,serviceSource:"current_promotion"}
   ]) assert.deepEqual(selectCompactFAQs(faqs,c,plan),faqs);
 });
+
+
+test("reviewed November 26 variant preserves changed clinic facts and rejects unknown drift",()=>{
+  const revised=require("../scripts/config-proposals/neutro-prompt-consolidation-20261126.json");
+  assert.equal(revised.clinic,proposal.clinic);
+  assert.notDeepEqual(revised.expectedMd5,require("../scripts/config-proposals/neutro-prompt-consolidation-20261124.json").expectedMd5);
+  assert.match(revised.replacement.sop,/Pulse Wave is a whole-body treatment, not a localized treatment/);
+  assert.match(revised.replacement.sop,/additional attention to specific areas/);
+  assert.match(revised.replacement.sop,/KKM-certified TCM practitioners and 25 years/);
+  assert.match(revised.replacement.sop,/深入15cm/);
+  assert.match(revised.replacement.sop,/不得主动重复或保证/);
+  assert.match(revised.replacement.messagingStyle,/do not promise AI 身体检测/i);
+  assert.match(revised.replacement.closingPlaybook,/Package A's AI 身体检测/);
+  // A real source edit cannot select either reviewed revision.
+  assert.equal(resolveProductionCompactPolicy({...original,promptOptimization:{neutroCompactV2:true},
+    sop:"edited",messagingStyle:"edited",closingPlaybook:"edited"},plan),null);
+});

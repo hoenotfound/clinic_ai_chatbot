@@ -135,6 +135,8 @@ function harness({ failDelivery = false } = {}) {
       }),
       isRecoverableAiReplyFailure: () => false,
     },
+    appointmentRecognitionEnabled: require("../src/utils/aiLedAppointmentEvidence").appointmentRecognitionEnabled,
+    resolveModelAppointmentEvidence: require("../src/utils/aiLedAppointmentEvidence").resolveModelAppointmentEvidence,
     correctReplyLanguage, parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
     correctUnsupportedBranchReply, isSimpleVisitTimingQuestion, safeVisitTimingReply,
     isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,

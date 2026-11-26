@@ -142,7 +142,7 @@ test("staff acknowledgment is held for review, not automatically booked", async 
   assert.equal(events.length,0);
   assert.deepEqual(await service(7,"See u tmr",{providerAccepted:true}),{review:true});
   assert.equal(events[1].messageId,200);
-  assert.match(events[0],/whatsapp_message_id IS NOT NULL/);
+  assert.match(events[0],/whatsapp_message_id LIKE 'wamid\.%'/);
 });
 
 test("informal Business App date confirmation creates a hold, not a booked lead", async () => {

@@ -94,6 +94,8 @@ test("Claude customer replies use native structured outputs and the workspace he
       "appointmentPreference",
       "appointmentScheduling",
       "appointmentProposal",
+      "appointmentIntent",
+      "appointmentStaffEvidence",
       "businessLocationOnly",
       "projectLocation",
       "projectSummary",
