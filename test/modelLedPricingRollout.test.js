@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {resolveAiPricingDecision,resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing,hasConflictingStaffPrice}=require("../src/utils/aiPricingIntentDecision");
+const {resolveAiPricingDecision,resolveModelLedPricingDecision,shouldApplyModelLedPricing,shouldBlockRejectedModelPricing,hasConflictingStaffPrice,staleCommercialIntent,hasCustomerRequestedPriceReply}=require("../src/utils/aiPricingIntentDecision");
 const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
 const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
 const {resolvePricePromotionForReply}=require("../src/utils/pricePromotionTrigger");
@@ -469,6 +469,81 @@ test("delivered AI recommendation plus customer engagement grounds the real Puls
  }
 });
 
+test("rapid Pulse Wave concern messages must not inherit an earlier pricing request",async()=>{
+ const name="脉冲波调理";
+ const prior=[turn("user","你好，我想了解黄金脉冲技术",12000),
+   {...turn("assistant","脉冲波调理主要针对局部身体线条。请问你想改善哪个部位呢？",11000),pricingDeliveredBotMessage:true},
+   turn("user","大概多少钱 有全身的吗？",9000)];
+ const quoted={...turn("assistant","脉冲波调理首次体验价 RM388。主要是局部护理。",5000),pricingDeliveredBotMessage:true};
+ const first=args(prior.at(-1).content,name,{
+   services:[...services,{name}],serviceAliases:[...serviceAliases,{alias:"黄金脉冲技术",officialService:name}],
+   promotions:[...promotions,promo(name,388)],conversationHistory:prior,
+ });
+ assert.deepEqual(resolveModelLedPricingDecision(first)?.prices.map(p=>p.price),["RM388"]);
+ for(const current of ["排毒全身","减肥","whole body","weight loss","kurus badan","肚子，腿","会","yes","全身排毒吗？","想了解减肥","肚子呢？","What areas does it cover?","Is this for the whole body?"]){
+   for(const afterQuote of [false,true]){
+     const history=[...prior,...(afterQuote?[quoted]:[]),
+       turn("user","排毒全身",2000),turn("user",current,0)];
+     const a={...first,customerText:current,conversationHistory:history};
+     assert.equal(staleCommercialIntent(a),true,current+" afterQuote="+afterQuote);
+     assert.equal(resolveModelLedPricingDecision(a),null,current);
+     assert.equal(hasCustomerRequestedPriceReply({customerText:current,pricingDecision:null}),false,current);
+     const r=ensureVerifiedPriceReply({...a,reply:"RM388",pricingDecision:null,priceRequested:false,language:"zh"});
+     assert.doesNotMatch(r.reply,/RM\s*388|哪项疗程的价格/iu);
+     const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,pricingDecision:null,
+       priceQuery:true,packageQuery:false,treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,
+       wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+     assert.equal(media,null,current);
+   }
+ }
+ // Fresh independently evidenced price questions still work in the burst.
+ for(const current of ["多少钱？","How much for two?","Berapa harga?"]){
+   const a={...first,customerText:current,conversationHistory:[...prior,quoted,turn("user",current,0)]};
+   assert.equal(staleCommercialIntent(a),false,current);
+   assert.deepEqual(resolveModelLedPricingDecision(a)?.prices.map(p=>p.price),["RM388"],current);
+ }
+ // Do not impose a grammar or monetary-keyword requirement on the normal
+ // AI-led conversation outside this narrow rapid-inbound exception.
+ const older=[...prior,quoted].map(t=>({...t,pricingCreatedAtMs:t.pricingCreatedAtMs-20_000}));
+ for(const current of ["一般是怎么算?","What would I be paying","I'd like to know what I'd be paying","Berapa perlu saya sediakan","Total for both","And for two people"]){
+   const a={...first,customerText:current,conversationHistory:[...older,turn("user",current,0)]};
+   assert.equal(staleCommercialIntent(a),false,current);
+   assert.deepEqual(resolveModelLedPricingDecision(a)?.prices.map(p=>p.price),["RM388"],current);
+ }
+ // No previous customer price request: an assistant quote alone does not
+ // invoke the new safeguard (e.g. an automated promotion or old caption).
+ const onlyBot={...first,customerText:"减肥",
+   conversationHistory:[...prior.slice(0,2),quoted,turn("user","减肥",0)]};
+ assert.equal(staleCommercialIntent(onlyBot),false);
+ // The observed 7-second burst is in scope; a 15-second-old request is the
+ // upper boundary. Beyond it no new pricing restriction applies.
+ for(const age of [7_000,15_000,15_001,60_000]){
+   const current="减肥";
+   const history=[turn("user",prior.at(-1).content,age),turn("user",current,0)];
+   assert.equal(staleCommercialIntent({...first,customerText:current,conversationHistory:history}),age<=15_000);
+ }
+ const noPrior={...first,customerText:"我要知道你们的收费标准",
+   conversationHistory:[...prior.slice(0,2),turn("user","我要知道你们的收费标准",0)]};
+ assert.equal(staleCommercialIntent(noPrior),false);
+ assert.equal(resolveModelLedPricingDecision(noPrior)?.treatment,name);
+});
+
+test("an actual unanswered price clarification is not stale commercial intent",()=>{
+ const a=args("3D","3D 小颜术");
+ a.conversationHistory=[turn("user","多少钱？",2000),
+   turn("assistant","请问你想了解哪一项疗程的价格呢？",1000),turn("user","3D",0)];
+ assert.equal(staleCommercialIntent(a),false);
+ assert.equal(resolveModelLedPricingDecision(a)?.treatment,"3D 小颜术");
+});
+
+test("rapid guard leaves verified legacy pricing exceptions and Shadow observational",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ assert.match(source,/staleModelPricing = aiPricingEnabled && staleIntent && !legacyPricingApproval\.decision/u);
+ assert.match(source,/const selectedPricingApproval = staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
+ assert.match(source,/if \(staleModelPricing\) \{[\s\S]*?priceQuery = false;\s*packageQuery = false;\s*modelPricingStage = null;/u);
+});
+
 test("returning customer: named 3D, concern, location, price and quoted clarification use the same verified offer",async()=>{
  const stamp=(id,role,content,ms,extra={})=>({...turn(role,content,ms),contextMessageId:id,...extra});
  const history=[
@@ -516,4 +591,15 @@ test("returning customer: named 3D, concern, location, price and quoted clarific
  ])assert.equal(clarification({...b,customerText:unsafe.content,conversationHistory:[...extended.slice(0,-1),unsafe]}),null);
  const changed=extended.map(t=>t.contextMessageId===8?{...t,content:"另外想了解 9D 逆龄抗衰"}:t);
  assert.equal(clarification({...b,conversationHistory:changed}),null);
+});
+
+test("new treatment selection separates rapid fresh budget questions from old price intent",()=>{
+ const a=args("那我要准备多少预算呢？","骨盆调理");
+ a.conversationHistory=[
+   turn("user","3D第一次体验之后，第二次收费多少？",10000),
+   turn("user","我想了解骨盆调理",8000),
+   turn("assistant","骨盆调理主要是徒手护理，可以先安排免费体态评估。",6000),
+   turn("user",a.customerText,0)];
+ assert.equal(staleCommercialIntent(a),false);
+ assert.equal(resolveModelLedPricingDecision(a)?.treatment,"骨盆调理");
 });
