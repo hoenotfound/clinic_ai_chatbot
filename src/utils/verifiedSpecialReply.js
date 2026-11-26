@@ -79,10 +79,28 @@ function comboPriceClauseMatches(value,decision){
 function comboDraftMatches(draft,decision){
   if(decision?.afterVoucher)return false;
   if(Array.isArray(decision?.individualPrices)&&decision.individualPrices.length){
-    // A two-individual-plus-combo quote is inherently a different scope.
-    // Keep its existing exact validated fallback until all three price
-    // associations can be checked independently.
-    return verifiedEquivalentReply(draft,decision.reply);
+    if(verifiedEquivalentReply(draft,decision.reply))return true;
+    const entries=decision.individualPrices;
+    const lines=String(draft||"").split(/\r?\n|[;；。]/u).map(x=>x.trim()).filter(x=>x&&!harmlessLine(x));
+    if(entries.length!==2||lines.length!==3||scanMyrAmounts(draft).length!==3)return false;
+    const {preserveVerifiedModelQuote}=require("./verifiedPriceReply");
+    const used=new Set();
+    for(const entry of entries){
+      const code=String(entry.name||"").match(/^[39]D\b/iu)?.[0];
+      if(!code||typeof entry.firstTrial!=="boolean")return false;
+      const namePattern=new RegExp("(?<![a-z0-9])"+code+"(?![a-z0-9])","iu");
+      const matches=lines.filter(line=>namePattern.test(line)&&!comboLabel.test(line));
+      if(matches.length!==1||used.has(matches[0]))return false;
+      const line=matches[0];
+      const claims=monetaryClaims(line);
+      if(scopeNegation.test(line)||/[?？❌🚫⛔]/u.test(line)||
+        claims.length!==1||claims[0].role!=="offer"||claims[0].negated||claims[0].afterVoucher)return false;
+      const canonical=line.includes(entry.name)?line:line.replace(namePattern,()=>entry.name);
+      if(!preserveVerifiedModelQuote({reply:canonical,treatment:entry.name,prices:[{name:"Main offer",price:entry.price}],firstTrialQuote:entry.firstTrial}))return false;
+      used.add(line);
+    }
+    const combo=lines.find(line=>!used.has(line));
+    return Boolean(combo&&comboPriceClauseMatches(combo,decision));
   }
   if(decision?.mode==="contextual")return verifiedEquivalentReply(draft,decision.reply);
   const text=comparableLines(draft).filter(line=>!harmlessLine(line)).join(" ");
