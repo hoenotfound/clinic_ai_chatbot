@@ -2,7 +2,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
-const { HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
+const { HOLD_SQL, CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance}=require("./staffAppointmentAcceptanceService");
@@ -255,10 +255,10 @@ function createStaffBookingConfirmationService({
     // permission to fabricate a CRM appointment or send a booking alert.
     // The provider-authenticated original message ID is required for a
     // recoverable, replay-safe follow-up hold.
-    const persistStaffHold=async()=>{
+    const persistStaffHold=async(confirmation=false)=>{
       const sourceId=Number(messageId);
       if(!Number.isSafeInteger(sourceId)||sourceId<=0)return null;
-      const holdSql=HOLD_SQL;
+      const holdSql=confirmation?CONFIRMATION_HOLD_SQL:HOLD_SQL;
       const args=[contactId,sourceId,staffText];
       // Serialize duplicate webhook deliveries on the existing conversation
       // lock. The NOT EXISTS check then becomes race-safe without a migration.
@@ -323,7 +323,7 @@ function createStaffBookingConfirmationService({
         // Staff explicitly confirmed a visit but the exact slot lacks enough
         // corroboration. Keep sales paused even if booking-ready hours cannot
         // yet validate the full preference. This never creates a CRM booking.
-        if(config.businessType==="tcm_clinic"&&terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))await persistStaffHold();
+        if(config.businessType==="tcm_clinic"&&terseSlot&&/^(?:confirm|comfirm)(?:ed)?\s+(?:appointment|booking)\b/iu.test(String(staffText||"").trim()))await persistStaffHold(true);
         return markPendingBooking(contactId,recorded.id,{
           reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
           activityDescription:"Staff visit acknowledgement needs independently verified customer slot agreement.",
@@ -347,7 +347,7 @@ function createStaffBookingConfirmationService({
       const hours=config.hours.weekly[day];
       const clock=String(local.getUTCHours()).padStart(2,"0")+":"+String(local.getUTCMinutes()).padStart(2,"0");
       if(!Number.isFinite(instant)||instant<now().getTime()||!hours||!/^\d{2}:\d{2}$/u.test(hours.open)||!/^\d{2}:\d{2}$/u.test(hours.close)||clock<hours.open||clock>=hours.close){
-        await persistStaffHold();
+        await persistStaffHold(true);
         return null;
       }
     }
