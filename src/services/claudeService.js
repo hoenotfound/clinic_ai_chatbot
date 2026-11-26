@@ -53,7 +53,7 @@ function buildConversationOutputSchema() {
       reply: { type: "string" },
       outcome: {
         type: "string",
-        enum: ["normal", "review_required", "needs_human", "booking_ready"],
+        enum: ["normal", "review_required", "needs_human", "booking_ready", "no_reply"],
       },
       serviceQuery: { type: "boolean" },
       serviceQuerySource: {
@@ -68,6 +68,7 @@ function buildConversationOutputSchema() {
       branch: nullableString(),
       appointmentPreference: nullableString(),
       appointmentScheduling: { type: "boolean" },
+      appointmentProposal: nullableString(),
       businessLocationOnly: { type: "boolean" },
       projectLocation: nullableString(),
       projectSummary: nullableString(),
@@ -89,6 +90,7 @@ function buildConversationOutputSchema() {
       "branch",
       "appointmentPreference",
       "appointmentScheduling",
+      "appointmentProposal",
       "businessLocationOnly",
       "projectLocation",
       "projectSummary",

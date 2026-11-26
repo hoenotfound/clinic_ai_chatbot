@@ -79,6 +79,7 @@ function harness({ failDelivery = false } = {}) {
     markOutboundAttemptAmbiguous: async () => ({ message: null }),
   };
   const context = {
+    ...require("../src/utils/neutroAiReplyAuthority"),
     console: { error: (...args) => state.errors.push(args.join(" ")), log: () => {}, warn: () => {}, info: () => {} },
     process, setTimeout, clearTimeout, Buffer,
     resolveContactPricingMode: args => require("../src/utils/pricingTestContact").resolveContactPricingMode({...args,env:{}}),

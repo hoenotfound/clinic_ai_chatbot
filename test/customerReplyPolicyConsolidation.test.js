@@ -67,7 +67,7 @@ test("consolidated reply policy retains pricing, booking, clinical and media saf
     assert.match(prompt, /An explicit price question is NOT required/);
     assert.match(prompt, /clinical safety, duplicate, staff-handoff and channel-delivery checks/);
     assert.match(prompt, /Never borrow its price, discount, bundle, free add-on, or deadline for another service/);
-    assert.match(prompt, /"outcome": "normal \| review_required \| needs_human \| booking_ready"/);
+    assert.match(prompt, /"outcome": "normal \| review_required \| needs_human \| booking_ready \| no_reply"/);
     assert.equal((prompt.match(/ASSESSMENT-FIRST PRICING POLICY/g) || []).length, 1);
     assert.equal((prompt.match(/TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT/g) || []).length, 1);
 

@@ -93,6 +93,7 @@ test("Claude customer replies use native structured outputs and the workspace he
       "branch",
       "appointmentPreference",
       "appointmentScheduling",
+      "appointmentProposal",
       "businessLocationOnly",
       "projectLocation",
       "projectSummary",

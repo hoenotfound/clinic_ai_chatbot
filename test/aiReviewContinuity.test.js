@@ -76,7 +76,7 @@ test("AI prompt chooses review_required for nonurgent unknowns and takeover for 
   const prompt = source("src/utils/systemPrompt.js");
   assert.match(prompt, /Use "review_required" when a missing\/unverified business-specific fact/);
   assert.match(prompt, /Use "needs_human" for an explicit request for human\/staff\/manager assistance/);
-  assert.match(prompt, /"normal \| review_required \| needs_human \| booking_ready"/);
+  assert.match(prompt, /"normal \| review_required \| needs_human \| booking_ready \| no_reply"/);
 });
 
 

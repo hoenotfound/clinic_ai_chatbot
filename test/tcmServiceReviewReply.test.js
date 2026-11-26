@@ -216,7 +216,7 @@ test("runtime acknowledgement path persists review and exits before promotional 
   assert.doesNotMatch(review, /sendImageByUrl|markBookingReadyForContact|resolvePricePromotionForReply/);
   assert.match(server, /getTcmReviewEvidence\(/);
   assert.match(server, /plan\?\.preserveReview/);
-  assert.match(server, /plan\.alreadyInvited/);
+  assert.doesNotMatch(server, /if \(!modelIdentifiedTreatment\) aiReply = plan\.reply/);
 });
 
 
@@ -290,18 +290,14 @@ test("existing evidence plan identifies the verified treatment but preserves pen
   assert.equal(pending.preserveReview, true);
 });
 
-test("normal repeated-invitation branch preserves model draft only for the verified current treatment", () => {
+test("ordinary TCM reply is not replaced because optional treatment metadata is absent", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
-  const start = source.indexOf("const modelIdentifiedTreatment = plan.treatment");
-  const end = source.indexOf("if (!modelIdentifiedTreatment) aiReply = plan.reply;", start);
+  const start = source.indexOf("if (plan?.preserveReview) {");
+  const end = source.indexOf("// An unflagged ordinary treatment reply is model-owned", start);
   assert.ok(start > 0 && end > start);
-  const run = new Function("plan", "serviceQuery", "serviceQuerySource", "details", "priceQuery", "packageQuery", "aiReply",
-    source.slice(start, end + "if (!modelIdentifiedTreatment) aiReply = plan.reply;".length) + "\nreturn aiReply;");
-  const plan = { treatment:"骨盆调理", reply:"verified fallback" };
-  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},false,false,"natural"),"natural");
-  assert.equal(run(plan,true,"customer_message",{treatment:"3D 小颜术"},false,false,"natural"),"verified fallback");
-  assert.equal(run(plan,true,"conversation",{treatment:"骨盆调理"},false,false,"natural"),"verified fallback");
-  assert.equal(run(plan,false,null,null,false,false,"natural"),"verified fallback");
-  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},true,false,"natural"),"verified fallback");
-  assert.equal(run(plan,true,"customer_message",{treatment:"骨盆调理"},false,true,"natural"),"verified fallback");
+  const block = source.slice(start, end);
+  assert.match(block, /else if \(plan\?\.reply && reviewRequired\)/);
+  assert.doesNotMatch(block, /plan\.alreadyInvited|modelIdentifiedTreatment/);
+  assert.match(block, /clinicalAcknowledgement = plan\.reply/);
+  assert.match(block, /reviewType = "clinical"/);
 });

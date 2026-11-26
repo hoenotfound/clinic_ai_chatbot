@@ -102,8 +102,8 @@ test("processing failure is private and does not disable a subsequent AI turn", 
   assert.doesNotMatch(tail, /sendTrackedText|pauseAiForHumanHandoff|system_fallback/);
 });
 
-test("prompt requests silent review but permits normal replies and truthful identity answers", () => {
-  assert.match(prompt, /all other unresolved professional questions stay silent/);
+test("prompt permits recorded review acknowledgements and truthful identity answers", () => {
+  assert.match(prompt, /after successfully recording the staff review/);
   assert.match(prompt, /non-diagnostic acknowledgement/);
   assert.match(prompt, /Continue to answer future unrelated questions/);
   assert.match(prompt, /If explicitly asked whether you're automated, answer truthfully/);
