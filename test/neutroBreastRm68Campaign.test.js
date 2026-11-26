@@ -519,3 +519,39 @@ test("Stage 21 preserves qualified campaign availability but not unconfirmed boo
       reply,language:"en",now:early}),reply);
   }
 });
+
+
+test("RM68 amounts obey one campaign disclosure policy across currency formats",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const amount of ["RM68","MYR 68.00","马币68","RM 6️⃣8️⃣","令吉68"]){
+    const draft="The first trial is "+amount+" for the December 5 and 6 event.";
+    assert.equal(campaignClaimsSafe(draft,early),true,draft);
+    assert.equal(campaignClaimsSafe(draft,expired),false,draft);
+    const allowed=campaignContinuationPolicy({history,customerText:"How much?",reply:draft,language:"en",now:early});
+    assert.equal(allowed.reply,draft,draft);
+    const unsolicited=guardCampaignPriceConflicts({history,customerText:"How long?",reply:draft,language:"en",now:early});
+    assert.notEqual(unsolicited,draft,draft);
+  }
+  for(const amount of ["MYR 68.50","RM68.00.50","RM680","RM-68","RM6,8"]){
+    assert.equal(campaignClaimsSafe("The trial is "+amount+" on December 5.",early),false,amount);
+  }
+});
+
+test("RM68 duration claims distinguish the care component and whole visit",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const valid of [
+    "Breast care takes about 45 minutes, or about 90 minutes in total.",
+    "The full visit takes 90 minutes.",
+    "胸部护理约45分钟，全程约1小时30分钟。",
+    "Penjagaan payudara sekitar 45 minit, keseluruhan 90 minit.",
+    "The event takes 1.5 hours."
+  ]) assert.equal(campaignClaimsSafe(valid,early),true,valid);
+  for(const invalid of [
+    "Breast care takes 90 minutes.",
+    "The full visit takes 45 minutes.",
+    "Breast care takes 90 minutes, with 45 minutes in total.",
+    "胸部护理90分钟，全程45分钟。",
+    "Penjagaan payudara 90 minit, keseluruhan 45 minit.",
+    "The event takes 2h15."
+  ]) assert.equal(campaignClaimsSafe(invalid,early),false,invalid);
+});
