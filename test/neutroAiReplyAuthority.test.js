@@ -54,6 +54,7 @@ test("model closure is allowed only after verified delivery and never for an act
   assert.equal(canHonorNoReply({...args,contact:{needs_attention:true}}),false);
   assert.equal(canHonorNoReply({...args,parsed:{...parsed,details:{appointmentScheduling:true}}}),false);
   assert.equal(canHonorNoReply({...args,history:[{...args.history[0],content:"你想安排几点？"},args.history[1]]}),false);
+  assert.equal(canHonorNoReply({...args,customerText:"👌",history:[{...args.history[0],content:"可以帮您安排预约哦"},{role:"user",content:"👌"}]}),false);
   assert.equal(canHonorNoReply({...args,history:[{...args.history[0],pricingDeliveredBotMessage:false},args.history[1]]}),false);
   for(const text of ["OK","可以","我怀孕了","多少钱","明天","stop","我要预约","要怎么付款"]){
     assert.equal(canHonorNoReply({...args,customerText:text,history:[args.history[0],{role:"user",content:text}]}),false,text);

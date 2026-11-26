@@ -36,6 +36,9 @@ function canHonorNoReply({config,parsed,customerText,history=[],contact,isFirstM
   if(last?.role!=="user"||String(last.content||"").trim()!==text||
      previous?.role!=="assistant"||previous.pricingDeliveredBotMessage!==true||
      previous.pricingStaffAuthored===true||/[?？]/u.test(String(previous.content||"")))return false;
+  // Even without a question mark a prior scheduling or payment invitation
+  // may make an emoji an acceptance rather than a social closing.
+  if (/(?:预约|預約|安排|确认空档|確認空檔|付款|订金|訂金|押金|\b(?:book(?:ing)?|appointment|slot|payment|deposit|temujanji|janji temu|bayaran)\b)/iu.test(String(previous.content||"")))return false;
   // Require a short social closing, not arbitrary message content. This is
   // a restrictive safety boundary, never a standalone keyword ignore rule.
   return /^(?:(?:thanks|thank you|terima kasih|谢谢|謝謝|多谢|多謝|tq|thx)(?:\s*(?:very much|so much|很多|您|你|ya))?|[👍👌🙏❤️💚😊☺️\s]+)[.!。！\s]*$/iu.test(text);

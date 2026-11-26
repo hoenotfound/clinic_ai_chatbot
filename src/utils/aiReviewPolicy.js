@@ -125,6 +125,9 @@ function categorizeAiReview(customerText, proposedCategory,{trustStructuredInfor
   // A mixed promotional price enquiry does not downgrade a breast lump,
   // tumor or nodule concern to ordinary information.
   if (isBreastLumpConcern(customerText)) return "clinical";
+  // A structured information decision never downgrades independent safety
+  // evidence, even when another early administrative recovery also matches.
+  if (trustStructuredInformation && hasClinicalMediaRisk(customerText)) return "clinical";
   // A lone greeting cannot on its own justify a clinical label. Higher-level
   // server safeguards must separately check pending real clinical reviews.
   if (isSimpleGreeting(customerText) && !hasClinicalMediaRisk(customerText)) return "information";
