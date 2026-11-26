@@ -175,6 +175,11 @@ function schedulingQuestion(text) {
     (VISIT_ACTION.test(value) && (TODAY.test(value)||TOMORROW.test(value)||OTHER_DATE.test(value)||
        /\b(?:temu janji|kekosongan|tarikh|Disember)\b/iu.test(value)));
 }
+function configuredEventDateMatches(date,day="both"){
+  const {campaign}=rm68CampaignSettings();
+  const dates=day==="dec6"?campaign.eventDates.slice(-1):campaign.eventDates;
+  return dates.some(iso=>Number(iso.slice(5,7))===date.month&&Number(iso.slice(8,10))===date.day);
+}
 function alternativeDateRequest(text, now=Date.now()) {
   const value=String(text||"");
   if(eventDateRejection(value)) return true;
@@ -182,7 +187,7 @@ function alternativeDateRequest(text, now=Date.now()) {
   if(OTHER_DATE.test(value)) return true;
   // Explicit December dates outside the advertised days.
   const dates=campaignDatesInText(value);
-  if(dates.some(d=>d.month!==12||![5,6].includes(d.day))) return true;
+  if(dates.some(d=>!configuredEventDateMatches(d))) return true;
   const at=now===null?NaN:Number(now);
   if(!Number.isFinite(at)) return false;
   const day=new Date(at+8*3600000).toISOString().slice(0,10);
@@ -203,7 +208,7 @@ function dateScope(text,now) {
   if(eventDateRejection(value)||alternativeDateRequest(value,now))return "ordinary";
   if(!VISIT_ACTION.test(value)&&!DATE_QUESTION.test(value)&&!/(?:[56]\s*日(?:方便|可以)|\b(?:5th|6th|both days|those days)\b)/iu.test(value))return null;
   const dates=campaignDatesInText(value);
-  if(dates.length) return dates.every(d=>d.month===12&&[5,6].includes(d.day))?"event":"ordinary";
+  if(dates.length) return dates.every(d=>configuredEventDateMatches(d))?"event":"ordinary";
   const at=now===null?NaN:Number(now);
   const local=Number.isFinite(at)?localParts(at):null;
   const date=local&&detectDate(value,local.date);
@@ -332,10 +337,12 @@ function campaignClaimsSafe(value, now=Date.now()) {
   const text=String(value||"").normalize("NFKC");
   const day=campaignDay(now);
   const amounts=[...text.matchAll(/(?:\b(?:RM|MYR)\s*|马币\s*|令吉\s*)(\d[\d,]*(?:\.\d+)?)/giu)].map(m=>Number(m[1].replace(/,/g,"")));
-  if(amounts.some(n=>n!==68)|| (day==="expired"&&amounts.length))return false;
+  const {campaign}=rm68CampaignSettings();
+  if(amounts.some(n=>n!==campaign.priceMYR)|| (day==="expired"&&amounts.length))return false;
   const dates=campaignDatesInText(text);
-  if(dates.some(d=>d.month!==12||![5,6].includes(d.day)||(day==="dec6"&&d.day!==6)))return false;
-  if(/\b20\d{2}\b/u.test(text)&&/\b20(?!26)\d{2}\b/u.test(text))return false;
+  if(dates.some(d=>!configuredEventDateMatches(d,day)))return false;
+  const allowedYears=new Set(campaign.eventDates.map(date=>date.slice(0,4)));
+  if([...text.matchAll(/\b20\d{2}\b/gu)].some(m=>!allowedYears.has(m[0])))return false;
   // Unverified slot, clinical equipment, guarantees and unrelated prices
   // cannot be authorised by a fluent answer.
   if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(text))return false;
@@ -343,7 +350,7 @@ function campaignClaimsSafe(value, now=Date.now()) {
   const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
   for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
     const mins=/^(?:hours?|hrs?|jam|小时|小時)$/iu.test(m[2])?Number(m[1])*60:Number(m[1]);
-    if(![45,90].includes(mins))return false;
+    if(![campaign.careMinutes,campaign.totalMinutes].includes(mins))return false;
   }
   // Prices must be explicitly event-scoped, not just coexist with a valid date.
   if(amounts.length && !/(?:\bevent\b|\bpromotion\b|\btrial\b|\bonly\b|\bpromo\b|活动|活動|体验|體驗|限时|限時|优惠|優惠|\bacara\b|\bpromosi\b|\bpercubaan\b)/iu.test(text))return false;
