@@ -8,7 +8,7 @@ const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { getActivePromotions, getPricePromotionBundle } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const {hasMyrAmount}=require("./myrAmountClaims");
-const {verifiedEquivalentReply}=require("./verifiedSpecialReply");
+const {comboDraftMatches}=require("./verifiedSpecialReply");
 const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 
@@ -57,10 +57,11 @@ function verifiedComboOffer(promotions, now, current, session) {
     COMBO_SERVICE, promotions, current, session, { allowTextOnlyOffers: true }
   );
   if (prices?.length !== 1 || !/^RM[1-9]\d{0,5}$/u.test(String(prices[0]?.price || ""))) return null;
+  if(prices[0].afterVoucher || prices[0].sessionsIncluded>1)return null;
   const offer = matches[0];
   const text = String(offer.followUpMessage || "");
   const complimentaryMeridianHour = /(?:免费送|免費送|赠送|贈送).{0,15}(?:1\s*小时|1\s*小時|一小时|一小時).{0,20}(?:经络|經絡)/u.test(text);
-  return { treatment: COMBO_SERVICE, price: prices[0].price, complimentaryMeridianHour };
+  return { treatment: COMBO_SERVICE, price: prices[0].price, complimentaryMeridianHour, afterVoucher:false };
 }
 
 // '3D 和 9D 分别多少钱' remains two individual prices. Suggest the combo
@@ -137,7 +138,7 @@ function resolveNeutroComboOfferReply({
       (!currentNames.face && !currentNames.firming)) return null;
   // Never repeat an offer already made in this recent conversation.
   if (turns.some(turn => turn.role === "assistant" &&
-      String(turn.content || "").includes(offer.price) &&
+      hasMyrAmount(turn.content,Number(offer.price.slice(2))) &&
       (JOINT_INTENT.test(String(turn.content || "")) ||
        (/3\s*d/iu.test(turn.content) && /9\s*d/iu.test(turn.content))))) return null;
   const reply = locale.startsWith("ms")
@@ -205,8 +206,11 @@ function resolveNeutroComboMediaPricingDecision({
   // quoted for this combination. Direct replies must still match the facts
   // approved by the combo resolver. Suggestion mode retains its exact appended
   // block, which is independently checked below.
-  if(comboOfferDecision.mode==="direct" && !verifiedEquivalentReply(reply,comboOfferDecision.reply))return null;
-  if(comboOfferDecision.mode==="suggestion" && !String(reply||"").endsWith(comboOfferDecision.reply))return null;
+  if(comboOfferDecision.mode==="direct" && !comboDraftMatches(reply,comboOfferDecision))return null;
+  if(comboOfferDecision.mode==="suggestion") {
+    const lastBlock=String(reply||"").split(/\n\s*\n/u).at(-1);
+    if(!comboDraftMatches(lastBlock,comboOfferDecision))return null;
+  }
 
   const bundle = getPricePromotionBundle(
     promotions, COMBO_SERVICE, null, new Date(now)
