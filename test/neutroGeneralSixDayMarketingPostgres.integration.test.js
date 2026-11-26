@@ -149,6 +149,64 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   const activation=new Date(fixtureNow.getTime()-6*86400000).toISOString();
   const p=["neutro_secondary","100000000011111","200000000011111",
     fixtureNow,5,activation,"ads_only",activation,activation];
+
+  // Compare against the exact pre-optimisation SQL (only the redundant
+  // early seed restriction is removed), including future due hints.
+  function legacy(sql){
+   const old=sql.replace(/\n     AND EXISTS \(\n       SELECT 1 FROM contacts seed_contact[\s\S]*?\n     \)/,"");
+   assert.notEqual(old,sql,"legacy general seed marker must match");
+   return old;
+  }
+  const hintArgs=[...p.slice(0,4),...p.slice(5)];
+  async function parity(){
+   for(const [sql,args] of [[general.CANDIDATES_SQL,p],[general.RECHECK_SQL,p],[general.POTENTIAL_DUE_SQL,hintArgs]]){
+    assert.deepEqual((await db.query(sql,args)).rows,(await db.query(legacy(sql),args)).rows);
+   }
+   const all=(await db.query(general.RECHECK_SQL,p)).rows;
+   assert.deepEqual((await db.query(general.SCOPED_RECHECK_SQL,[...p,contact])).rows,
+    all.filter(row=>Number(row.contact_id)===Number(contact)));
+   assert.deepEqual((await db.query(general.SCOPED_RECHECK_SQL,[...p,0])).rows,[]);
+  }
+  await parity();
+  // Delayed provider source timestamp, not local message storage time,
+  // remains the consent proof. An actual provider timestamp mismatch must
+  // never be treated as a current verified opt-in.
+  await db.query("UPDATE messages SET source_created_at=source_created_at-interval '2 hours' WHERE id=$1",[consent.id]);
+  await db.query("UPDATE contacts SET whatsapp_opt_in_at=whatsapp_opt_in_at-interval '2 hours' WHERE id=$1",[contact]);
+  await db.query("UPDATE whatsapp_marketing_consent_events SET consented_at=consented_at-interval '2 hours' WHERE message_id=$1",[consent.id]);
+  await parity();
+  assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,1);
+  await db.query("UPDATE messages SET source_created_at=source_created_at+interval '1 second' WHERE id=$1",[consent.id]);
+  await parity();
+  assert.equal((await db.query(general.CANDIDATES_SQL,p)).rows.length,0);
+  await db.query("UPDATE messages SET source_created_at=$2 WHERE id=$1",[consent.id,consent.source_created_at]);
+  await db.query("UPDATE contacts SET whatsapp_opt_in_at=$2 WHERE id=$1",[contact,consent.source_created_at]);
+  await db.query("UPDATE whatsapp_marketing_consent_events SET consented_at=$2 WHERE message_id=$1",[consent.id,consent.source_created_at]);
+  // Historical consents in staff-owned conversations exercise the old
+  // broad seed. All rows are synthetic, in this disposable CI schema.
+  await db.query(`INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,mode,whatsapp_opt_in_at,whatsapp_opt_in_source)
+    SELECT 'whatsapp','60199'||lpad(i::text,6,'0'),$1,'human',$2,'explicit_customer_message'
+    FROM generate_series(1,500) i`,[sender,consent.source_created_at]);
+  await db.query(`INSERT INTO leads(contact_id,marketing_consent)
+    SELECT id,'opted_in' FROM contacts WHERE whatsapp_number LIKE '60199%'`);
+  await db.query(`INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at)
+    SELECT id,'user','Fixture consent','wamid.fixture.generic.'||id,$1,$1
+    FROM contacts WHERE whatsapp_number LIKE '60199%'`,[consent.source_created_at]);
+  await db.query(`INSERT INTO whatsapp_marketing_consent_events
+    (contact_id,lead_id,source,message_id,provider_message_id,message_text,business_name,
+     consent_scope,consent_category,consented_at,consent_method,consent_service)
+    SELECT c.id,l.id,'explicit_customer_message',m.id,m.whatsapp_message_id,m.content,'Fixture clinic',
+     'general_clinic_followups_and_related_offers','MARKETING',m.source_created_at,'customer_whatsapp_text','neutro_general_tcm_care'
+    FROM contacts c JOIN leads l ON l.contact_id=c.id JOIN messages m ON m.contact_id=c.id
+    WHERE c.whatsapp_number LIKE '60199%'`);
+  for(const table of ["contacts","leads","messages","whatsapp_marketing_consent_events"])await db.query("ANALYZE "+table);
+  await parity();
+  for(const [label,sql,args] of [["general legacy",legacy(general.POTENTIAL_DUE_SQL),hintArgs],
+    ["general optimised",general.POTENTIAL_DUE_SQL,hintArgs]]){
+    const plan=(await db.query("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql,args)).rows[0]["QUERY PLAN"][0];
+    console.log("marketing synthetic benchmark",label,JSON.stringify({ms:plan["Execution Time"],
+      blocks:plan.Plan["Shared Hit Blocks"]+plan.Plan["Shared Read Blocks"]}));
+  }
   const bareWhere=general.CANDIDATES_SQL.indexOf("\n WHERE rule.enabled=TRUE");
   const order=general.CANDIDATES_SQL.lastIndexOf("\n ORDER BY inbound.created_at");
   assert.ok(bareWhere>0&&order>bareWhere);
@@ -223,6 +281,7 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     [sender,contact,ad])).rows[0].id;
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
     "claimed generic marketing follow-up survives independent final consent check");
+  await parity();
   // A reply arriving between the one-shot claim and the provider call must
   // also cancel the template during the final sender-bound recheck.
   const justReplied=(await db.query(
@@ -234,6 +293,7 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     [justReplied,conversation]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "new customer question prevents send after the claim");
+  await parity();
   await db.query("DELETE FROM whatsapp_sender_message_context WHERE message_id=$1",[justReplied]);
   await db.query("DELETE FROM messages WHERE id=$1",[justReplied]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,1,
@@ -241,10 +301,12 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NOW() WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "fresh marketing opt-out cancels the claimed generic send");
+  await parity();
   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=$1",[contact]);
   await db.query("UPDATE contacts SET mode='human' WHERE id=$1",[contact]);
   assert.equal((await db.query(general.RECHECK_SQL,p)).rows.length,0,
     "manual Staff mode cancels the generic send");
+  await parity();
   await db.query("DELETE FROM whatsapp_sender_marketing_followup_attempts WHERE id=$1",[attempt]);
   await db.query("DEALLOCATE ALL");
  }finally{
