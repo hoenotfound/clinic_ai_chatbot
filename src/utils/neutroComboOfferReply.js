@@ -109,14 +109,19 @@ function resolveNeutroComboOfferReply({
   if (ambiguousBothPrices) {
     const standalone = ["3D 小颜术", "9D 逆龄抗衰"].map(name => {
       const entries = verifiedPricesForService(name, promotions, current, turns);
-      return entries?.length === 1 ? { name, price:entries[0].price } : null;
+      if(entries?.length!==1||entries[0].afterVoucher||entries[0].sessionsIncluded>1)return null;
+      const offers=getActivePromotions(promotions,new Date(now)).filter(p=>p.linkedService===name&&p.sendOnPriceQuery===true);
+      if(offers.length!==1)return null;
+      const evidence=[offers[0].name,offers[0].caption,entries[0].title].filter(Boolean).join(" ");
+      return { name, price:entries[0].price,firstTrial:/first[\s-]*trial|首次(?:体验|體驗)|初次(?:体验|體驗)|percubaan pertama/iu.test(evidence) };
     });
     if (standalone.some(item => !item || !/^RM[1-9]\d{0,5}$/u.test(item.price))) return null;
+    const bothTrial=standalone.every(item=>item.firstTrial);
     const reply = locale.startsWith("ms")
-      ? `Harga First Trial 3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
+      ? `Harga ${bothTrial?"First Trial ":"promosi "}3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
       : locale.startsWith("en")
-        ? `The separate 3D and 9D First Trial offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
-        : `3D 和 9D 分开体验的 First Trial 价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
+        ? `The separate 3D and 9D ${bothTrial?"First Trial ":"current "}offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
+        : `3D 和 9D 分开体验的 ${bothTrial?"First Trial ":"当前优惠"}价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
     return { ...offer, mode:"direct", individualPrices:standalone, mediaAllowed:false, reply };
   }
 
