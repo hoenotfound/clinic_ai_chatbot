@@ -199,6 +199,11 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
      'general_clinic_followups_and_related_offers','MARKETING',m.source_created_at,'customer_whatsapp_text','neutro_general_tcm_care'
     FROM contacts c JOIN leads l ON l.contact_id=c.id JOIN messages m ON m.contact_id=c.id
     WHERE c.whatsapp_number LIKE '60199%'`);
+  await db.query(`INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state)
+    SELECT $1,whatsapp_number,id,'bound' FROM contacts WHERE whatsapp_number LIKE '60199%'`,[sender]);
+  await db.query(`INSERT INTO whatsapp_sender_message_context(message_id,conversation_id)
+    SELECT m.id,sc.id FROM messages m JOIN whatsapp_sender_conversations sc ON sc.contact_id=m.contact_id
+    JOIN contacts c ON c.id=m.contact_id WHERE c.whatsapp_number LIKE '60199%'`);
   for(const table of ["contacts","leads","messages","whatsapp_marketing_consent_events"])await db.query("ANALYZE "+table);
   await parity();
   for(const [label,sql,args] of [["general legacy",legacy(general.POTENTIAL_DUE_SQL),hintArgs],
@@ -308,6 +313,70 @@ test("general 48h/66h/Day4/Day6 candidate, recheck and scheduler SQL compile aga
     "manual Staff mode cancels the generic send");
   await parity();
   await db.query("DELETE FROM whatsapp_sender_marketing_followup_attempts WHERE id=$1",[attempt]);
+  // Reuse the same verified sender-bound journey as treatment marketing.
+  // The consent and due anchors are deliberately different for ordinary
+  // and extended stages. Test the *full* selectors, not just SQL fragments.
+  await db.query("UPDATE contacts SET mode='ai',created_at=$2::timestamptz-interval '49 hours' WHERE id=$1",[contact,fixtureNow]);
+  await db.query("UPDATE leads SET treatment_interest='3D 小颜术' WHERE id=$1",[lead]);
+  await db.query("UPDATE whatsapp_marketing_consent_events SET consent_scope='treatment_followups_and_related_offers',consent_service='3D 小颜术' WHERE message_id=$1",[consent.id]);
+  const reply=(await db.query(`INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,delivery_status)
+    VALUES($1,'assistant','Facial care information','wamid.fixture.marketing-reply',$2::timestamptz-interval '48 hours 30 minutes','delivered')
+    RETURNING id`,[contact,fixtureNow])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[reply,conversation]);
+  // Existing receipt constraints require a real synthetic reservation.
+  const reservation="00000000-0000-4000-8000-000000000001";
+  await db.query(`INSERT INTO whatsapp_sender_billing_attempts(reservation_id,sender_id,contact_id,message_id,state,billable_authorized)
+    VALUES($1,$2,$3,$4,'rejected',FALSE)`,[reservation,sender,contact,reply]);
+  await db.query(`INSERT INTO whatsapp_sender_status_receipts
+    (fingerprint,sender_id,reservation_id,wamid,wamid_hash,delivery_status,pricing_type,pricing_billable,
+      meta_phone_number_id,meta_account_id,matched)
+    VALUES($1,$2,$3,'wamid.fixture.marketing-reply',$4,'delivered','free_entry_point',FALSE,
+      '100000000011111','200000000011111',TRUE)`,["b".repeat(64),sender,reservation,"c".repeat(64)]);
+  await db.query(`INSERT INTO whatsapp_sender_marketing_followup_rules
+    (sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved,updated_at)
+    VALUES($1,96,TRUE,'fixture_day4','en_US',$2,TRUE,$3),
+          ($1,144,TRUE,'fixture_day6','en_US',$2,TRUE,$3)`,[sender,"a".repeat(64),activation]);
+  function oldTreatment(sql){
+   const old=sql.replace(/\n        -- Exclude contacts that cannot meet[\s\S]*?\n        \)/,"");
+   assert.notEqual(old,sql,"legacy treatment seed marker must match");
+   return old;
+  }
+  const ordinaryArgs=p.slice(0,8);
+  async function compareTreatment({candidateSql,recheckSql,scopedSql,dueSql,args,anchor,slot,label}){
+   const hArgs=[...args.slice(0,4),...args.slice(5)];
+   const rows=(await db.query(candidateSql,args)).rows;
+   assert.deepEqual(rows,(await db.query(oldTreatment(candidateSql),args)).rows);
+   assert.ok(rows.some(x=>Number(x.contact_id)===Number(contact)&&Number(x.slot_hours)===slot),label+" eligible journey must survive");
+   const hint=(await db.query(dueSql,hArgs)).rows;
+   assert.deepEqual(hint,(await db.query(oldTreatment(dueSql),hArgs)).rows);
+   assert.equal(hint[0].has_overdue,true);
+   for(const [variant,sql] of [["legacy",oldTreatment(dueSql)],["optimised",dueSql]]){
+    const plan=(await db.query("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql,hArgs)).rows[0]["QUERY PLAN"][0];
+    console.log("marketing synthetic benchmark",label,variant,JSON.stringify({ms:plan["Execution Time"],
+      blocks:plan.Plan["Shared Hit Blocks"]+plan.Plan["Shared Read Blocks"]}));
+   }
+   const claim=(await db.query(`INSERT INTO whatsapp_sender_marketing_followup_attempts
+     (sender_id,contact_id,anchor_message_id,slot_hours,status,claimed_at)
+     VALUES($1,$2,$3,$4,'claimed',$5) RETURNING id`,[sender,contact,anchor,slot,args[3]])).rows[0].id;
+   const fresh=(await db.query(recheckSql,args)).rows;
+   assert.deepEqual(fresh,(await db.query(oldTreatment(recheckSql),args)).rows);
+   assert.ok(fresh.some(x=>Number(x.contact_id)===Number(contact)&&Number(x.slot_hours)===slot));
+   assert.deepEqual((await db.query(scopedSql,[...args,contact])).rows,
+     fresh.filter(x=>Number(x.contact_id)===Number(contact)));
+   assert.deepEqual((await db.query(scopedSql,[...args,0])).rows,[]);
+   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=now() WHERE id=$1",[contact]);
+   assert.deepEqual((await db.query(scopedSql,[...args,contact])).rows,[]);
+   await db.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=$1",[contact]);
+   await db.query("DELETE FROM whatsapp_sender_marketing_followup_attempts WHERE id=$1",[claim]);
+  }
+  await compareTreatment({candidateSql:marketing.CANDIDATES_SQL,recheckSql:marketing.RECHECK_SQL,
+    scopedSql:marketing.SCOPED_RECHECK_SQL,dueSql:marketing.POTENTIAL_DUE_SQL,args:ordinaryArgs,anchor:consent.id,slot:48,label:"48h"});
+  for(const slot of [96,144]){
+   const args=[...ordinaryArgs];
+   args[3]=new Date(fixtureNow.getTime()+(slot-48)*3600000);
+   await compareTreatment({candidateSql:marketing.EXTENDED_CANDIDATES_SQL,recheckSql:marketing.EXTENDED_RECHECK_SQL,
+    scopedSql:marketing.SCOPED_EXTENDED_RECHECK_SQL,dueSql:marketing.EXTENDED_POTENTIAL_DUE_SQL,args,anchor:ad,slot,label:slot+"h"});
+  }
   await db.query("DEALLOCATE ALL");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
