@@ -61,6 +61,19 @@ const CLAIM_MARKER="   AND NOT EXISTS(\n     SELECT 1 FROM whatsapp_sender_marke
 const RECHECK_SQL=CANDIDATES_SQL.replace(GENERAL_DISCOVERY_GATE,"").replace(CLAIM_MARKER,
  "   AND EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id AND attempted.anchor_message_id=inbound.id AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed')");
 if(RECHECK_SQL===CANDIDATES_SQL)throw Error("Generic marketing recheck mismatch");
+// Only scope an already-claimed recheck, never discovery or scheduling.
+// Add both the materialized seed and final contact predicates so PostgreSQL
+// need not scan other customers. Keep every original eligibility predicate.
+function scopeMarketingRecheckSql(sql, parameter, seedAlias){
+ if(![9,10].includes(parameter)||!["recent","e"].includes(seedAlias))throw Error("Invalid marketing recheck scope");
+ const seed="WHERE seed_contact.id="+seedAlias+".contact_id";
+ const order=sql.lastIndexOf("ORDER BY ");
+ if(sql.split(seed).length!==2||order<0||!sql.slice(order).includes("LIMIT $5"))throw Error("Marketing recheck scope mismatch");
+ const binding="$"+parameter;
+ return (sql.slice(0,order)+"AND c.id="+binding+"\n "+sql.slice(order))
+   .replace(seed,seed+" AND seed_contact.id="+binding);
+}
+const SCOPED_RECHECK_SQL=scopeMarketingRecheckSql(RECHECK_SQL,10,"e");
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
  dueExpression:GENERAL_DUE_SQL,
@@ -68,4 +81,4 @@ const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  deferredReadyPredicate:DEFERRED_READY_PREDICATE,
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
-module.exports={GENERAL_TEMPLATE_BY_SLOT,GENERAL_TEMPLATE_NAMES,activation,enabled,GENERAL_DUE_SQL,CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL};
+module.exports={GENERAL_TEMPLATE_BY_SLOT,GENERAL_TEMPLATE_NAMES,activation,enabled,GENERAL_DUE_SQL,CANDIDATES_SQL,RECHECK_SQL,SCOPED_RECHECK_SQL,scopeMarketingRecheckSql,POTENTIAL_DUE_SQL};
