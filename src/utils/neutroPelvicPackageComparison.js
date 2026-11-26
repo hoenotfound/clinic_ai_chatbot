@@ -10,12 +10,12 @@ const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { scanMyrAmounts } = require("./myrAmountClaims");
 
 const TREATMENT = "骨盆调理";
 const COMPARE = /(?:分别|分別|差别|差別|区别|區別|不同|比较|比較|对比|對比|有何不同|difference|different|compar(?:e|ison)|beza|berbeza|banding)/iu;
 const PACKAGE = /(?:配套|套餐|package|pakej)/iu;
 const FORBIDDEN = /(?:不要|不用|不想|取消|退款|退费|退費|订金|訂金|押金|停止|退订|退訂|改聊|换成|換成|\b(?:stop|unsubscribe|refund|cancel|instead|deposit)\b)/iu;
-const AMOUNT = /\b(?:RM|MYR)\s*([1-9]\d{1,5})\b/giu;
 const MAX_QUOTE_AGE_MS = 3 * 60 * 60 * 1000;
 
 function safeOffer(item) {
@@ -70,7 +70,7 @@ function verifiedComparisonSessionWithStaffNote({
   // A manual change to pricing, or a different paid-treatment discussion,
   // is a reason to leave the customer with staff. Package inclusions are not
   // an independent treatment switch.
-  const amounts = [...noteText.matchAll(AMOUNT)].map(m => Number(m[1]));
+  const amounts = scanMyrAmounts(noteText).map(c => c.amount);
   if (amounts.some(n => n !== safeOffer(a) && n !== safeOffer(b))) return null;
   const permittedInclusions = [a, b].flatMap(item =>
     ["zh", "en", "ms"].flatMap(locale => includedItems(item, locale) || [])
@@ -132,7 +132,7 @@ function resolveNeutroPelvicPackageComparison({
       !PACKAGE.test(current) || FORBIDDEN.test(current) ||
       hasClinicalMediaRisk(current)) return null;
 
-  const mentionedAmounts = [...current.matchAll(AMOUNT)].map(m => Number(m[1]));
+  const mentionedAmounts = scanMyrAmounts(current).map(c => c.amount);
   if (mentionedAmounts.length !== 2 ||
       new Set(mentionedAmounts).size !== 2) return null;
 
@@ -196,6 +196,9 @@ function resolveNeutroPelvicPackageComparison({
     reply: lead + "\n\n" + format(a, itemsA) + "\n\n" +
       format(b, itemsB) + "\n\n" + ending,
     type: "text_only",
+    heading:lead,conclusion:ending,
+    verifiedPackages:[{name:a.name,price:safeOffer(a),title:a.title,includedItems:itemsA},
+      {name:b.name,price:safeOffer(b),title:b.title,includedItems:itemsB}],
   });
 }
 module.exports = { resolveNeutroPelvicPackageComparison };
