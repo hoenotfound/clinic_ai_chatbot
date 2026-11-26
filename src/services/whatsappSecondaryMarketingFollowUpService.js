@@ -660,6 +660,8 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_R
        AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed'
    )`
 );
+const SCOPED_RECHECK_SQL=generalSql.scopeMarketingRecheckSql(RECHECK_SQL,9,"recent");
+const SCOPED_EXTENDED_RECHECK_SQL=generalSql.scopeMarketingRecheckSql(EXTENDED_RECHECK_SQL,9,"recent");
 // Only a durably rejected billing reservation with no provider evidence can
 // be marked cancelled. Keep the slot blocked so it is never blindly replayed.
 async function finishProvenMarketingPreProviderCancellation({
@@ -821,11 +823,12 @@ async function runOnce({
   const current=async()=>{
    if(EXTENDED_SLOTS.has(slot) && !isGeneral && !extendedEnabled(env))return false;
    if(isGeneral && !generalSql.enabled(env))return false;
-   const query=isGeneral?generalSql.RECHECK_SQL:
-     EXTENDED_SLOTS.has(slot)?EXTENDED_RECHECK_SQL:RECHECK_SQL;
+   const query=isGeneral?generalSql.SCOPED_RECHECK_SQL:
+     EXTENDED_SLOTS.has(slot)?SCOPED_EXTENDED_RECHECK_SQL:SCOPED_RECHECK_SQL;
    const queryParams=[params[0],params[1],params[2],
      new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
-     originalAdsOnlyCutoff(env),...(isGeneral?[generalSql.activation(env)]:[])];
+     originalAdsOnlyCutoff(env),...(isGeneral?[generalSql.activation(env)]:[]),
+     candidate.contact_id];
    const result=await database.query(query,queryParams);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
@@ -1006,6 +1009,7 @@ function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
  ORDINARY_MARKETING_DUE_SQL,ORDINARY_NEWER_DUE_SQL,
  CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+ SCOPED_RECHECK_SQL,SCOPED_EXTENDED_RECHECK_SQL,
  PROVEN_CANCELLED_MARKETING_ATTEMPT_SQL,
  MARKETING_CUSTOMER_INTENT_SQL,
  POTENTIAL_DUE_SQL,EXTENDED_POTENTIAL_DUE_SQL,enabled,extendedEnabled,combinedPotentialDueSql,combinePotentialDueHints,customerTemplateLocale,
