@@ -106,6 +106,8 @@ const RESCHEDULE_DISCREPANCY_SQL=CONFIRMATION_HOLD_SQL
   .replace("COALESCE(l.appointment_status,'none') NOT IN ('set','visited','cancelled')",
     "l.appointment_status='set' AND l.appointment_at IS DISTINCT FROM $4::timestamptz")
   .replace("AND c.mode='ai'", "AND c.mode IN ('ai','human')")
+  .replace("OR c.attention_reason LIKE 'Booking ready:%')",
+    "OR c.attention_reason LIKE 'Booking ready:%' OR c.attention_reason='Manual-only secondary WhatsApp: customer asked about an appointment. Staff should check the latest message and availability.')")
   .replace("Booking ready: staff confirmed a visit; reconcile the appointment in CRM.",
     "Booking ready: staff indicated a different appointment slot; reconcile the existing CRM booking.")
   .replace("'holdKind','confirmation_pending'", "'holdKind','confirmation_pending','proposedAppointmentAt',$4::timestamptz");

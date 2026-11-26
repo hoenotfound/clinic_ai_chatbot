@@ -100,3 +100,13 @@ test("social OK and smile can end a delivered explicit closing, never an open in
  assert.equal(check("Ok","我们的门店在PJ。"),false);
  assert.equal(check("😄","请问哪天方便，祝你顺心"),false);
 });
+
+test("a second smile after a suppressed OK still closes, without skipping a new request",()=>{
+ const {canHonorNoReply}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+ const history=[{role:"assistant",content:"随时欢迎你～祝你顺心！",pricingDeliveredBotMessage:true},
+ {role:"user",content:"Ok"},{role:"user",content:"😄"}];
+ const args={config,parsed:{structured:true,outcome:"no_reply",details:{}},customerText:"😄",history};
+ assert.equal(canHonorNoReply(args),true);
+ assert.equal(canHonorNoReply({...args,history:[history[0],{role:"user",content:"How much?"},history[2]]}),false);
+});

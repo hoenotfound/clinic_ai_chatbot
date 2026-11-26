@@ -15,13 +15,14 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
   const salesState=neutro ? ` AND COALESCE((
     SELECT a.metadata->>'state'
     FROM lead_activities a JOIN messages source
-      ON source.id::text=a.metadata->>'inboundMessageId'
+      ON source.id=CASE WHEN a.metadata->>'inboundMessageId' ~ '^[1-9][0-9]{0,17}$'
+        THEN (a.metadata->>'inboundMessageId')::bigint END
       AND source.contact_id=${contactAlias}.id
     WHERE a.lead_id=(SELECT l.id FROM leads l WHERE l.contact_id=${contactAlias}.id
       ORDER BY l.created_at DESC,l.id DESC LIMIT 1)
       AND a.metadata->>'outcome'='customer_sales_followup_state'
-      AND source.role='user' AND source.whatsapp_customer_mutation IS NULL
-      AND source.is_forwarded IS DISTINCT FROM TRUE
+      AND source.role='user' AND NULLIF(to_jsonb(source)->>'whatsapp_customer_mutation','') IS NULL
+      AND COALESCE((to_jsonb(source)->>'is_forwarded')::boolean,false)=false
     ORDER BY source.id DESC,a.id DESC LIMIT 1
   ),'reopened') NOT IN ('declined','deferred')` : "";
   return `NOT EXISTS (

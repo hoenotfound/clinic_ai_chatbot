@@ -41,14 +41,22 @@ function canHonorNoReply({config,parsed,customerText,history=[],contact,isFirstM
      checkKeywordTriggers(text)||isDefiniteAppointmentCancellation(text)||
      hasExplicitPriceRequest(text)||detectExplicitLanguagePreference(text))return false;
   const turns=Array.isArray(history)?history:[];
-  const last=turns.at(-1),previous=turns.at(-2);
+  const last=turns.at(-1);
+  // No-reply deliberately leaves no assistant row. A second social
+  // acknowledgement may follow the first one; look back through at most
+  // two such user turns, never through a substantive enquiry.
+  let priorIndex=turns.length-2;
+  const closingAck=value=>/^(?:ok(?:ay)?|baik|好的?|嗯|thanks|thank you|谢谢|謝謝|[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D\s]+)[.!。！\s]*$/iu.test(String(value||"").trim());
+  while(priorIndex>=0&&turns.length-2-priorIndex<2&&turns[priorIndex]?.role==="user"&&closingAck(turns[priorIndex].content))priorIndex--;
+  const previous=turns[priorIndex];
   if(last?.role!=="user"||String(last.content||"").trim()!==text||
      previous?.role!=="assistant"||previous.pricingDeliveredBotMessage!==true||
      previous.pricingStaffAuthored===true||/[?？]/u.test(String(previous.content||"")))return false;
   const closing=explicitSocialClosing(previous.content);
+  if(priorIndex!==turns.length-2&&!closing)return false;
   // A broad emoji/OK is safe only after a verified, explicit social ending.
   // Preserve the older strict acceptance boundary for all other turns.
-  if(closing && /^(?:ok(?:ay)?|baik|好的?|嗯|[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D\s]+)[.!。！\s]*$/iu.test(text))return true;
+  if(closing && closingAck(text))return true;
   // Even without a question mark a prior scheduling or payment invitation
   // may make an emoji an acceptance rather than a social closing.
   if (/(?:预约|預約|安排|确认空档|確認空檔|付款|订金|訂金|押金|\b(?:book(?:ing)?|appointment|slot|payment|deposit|temujanji|janji temu|bayaran)\b)/iu.test(String(previous.content||"")))return false;
@@ -135,7 +143,8 @@ const SALES_STATE_INSERT_SQL=`
   LEFT JOIN LATERAL (
     SELECT a.metadata->>'state' AS state
     FROM lead_activities a JOIN messages source
-      ON source.id::text=a.metadata->>'inboundMessageId' AND source.contact_id=inbound.contact_id
+      ON source.id=CASE WHEN a.metadata->>'inboundMessageId' ~ '^[1-9][0-9]{0,17}$'
+        THEN (a.metadata->>'inboundMessageId')::bigint END AND source.contact_id=inbound.contact_id
     WHERE a.lead_id=lead.id AND a.metadata->>'outcome'='customer_sales_followup_state'
       AND source.role='user' AND source.whatsapp_customer_mutation IS NULL
       AND source.is_forwarded IS DISTINCT FROM TRUE AND source.id<inbound.id

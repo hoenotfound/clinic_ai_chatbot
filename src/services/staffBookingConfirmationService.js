@@ -307,13 +307,7 @@ function createStaffBookingConfirmationService({
       !/[?？]/u.test(staffText) ? verifiedStaffSlot(staffText,now(),now(),config.hours) : null;
     if(farewellSlot)return persistStaffHold(true,messageId,farewellSlot);
     if(!strictSlot&&!terseSlot&&isProactiveAppointmentReminder(staffText)) return persistStaffHold();
-    if(!strictSlot) {
-      const contextualCandidate=config.businessType==="tcm_clinic" &&
-         /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
-       if(!terseSlot&&!contextualCandidate&&!isStaffVisitAcknowledgement(staffText))return null;
-      // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
-      // provider-authenticated staff evidence and independent customer
-      // agreement on the same date and time. If missing, hold for review.
+    async function readStaffProof(){
       const proof=await database.query(
         `SELECT staff.id,staff.created_at,
            COALESCE((SELECT jsonb_agg(to_jsonb(prior_turn))
@@ -342,7 +336,16 @@ function createStaffBookingConfirmationService({
          ORDER BY staff.created_at DESC,staff.id DESC LIMIT 1`,
         [contactId,staffText,messageId]
       );
-      const recorded=proof.rows?.[0];
+      return proof.rows?.[0]||null;
+    }
+    if(!strictSlot) {
+      const contextualCandidate=config.businessType==="tcm_clinic" &&
+         /(?:confirm(?:ed)?\s+appointment|appointment\s+(?:is\s+)?confirm(?:ed)?|预约已确认|預約已確認)/iu.test(staffText);
+       if(!terseSlot&&!contextualCandidate&&!isStaffVisitAcknowledgement(staffText))return null;
+      // A terse "OK 29/11 3pm" cannot book anybody by itself. Require
+      // provider-authenticated staff evidence and independent customer
+      // agreement on the same date and time. If missing, hold for review.
+      const recorded=await readStaffProof();
       if(!recorded?.id)return null;
       recordedProof=recorded;
       if(terseSlot&&isTerseBookingCorroborated(
@@ -375,6 +378,8 @@ function createStaffBookingConfirmationService({
       if(lead.appointment_at &&
          new Date(lead.appointment_at).getTime()===new Date(appointmentAt).getTime())return lead;
       if(neutro){
+        if(!recordedProof&&Number.isSafeInteger(Number(messageId))&&Number(messageId)>0)
+          recordedProof=await readStaffProof();
         const verified=verifiedStaffSlot(staffText,new Date(recordedProof?.created_at||now()),now(),config.hours);
         // Automatic replacement requires explicit staff confirmation, an
         // independently corroborated exact customer agreement, a provider
@@ -384,7 +389,10 @@ function createStaffBookingConfirmationService({
           isTerseBookingCorroborated(staffText,appointmentAt,recordedProof.prior_turns,recordedProof.created_at)){
           const changed=await pipeline.updateLead(lead.id,{appointmentStatus:"set",appointmentAt},"Verified staff reschedule",{
             expectedBookingRecovery:{contactId,staffMessageId:recordedProof.id,staffText,latestMessageId:recordedProof.id,
-              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at}});
+              updatedAt:lead.updated_at,expectedAppointmentAt:lead.appointment_at,
+              priorEvidence:(Array.isArray(recordedProof.prior_turns)?recordedProof.prior_turns:[]).map(t=>({
+                id:t.id,content:t.content,mutation:t.whatsapp_customer_mutation??null
+              }))}});
           if(changed)return changed;
         }
         if(verified)await persistStaffHold(true,recordedProof?.id||messageId,verified);

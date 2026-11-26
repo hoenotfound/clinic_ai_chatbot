@@ -517,8 +517,9 @@ async function updateLead(id, patch, actor, { expectedBookingRecovery = null } =
     );
     const current = currentResult.rows[0];
     if (!current) return null;
-    // One-off reconciliation may only update the exact unchanged unbooked
-    // lead and source snapshot. Ordinary staff edits use the existing path.
+    // Reconciliation may only update the exact unchanged lead and source
+    // snapshot. A reschedule additionally requires the old confirmed time
+    // and the prior customer/staff evidence to remain unchanged.
     if(expectedBookingRecovery){
       const proof=expectedBookingRecovery;
       const reschedule=proof.expectedAppointmentAt!=null;
@@ -545,6 +546,18 @@ async function updateLead(id, patch, actor, { expectedBookingRecovery = null } =
               AND a.created_at>=source.created_at AND a.metadata->>'outcome'='booking_hold_resolved')`,
         [proof.staffMessageId,proof.contactId,proof.staffText,proof.latestMessageId,current.created_at,id]);
       if(!fresh.rows.length)return null;
+      if(reschedule){
+        if(!Array.isArray(proof.priorEvidence)||!proof.priorEvidence.length||proof.priorEvidence.length>50||
+          !proof.priorEvidence.every(e=>Number.isSafeInteger(Number(e.id))&&typeof e.content==="string"))return null;
+        const evidence=await client.query(
+          `SELECT COUNT(*)::integer AS verified FROM jsonb_to_recordset($1::jsonb)
+             AS expected(id bigint,content text,mutation text)
+           JOIN messages m ON m.id=expected.id AND m.contact_id=$2
+             AND m.content=expected.content
+             AND (to_jsonb(m)->>'whatsapp_customer_mutation') IS NOT DISTINCT FROM expected.mutation`,
+          [JSON.stringify(proof.priorEvidence),proof.contactId]);
+        if(Number(evidence.rows[0]?.verified)!==proof.priorEvidence.length)return null;
+      }
     }
 
     const changes = { ...patch };
@@ -700,6 +713,22 @@ async function updateLead(id, patch, actor, { expectedBookingRecovery = null } =
             }
           : {}
       );
+    }
+    // A staff edit of the actual appointment resolves any older discrepancy
+    // signal. Leave unrelated booking, clinical and sales evidence intact.
+    if(isClinicBooking&&clinicConfig.aiAppointmentRecognition!==false&&
+      /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName||clinicConfig.clinicName||""))&&
+      (dateValue(result.rows[0].appointment_at)!==dateValue(current.appointment_at)||
+        result.rows[0].appointment_status!==current.appointment_status)){
+      await client.query(`INSERT INTO lead_activities(lead_id,activity_type,description,actor,metadata)
+        SELECT $1,'updated','Staff reconciled the appointment discrepancy.',$2,
+          jsonb_build_object('outcome','booking_hold_resolved','reviewedSignalId',signal.id)
+        FROM lead_activities signal
+        WHERE signal.lead_id=$1 AND signal.metadata->>'outcome'='staff_appointment_reminder'
+          AND signal.metadata ? 'proposedAppointmentAt'
+          AND NOT EXISTS(SELECT 1 FROM lead_activities resolved WHERE resolved.lead_id=$1
+            AND resolved.metadata->>'outcome'='booking_hold_resolved' AND resolved.id>signal.id)
+        ORDER BY signal.id DESC LIMIT 1`,[id,actor]);
     }
     return result.rows[0];
   });

@@ -306,6 +306,11 @@ const SESSION_OR_DURATION_QUESTION =
 function hasSeparateNonPriceEnquiry(customerText){
   const current=stripFutureFollowUpPermission(String(customerText||"")).text;
   const clauses=(current.match(/[^?？。;；\n]+[?？。;；\n]*/gu)||[]).map(s=>s.trim()).filter(Boolean);
+  // A customer can request price and treatment process in the same
+  // sentence without punctuation. This preserves non-price explanatory
+  // text; it is not a new source of commercial authorization.
+  if(hasExplicitPriceRequest(current)&&
+    /(?:了解.{0,18}(?:过程|過程|流程)|(?:过程|過程|流程).{0,10}(?:价格|價格|价钱|價錢)|怎么做|怎麼做|如何进行|如何進行|\b(?:how (?:does it work|is it done)|treatment process|procedure details|proses rawatan|cara rawatan)\b)/iu.test(current))return true;
   if(clauses.length<2)return false;
   const {isCurrentOfferEnquiry}=require("./currentOfferEnquiry");
   const commercial=part=>hasExplicitPriceRequest(part)||isStandalonePriceQuestion(part)||

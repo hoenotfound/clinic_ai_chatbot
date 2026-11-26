@@ -339,3 +339,21 @@ test("real Neutro short staff confirmation needs recent customer slot and matchi
    appointmentStatus:"set",appointmentAt:"2026-11-24T04:00:00.000Z",
  }}]);
 });
+
+test("observed staff-only reschedule farewell raises a durable discrepancy, not a guessed booking",async()=>{
+ const now=new Date("2026-11-26T14:27:52Z");
+ const calls=[];
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",hours:{weekly:{
+  monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},
+  thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},
+  saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}}}};
+ const service=createStaffBookingConfirmationService({config,now:()=>now,
+  database:{query:async(sql,args)=>{calls.push({sql,args});return {rows:[]};}},
+  pipeline:{getActiveLeadForContact:async()=>{throw Error("farewell is not confirmation");},
+   updateLead:async()=>{throw Error("must not overwrite");}}});
+ assert.equal(await service(9232,"C u on 11/12- 12pm",{providerAccepted:true,messageId:24706}),null);
+ assert.equal(calls.length,1);
+ assert.match(calls[0].sql,/proposedAppointmentAt/);
+ assert.match(calls[0].sql,/l.appointment_status='set'/);
+ assert.deepEqual(calls[0].args,[9232,24706,"C u on 11/12- 12pm","2026-12-11T04:00:00.000Z"]);
+});
