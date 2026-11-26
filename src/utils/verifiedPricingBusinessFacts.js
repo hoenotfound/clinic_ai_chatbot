@@ -39,6 +39,10 @@ function standaloneLocationQuestion(customerText, modelLocationOnly = false) {
   const en=/^(?:hi[, ]+|hello[, ]+)?(?:(?:please |can you |could you )?(?:share|send|give)(?: me)? (?:your |the |clinic )?address(?: please)?|(?:your |the |clinic |our )?(?:address|location)(?: please)?|where (?:are you(?: located)?|is (?:your |the |this )?(?:clinic|centre|center|branch|outlet|shop|store|business)(?: located)?|can i find you)(?: please)?)$/iu;
   const ms=/^(?:(?:boleh (?:tahu|share|bagi|beri|hantar) )?(?:alamat|lokasi)(?: (?:klinik|clinic|pusat|cawangan|kedai|anda|awak|kamu))?|(?:klinik|clinic|pusat|cawangan|kedai) (?:di mana|dimana|kat mana)|(?:di mana|dimana|kat mana) (?:lokasi |alamat )?(?:klinik|clinic|pusat|cawangan|kedai))$/iu;
   if(zh.test(q)||en.test(q)||ms.test(q)) return true;
+  // A complete colloquial location question, not an arbitrary "where" token.
+  // The short contextual forms require the caller's independent scope proof.
+  if(/^(?:店|诊所|診所|门店|門店)\s*(?:在哪里|在哪裡|在哪|哪里|哪裡)(?:呢|呀|啊)?$/u.test(q))return true;
+  if(modelLocationOnly&&/^(?:at where|where(?: is it)?|kat mana|di mana|dimana|在哪里|在哪裡|哪里|哪裡)(?:\s+(?:ya|ah|lah|leh))?$/iu.test(q))return true;
   // Contextual correction requires BOTH the model decision and a complete
   // business-location question. No action for a bare model flag.
   if(!modelLocationOnly) return false;
@@ -48,6 +52,43 @@ function standaloneLocationQuestion(customerText, modelLocationOnly = false) {
 
 // Configured facts are independent of customer intent. The offline/live
 // benchmark can verify a raw address claim without authorizing a reply rewrite.
+// Restrict this boundary to a complete question about BUSINESS hours.
+// Treatment length, event dates and booking requests remain in their own paths.
+function standaloneBusinessHoursQuestion(value){
+  const text=String(value||"").trim().replace(/[?？。.!！\s]+$/gu,"");
+  if(!text||text.length>130)return false;
+  return /^(?:请问|請問|想问|想問)?[\s，,]*(?:(?:你们|你們|店|门店|門店|诊所|診所|中心)(?:的)?\s*)?(?:营业时间|營業時間|开门时间|開門時間|几点开门|幾點開門|几点关门|幾點關門|营业到几点|營業到幾點|几时开门|幾時開門|几时关门|幾時關門)(?:是几点|是幾點|呢|呀|啊)?$/u.test(text)||
+    /^(?:(?:hi|hello|please)[, ]+)?(?:(?:your |clinic |business )?(?:opening|operating|business) hours|(?:what time|when) (?:do you|does (?:the|your) (?:clinic|centre|center|shop)) (?:open|close))(?: please| ya| ah)?$/iu.test(text)||
+    /^(?:boleh tahu )?(?:waktu operasi|waktu buka|masa operasi|jam buka|pukul berapa (?:buka|tutup))(?: (?:klinik|pusat|kedai))?(?: ya)?$/iu.test(text);
+}
+function confirmedBusinessHoursAnswer({customerText,hours,language="zh"}={}){
+  if(!standaloneBusinessHoursQuestion(customerText))return null;
+  const weekly=hours?.weekly;
+  const days=["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+  if(!weekly||!days.every(d=>Object.prototype.hasOwnProperty.call(weekly,d)))return null;
+  const valid=v=>v===null||(typeof v==="object"&&/^([01]\d|2[0-3]):[0-5]\d$/u.test(v.open)&&/^([01]\d|2[0-3]):[0-5]\d$/u.test(v.close)&&v.open<v.close);
+  if(!days.every(d=>valid(weekly[d])))return null;
+  const locale=String(language).startsWith("en")?"en":String(language).startsWith("ms")?"ms":"zh";
+  const labels={en:["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],ms:["Isnin","Selasa","Rabu","Khamis","Jumaat","Sabtu","Ahad"],zh:["星期一","星期二","星期三","星期四","星期五","星期六","星期日"]}[locale];
+  const groups=[];
+  for(let i=0;i<days.length;i++){
+    const v=weekly[days[i]],key=v?v.open+"-"+v.close:"closed";
+    const last=groups.at(-1);
+    if(last?.key===key)last.end=i;else groups.push({key,start:i,end:i});
+  }
+  const rows=groups.map(({key,start,end})=>{
+    const label=labels[start]+(end!==start?(locale==="zh"?"至":"–")+labels[end]:"");
+    return label+": "+(key==="closed"?({en:"Closed",ms:"Tutup",zh:"休息"}[locale]):key);
+  });
+  const reply=({en:"Opening hours:",ms:"Waktu operasi:",zh:"营业时间："}[locale])+"\n"+rows.join("\n");
+  return {kind:"verified_hours",reply,language:locale,rows};
+}
+function verifyBusinessHoursDraft(reply,facts){
+  if(!facts||typeof reply!=="string")return false;
+  const norm=v=>String(v).normalize("NFKC").replace(/[😊☺️🙂💕]/gu,"").replace(/\s+/gu," ").trim().toLowerCase();
+  return norm(reply)===norm(facts.reply);
+}
+
 function singleBranchLocationFacts(branches, language = "zh") {
   if (!Array.isArray(branches) || branches.length !== 1) return null;
   const branch = branches[0];
@@ -262,4 +303,4 @@ function correctUnsupportedBranchReply({customerText="",reply="",branches=[],lan
 }
 
 module.exports = { appendRequestedBusinessFacts, correctUnsupportedBranchReply,
-  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft, standaloneLocationQuestion, singleBranchLocationFacts };
+  isBusinessLocationQuestion, confirmedSingleBranchLocationAnswer, verifyLocationDraft, standaloneLocationQuestion, singleBranchLocationFacts, standaloneBusinessHoursQuestion, confirmedBusinessHoursAnswer, verifyBusinessHoursDraft };
