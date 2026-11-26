@@ -117,7 +117,7 @@ function resolveNeutroComboOfferReply({
       : locale.startsWith("en")
         ? `The separate 3D and 9D First Trial offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
         : `3D 和 9D 分开体验的 First Trial 价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
-    return { ...offer, mode:"direct", individualPrices:standalone, reply };
+    return { ...offer, mode:"direct", individualPrices:standalone, mediaAllowed:false, reply };
   }
 
   if (explicitlyJoint) {
@@ -126,7 +126,7 @@ function resolveNeutroComboOfferReply({
       : locale.startsWith("en")
         ? `The current 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner will assess whether both treatments are suitable.`
         : `3D + 9D 组合目前的体验优惠是 ${offer.price}${gift} 😊 是否适合一起安排，还是需要先让中医师评估哦。`;
-    return { ...offer, mode: "direct", reply };
+    return { ...offer, mode: "direct", mediaAllowed:true, reply };
   }
 
   const userTurns = turns.filter(turn => turn.role === "user");
@@ -146,7 +146,7 @@ function resolveNeutroComboOfferReply({
     : locale.startsWith("en")
       ? `If you're interested in both, there's also a 3D + 9D combination offer for ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
       : `如果你两项都想体验，我们目前也有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
-  return { ...offer, mode: "suggestion", reply };
+  return { ...offer, mode: "suggestion", mediaAllowed:true, reply };
 }
 
 // The customer may refer to "doing these together" after staff has shown 9D
@@ -198,7 +198,7 @@ function resolveNeutroComboMediaPricingDecision({
   comboOfferDecision, promotions = [], customerText = "", session = null,
   reply = "", now = Date.now(),
 } = {}) {
-  if (!comboOfferDecision ||
+  if (!comboOfferDecision || comboOfferDecision.mediaAllowed!==true ||
       !["direct", "suggestion"].includes(comboOfferDecision.mode) ||
       comboOfferDecision.treatment !== COMBO_SERVICE ||
       !hasMyrAmount(reply,Number(comboOfferDecision.price.slice(2)))) return null;
