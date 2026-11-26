@@ -3130,6 +3130,9 @@ async function processIncomingMessage(
         language: mediaLanguage,
         resolvedLanguage: mediaLanguage,
         modelLocationOnly,
+        // In Neutro's AI-led mode a factual fallback must not introduce
+        // a new sales question the model did not decide to ask.
+        omitInvitation: clinicConfig.aiPricingIntentMode === "enabled",
       });
       if (verifiedLocation) {
         const originalStatus = verifyLocationDraft(originalModelReply, verifiedLocation);
