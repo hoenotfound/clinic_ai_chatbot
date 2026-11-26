@@ -139,7 +139,7 @@ async function runRealRecoveryBoundary({ pending, sender = 1 }) {
     { role: "user", content: PREFILL },
     { role: "assistant", content: firstReply(Date.parse("2026-11-22T00:00:00Z")) },
   ];
-  const context = {routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+  const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
     keywordReason: null, urgentSafety: false, flagged: true, reviewRequired: true,
     reviewType: "clinical", bookingReady: false, text: "价钱呢？",
     marketingStopQuestion: null, clinicalAcknowledgement: null,
@@ -191,7 +191,7 @@ const finalLocationSection = serverSection(
 );
 test("real final-send guard replaces Puchong on both sender paths", async () => {
   for (const sender of [1, 2]) {
-    const context = {routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+    const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
       flagged:false, bookingReady:false, verifiedBookingForHours:null, keywordReason:null,
       staffPriceConflict:false, rejectedModelPricing:false, approvedPricingDecision:null,
       marketingStopQuestion:null, urgentSafety:false,
@@ -274,7 +274,7 @@ const oldContinuitySection = serverSection(
 );
 test("older verified-price review path never clears pending clinical review", async () => {
   for (const pending of [true, false, null]) {
-    const context = {routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+    const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
       flagged: true, reviewRequired: true, reviewType: "clinical",
       keywordReason: null, urgentSafety: false, marketingStopQuestion: null,
       text: "价钱？", bookingReady: false, reply: "staff review",
@@ -310,7 +310,7 @@ const earlyPriceSection = serverSection(
 test("verified price review flows to existing pricing/media path only without clinical hold", async () => {
   for (const sender of [1, 2]) {
     for (const pending of [true, false, null]) {
-      const context = {routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+      const context = {routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
         flagged: true, reviewRequired: true, reviewType: "clinical",
         keywordReason: null, urgentSafety: false, bookingReady: false,
         marketingStopQuestion: null, text: "价钱呢？",
@@ -394,7 +394,7 @@ test("actual final boundary retains an unchanged verified AI reply and measures 
     const good="我们的地址："+PJ[0].address+" 😊";
     for(const [original,final,expectedDecision] of [[good,good,"preserve"],["我们有多个分行。",good,"preserve"],["我们在 Puchong。"+PJ[0].address,good,"preserve"]]){
       const logs=[];
-      const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
+      const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, 
         flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,
         staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,
         text:"你们的店是在哪？",reply:final,originalModelReply:original,modelLocationOnly:false,
@@ -450,7 +450,7 @@ test("actual final boundary preserves mixed and unrelated answers even with erro
     ["你们店在哪里？一次需要多久？","我们在 PJ。一次约40分钟。",true],
     ["Can I come Tuesday at 3pm?","We can check your preferred time with the team.",true],
   ]){
-    const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
+    const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, flagged:false,bookingReady:false,verifiedBookingForHours:null,keywordReason:null,staffPriceConflict:false,rejectedModelPricing:false,approvedPricingDecision:null,marketingStopQuestion:null,urgentSafety:false,text,reply,originalModelReply:reply,modelLocationOnly,channel:"whatsapp",mediaLanguage:"en",reviewContinuationTextOnly:false,rm68CampaignContinuationTextOnly:false,fixedAdFirstReply:null,clearReplyLanguageMismatch:()=>false,priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,contact:{id:24,whatsapp_sender_id:sender},savedInbound:{id:999},console:{info(){}},clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",branches:PJ},isActiveSafetyConcern:()=>false,hasClinicalMediaRisk:()=>false,isExplicitStaffRequest:()=>false,confirmedSingleBranchLocationAnswer,verifyLocationDraft,isBusinessLocationQuestion:()=>false,recoveryPromptProof:null,recoveryOther:false};
     const result=await vm.runInNewContext("(async()=>{\n"+finalLocationSection+"\nreturn {reply,reviewContinuationTextOnly};\n})()",context);
     assert.equal(result.reply,reply);
     assert.equal(result.reviewContinuationTextOnly,false);
