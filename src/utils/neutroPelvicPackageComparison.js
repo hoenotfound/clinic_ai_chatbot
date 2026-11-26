@@ -23,6 +23,25 @@ function safeOffer(item) {
   return Number.isSafeInteger(price) && price > 0 && price < 100000
     ? price : null;
 }
+// A numeric substring is not proof of an accepted A/B quote. Check
+// complete amounts in the scope of each package label.
+function containsVerifiedPackagePair(value,a,b){
+  const text=String(value||"").normalize("NFKC");
+  if(!text.includes(TREATMENT))return false;
+  const names=[...text.matchAll(/\bPackage\s+([AB])\b/giu)];
+  if(names.length<2)return false;
+  const seen=new Set();
+  for(let i=0;i<names.length;i++){
+    const name=names[i][1].toUpperCase();
+    const end=names[i+1]?.index??text.length;
+    const scope=text.slice(names[i].index+names[i][0].length,end);
+    const amounts=scanMyrAmounts(scope);
+    if(!amounts.length)continue;
+    if(amounts.length!==1||amounts[0].amount!==safeOffer(name==="A"?a:b))return false;
+    seen.add(name);
+  }
+  return seen.size===2;
+}
 function includedItems(item, locale) {
   const localized = item?.mediaTranslations?.[locale]?.caption;
   const source = String(localized || item?.caption || "");
@@ -101,11 +120,7 @@ function verifiedComparisonSessionWithStaffNote({
   if (!aiOnly) return null;
   const verifiedQuote = aiOnly.find(t => t.role === "assistant" &&
     t.pricingCreatedAtMs < note.pricingCreatedAtMs &&
-    String(t.content || "").includes(TREATMENT) &&
-    String(t.content || "").includes("Package A") &&
-    String(t.content || "").includes("Package B") &&
-    String(t.content || "").includes("RM" + safeOffer(a)) &&
-    String(t.content || "").includes("RM" + safeOffer(b)));
+    containsVerifiedPackagePair(t.content,a,b));
   if (!verifiedQuote) return null;
   const selectedBeforeQuote = aiOnly.some(t =>
     t.role === "user" && t.pricingCreatedAtMs < verifiedQuote.pricingCreatedAtMs &&
@@ -168,11 +183,7 @@ function resolveNeutroPelvicPackageComparison({
   if (!recentCustomerSelection) return null;
   const quoted = previous.some(t => t.role === "assistant" &&
     t.pricingCreatedAtMs >= now - MAX_QUOTE_AGE_MS &&
-    String(t.content || "").includes(TREATMENT) &&
-    String(t.content || "").includes("Package A") &&
-    String(t.content || "").includes("Package B") &&
-    String(t.content || "").includes("RM" + safeOffer(a)) &&
-    String(t.content || "").includes("RM" + safeOffer(b)));
+    containsVerifiedPackagePair(t.content,a,b));
   if (!quoted) return null;
   const locale = String(language || "zh").toLowerCase().startsWith("ms") ? "ms" :
     String(language || "zh").toLowerCase().startsWith("en") ? "en" : "zh";
