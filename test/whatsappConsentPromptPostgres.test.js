@@ -138,6 +138,19 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       SELECT i,'whatsapp','fixture-'||i,'ai' FROM generate_series(200,2199) i`);
     await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at)
       SELECT 10000+i,i,'user','Historical fixture',now()-interval '5 days' FROM generate_series(200,2199) i`);
+    // Model an activation-eligible cohort that has really received FU3,
+    // but whose latest inbound source time is already outside the window.
+    // Keep their anchors recent enough that the activation seed alone
+    // cannot exclude them.
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username)
+      SELECT 20000+i,i,'assistant','Historical anchor',now()-interval '19 hours','AI'
+      FROM generate_series(200,1199) i`);
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,
+      is_automated_follow_up,automated_follow_up_step,automated_follow_up_for_message_id,
+      whatsapp_accepted_at,whatsapp_message_id,delivery_status)
+      SELECT 30000+i,i,'assistant','Historical FU3',now()-interval '30 minutes',
+      true,3,20000+i,now()-interval '20 minutes','fixture-fu3-'||i,'delivered'
+      FROM generate_series(200,1199) i`);
     await pool.query("CREATE INDEX ON messages(contact_id,created_at DESC,id DESC)");
     await pool.query("CREATE INDEX ON messages(contact_id,COALESCE(source_created_at,created_at)) WHERE role='user'");
     await pool.query("CREATE INDEX ON messages(automated_follow_up_step) WHERE is_automated_follow_up=true AND automated_follow_up_for_message_id IS NOT NULL");
@@ -158,6 +171,31 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
         sharedReadBlocks:plan.Plan["Shared Read Blocks"]
       }));
     }
+    // The original contact was legitimately selected before a competing
+    // batch became eligible. Recheck it by identity even if the global
+    // top 200 has moved, but never waive current eligibility.
+    const initiallySelected=(await repo.listCandidates(settings,pool))[0];
+    await pool.query(`UPDATE messages SET created_at=now()-interval '20 hours'
+      WHERE contact_id BETWEEN 200 AND 404 AND role='user'`);
+    await pool.query(`UPDATE messages SET whatsapp_accepted_at=now()-interval '40 minutes'
+      WHERE contact_id BETWEEN 200 AND 404 AND automated_follow_up_step=3`);
+    await pool.query(`INSERT INTO leads(id,contact_id,treatment_interest,marketing_consent,
+      is_closed,appointment_status,stage_id,created_at)
+      SELECT i,i,'骨盆调理','unknown',false,'none',1,now()-interval '22 hours'
+      FROM generate_series(200,404) i`);
+    const competing=await repo.listCandidates(settings,pool);
+    assert.equal(competing.length,200);
+    assert.ok(!competing.some(row=>Number(row.contact_id)===1));
+    const scoped=(await pool.query(repo.CLAIM_CANDIDATES_SQL,[...perfBindings,1])).rows;
+    assert.deepEqual(scoped,[initiallySelected]);
+    await pool.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=now() WHERE id=1");
+    assert.equal(await repo.claim(initiallySelected,{...settings,question:"Fixture only"},pool),null);
+    await pool.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=1");
+    const claimed=await repo.claim(initiallySelected,{...settings,question:"Fixture only"},pool);
+    assert.ok(claimed?.promptId);
+    await pool.query("DELETE FROM whatsapp_consent_prompts WHERE id=$1",[claimed.promptId]);
+    await pool.query("DELETE FROM messages WHERE id=$1",[claimed.message.id]);
+    await pool.query("DELETE FROM leads WHERE id BETWEEN 200 AND 404");
     // Avoid affecting the subsequent existing fixture assertions.
     await pool.query("DELETE FROM messages WHERE contact_id>=200");
     await pool.query("DELETE FROM contacts WHERE id>=200");
