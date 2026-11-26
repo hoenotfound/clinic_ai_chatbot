@@ -83,7 +83,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -1401,6 +1401,7 @@ async function processIncomingMessage(
       {reuseVeto:naturalReplyAuthority}
     );
     let originalModelReply = null;
+    let languageCheckedModelReply = null;
     let languageReviewRequired = false;
     let modelLocationOnly = false;
     let flagged = false;
@@ -1593,6 +1594,7 @@ async function processIncomingMessage(
             ),
           }
         );
+        languageCheckedModelReply = languageCheckedReply.languageCorrectionFailed ? null : languageCheckedReply.text;
         replyOverrideAudit.change("correctReplyLanguage",originalModelReply,languageCheckedReply.text);
         languageReviewRequired = naturalReplyAuthority &&
           languageCheckedReply.languageCorrectionFailed === true &&
@@ -2632,7 +2634,7 @@ async function processIncomingMessage(
       const beforeCombo=reply;
       reply = ["direct","contextual"].includes(comboOfferDecision.mode)
         ? naturalReplyAuthority && !fixedAdFirstReply && !isFirstMessage
-          ? selectVerifiedSpecialReply({draft:originalModelReply,decision:comboOfferDecision,language:mediaLanguage,kind:"combo"})
+          ? selectVerifiedSpecialReply({draft:languageCheckedModelReply,decision:comboOfferDecision,language:mediaLanguage,kind:"combo"})
           : comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
       replyOverrideAudit.change("resolveNeutroComboOfferReply",beforeCombo,reply);
@@ -2714,7 +2716,7 @@ async function processIncomingMessage(
     // guards have run. It must not license any fresh promo-media selection.
     if (pelvicPackageComparison && !flagged && !bookingReady) {
       const comparisonReply=naturalReplyAuthority&&!fixedAdFirstReply&&!isFirstMessage
-        ? selectVerifiedSpecialReply({draft:originalModelReply,decision:pelvicPackageComparison,language:mediaLanguage,kind:"pelvic"})
+        ? selectVerifiedSpecialReply({draft:languageCheckedModelReply,decision:pelvicPackageComparison,language:mediaLanguage,kind:"pelvic"})
         : pelvicPackageComparison.reply;
       replyOverrideAudit.change("resolveNeutroPelvicPackageComparison",reply,comparisonReply);
       reply = comparisonReply;
@@ -2762,7 +2764,7 @@ async function processIncomingMessage(
     }
     if (repeatVisitPriceReply) {
       const subsequentReply=naturalReplyAuthority&&!fixedAdFirstReply&&!isFirstMessage&&!flagged
-        ? selectVerifiedSpecialReply({draft:originalModelReply,decision:repeatVisitPriceReply,language:mediaLanguage,kind:"subsequent"})
+        ? selectVerifiedSpecialReply({draft:languageCheckedModelReply,decision:repeatVisitPriceReply,language:mediaLanguage,kind:"subsequent"})
         : repeatVisitPriceReply.reply;
       replyOverrideAudit.change("resolveRepeatVisitPriceReply",reply,subsequentReply);
       reply = subsequentReply;
@@ -2817,20 +2819,10 @@ async function processIncomingMessage(
       });
       if (continuity) {
         const verified = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        if (verified?.pendingClinicalReview === false) {
-          replyOverrideAudit.change("planNeutroReviewContinuation",reply,continuity.reply);
-          reply = continuity.reply;
-          flagged = false;
-          reviewRequired = false;
-          reviewType = null;
-          bookingReady = false;
-          serviceQuery = false;
-          serviceQuerySource = null;
-          priceQuery = false;
-          packageQuery = false;
-          details = null;
-          clinicalAcknowledgement = null;
-          reviewContinuationTextOnly = true;
+        const recovered=routineReviewTextOnlyState(verified,continuity.reply);
+        if(recovered){
+          replyOverrideAudit.change("planNeutroReviewContinuation",reply,recovered.reply);
+          ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
           console.info("[Neutro review continuity] contact=" + contact.id +
             " inbound=" + savedInbound.id + " kind=" + continuity.kind);
         }
@@ -2849,20 +2841,10 @@ async function processIncomingMessage(
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        if (reviewEvidence?.pendingClinicalReview === false) {
-          replyOverrideAudit.change("rm68AvailabilityAnswer",reply,rm68AvailabilityAnswer);
-          reply = rm68AvailabilityAnswer;
-          flagged = false;
-          reviewRequired = false;
-          reviewType = null;
-          bookingReady = false;
-          clinicalAcknowledgement = null;
-          priceQuery = false;
-          packageQuery = false;
-          serviceQuery = false;
-          serviceQuerySource = null;
-          details = null;
-          reviewContinuationTextOnly = true;
+        const recovered=routineReviewTextOnlyState(reviewEvidence,rm68AvailabilityAnswer);
+        if(recovered){
+          replyOverrideAudit.change("rm68AvailabilityAnswer",reply,recovered.reply);
+          ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
           console.info("[RM68 availability review recovery] contact=" +
             contact.id + " inbound=" + savedInbound.id);
         }
@@ -2883,23 +2865,13 @@ async function processIncomingMessage(
       });
       if (adminAnswer) {
         const evidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        if (evidence?.pendingClinicalReview === false) {
-          const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
-            verifyLocationDraft(originalModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
-            ? originalModelReply : adminAnswer.reply;
-          replyOverrideAudit.change("administrativeReviewReply",reply,administrativeReply);
-          reply = administrativeReply;
-          flagged = false;
-          reviewRequired = false;
-          reviewType = null;
-          bookingReady = false;
-          clinicalAcknowledgement = null;
-          priceQuery = false;
-          packageQuery = false;
-          serviceQuery = false;
-          serviceQuerySource = null;
-          details = null;
-          reviewContinuationTextOnly = true;
+        const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
+          verifyLocationDraft(languageCheckedModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
+          ? languageCheckedModelReply : adminAnswer.reply;
+        const recovered=routineReviewTextOnlyState(evidence,administrativeReply);
+        if(recovered){
+          replyOverrideAudit.change("administrativeReviewReply",reply,recovered.reply);
+          ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
           console.info("[Neutro administrative review recovery] contact=" +
             contact.id + " inbound=" + savedInbound.id +
             " kind=" + adminAnswer.kind);
