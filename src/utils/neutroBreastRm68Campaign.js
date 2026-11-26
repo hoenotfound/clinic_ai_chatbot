@@ -354,9 +354,13 @@ function campaignClaimsSafe(value, now=Date.now()) {
   if(dates.some(d=>!configuredEventDateMatches(d,day)))return false;
   const allowedYears=new Set(campaign.eventDates.map(date=>date.slice(0,4)));
   if([...text.matchAll(/\b20\d{2}\b/gu)].some(m=>!allowedYears.has(m[0])))return false;
+  // A qualified availability statement is not a booking confirmation.
+  // Remove only complete, narrowly defined caveats before evaluating risky
+  // claims. Do not remove adjacent promises or actual confirmation language.
+  const riskyText=text.replace(/(?:\b(?:availability|slots?) (?:must be|needs? to be|will need to be|still needs? to be) confirmed by (?:the |our )?(?:clinic|centre|center)\b|\b(?:kekosongan|slot) perlu disahkan oleh (?:pihak )?pusat\b|具体名额(?:仍)?(?:需要|需|必须)由门店确认|具體名額(?:仍)?(?:需要|需|必須)由門店確認)/giu," ");
   // Unverified slot, clinical equipment, guarantees and unrelated prices
   // cannot be authorised by a fluent answer.
-  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(text))return false;
+  if(/\b(?:ultrasound|mammogram|mammography|screening|diagnos\w*|cure|guarantee|confirmed|booked|available today|available tomorrow|slots? (?:are|is) available|(?:we have|there are) (?:a |any )?(?:slots?|availability))\b|超声|超音波|筛查|篩查|诊断|診斷|治愈|保证|已确认|已預約|已预约|还有空位|\b(?:ultrabunyi|saringan|diagnosis|disahkan|dijamin|slot tersedia|ada kekosongan)\b/iu.test(riskyText))return false;
   if(amounts.length && (!dates.length||/\b(?:any day|any date|every day|daily|all dates|other dates? (?:at|for) RM|regular price|outside (?:the )?event|also (?:available|valid)|anytime|today|tomorrow)\b|每天|任何日期|平日.{0,12}RM\s*68|其他日期.{0,12}RM\s*68|\b(?:setiap hari|bila-bila masa|hari ini|esok)\b/iu.test(text)))return false;
   const durationText=text.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|jam|小时|小時)\s*(\d+)\s*(?:minutes?|mins?|minit|分钟|分鐘)/giu,(_,h,m)=>(Number(h)*60+Number(m))+" minutes");
   for(const m of durationText.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)/giu)) {
@@ -377,8 +381,9 @@ function guardCampaignPriceConflicts({ history, customerText, reply, now = Date.
     (day==="expired" && /\bRM\s*68\b/iu.test(original)) ||
     (day==="dec6" && /(?:12月5日|\b(?:5(?:th)?\s*dec(?:ember)?|dec(?:ember)?\s*5|5\s*disember)\b)/iu.test(original)) ||
     ((ordinary || !campaignAmountRequested(text)) && /\bRM\s*68\b/iu.test(original));
-  const commercialClaim=/(?:\b(?:RM|MYR)\s*\d|December|Disember|12月|2\s*(?:hours?|jam|小时|小時)\s*15|2h\s*15)/iu.test(original);
-  if(!bad && (!commercialClaim || campaignClaimsSafe(original,now)))return original;
+  // Also validate non-price drafts: slot confirmations and unsupported
+  // duration claims can appear without RM or a named calendar date.
+  if(!bad && campaignClaimsSafe(original,now))return original;
   return campaignContextReply({history,customerText:text,now,language}) ||
     localized(localeFor(history,text,language || campaignLanguage(history,text)),
       "这项胸部护理的具体安排需要由门店确认哦 😊",
