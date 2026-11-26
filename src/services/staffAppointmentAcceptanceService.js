@@ -4,6 +4,8 @@ const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramAlertRepo = require("../db/telegramImmediateAlertRepo");
 const webPushNotifications = require("./webPushNotificationService");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
+const clinicConfig=require("../config/clinicConfig");
+const {verifiedStaffSlot}=require("../utils/verifiedStaffAppointmentSlot");
 
 const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
@@ -144,9 +146,12 @@ function createStaffAppointmentAcceptanceService({
   wakeAlertQueue = telegramImmediateAlerts.wakeImmediateAlertQueue,
   sendWebPush = webPushNotifications.sendContactAlertBestEffort,
   markPendingBooking = markBookingReadyForContact,
+  config=clinicConfig,
+  now=()=>new Date(),
 } = {}) {
   return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText, { modelStaffEvidence = null } = {}) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
+    const strictEvidence=config.businessType==="tcm_clinic"&&/^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||""));
     const modelAccepted = modelStaffEvidence && Number.isSafeInteger(modelStaffEvidence.id) &&
       typeof modelStaffEvidence.text==="string" && modelStaffEvidence.text.length>0 &&
       !/[?？]/u.test(String(customerText||"")) &&
@@ -174,7 +179,7 @@ function createStaffAppointmentAcceptanceService({
       await client.query("SELECT id FROM contacts WHERE id = $1 FOR UPDATE", [contactId]);
       const selected = await client.query(
         [
-          "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
+          "SELECT staff.id AS staff_message_id, staff.content AS staff_text, staff.created_at AS staff_at,",
           "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id, lead.appointment_at",
           "FROM messages inbound",
           "JOIN LATERAL (",
@@ -201,7 +206,7 @@ function createStaffAppointmentAcceptanceService({
           "  AND NOT EXISTS (SELECT 1 FROM messages later",
           "    WHERE later.contact_id = inbound.contact_id",
           "      AND later.id > staff.id AND later.id < inbound.id)",
-          ...(modelStaffEvidence?[
+          ...((strictEvidence||modelStaffEvidence)?[
             "  AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE",
             "  AND EXISTS (SELECT 1 FROM messages proof WHERE proof.id=staff.id AND proof.whatsapp_message_id LIKE 'wamid.%' AND proof.whatsapp_customer_mutation IS NULL AND proof.is_forwarded IS DISTINCT FROM TRUE AND proof.media_mime_type IS NULL AND proof.media_url IS NULL AND proof.sent_by_username NOT IN ('Follow-up automation','Consent request automation'))",
             "  AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)",
@@ -218,7 +223,7 @@ function createStaffAppointmentAcceptanceService({
         // suggestion as permission to record a booking.
         const relayed = await client.query(
           [
-            "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
+            "SELECT staff.id AS staff_message_id, staff.content AS staff_text, staff.created_at AS staff_at,",
             "  lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id,",
             "  lead.appointment_at, relay.id AS relay_message_id,",
             "  relay.content AS relay_text",
@@ -245,6 +250,13 @@ function createStaffAppointmentAcceptanceService({
             "    WHERE previous.contact_id=inbound.contact_id AND previous.id<inbound.id)",
             "  AND relay.created_at >= inbound.created_at - interval '24 hours'",
             "  AND staff.id<relay.id AND staff.created_at >= inbound.created_at - interval '24 hours'",
+            ...(strictEvidence?[
+              "  AND inbound.whatsapp_customer_mutation IS NULL AND inbound.is_forwarded IS DISTINCT FROM TRUE",
+              "  AND staff.whatsapp_message_id LIKE 'wamid.%' AND staff.whatsapp_customer_mutation IS NULL AND staff.is_forwarded IS DISTINCT FROM TRUE AND staff.media_mime_type IS NULL AND staff.media_url IS NULL",
+              "  AND staff.sent_by_username NOT IN ('Follow-up automation','Consent request automation')",
+              "  AND staff.id=(SELECT MAX(previous.id) FROM messages previous WHERE previous.contact_id=inbound.contact_id AND previous.id<relay.id)",
+              "  AND NOT EXISTS(SELECT 1 FROM messages newer WHERE newer.contact_id=inbound.contact_id AND newer.role='user' AND newer.id>inbound.id)",
+            ]:[]),
             "ORDER BY staff.id DESC LIMIT 25",
           ].join("\n"),
           [contactId, inboundMessageId]
@@ -257,6 +269,10 @@ function createStaffAppointmentAcceptanceService({
            String(offer.staff_text||"").trim()!==modelStaffEvidence.text.trim()))) {
         await client.query("COMMIT");
         return null;
+      }
+      if(strictEvidence&&(!verifiedStaffSlot(offer.staff_text,new Date(offer.staff_at),now(),config.hours)||
+        /\b(?:not available|unavailable|cannot|can[’']t|fully booked|cancel)\b|不能|没空|沒空|不可以|取消|已满|已滿/iu.test(offer.staff_text))){
+        await client.query("COMMIT");return null;
       }
       const metadata = {
         outcome: "staff_time_accepted",
