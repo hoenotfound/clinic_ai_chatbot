@@ -618,3 +618,34 @@ test("rejected pricing preserves clear ordinary answers but never an unverified 
  for(const reply of ["RM388", "骨盆 388 / 268","Free trial","I can send the promotion"])
   assert.equal(decision("How long does it take?",reply),true,reply);
 });
+
+
+test("Stage 18 independently verified two-treatment drafts preserve exact wording",()=>{
+  const customerText="How much are both treatments separately?";
+  const quote={source:"verified_two_separate_treatments",reply:"verified fallback",prices:[
+    {treatment:"3D 小颜术",amount:"RM388",label:"first_trial"},
+    {treatment:"9D 逆龄抗衰",amount:"RM488",label:"first_trial"},
+  ]};
+  const good="3D 小颜术 First Trial: RM388 😊\n9D 逆龄抗衰 First Trial: RM488";
+  const input={customerText,promotions,preserveNaturalReply:true,verifiedTwoTreatmentQuote:quote};
+  assert.deepEqual(ensureVerifiedPriceReply({...input,reply:good}),
+    {reply:good,restored:false,verifiedQuote:true});
+  for(const bad of [
+    good.replace("RM388","RM999"),
+    good.replace("RM388","RM488").replace(/RM488$/u,"RM388"),
+    good.replace("First Trial","Normal price"),
+    good+"\nFree gifts included!",
+    good.replace("RM388","RM388 only for three sessions"),
+    good.replace("RM388","RM388 + RM100 voucher"),
+    good.replace("RM388","RM388, guaranteed results"),
+    good.replace("RM388","RM388.00"),
+    good.replace("9D 逆龄抗衰","3D 小颜术"),
+  ]) assert.equal(ensureVerifiedPriceReply({...input,reply:bad}).reply,quote.reply,bad);
+  const voucherPromotions=promotions.map(p=>p.linkedService==="3D 小颜术"?
+    {...p,caption:"RM100 voucher. After voucher RM388"}:p);
+  assert.equal(ensureVerifiedPriceReply({...input,promotions:voucherPromotions,reply:good}).reply,quote.reply);
+  assert.equal(ensureVerifiedPriceReply({...input,customerText:"How much? Where is your clinic?",reply:good}).reply,quote.reply);
+  const source=require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/server.js"),"utf8");
+  assert.match(source,/naturalTwoTreatmentQuote\?\.verifiedQuote === true/);
+  assert.match(source,/!preserveTwoTreatmentDraft \|\| reply !== naturalTwoTreatmentQuote.reply/);
+});
