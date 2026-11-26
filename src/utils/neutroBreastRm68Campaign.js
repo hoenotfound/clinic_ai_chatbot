@@ -348,27 +348,24 @@ function campaignContextReply({ history, customerText, now = Date.now(), languag
 // Duration must describe the right part of the visit. A generic event
 // duration is the total; 45 minutes is only the breast-care component.
 // Keep scope local to each claim, including a trailing "in total" qualifier.
-function campaignDurationsSafe(value,campaign){
+function campaignDurationClaims(value){
   const text=String(value||"");
-  const claims=[...text.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|h(?=\s*\d|\b)|jam|小时|小時|minutes?|mins?|minit|分钟|分鐘)(?:\s*(\d+)\s*(?:minutes?|mins?|m|minit|分钟|分鐘))?/giu)];
+  const claims=[...text.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?|h(?=\s*\d|\b)|jam|小时|小時)(?:\s*(?:and\s+|dan\s+|又\s*)?(\d{1,2})(?!\d)\s*(?:minutes?|mins?|minit|m\b|分钟|分鐘)?)?|(\d+(?:\.\d+)?)\s*(minutes?|mins?|minit|分钟|分鐘)/giu)];
   const total=/(?:\b(?:full\s+(?:visit|session|appointment|treatment)|total(?:\s+(?:visit|duration|time|session))?|whole\s+(?:visit|session)|including\s+(?:the\s+)?(?:complimentary\s+)?moxibustion|keseluruhan|termasuk\s+(?:rawatan\s+)?moksibusi)\b|全程|总时长|總時長|总共|總共|合计|合計|整体|整體|包含(?:赠送|贈送)?艾灸|加上(?:赠送|贈送)?艾灸)/iu;
   const care=/(?:\b(?:breast(?:\s+wellness)?\s+(?:care|treatment|assessment)|penjagaan\s+payudara|rawatan\s+payudara)\b|胸部(?:护理|護理|评估|評估)|乳房(?:护理|護理)|乳腺(?:护理|護理))/iu;
   const trailingTotal=/^[\s,，]*(?:(?:in\s+total|keseluruhan)\b|合计|合計|全程|总共|總共|(?:including\s+(?:the\s+)?(?:complimentary\s+)?moxibustion)\b|包含(?:赠送|贈送)?艾灸)/iu;
-  for(let i=0;i<claims.length;i++){
-    const m=claims[i],hours=/^(?:hours?|hrs?|h|jam|小时|小時)$/iu.test(m[2]);
-    if(m[3]&&!hours)return false;
-    const minutes=Number(m[1])*(hours?60:1)+Number(m[3]||0);
-    if(![campaign.careMinutes,campaign.totalMinutes].includes(minutes))return false;
+  return claims.map((m,i)=>{
+    const minutes=m[1]===undefined?Number(m[4]):Number(m[1])*60+Number(m[3]||0);
     const prefix=text.slice(i?claims[i-1].index+claims[i-1][0].length:0,m.index);
     const clause=prefix.split(/[;；。！？!?，,\n]|\.(?!\d)|\b(?:or|and|atau|dan)\b|或者|以及/iu).at(-1);
     const suffix=text.slice(m.index+m[0].length,claims[i+1]?.index??text.length);
     const totalScope=total.test(clause)||trailingTotal.test(suffix);
     const careScope=care.test(clause);
-    if(totalScope&&minutes!==campaign.totalMinutes)return false;
-    if(!totalScope&&careScope&&minutes!==campaign.careMinutes)return false;
-    if(!totalScope&&!careScope&&minutes!==campaign.totalMinutes)return false;
-  }
-  return true;
+    return {minutes,scope:!totalScope&&careScope?"care":"total",valid:m[3]===undefined||(Number(m[3])<60&&!m[1].includes("."))};
+  });
+}
+function campaignDurationsSafe(value,campaign){
+  return campaignDurationClaims(value).every(claim=>claim.valid&&claim.minutes===(claim.scope==="care"?campaign.careMinutes:campaign.totalMinutes));
 }
 
 function campaignClaimsSafe(value, now=Date.now()) {
@@ -445,7 +442,11 @@ function selectCampaignReply({reply,fallback,history,customerText,language,now=D
   if(clearReplyLanguageMismatch(value,locale)||!campaignClaimsSafe(value,now))return fallback;
   if(asked&&!hasMyrAmount(value,rm68CampaignSettings().campaign.priceMYR))return fallback;
   if(isCampaignAvailabilityQuestion(text)&&(!campaignDatesInText(value).length||!/(?:check|confirm|semak|sahkan|确认|確認)/iu.test(value)))return fallback;
-  if(DURATION_QUESTION.test(text)&&!/(?:90\s*(?:minutes|minit|分钟|分鐘)|1\s*(?:hour|jam|小时|小時)\s*30|1\.5\s*(?:hours?|jam|小时|小時)|45\s*(?:minutes|minit|分钟|分鐘))/iu.test(value))return fallback;
+  if(DURATION_QUESTION.test(text)){
+    const claims=campaignDurationClaims(value);
+    const asksCareOnly=/(?:breast care only|breast treatment only|penjagaan payudara sahaja|只做胸部护理|胸部护理本身|胸部護理本身)/iu.test(text);
+    if(!claims.some(claim=>claim.scope===(asksCareOnly?"care":"total")))return fallback;
+  }
   if(INCLUDES_QUESTION.test(text)&&!/(?:moxibustion|moksibusi|艾灸)/iu.test(value))return fallback;
   if(!hasMyrAmount(value,rm68CampaignSettings().campaign.priceMYR)&&!/(?:breast|payudara|胸部|乳腺|乳房|December|Disember|12月|moxibustion|moksibusi|艾灸)/iu.test(value))return fallback;
   return value;
