@@ -1427,6 +1427,7 @@ async function processIncomingMessage(
 
     if (urgentSafety || isActiveSafetyConcern(text)) {
       flagged = true;
+      replyOverrideAudit.note("urgentSafetyHandoff");
       aiReply = fallbackHandoffReply(
         text,
         clinicConfig.escalation.handoffMessage,
@@ -1434,6 +1435,7 @@ async function processIncomingMessage(
       );
     } else if (isExplicitStaffRequest(text)) {
       flagged = true;
+      replyOverrideAudit.note("explicitStaffHandoff");
       aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
     } else {
       try {
@@ -1512,14 +1514,17 @@ async function processIncomingMessage(
         fixedAdFirstReply = recoveryBreastCampaignOpening({history:commercialHistory,customerText:text,config:clinicConfig,language:mediaLanguage});
       }
       if (recoveryOther && !keywordReason && !marketingStopQuestion) {
+        replyOverrideAudit.note("recoveryOtherOpening");
         aiReply = "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。";
       } else if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
+        replyOverrideAudit.note("numberedPricingMenu");
         aiReply = priceCheckingReply("latest_package", mediaLanguage);
         priceQuery = true;
         details = { treatment: numberedPricingSelection.treatment };
       } else if (fixedAdFirstReply) {
+        replyOverrideAudit.note("configuredAdOpening");
         aiReply = fixedAdFirstReply.reply;
         serviceQuery = fixedAdFirstReply.serviceQuery;
         serviceQuerySource = fixedAdFirstReply.serviceQuerySource;
@@ -1531,6 +1536,7 @@ async function processIncomingMessage(
         // clinical question or a reason to send images or transfer to staff.
         // Keep existing urgent safety and explicit staff-request guards above.
         const requested = detectExplicitLanguagePreference(text);
+        replyOverrideAudit.note("explicitLanguagePreference");
         aiReply = requested === "en"
           ? "Of course 😊 I'll reply in English from now on. What would you like to know about our treatments?"
           : requested === "ms"
@@ -1667,6 +1673,7 @@ async function processIncomingMessage(
         reviewRequired = false;
         reviewType = null;
         bookingReady = false;
+        replyOverrideAudit.note("keywordStaffHandoff");
         aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
       }
       // Resolve exact TCM treatment names using verified current config, the
@@ -1739,8 +1746,13 @@ async function processIncomingMessage(
         commercialHistory
       ) && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
+      // In natural-authority mode the final verified-price formatter owns
+      // routine fee answers. Recover an INFORMATION review only after checking
+      // that no independent clinical review is pending.
       if (verifiedFreeIntroFee &&
-          (!flagged || (reviewRequired && reviewType === "information"))) {
+          (!flagged || (reviewRequired && reviewType === "information")) &&
+          (!naturalReplyAuthority || (flagged &&
+            (await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id))?.pendingClinicalReview === false))) {
         aiReply = replyOverrideAudit.change("complimentaryAssessmentFeeReply",aiReply,complimentaryAssessmentFeeReply(mediaLanguage));
         flagged = false;
         reviewRequired = false;
@@ -1817,7 +1829,11 @@ async function processIncomingMessage(
     // diagnosis, suitability check or confirmed booking. If the model
     // incorrectly chooses a staff review, answer cautiously and normally.
     if(flagged&&reviewRequired&&!keywordReason&&!urgentSafety&&
-       !bookingReady&&isSimpleVisitTimingQuestion(text)){
+       !bookingReady&&isSimpleVisitTimingQuestion(text)&&
+       (!naturalReplyAuthority || (!isActiveSafetyConcern(text) &&
+         !hasClinicalMediaRisk(text) && !isExplicitStaffRequest(text) &&
+         !marketingStopQuestion && !isDefiniteAppointmentCancellation(text) &&
+         (await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id))?.pendingClinicalReview === false))){
       aiReply = replyOverrideAudit.change("safeVisitTimingReply",aiReply,safeVisitTimingReply(mediaLanguage));
       flagged=false;reviewRequired=false;reviewType=null;
       clinicalAcknowledgement=null;
@@ -1945,6 +1961,7 @@ async function processIncomingMessage(
           priceQuery = true;
           packageQuery = false;
           details = { ...details, treatment: chosen.name };
+          replyOverrideAudit.note("verifiedPriceReviewRecovery");
           aiReply = priceCheckingReply("treatment", mediaLanguage);
           console.info("[Pricing] Recovered verified Neutro price question " +
             "contact=" + contact.id + " inbound=" + savedInbound.id);
@@ -2028,6 +2045,7 @@ async function processIncomingMessage(
         priceQuery = true;
         packageQuery = false;
         details = { ...details, treatment: shadowPriceException.treatment };
+        replyOverrideAudit.note("shadowPriceReviewRecovery");
         aiReply = priceCheckingReply("treatment", mediaLanguage);
         console.info("[Pricing] Recovered narrow Shadow price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
@@ -2099,6 +2117,7 @@ async function processIncomingMessage(
         bookingReady = false;
         priceQuery = true;
         packageQuery = false;
+        replyOverrideAudit.note("twoTreatmentReviewRecovery");
         aiReply = priceCheckingReply("two_treatments", mediaLanguage);
         console.info("[Pricing] Recovered verified two-price information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
@@ -2154,6 +2173,7 @@ async function processIncomingMessage(
         details = { ...details, treatment: scopedPackagePrice.treatment };
         // The price-only formatter replaces this safe placeholder with
         // currently configured and independently verified package amounts.
+        replyOverrideAudit.note("scopedPackageReviewRecovery");
         aiReply = priceCheckingReply("two_packages", mediaLanguage);
         console.info("[Pricing] Resolved verified scoped-package information review " +
           "contact=" + contact.id + " inbound=" + savedInbound.id);
@@ -2404,6 +2424,7 @@ async function processIncomingMessage(
     let reply = isFirstMessage && !flagged && !generateFirstIntro && !fixedAdFirstReply
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
+    replyOverrideAudit.change("configuredIntroduction",aiReply,reply);
     if (isFirstMessage && !flagged && generateFirstIntro && !fixedAdFirstReply) {
       const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
       replyOverrideAudit.change("preserveOriginalIntroFacts",reply,guardedIntro.reply);
@@ -2490,6 +2511,7 @@ async function processIncomingMessage(
         resultMedia: clinicConfig.resultMedia, conversationHistory: commercialHistory,
         language: mediaLanguage,
         allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
+        preserveNaturalReply: naturalReplyAuthority,
       });
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
@@ -2498,6 +2520,7 @@ async function processIncomingMessage(
       reply = priced.reply;
       if (priced.restored && approvedPricingDecision?.source ===
           "customer_returning_treatment_price") {
+        const beforeFeeClarification=reply;
         reply = clarifyFreeAssessmentAndPaidTrial({
           customerText: text, conversationHistory: returningPricingHistory || commercialHistory,
           treatment: approvedPricingDecision.treatment, reply,
@@ -2505,6 +2528,7 @@ async function processIncomingMessage(
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           language: mediaLanguage,
         });
+        replyOverrideAudit.change("clarifyFreeAssessmentAndPaidTrial",beforeFeeClarification,reply);
       }
       // The verified price formatter intentionally replaces model-authored
       // text. Recover independently configured branch/hours details when the
@@ -2516,10 +2540,12 @@ async function processIncomingMessage(
           (approvedPricingDecision.servicePrice &&
             reply.includes(approvedPricingDecision.servicePrice))));
       if (approvedPriceQuoted) {
+        const beforeBusinessFacts=reply;
         reply = appendRequestedBusinessFacts({
           customerText: text, reply, language: mediaLanguage,
           branches: clinicConfig.branches, hours: clinicConfig.hours,
         });
+        replyOverrideAudit.change("appendRequestedBusinessFacts",beforeBusinessFacts,reply);
       }
     }
 
@@ -2570,9 +2596,11 @@ async function processIncomingMessage(
           language:mediaLanguage,
         }) : null;
     if (comboOfferDecision) {
+      const beforeCombo=reply;
       reply = ["direct","contextual"].includes(comboOfferDecision.mode)
         ? comboOfferDecision.reply
         : reply + "\n\n" + comboOfferDecision.reply;
+      replyOverrideAudit.change("resolveNeutroComboOfferReply",beforeCombo,reply);
       console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
         " contact=" + contact.id + " inbound=" + savedInbound.id);
     }
@@ -2708,12 +2736,14 @@ async function processIncomingMessage(
     // A marketing STOP must not become a price/promotion reply even if the
     // model adds unsolicited commercial copy. Preserve useful service answers.
     if (marketingStopQuestion && hasCommercialReplyContent(reply) && !flagged) {
+      const beforeStopReply=reply;
       reply = safeIntroReply({
         customerText: marketingStopQuestion,
         language: mediaLanguage,
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
       });
+      replyOverrideAudit.change("marketingStopReply",beforeStopReply,reply);
     }
 
     // Correct only an objectively false multi-branch claim against the
@@ -3139,7 +3169,8 @@ async function processIncomingMessage(
         const finalStatus = verifyLocationDraft(reply, verifiedLocation);
         // Preserve an independently verified final location answer, including
         // a legitimate language correction. Original draft accuracy is logged separately.
-        const preserveModelLocation = finalStatus === "verified_address_only";
+        const preserveModelLocation = finalStatus === "verified_address_only" ||
+          (naturalReplyAuthority && verifyLocationDraft(reply, verifiedLocation, {allowNeutralCourtesy:true}) === "verified_address_only");
         console.info("[Location facts] contact=" + contact.id +
           " original=" + originalStatus + " final=" + finalStatus +
           " decision=" + (preserveModelLocation ? "preserve" : "fallback"));
@@ -3304,9 +3335,11 @@ async function processIncomingMessage(
       const breastInvitation = recoveryPromptProof && !fixedAdFirstReply
         ? recoveryBreastOfferInvitation({customerText:text,config:clinicConfig}) : null;
       if (recoveryOther || breastInvitation) {
+        const beforeRecoveryReply=reply;
         reply = recoveryOther
           ? "好的 😊 请问您想改善什么情况，或想了解哪方面的护理呢？我可以为您介绍适合的护理。"
           : breastInvitation;
+        replyOverrideAudit.change(recoveryOther?"recoveryOtherFinal":"recoveryBreastOfferInvitation",beforeRecoveryReply,reply);
         reviewContinuationTextOnly=true;
         priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
       }
@@ -3314,10 +3347,12 @@ async function processIncomingMessage(
     // Campaign-specific final language validation, including downstream overrides.
     if (!flagged && !bookingReady && (rm68CampaignContinuationTextOnly || reviewContinuationTextOnly || fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") &&
         clearReplyLanguageMismatch(reply,mediaLanguage)) {
+      const beforeFinalLanguage=reply;
       reply = (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026" ? fixedAdFirstReply.reply : null) ||
         campaignContextReply({history:commercialHistory,customerText:text,language:mediaLanguage}) ||
         (mediaLanguage==="ms" ? "Pihak pusat perlu mengesahkan maklumat ini dahulu 😊" :
           mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
+      replyOverrideAudit.change("finalLanguageFallback",beforeFinalLanguage,reply);
     }
     replyOverrideAudit.flush({contactId:contact.id,inboundId:savedInbound.id,
       original:originalModelReply,final:reply,outcome:flagged?"needs_human":bookingReady?"booking_ready":"normal"});

@@ -368,7 +368,7 @@ function ensureVerifiedPriceReply({
   priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
-  allowContinuedPriceContext = false,
+  allowContinuedPriceContext = false, preserveNaturalReply = false,
 } = {}) {
   const original = String(reply || "").trim();
   // The clinic explicitly offers the introductory assessment + experience
@@ -379,7 +379,8 @@ function ensureVerifiedPriceReply({
     clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
     conversationHistory
   )) {
-    return { reply: complimentaryAssessmentFeeReply(language), restored: true };
+    const verifiedFee = complimentaryAssessmentFeeReply(language);
+    return { reply: verifiedFee, restored: original !== verifiedFee };
   }
   const aiLed = pricingDecision !== undefined;
   // In enabled mode the same independently verified decision drives text and
@@ -467,6 +468,11 @@ function ensureVerifiedPriceReply({
           ? `The price for ${treatment} is ${pricingDecision.servicePrice} 😊`
           : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
       const recovery = recoveryPeriodGuidance(customerText, language);
+      // A simple exact configured service-price answer can retain model wording.
+      const preserved = preserveNaturalReply && !recovery && !hasClinicalMediaRisk(customerText)
+        ? preserveVerifiedModelQuote({reply:original,treatment,prices:[{name:"Main offer",price:pricingDecision.servicePrice}],firstTrialQuote:false})
+        : null;
+      if(preserved) return {reply:preserved,restored:false};
       return { reply: [text, recovery].filter(Boolean).join("\n\n"), restored: true };
     }
     const safeInfo = recoveryPeriodGuidance(customerText, language) ||
@@ -552,7 +558,10 @@ function ensureVerifiedPriceReply({
         ? `The listed price for ${voucherNames} is after applying the voucher`
         : `${voucherNames} 的上述价格为使用优惠券后的价格`)
     : "";
-  const preservedModelQuote = aiLed && pricingDecision.source === "model_led_customer_context"
+  const preservedModelQuote = aiLed && (pricingDecision.source === "model_led_customer_context" ||
+      (preserveNaturalReply && pricingDecision.source === "customer_current_offer" &&
+        !hasClinicalMediaRisk(customerText) && !recoveryPeriodGuidance(customerText, language) &&
+        !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))))
     ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
     : null;
   if (preservedModelQuote) return {reply:preservedModelQuote,restored:false};
@@ -597,7 +606,7 @@ function ensureVerifiedPriceReply({
   // An independently approved current promotion request deserves a clear
   // answer and one next-step invitation, not the earlier generic AI fallback.
   const offerInvitation = aiLed && pricingDecision.source === "customer_current_offer" &&
-    !independentServiceQuestion
+    !preserveNaturalReply && !independentServiceQuestion
     ? locale.startsWith("ms")
       ? "Nak tahu apa yang termasuk, atau mahu saya bantu semak masa untuk penilaian? 😊"
       : locale.startsWith("en")
