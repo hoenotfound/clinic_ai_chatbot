@@ -144,6 +144,22 @@ const CANDIDATES_SQL=`
      WHERE recent.created_at > $4::timestamptz - INTERVAL '5 days'
        AND recent.role='user'
        AND recent.whatsapp_message_id IS NOT NULL
+        -- Exclude contacts that cannot meet the identical outer sender,
+        -- ownership and consent predicates before the legacy-ad lookup.
+        AND EXISTS (
+          SELECT 1 FROM contacts seed_contact
+          JOIN whatsapp_sender_accounts seed_sender
+            ON seed_sender.id=seed_contact.whatsapp_sender_id
+          WHERE seed_contact.id=recent.contact_id
+            AND seed_sender.state='active' AND seed_sender.sender_key=$1
+            AND seed_sender.meta_phone_number_id=$2 AND seed_sender.meta_account_id=$3
+            AND seed_contact.channel='whatsapp' AND seed_contact.mode='ai'
+            AND seed_contact.takeover_by IS NULL
+            AND seed_contact.whatsapp_opt_in_at IS NOT NULL
+            AND NULLIF(BTRIM(seed_contact.whatsapp_opt_in_source),'') IS NOT NULL
+            AND seed_contact.whatsapp_opt_out_at IS NULL
+            AND seed_contact.whatsapp_marketing_opt_out_at IS NULL
+        )
        -- This shortlist cannot authorize any recipient. All current
        -- consent, sender, appointment and billing checks remain below.
        AND EXISTS (
