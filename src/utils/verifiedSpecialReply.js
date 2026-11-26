@@ -8,7 +8,7 @@ const {clearReplyLanguageMismatch}=require("./replyLanguageGuard");
 // or grants media permission. Unproven drafts retain the verified fallback.
 const neutral=/^(?:hi|hello|dear|yes|sure|of course|thank you|thanks|hai|helo|baik|boleh|terima kasih|您好|你好|亲爱的|親愛的|好的|可以的|当然可以|當然可以|谢谢|謝謝)$/iu;
 function comparable(value){
-  return normalizeMoneyText(value).replace(/[\p{Extended_Pictographic}\u200d]/gu,"")
+  return normalizeMoneyText(value).replace(/[😊☺🙂💕❤️💗💖🙏]/gu,"")
     .replace(/\s+/gu," ").trim().toLowerCase();
 }
 function harmlessLine(value){
