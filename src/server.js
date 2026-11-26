@@ -2453,12 +2453,27 @@ async function processIncomingMessage(
       }
     }
 
+    // A verified two-service quote is independently authorized even though
+    // the single-treatment decision may be absent. Preserve a bounded draft
+    // only after the shared price validator proves both treatment/amount pairs.
+    const naturalTwoTreatmentQuote = naturalReplyAuthority && !flagged &&
+      !marketingStopQuestion && !fixedAdFirstReply && !isFirstMessage &&
+      twoTreatmentQuote?.source === "verified_two_separate_treatments"
+      ? ensureVerifiedPriceReply({
+          customerText:text, reply, promotions:clinicConfig.promotions,
+          conversationHistory:commercialHistory, language:mediaLanguage,
+          preserveNaturalReply:true, verifiedTwoTreatmentQuote:twoTreatmentQuote,
+        }) : null;
+    const preserveTwoTreatmentDraft = naturalTwoTreatmentQuote?.verifiedQuote === true &&
+      naturalTwoTreatmentQuote.restored === false &&
+      naturalTwoTreatmentQuote.reply === reply;
+
     // Last assembled-text boundary before Meta/Neon outbound reservation.
     // An unrelated treatment refusal or ambiguous future marketing consent
     // must NEVER allow unsolicited first-contact prices to slip through.
     // Actual current price enquiries still bypass the guard. Preserve all AI
     // intent fields, clinical escalation and Before & After media eligibility.
-    if (!flagged && fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026") {
+    if (!flagged && !preserveTwoTreatmentDraft && fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026") {
       const guardedOfferIntro = guardFutureOfferIntroductionReply({
         channel,
         isFirstMessage: clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true ? false : isFirstMessage,
@@ -2497,7 +2512,7 @@ async function processIncomingMessage(
     // A real price question must receive an amount even when the model tries
     // to move straight to the assessment. Use only this verified treatment's
     // active configured packages, never a guessed amount or stacked voucher.
-    if (!flagged && !marketingStopQuestion &&
+    if (!flagged && !marketingStopQuestion && !preserveTwoTreatmentDraft &&
         fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026" &&
         (aiPricingEnabled ||
          clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true)) {
@@ -2580,8 +2595,10 @@ async function processIncomingMessage(
     if (twoTreatmentQuote) {
       // A verified multi-treatment request is not approval for promotional
       // graphics. Existing WhatsApp send/billing controls still apply.
-      replyOverrideAudit.change("resolveTwoTreatmentPriceReply",reply,twoTreatmentQuote.reply);
-      reply = twoTreatmentQuote.reply;
+      if (!preserveTwoTreatmentDraft || reply !== naturalTwoTreatmentQuote.reply) {
+        replyOverrideAudit.change("resolveTwoTreatmentPriceReply",reply,twoTreatmentQuote.reply);
+        reply = twoTreatmentQuote.reply;
+      }
       console.info("[Pricing] Verified two separate text-only prices contact=" +
         contact.id + " inbound=" + savedInbound.id);
     }
@@ -2781,9 +2798,10 @@ async function processIncomingMessage(
     // Recover only narrow, non-clinical continuations wrongly escalated by
     // the model. The previous question and fresh Neon clinical-review evidence
     // are verified; no medical decision, pricing or optional media is inferred.
-    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+    if (flagged && reviewRequired && (!naturalReplyAuthority || reviewType === "information") && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
+        !isDefiniteAppointmentCancellation(text) &&
         clinicConfig.businessType === "tcm_clinic" &&
         /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
       const continuity = planNeutroReviewContinuation({
@@ -2856,7 +2874,7 @@ async function processIncomingMessage(
     // questions. Verify there is no unresolved clinical review on this contact
     // before bypassing an erroneous model review. This path sends text only,
     // and does not clear staff reviews, override ownership or trigger media.
-    if (flagged && reviewRequired && !keywordReason && !urgentSafety &&
+    if (flagged && reviewRequired && (!naturalReplyAuthority || reviewType === "information") && !keywordReason && !urgentSafety &&
         !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion &&
         !isDefiniteAppointmentCancellation(text) && !bookingReady &&
@@ -3139,6 +3157,7 @@ async function processIncomingMessage(
       });
       const campaign = campaignContinuationPolicy({
         history:commercialHistory,customerText:text,reply,verifiedNewService,language:mediaLanguage,
+        now:Date.parse(savedInbound.created_at)||Date.now(),
       });
       if (campaign) {
         replyOverrideAudit.change("campaignContinuationPolicy",reply,campaign.reply);
