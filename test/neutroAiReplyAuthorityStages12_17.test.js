@@ -185,3 +185,18 @@ test("natural administrative location recovery does not add a sales invitation",
   assert.ok(result?.reply.includes("Example Street"));
   assert.doesNotMatch(result.reply,/appointment|schedule|assessment|book/i);
 });
+
+
+test("shared routine recovery gate never clears clinical, cancellation, booking or staff requests in AI-led mode",()=>{
+  const {routineReviewRecoveryEligible}=require("../src/utils/neutroAiReplyAuthority");
+  const base={config:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
+    naturalReplyAuthority:true,flagged:true,reviewRequired:true,reviewType:"information",
+    customerText:"What is your address?",channel:"whatsapp",bookingReady:false};
+  assert.equal(routineReviewRecoveryEligible(base),true);
+  for(const extra of [
+    {reviewType:"clinical"},{reviewType:null},{bookingReady:true},{keywordReason:"staff"},
+    {urgentSafety:true},{marketingStopQuestion:true},{customerText:"Cancel my appointment"},
+    {customerText:"I want to speak to a human"},{config:{businessType:"other",businessName:"Other"}}
+  ]) assert.equal(routineReviewRecoveryEligible({...base,...extra}),false,JSON.stringify(extra));
+  assert.equal(routineReviewRecoveryEligible({...base,channel:"messenger",whatsappOnly:true}),false);
+});

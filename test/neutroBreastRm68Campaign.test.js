@@ -171,7 +171,7 @@ test("verified RM68 availability review can recover without silencing clinical r
     ${fragment}
     return { flagged, reviewRequired, reply, reviewContinuationTextOnly };
   })`, {
-    replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+    routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
     isActiveSafetyConcern: text => /urgent|emergency/iu.test(text),
     hasClinicalMediaRisk,
     isExplicitStaffRequest: text => /人工|staff/iu.test(text),
@@ -332,7 +332,7 @@ test("real final campaign boundary checks booking-ready and respects service swi
   const source=server.slice(start,end);
   const run=(text,history,selected=false)=>vm.runInNewContext(
     "(function(){"+source+"\nreturn {reply,bookingReady,details,rm68BlocksBooking,rm68CampaignContinuationTextOnly};})()",{
-      replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+      routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
       flagged:false,bookingReady:true,marketingStopQuestion:false,keywordReason:null,urgentSafety:false,
       mediaLanguage:"en",text,reply:"Your event appointment is confirmed for RM68 on December 5.",details:{appointmentPreference:"December 5"},
       fixedAdFirstReply:null,staffPriceConflict:false,clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
@@ -359,7 +359,7 @@ test("screening uses actual review persistence and guarded acknowledgement, neve
   const text="Any ultrasound screening";
   for(const allowed of [true,false]){
     const actions=[];
-    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
+    const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
       flagged:false,reviewRequired:false,reviewType:null,bookingReady:true,priceQuery:true,packageQuery:true,
       serviceQuery:true,serviceQuerySource:"model",clinicalAcknowledgement:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:false,mediaLanguage:"en",text,commercialHistory:[...history,{role:"user",content:text}],
@@ -483,7 +483,7 @@ test("actual server review boundary routes Hui's alternative date for staff even
   const text="December 5 and 6, I am not available\nIs that possible to do the treatment and checking today";
   const commercialHistory=[...history,{role:"user",content:"Any ultrasound screening"},{role:"user",content:text}];
   for(const bookingReady of [true,false]){
-    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
+    const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:null,mediaLanguage:"en",
       clinicalAcknowledgement:null,serviceQuery:true,serviceQuerySource:"model",priceQuery:true,packageQuery:true,details:{treatment:"pulse wave"},
       savedInbound:{id:24036,created_at:new Date(early).toISOString()},
@@ -500,4 +500,69 @@ test("actual server review boundary routes Hui's alternative date for staff even
     assert.match(result.clinicalAcknowledgement,/clinic will need to confirm/i);
     assert.doesNotMatch(result.clinicalAcknowledgement,/[\u3400-\u9fff]/);
   }
+});
+
+
+test("Stage 21 preserves qualified campaign availability but not unconfirmed bookings",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const [language,customerText,reply] of [
+    ["en","How much?","The first trial is RM68 for the December 5 and 6 event. Availability must be confirmed by the clinic."],
+    ["ms","Berapa harga?","Promosi RM68 pada 5 dan 6 Disember. Slot perlu disahkan oleh pusat."],
+    ["zh","多少钱？","12月5日及6日活动首次体验 RM68，具体名额需要由门店确认。"],
+  ]){
+    assert.equal(campaignClaimsSafe(reply,early),true,reply);
+    assert.equal(campaignContinuationPolicy({history,customerText,reply,language,now:early}).reply,reply);
+  }
+  for(const reply of ["Your appointment is confirmed.","The breast care takes 5 hours.",
+    "Availability must be confirmed by the clinic, but your appointment is confirmed."]){
+    assert.notEqual(guardCampaignPriceConflicts({history,customerText:"Can you tell me more about breast care?",
+      reply,language:"en",now:early}),reply);
+  }
+});
+
+
+test("RM68 amounts obey one campaign disclosure policy across currency formats",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const amount of ["RM68","MYR 68.00","马币68","RM 6️⃣8️⃣","令吉68"]){
+    const draft="The first trial is "+amount+" for the December 5 and 6 event.";
+    assert.equal(campaignClaimsSafe(draft,early),true,draft);
+    assert.equal(campaignClaimsSafe(draft,expired),false,draft);
+    const allowed=campaignContinuationPolicy({history,customerText:"How much?",reply:draft,language:"en",now:early});
+    assert.equal(allowed.reply,draft,draft);
+    const unsolicited=guardCampaignPriceConflicts({history,customerText:"How long?",reply:draft,language:"en",now:early});
+    assert.notEqual(unsolicited,draft,draft);
+  }
+  for(const amount of ["MYR 68.50","RM68.00.50","RM680","RM-68","RM6,8","RM68k","RM68-100","RM68 + 20"]){
+    assert.equal(campaignClaimsSafe("The trial is "+amount+" on December 5.",early),false,amount);
+  }
+});
+
+test("RM68 duration claims distinguish the care component and whole visit",()=>{
+  const {campaignClaimsSafe}=require("../src/utils/neutroBreastRm68Campaign");
+  for(const valid of [
+    "Breast care takes about 45 minutes, or about 90 minutes in total.",
+    "The full visit takes 90 minutes.",
+    "胸部护理约45分钟，全程约1小时30分钟。",
+    "Penjagaan payudara sekitar 45 minit, keseluruhan 90 minit.",
+    "The event takes 1.5 hours.",
+    "The full visit takes 1h30.",
+    "The full visit takes 1 hour and 30 minutes."
+  ]) assert.equal(campaignClaimsSafe(valid,early),true,valid);
+  for(const invalid of [
+    "Breast care takes 90 minutes.",
+    "The full visit takes 45 minutes.",
+    "Breast care takes 90 minutes, with 45 minutes in total.",
+    "胸部护理90分钟，全程45分钟。",
+    "Penjagaan payudara 90 minit, keseluruhan 45 minit.",
+    "The event takes 2h15."
+  ]) assert.equal(campaignClaimsSafe(invalid,early),false,invalid);
+});
+
+
+test("a whole-visit duration question cannot pass with only the care component",()=>{
+  const draft="Breast care takes 45 minutes.";
+  const customerText="How long is the full visit?";
+  const result=campaignContinuationPolicy({history,customerText,reply:draft,language:"en",now:early});
+  assert.notEqual(result.reply,draft);
+  assert.match(result.reply,/90/);
 });

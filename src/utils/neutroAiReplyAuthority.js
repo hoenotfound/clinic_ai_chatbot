@@ -43,6 +43,22 @@ function canHonorNoReply({config,parsed,customerText,history=[],contact,isFirstM
   // a restrictive safety boundary, never a standalone keyword ignore rule.
   return /^(?:(?:thanks|thank you|terima kasih|谢谢|謝謝|多谢|多謝|tq|thx)(?:\s*(?:very much|so much|很多|您|你|ya))?|[👍👌🙏❤️💚😊☺️\s]+)[.!。！\s]*$/iu.test(text);
 }
+// One eligibility boundary for late routine review recovery. A positive
+// result is NOT clinical clearance or authorization to perform an action.
+// Callers still require fresh independent Neon evidence before clearing review.
+function routineReviewRecoveryEligible({config,naturalReplyAuthority,flagged,reviewRequired,reviewType,
+  keywordReason,urgentSafety,marketingStopQuestion,customerText,bookingReady,channel,
+  whatsappOnly=false,informationOnly=false,requireNoBooking=false}={}){
+  return Boolean(flagged&&reviewRequired&&
+    (!(naturalReplyAuthority||informationOnly)||reviewType==="information")&&
+    !keywordReason&&!urgentSafety&&!marketingStopQuestion&&
+    !isActiveSafetyConcern(customerText)&&!hasClinicalMediaRisk(customerText)&&
+    !isExplicitStaffRequest(customerText)&&!isDefiniteAppointmentCancellation(customerText)&&
+    (!(requireNoBooking||naturalReplyAuthority)||!bookingReady)&&
+    (!whatsappOnly||channel==="whatsapp")&&
+    config?.businessType==="tcm_clinic"&&
+    /^neutro\s+sense\b/iu.test(String(config.businessName||config.clinicName||"")));
+}
 function createReplyOverrideAudit(log=console.info) {
   const reasons=new Set();
   return {
@@ -66,4 +82,4 @@ function createClinicalReviewEvidenceReader(read,{reuseVeto=false}={}){
     return evidence;
   };
 }
-module.exports={usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
