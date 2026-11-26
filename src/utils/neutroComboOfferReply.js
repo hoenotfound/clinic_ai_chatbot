@@ -7,6 +7,8 @@ const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { getActivePromotions, getPricePromotionBundle } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
+const {hasMyrAmount}=require("./myrAmountClaims");
+const {verifiedEquivalentReply}=require("./verifiedSpecialReply");
 const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 
@@ -114,7 +116,7 @@ function resolveNeutroComboOfferReply({
       : locale.startsWith("en")
         ? `The separate 3D and 9D First Trial offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
         : `3D 和 9D 分开体验的 First Trial 价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
-    return { ...offer, mode:"direct", reply };
+    return { ...offer, mode:"direct", individualPrices:standalone, reply };
   }
 
   if (explicitlyJoint) {
@@ -198,7 +200,13 @@ function resolveNeutroComboMediaPricingDecision({
   if (!comboOfferDecision ||
       !["direct", "suggestion"].includes(comboOfferDecision.mode) ||
       comboOfferDecision.treatment !== COMBO_SERVICE ||
-      !String(reply || "").includes(comboOfferDecision.price)) return null;
+      !hasMyrAmount(reply,Number(comboOfferDecision.price.slice(2)))) return null;
+  // An approved combo amount elsewhere in the text is not proof it was
+  // quoted for this combination. Direct replies must still match the facts
+  // approved by the combo resolver. Suggestion mode retains its exact appended
+  // block, which is independently checked below.
+  if(comboOfferDecision.mode==="direct" && !verifiedEquivalentReply(reply,comboOfferDecision.reply))return null;
+  if(comboOfferDecision.mode==="suggestion" && !String(reply||"").endsWith(comboOfferDecision.reply))return null;
 
   const bundle = getPricePromotionBundle(
     promotions, COMBO_SERVICE, null, new Date(now)
