@@ -2,7 +2,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
-const { HOLD_SQL, CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
+const { HOLD_SQL, CONFIRMATION_HOLD_SQL, MODEL_CONFIRMATION_HOLD_SQL } = require("../db/staffAppointmentReminderRepo");
 const { isProactiveAppointmentReminder } = require("../utils/staffAppointmentReminderText");
 const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 const {isBriefAcceptance}=require("./staffAppointmentAcceptanceService");
@@ -356,6 +356,23 @@ function createStaffBookingConfirmationService({
     return pipeline.updateLead(lead.id, { appointmentStatus: "set", appointmentAt }, "Staff chat confirmation");
   };
 }
+// AI interpretation can recover a missed SALES hold, never independently
+// set or replace a CRM appointment. Persist only authenticated current proof.
+async function recordModelConfirmationHold(contactId,inboundId,evidence,{database=pool}={}){
+  if(evidence?.kind!=="confirmed"||![contactId,inboundId,evidence.id].every(id=>Number.isSafeInteger(Number(id))&&Number(id)>0)||
+    typeof evidence.text!=="string"||!evidence.text.trim())return false;
+  const client=await database.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query(`SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,[contactId]);
+    const result=await client.query(MODEL_CONFIRMATION_HOLD_SQL,[contactId,evidence.id,evidence.text,inboundId]);
+    await client.query("COMMIT");
+    return Boolean(result.rows?.length);
+  }catch(error){
+    await client.query("ROLLBACK").catch(()=>{});
+    throw error;
+  }finally{client.release();}
+}
 const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
@@ -367,4 +384,5 @@ module.exports = {
   isProactiveAppointmentReminder,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
+  recordModelConfirmationHold,
 };
