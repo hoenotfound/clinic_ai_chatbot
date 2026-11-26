@@ -136,7 +136,7 @@ test("multibranch settings clarify rather than choosing the wrong branch",()=>{
 
 test("server only restores configured facts after an independently approved, quoted price",()=>{
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(server,/const approvedPriceQuoted = Boolean\(approvedPricingDecision && priced\.restored/u);
+  assert.match(server,/const approvedPriceQuoted = Boolean\(approvedPricingDecision &&\s*\(priced\.restored \|\| \(naturalReplyAuthority && priced\.verifiedQuote === true\)\)/u);
   assert.match(server,/approvedPricingDecision\.prices\?\.some\(item/u);
   assert.match(server,/reply = appendRequestedBusinessFacts\(/u);
   assert.match(server,/branches: clinicConfig\.branches, hours: clinicConfig\.hours/u);

@@ -1746,6 +1746,14 @@ async function processIncomingMessage(
         commercialHistory
       ) && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
+      // A fee enquiry does not itself authorize a booking or paid promotion.
+      // Retain the previous booking-state boundary when formatting is deferred.
+      if (naturalReplyAuthority && verifiedFreeIntroFee && !flagged) {
+        bookingReady = false;
+        if (details) details={...details,appointmentPreference:null,appointmentProposal:null,appointmentScheduling:false};
+        priceQuery=false;
+        packageQuery=false;
+      }
       // In natural-authority mode the final verified-price formatter owns
       // routine fee answers. Recover an INFORMATION review only after checking
       // that no independent clinical review is pending.
@@ -2535,9 +2543,11 @@ async function processIncomingMessage(
       // text. Recover independently configured branch/hours details when the
       // same customer turn also asks for them (e.g. location + RM488).
       // Never append administrative facts to rejected/unverified pricing.
-      const approvedPriceQuoted = Boolean(approvedPricingDecision && (priced.restored || naturalReplyAuthority) &&
-        (approvedPricingDecision.prices?.some(item =>
-          item.price && reply.includes(item.price)) ||
+      const approvedPriceQuoted = Boolean(approvedPricingDecision &&
+        (priced.restored || (naturalReplyAuthority && priced.verifiedQuote === true)) &&
+        (priced.verifiedQuote === true ||
+          approvedPricingDecision.prices?.some(item =>
+            item.price && reply.includes(item.price)) ||
           (approvedPricingDecision.servicePrice &&
             reply.includes(approvedPricingDecision.servicePrice))));
       if (approvedPriceQuoted) {

@@ -40,7 +40,7 @@ test("a simple configured service price can preserve the AI quote, but not a wro
     pricingDecision:{treatment:service,source:"model_led_customer_context",prices:[],servicePrice:"RM150"},
     language:"zh",preserveNaturalReply:true};
   const reply="测试护理 价格是 RM150 😊";
-  assert.deepEqual(ensureVerifiedPriceReply({...opts,reply}),{reply,restored:false});
+  assert.deepEqual(ensureVerifiedPriceReply({...opts,reply}),{reply,restored:false,verifiedQuote:true});
   assert.match(ensureVerifiedPriceReply({...opts,reply:"测试护理 RM100"}).reply,/RM150/);
 });
 
@@ -78,7 +78,10 @@ test("the language failure path does not ask the customer to repeat the question
   const result=await correctReplyLanguage(original,[{role:"user",content:"Could you explain this?"}],
     {replyLanguage:"en",preserveNaturalReply:true},{getReply:async()=>{calls++;throw Error("provider timeout")},parseReply:JSON.parse});
   assert.equal(calls,1);
-  assert.equal(result.flagged,false);
+  assert.equal(result.flagged,true);
+  assert.equal(result.reviewRequired,true);
+  assert.equal(result.reviewType,"information");
+  assert.equal(result.outcome,"review_required");
   assert.equal(result.languageCorrectionFailed,true);
   assert.match(result.text,/accurate English reply/);
   assert.doesNotMatch(result.text,/What would you like to know/);

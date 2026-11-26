@@ -473,7 +473,7 @@ function ensureVerifiedPriceReply({
         !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))
         ? preserveVerifiedModelQuote({reply:original,treatment,prices:[{name:"Main offer",price:pricingDecision.servicePrice}],firstTrialQuote:false})
         : null;
-      if(preserved) return {reply:preserved,restored:false};
+      if(preserved) return {reply:preserved,restored:false,verifiedQuote:true};
       return { reply: [text, recovery].filter(Boolean).join("\n\n"), restored: true };
     }
     const safeInfo = recoveryPeriodGuidance(customerText, language) ||
@@ -565,7 +565,7 @@ function ensureVerifiedPriceReply({
         !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))))
     ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
     : null;
-  if (preservedModelQuote) return {reply:preservedModelQuote,restored:false};
+  if (preservedModelQuote) return {reply:preservedModelQuote,restored:false,...(preserveNaturalReply?{verifiedQuote:true}:{})};
   const quote = firstTrialQuote &&
     !(aiLed && pricingDecision.source === "model_led_customer_context" && prices[0].name !== "Main offer")
     ? (locale.startsWith("ms")

@@ -175,9 +175,10 @@ function staffLanguageHandoff(original, language) {
 // release the rejected draft or its price/media/booking intentions. The
 // customer's next message still goes through the ordinary guarded AI path.
 function ordinaryLanguageFallback(original, language, options={}) {
-  // Do not ask the customer to repeat an already supplied question after a
-  // provider/translation failure. Preserve normal AI ownership and keep all
-  // rejected action metadata cleared.
+  // A failed translation leaves the original question unresolved. In natural
+  // authority mode, create an information review rather than closing the turn
+  // with an apology or requiring the customer to repeat their question.
+  // The runtime persists the review before acknowledging it; AI ownership stays active.
   const naturalMessage=language==="ms"
     ? "Maaf, saya belum dapat memberikan jawapan yang tepat dalam Bahasa Malaysia buat masa ini 😊"
     : language==="zh" ? "不好意思，刚才没能准确地用中文回复您哦 😊"
@@ -190,9 +191,10 @@ function ordinaryLanguageFallback(original, language, options={}) {
   return {
     ...original,
     text: message,
-    outcome: "normal",
-    flagged: false,
-    reviewRequired: false,
+    outcome: options.preserveNaturalReply ? "review_required" : "normal",
+    flagged: options.preserveNaturalReply === true,
+    reviewRequired: options.preserveNaturalReply === true,
+    ...(options.preserveNaturalReply ? {reviewType:"information"} : {}),
     bookingReady: false,
     serviceQuery: false,
     serviceQuerySource: null,
