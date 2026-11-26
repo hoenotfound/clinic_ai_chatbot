@@ -609,6 +609,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const savedInbound = { id: 100 };
     const aiPricingMode = resolveContactPricingMode({baseMode:clinicConfig.aiPricingIntentMode,contactId:contact.id,channel,env:{}});
     const naturalReplyAuthority = usesNaturalReplyAuthority(clinicConfig);
+    let languageReviewRequired = false;
     const keywordReason = null;
     const marketingStopQuestion = null;
     const numberedPricingSelection = null;

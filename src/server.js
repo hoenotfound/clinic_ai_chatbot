@@ -43,7 +43,7 @@ const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartum
 const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote, containsApprovedPriceAmount } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPulseDepth");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
@@ -1396,6 +1396,7 @@ async function processIncomingMessage(
     const naturalReplyAuthority=usesNaturalReplyAuthority(clinicConfig);
     const replyOverrideAudit=createReplyOverrideAudit();
     let originalModelReply = null;
+    let languageReviewRequired = false;
     let modelLocationOnly = false;
     let flagged = false;
     let reviewRequired = false;
@@ -1588,6 +1589,10 @@ async function processIncomingMessage(
           }
         );
         replyOverrideAudit.change("correctReplyLanguage",originalModelReply,languageCheckedReply.text);
+        languageReviewRequired = naturalReplyAuthority &&
+          languageCheckedReply.languageCorrectionFailed === true &&
+          languageCheckedReply.reviewRequired === true &&
+          languageCheckedReply.reviewType === "information";
         // Only the accepted response may provide intent. A language
         // fallback explicitly clears pricing authority, not just its text.
         modelLocationOnly = !languageCheckedReply.languageCorrectionFailed &&
@@ -2545,11 +2550,7 @@ async function processIncomingMessage(
       // Never append administrative facts to rejected/unverified pricing.
       const approvedPriceQuoted = Boolean(approvedPricingDecision &&
         (priced.restored || (naturalReplyAuthority && priced.verifiedQuote === true)) &&
-        (priced.verifiedQuote === true ||
-          approvedPricingDecision.prices?.some(item =>
-            item.price && reply.includes(item.price)) ||
-          (approvedPricingDecision.servicePrice &&
-            reply.includes(approvedPricingDecision.servicePrice))));
+        containsApprovedPriceAmount(reply,approvedPricingDecision));
       if (approvedPriceQuoted) {
         const beforeBusinessFacts=reply;
         reply = appendRequestedBusinessFacts({
@@ -3017,8 +3018,9 @@ async function processIncomingMessage(
       // The structured model category may clarify administrative intent,
       // but independently detected clinical concerns still take precedence.
       const category=categorizeAiReview(text,reviewType,{trustStructuredInformation:
-        naturalReplyAuthority && modelPricingIntent?.structured===true &&
-        modelPricingIntent.outcome==="review_required" && modelPricingIntent.reviewType==="information"});
+        naturalReplyAuthority && ((modelPricingIntent?.structured===true &&
+        modelPricingIntent.outcome==="review_required" && modelPricingIntent.reviewType==="information") ||
+        (languageReviewRequired && reviewType==="information"))});
       const recordedReview=await contactsRepo.setAiReviewAttention(
         contact.id, savedInbound.id,
         String(text || "Unanswered customer question").slice(0, 350),

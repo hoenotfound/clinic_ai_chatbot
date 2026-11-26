@@ -118,3 +118,47 @@ test("audit reports multiple distinct changes without including customer text",(
   assert.match(logs[0],/configuredAdOpening.*resolveNeutroComboOfferReply.*finalLanguageFallback/);
   assert.doesNotMatch(logs[0],/original|translated/);
 });
+
+test("normalized approved monetary evidence is exact, never a substring of another quote",()=>{
+  const {containsApprovedPriceAmount}=require("../src/utils/verifiedPriceReply");
+  const decision={prices:[{price:"RM388"}]};
+  for(const value of ["RM388","RM 388","MYR 388.00","RM 3️⃣8️⃣8️⃣"]){
+    assert.equal(containsApprovedPriceAmount(value,decision),true,value);
+  }
+  for(const value of ["RM3880","RM388.50","RM38","388"]){
+    assert.equal(containsApprovedPriceAmount(value,decision),false,value);
+  }
+  assert.equal(containsApprovedPriceAmount("RM1,288",{servicePrice:"RM1288"}),true);
+  assert.equal(containsApprovedPriceAmount("RM388",null),false);
+});
+
+test("a price-only draft cannot pass preservation for a compound duration enquiry",()=>{
+  for(const source of ["customer_current_offer","model_led_customer_context"]){
+    const result=ensureVerifiedPriceReply({...args,pricingDecision:{...args.pricingDecision,source},
+      customerText:"3D小颜术有优惠吗？疗程多久？",reply:"3D 小颜术 First Trial 价格是 RM388 😊"});
+    assert.equal(result.restored,true);
+    assert.match(result.reply,/RM388/);
+    assert.match(result.reply,/护理时间|几次/);
+  }
+});
+
+test("a separate service question retains its noncommercial explanation when restoring a current offer",()=>{
+  const result=ensureVerifiedPriceReply({...args,
+    customerText:"3D小颜术有优惠吗？怎么做的？",
+    reply:"主要通过徒手护理帮助放松面部肌肉。\nFirst Trial RM188"});
+  assert.equal(result.restored,true);
+  assert.match(result.reply,/RM388/);
+  assert.match(result.reply,/徒手护理/);
+  assert.doesNotMatch(result.reply,/RM188/);
+});
+
+test("intro fallback restores only an isolated missing contact line, not unrelated translated copy",()=>{
+  const source="欢迎来到本中心！\nWhatsApp: +60123456789";
+  const draft="Hello and welcome!";
+  const result=preserveOriginalIntroFacts(source,draft,{language:"en"});
+  assert.equal(result.usedOriginalFallback,true);
+  assert.match(result.reply,/WhatsApp: \+60123456789/);
+  assert.doesNotMatch(result.reply,/欢迎来到本中心/);
+  const offer="首次体验优惠 RM488，仅限新客户";
+  assert.ok(preserveOriginalIntroFacts(offer,draft,{language:"en"}).reply.includes(offer));
+});

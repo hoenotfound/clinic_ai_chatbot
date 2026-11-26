@@ -1,7 +1,7 @@
 "use strict";
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
-const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, isStandalonePriceQuestion, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const { isContextualPriceReference, resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent, safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
@@ -299,6 +299,30 @@ function recoveryPeriodGuidance(customerText, language = "zh") {
 const SESSION_OR_DURATION_QUESTION =
   /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|(?:做|只做|护理|護理|调理|調理)\s*(?:一|1)\s*(?:次|回)\s*(?:就|可以|能|会)?\s*(?:行|好|够|夠|有效)(?:了|吗|嗎|呢|[?？])*|\b(?:is|will|would)\s+(?:one|1|a\s+single)\s+(?:session|treatment)\s+(?:be\s+)?(?:enough|sufficient)\b|多久|多长|多長|\bhow\s+many\s+sessions?\b|\bhow\s+long\b|\bberapa\s+(?:kali|sesi|lama)\b)/iu;
 
+// A simple price quote cannot by itself answer a separately stated question.
+// Reuse current enquiry classifiers rather than another treatment keyword list.
+function hasSeparateNonPriceEnquiry(customerText){
+  const current=stripFutureFollowUpPermission(String(customerText||"")).text;
+  const clauses=(current.match(/[^?？。;；\n]+[?？。;；\n]*/gu)||[]).map(s=>s.trim()).filter(Boolean);
+  if(clauses.length<2)return false;
+  const {isCurrentOfferEnquiry}=require("./currentOfferEnquiry");
+  const commercial=part=>hasExplicitPriceRequest(part)||isStandalonePriceQuestion(part)||
+    hasExplicitPackageOptionsRequest(part)||isCurrentOfferEnquiry(part);
+  return clauses.some(commercial)&&clauses.some(part=>!commercial(part)&&
+    (/[?？]/u.test(part)||hasCustomerServiceEnquiry(part)));
+}
+
+// Match complete MYR amounts, not a substring of another amount. This only
+// identifies a quoted fact AFTER independent commercial authorization.
+function containsApprovedPriceAmount(reply,decision){
+  if(!decision)return false;
+  const amounts=new Set([...(Array.isArray(decision.prices)?decision.prices:[]).map(item=>item?.price),
+    decision.servicePrice].filter(value=>/^RM[1-9]\d{0,5}$/u.test(String(value||""))).map(value=>Number(value.slice(2))));
+  const text=String(reply||"").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu,"");
+  return [...text.matchAll(/\b(?:RM|MYR)\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d,]|\.\d)/giu)]
+    .some(match=>amounts.has(Number(match[1].replace(/,/gu,"")+(match[2]?"."+match[2]:""))));
+}
+
 function safeNonPriceExplanation(customerText, original, language) {
   const recovery = recoveryPeriodGuidance(customerText, language);
   if (recovery) return recovery;
@@ -470,11 +494,15 @@ function ensureVerifiedPriceReply({
       const recovery = recoveryPeriodGuidance(customerText, language);
       // A simple exact configured service-price answer can retain model wording.
       const preserved = preserveNaturalReply && !recovery && !hasClinicalMediaRisk(customerText) &&
+        !hasSeparateNonPriceEnquiry(customerText) &&
         !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))
         ? preserveVerifiedModelQuote({reply:original,treatment,prices:[{name:"Main offer",price:pricingDecision.servicePrice}],firstTrialQuote:false})
         : null;
       if(preserved) return {reply:preserved,restored:false,verifiedQuote:true};
-      return { reply: [text, recovery].filter(Boolean).join("\n\n"), restored: true };
+      const otherAnswer=preserveNaturalReply && !hasClinicalMediaRisk(customerText) &&
+        (hasSeparateNonPriceEnquiry(customerText)||SESSION_OR_DURATION_QUESTION.test(String(customerText||"")))
+        ? safeNonPriceExplanation(customerText,original,language) : "";
+      return { reply: [text, recovery||otherAnswer].filter(Boolean).join("\n\n"), restored: true };
     }
     const safeInfo = recoveryPeriodGuidance(customerText, language) ||
       (hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language));
@@ -559,10 +587,13 @@ function ensureVerifiedPriceReply({
         ? `The listed price for ${voucherNames} is after applying the voucher`
         : `${voucherNames} 的上述价格为使用优惠券后的价格`)
     : "";
-  const preservedModelQuote = aiLed && (pricingDecision.source === "model_led_customer_context" ||
-      (preserveNaturalReply && pricingDecision.source === "customer_current_offer" &&
-        !hasClinicalMediaRisk(customerText) && !recoveryPeriodGuidance(customerText, language) &&
-        !SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))))
+  const otherQuestion=preserveNaturalReply && hasSeparateNonPriceEnquiry(customerText);
+  const canPreserveCompleteQuote=!preserveNaturalReply || (!otherQuestion &&
+    !hasClinicalMediaRisk(customerText) && !recoveryPeriodGuidance(customerText,language) &&
+    !SESSION_OR_DURATION_QUESTION.test(String(customerText||"")));
+  const preservedModelQuote = aiLed && canPreserveCompleteQuote &&
+    (pricingDecision.source === "model_led_customer_context" ||
+      (preserveNaturalReply && pricingDecision.source === "customer_current_offer"))
     ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
     : null;
   if (preservedModelQuote) return {reply:preservedModelQuote,restored:false,...(preserveNaturalReply?{verifiedQuote:true}:{})};
@@ -590,7 +621,7 @@ function ensureVerifiedPriceReply({
   const recoveryGuidance = recoveryPeriodGuidance(customerText, language);
   const independentServiceQuestion =
     SESSION_OR_DURATION_QUESTION.test(String(customerText || "")) ||
-    Boolean(recoveryGuidance);
+    Boolean(recoveryGuidance) || otherQuestion;
   const explanation = recoveryGuidance ||
     (hasClinicalMediaRisk(customerText) ||
       ((priceOnlyResponse === true ||
@@ -725,4 +756,4 @@ function guardUnfulfilledPriceQuote(reply,language="zh",{validateMediaPromise=fa
   return {...quote,mediaChanged:media.changed,afterMediaReply};
 }
 
-module.exports = { staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
