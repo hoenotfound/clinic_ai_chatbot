@@ -254,3 +254,24 @@ test("current RM388 versus RM268 comparison works when Package B lists one inclu
     now: currentNow,
   }), null);
 });
+
+
+test("A/B history requires affirmative payable claims and distinguishes normal and voucher amounts",()=>{
+  const verifiedPromo=structuredClone(promo);
+  verifiedPromo.packages[0].caption="RM100 优惠券\n原价 RM488\n优惠后仅需 RM388\n✅骨盆调整与体态矫正疗程";
+  verifiedPromo.packages[1].caption="RM100 优惠券\n原价 RM388\n优惠后仅需 RM288\n✅骨盆调整与体态矫正疗程";
+  const withQuote=quote=>history.map((turn,i)=>i===9?{...turn,content:quote}:turn);
+  for(const quote of [
+    "骨盆调理 Package A: MYR 388.00 (原价 RM488); Package B: 马币288 (原价 RM388)",
+    "骨盆调理 Package A: RM100 voucher; normal price RM488; offer RM388\nPackage B: RM100 voucher; normal price RM388; offer RM288",
+  ]) assert.equal(compare({promotions:[verifiedPromo],conversationHistory:withQuote(quote)})?.type,"text_only",quote);
+  for(const quote of [
+    "骨盆调理 Package A: not RM388; Package B: not RM288",
+    "骨盆调理 Package A: RM388; Package B: 不是RM288",
+    "骨盆调理 Package A: normal price RM388; Package B: RM288",
+    "骨盆调理 Package A: RM388; Package B: RM288 (normal price RM488)",
+    "骨盆调理 Package A: RM388; Package B: RM288; RM120 voucher",
+    "骨盆调理 Package A: RM288; Package B: RM388",
+    "骨盆调理 Package A: RM388.50; Package B: RM288",
+  ]) assert.equal(compare({promotions:[verifiedPromo],conversationHistory:withQuote(quote)}),null,quote);
+});
