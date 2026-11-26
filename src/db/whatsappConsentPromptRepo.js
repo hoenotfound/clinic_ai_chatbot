@@ -15,9 +15,9 @@ const SAFETY_WINDOW_MINUTES = 10;
 // to an anchor at or after activation. Start with that indexed event cohort,
 // not every contact. This is only a necessary-condition prefilter: keep the
 // original latest-message, consent, appointment and delivery checks below.
-// No age cutoff on FU3 or on stored inbound timestamps: delayed/imported
-// events must still be evaluated using the existing source-time rules.
-const CANDIDATES_SQL = `
+// Only seed contacts with an inbound inside the exact source-time window.
+// Never use stored creation time as a proxy for a delayed provider timestamp.
+const CONSENT_SEED_SQL = `
 WITH consent_seed AS MATERIALIZED (
  SELECT DISTINCT step3.contact_id
  FROM messages step3
@@ -31,7 +31,16 @@ WITH consent_seed AS MATERIALIZED (
   AND step3.whatsapp_message_id IS NOT NULL
   AND step3.delivery_status IN ('pending','sent','delivered','read')
   AND seed_anchor.created_at >= $1::timestamptz
-)
+  AND EXISTS (SELECT 1 FROM messages recent_inbound
+    WHERE recent_inbound.contact_id=step3.contact_id AND recent_inbound.role='user'
+      AND COALESCE(recent_inbound.source_created_at,recent_inbound.created_at)>$3::timestamptz - interval '23 hours 50 minutes'
+      AND COALESCE(recent_inbound.source_created_at,recent_inbound.created_at)<=$3::timestamptz)
+)`;
+
+// Shared eligibility body: discovery uses a bounded seed; claim checks only
+// the originally selected contact under its conversation lock.
+function candidateSql({ contactOnly = false } = {}) {
+ return `${contactOnly ? "" : CONSENT_SEED_SQL}
 SELECT
  c.id AS contact_id,c.whatsapp_number, lead.id AS lead_id,
  lead.treatment_interest AS service_name, inbound.id AS inbound_id,
@@ -47,8 +56,7 @@ SELECT
      WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
        AND price.whatsapp_message_id IS NOT NULL),
      final.whatsapp_accepted_at) + interval '5 minutes') AS due_at
-FROM consent_seed seed
-JOIN contacts c ON c.id=seed.contact_id
+${contactOnly ? "FROM contacts c" : "FROM consent_seed seed\nJOIN contacts c ON c.id=seed.contact_id"}
 JOIN LATERAL (
  SELECT m.id,m.created_at,COALESCE(m.source_created_at,m.created_at) AS source_at
  FROM messages m WHERE m.contact_id=c.id AND m.role='user'
@@ -81,7 +89,7 @@ JOIN LATERAL (
  FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
  WHERE l.contact_id=c.id ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1
 ) lead ON true
-WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
+WHERE ${contactOnly ? "c.id=$6 AND " : ""}c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
  AND COALESCE(c.mode,'ai') <> 'human'
  AND ${followUpAttentionAllowedSql("c")}
  AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -125,6 +133,9 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
 ORDER BY due_at,contact_id
 LIMIT 200
 `;
+}
+const CANDIDATES_SQL = candidateSql();
+const CLAIM_CANDIDATES_SQL = candidateSql({contactOnly:true});
 
 // A timer restart must not lose pending retries. This is a read-only
 // scheduling query; the normal eligibility checks are repeated at claim time.
@@ -164,8 +175,8 @@ async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = fal
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1,$2)",
       [CONVERSATION_LOCK_NAMESPACE,candidate.contact_id]);
-    const fresh = (await client.query(CANDIDATES_SQL,
-      [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled,pricingActivation])).rows
+    const fresh = (await client.query(CLAIM_CANDIDATES_SQL,
+      [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled,pricingActivation,candidate.contact_id])).rows
       .find(row => Number(row.contact_id)===Number(candidate.contact_id) &&
         Number(row.anchor_id)===Number(candidate.anchor_id) &&
         Number(row.inbound_id)===Number(candidate.inbound_id) &&
@@ -441,7 +452,7 @@ async function recordButtonResponse({
 }
 
 module.exports={
-  DUE_AFTER_THIRD_MINUTES,CANDIDATES_SQL,
+  DUE_AFTER_THIRD_MINUTES,CANDIDATES_SQL, CLAIM_CANDIDATES_SQL,
   listCandidates,nextDeferredRetryAt,claim,stillEligible,markSent,deferUnsent,
   parseResponseId,recordButtonResponse,
 };
