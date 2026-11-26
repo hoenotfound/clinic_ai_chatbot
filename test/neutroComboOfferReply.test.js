@@ -113,6 +113,13 @@ test("both-treatment price enquiry quotes the two verified trials and the combo 
  assert.match(result.reply,/3D 和 9D 分开体验/u);
  assert.equal((result.reply.match(/RM488/gu)||[]).length,2);
  assert.equal((result.reply.match(/RM688/gu)||[]).length,1);
+ assert.equal(result.mediaAllowed,false);
+ const {comboDraftMatches}=require("../src/utils/verifiedSpecialReply");
+ const natural="3D First Trial RM488\n9D First Trial MYR 488.00\n3D + 9D 组合目前优惠价 RM688";
+ assert.equal(comboDraftMatches(natural,result),true);
+ for(const wrong of [natural.replace("9D First Trial MYR 488.00","9D First Trial RM688"),natural.replace("3D First Trial","3D"),natural.replace("3D First Trial RM488","❌ 3D First Trial RM488")])assert.equal(comboDraftMatches(wrong,result),false,wrong);
+ const mediaDecision=resolveNeutroComboMediaPricingDecision({comboOfferDecision:result,promotions:[...standalone,{...combo,imageUrl:"https://example.test/combo.png"}],customerText:current,session:[turn("user",current,60)],reply:natural,now});
+ assert.equal(mediaDecision,null);
 });
 
 test("customer refusing one treatment is never sold the combination",()=>{
