@@ -171,7 +171,7 @@ test("verified RM68 availability review can recover without silencing clinical r
     ${fragment}
     return { flagged, reviewRequired, reply, reviewContinuationTextOnly };
   })`, {
-    replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+    routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
     isActiveSafetyConcern: text => /urgent|emergency/iu.test(text),
     hasClinicalMediaRisk,
     isExplicitStaffRequest: text => /人工|staff/iu.test(text),
@@ -332,7 +332,7 @@ test("real final campaign boundary checks booking-ready and respects service swi
   const source=server.slice(start,end);
   const run=(text,history,selected=false)=>vm.runInNewContext(
     "(function(){"+source+"\nreturn {reply,bookingReady,details,rm68BlocksBooking,rm68CampaignContinuationTextOnly};})()",{
-      replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+      routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
       flagged:false,bookingReady:true,marketingStopQuestion:false,keywordReason:null,urgentSafety:false,
       mediaLanguage:"en",text,reply:"Your event appointment is confirmed for RM68 on December 5.",details:{appointmentPreference:"December 5"},
       fixedAdFirstReply:null,staffPriceConflict:false,clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
@@ -359,7 +359,7 @@ test("screening uses actual review persistence and guarded acknowledgement, neve
   const text="Any ultrasound screening";
   for(const allowed of [true,false]){
     const actions=[];
-    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
+    const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
       flagged:false,reviewRequired:false,reviewType:null,bookingReady:true,priceQuery:true,packageQuery:true,
       serviceQuery:true,serviceQuerySource:"model",clinicalAcknowledgement:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:false,mediaLanguage:"en",text,commercialHistory:[...history,{role:"user",content:text}],
@@ -483,7 +483,7 @@ test("actual server review boundary routes Hui's alternative date for staff even
   const text="December 5 and 6, I am not available\nIs that possible to do the treatment and checking today";
   const commercialHistory=[...history,{role:"user",content:"Any ultrasound screening"},{role:"user",content:text}];
   for(const bookingReady of [true,false]){
-    const context={replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
+    const context={routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:null,mediaLanguage:"en",
       clinicalAcknowledgement:null,serviceQuery:true,serviceQuerySource:"model",priceQuery:true,packageQuery:true,details:{treatment:"pulse wave"},
       savedInbound:{id:24036,created_at:new Date(early).toISOString()},
