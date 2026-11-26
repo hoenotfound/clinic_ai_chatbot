@@ -82,7 +82,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -2461,6 +2461,7 @@ async function processIncomingMessage(
       twoTreatmentQuote?.source === "verified_two_separate_treatments"
       ? ensureVerifiedPriceReply({
           customerText:text, reply, promotions:clinicConfig.promotions,
+          services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
           conversationHistory:commercialHistory, language:mediaLanguage,
           preserveNaturalReply:true, verifiedTwoTreatmentQuote:twoTreatmentQuote,
         }) : null;
@@ -2798,12 +2799,8 @@ async function processIncomingMessage(
     // Recover only narrow, non-clinical continuations wrongly escalated by
     // the model. The previous question and fresh Neon clinical-review evidence
     // are verified; no medical decision, pricing or optional media is inferred.
-    if (flagged && reviewRequired && (!naturalReplyAuthority || reviewType === "information") && !keywordReason && !urgentSafety &&
-        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
-        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
-        !isDefiniteAppointmentCancellation(text) &&
-        clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+    if (routineReviewRecoveryEligible({config:clinicConfig,naturalReplyAuthority,flagged,reviewRequired,reviewType,
+      keywordReason,urgentSafety,marketingStopQuestion,customerText:text,bookingReady,channel})) {
       const continuity = planNeutroReviewContinuation({
         customerText: text, conversationHistory: commercialHistory, language: mediaLanguage,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
@@ -2835,15 +2832,10 @@ async function processIncomingMessage(
     // Recover only an INFORMATION review anchored to a verified prior
     // campaign opener, and only if the database has no unresolved clinical
     // review. Never silently clear a cancellation, complaint or safety issue.
-    if (flagged && reviewRequired && reviewType === "information" &&
-        channel === "whatsapp" && !keywordReason && !urgentSafety &&
-        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
-        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
-        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
+    if (routineReviewRecoveryEligible({config:clinicConfig,naturalReplyAuthority,flagged,reviewRequired,reviewType,
+      keywordReason,urgentSafety,marketingStopQuestion,customerText:text,bookingReady,channel,whatsappOnly:true,informationOnly:true,requireNoBooking:true}) &&
         isCampaignAvailabilityQuestion(text) &&
-        (!naturalReplyAuthority || String(text||"").trim().length>150) &&
-        clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+        (!naturalReplyAuthority || String(text||"").trim().length>150)) {
       const rm68AvailabilityAnswer = campaignContextReply({ history:commercialHistory, customerText: text, language: mediaLanguage,
       });
       if (rm68AvailabilityAnswer) {
@@ -2874,12 +2866,8 @@ async function processIncomingMessage(
     // questions. Verify there is no unresolved clinical review on this contact
     // before bypassing an erroneous model review. This path sends text only,
     // and does not clear staff reviews, override ownership or trigger media.
-    if (flagged && reviewRequired && (!naturalReplyAuthority || reviewType === "information") && !keywordReason && !urgentSafety &&
-        !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
-        !isExplicitStaffRequest(text) && !marketingStopQuestion &&
-        !isDefiniteAppointmentCancellation(text) && !bookingReady &&
-        channel === "whatsapp" && clinicConfig.businessType === "tcm_clinic" &&
-        /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))) {
+    if (routineReviewRecoveryEligible({config:clinicConfig,naturalReplyAuthority,flagged,reviewRequired,reviewType,
+      keywordReason,urgentSafety,marketingStopQuestion,customerText:text,bookingReady,channel,whatsappOnly:true,requireNoBooking:true})) {
       const adminAnswer = administrativeReviewReply({
         customerText: text, history: commercialHistory, branches: clinicConfig.branches,
         language: mediaLanguage, services: clinicConfig.services,
@@ -3598,12 +3586,6 @@ async function processIncomingMessage(
       await auditResultMediaEarlyExit("two_treatments_text_only");
       return { wasFirstMessage, keywordReason };
     }
-    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
-      // Once the matching First Trial image has been accepted, package and
-      // staff-handoff turns are strictly text only.
-      await auditResultMediaEarlyExit("subsequent_session_" + repeatVisitPriceReply.mode);
-      return { wasFirstMessage, keywordReason };
-    }
     {
       // The combo reply is verified text, but optional media needs its own
       // matching active price/package authorization. Keep the existing
@@ -3626,7 +3608,7 @@ async function processIncomingMessage(
       // rules therefore apply to ordinary and repeat-session promotions.
       const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
         !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
-          String(reply||"").replace(/\s+/gu,"").includes(p.price));
+          containsApprovedPriceAmount(reply,{prices:[p]}));
       if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
         comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({
