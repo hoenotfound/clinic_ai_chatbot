@@ -42,3 +42,20 @@ test("override audit records labels and IDs without customer content",()=>{
   assert.match(logs[0],/"reasons":\["guard"\]/);
   assert.doesNotMatch(logs[0],/private|unchanged/);
 });
+
+test("model closure is allowed only after verified delivery and never for an actionable response",()=>{
+  const {canHonorNoReply}=require("../src/utils/neutroAiReplyAuthority");
+  const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled"};
+  const parsed={structured:true,outcome:"no_reply",text:"不客气",details:{}};
+  const args={config,parsed,customerText:"谢谢",contact:{needs_attention:false},
+    history:[{role:"assistant",content:"我们的门店在PJ。",pricingDeliveredBotMessage:true},{role:"user",content:"谢谢"}]};
+  assert.equal(canHonorNoReply(args),true);
+  assert.equal(canHonorNoReply({...args,parsed:{...parsed,outcome:"normal"}}),false);
+  assert.equal(canHonorNoReply({...args,contact:{needs_attention:true}}),false);
+  assert.equal(canHonorNoReply({...args,parsed:{...parsed,details:{appointmentScheduling:true}}}),false);
+  assert.equal(canHonorNoReply({...args,history:[{...args.history[0],content:"你想安排几点？"},args.history[1]]}),false);
+  assert.equal(canHonorNoReply({...args,history:[{...args.history[0],pricingDeliveredBotMessage:false},args.history[1]]}),false);
+  for(const text of ["OK","可以","我怀孕了","多少钱","明天","stop","我要预约","要怎么付款"]){
+    assert.equal(canHonorNoReply({...args,customerText:text,history:[args.history[0],{role:"user",content:text}]}),false,text);
+  }
+});

@@ -58,7 +58,7 @@ const conversationReplySchema = {
   type: "object",
   properties: {
     reply: { type: "string" },
-    outcome: { type: "string", enum: ["normal", "review_required", "needs_human", "booking_ready"] },
+    outcome: { type: "string", enum: ["normal", "review_required", "needs_human", "booking_ready", "no_reply"] },
     serviceQuery: { type: "boolean" },
     serviceQuerySource: nullableString,
     priceQuery: { type: "boolean" },

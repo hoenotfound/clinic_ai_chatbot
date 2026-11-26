@@ -152,7 +152,7 @@ function categorizeAiReview(customerText, proposedCategory,{trustStructuredInfor
   // Generic practitioner titles alone do not constitute a clinical concern.
   // Only accept an explicit structured information decision when independent
   // clinical checks (including the broader non-title clinical signals) agree.
-  const withoutTitles=text.replace(/(?:中醫師|中医师|醫生|医生|醫師|医师|\\bdoktor\\b)/giu,"");
+  const withoutTitles=text.replace(/(?:中醫師|中医师|醫生|医生|醫師|医师|\bdoktor\b)/giu,"");
   if(trustStructuredInformation && !hasClinicalMediaRisk(text) &&
      !CLINICAL_QUESTION.test(withoutTitles) && !MEDICAL_HISTORY.test(text) &&
      !CLINICAL_PROCEDURE_TIMING.test(text) && !checkKeywordTriggers(text)) return "information";

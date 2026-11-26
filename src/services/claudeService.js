@@ -53,7 +53,7 @@ function buildConversationOutputSchema() {
       reply: { type: "string" },
       outcome: {
         type: "string",
-        enum: ["normal", "review_required", "needs_human", "booking_ready"],
+        enum: ["normal", "review_required", "needs_human", "booking_ready", "no_reply"],
       },
       serviceQuery: { type: "boolean" },
       serviceQuerySource: {

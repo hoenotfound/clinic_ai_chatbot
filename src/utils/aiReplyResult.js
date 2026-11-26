@@ -6,7 +6,7 @@ const {
   stripInternalOutcomeMarkers,
 } = require("./attentionTriggers");
 
-const VALID_OUTCOMES = new Set(["normal", "review_required", "needs_human", "booking_ready"]);
+const VALID_OUTCOMES = new Set(["normal", "review_required", "needs_human", "booking_ready", "no_reply"]);
 const VALID_SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
 const VALID_PROJECT_NEXT_STEPS = new Set(["site_visit", "quotation_discussion"]);
 const MAX_METADATA_LENGTH = 240;
@@ -170,7 +170,7 @@ function containsInternalAiScaffolding(value) {
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
     || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|appointmentScheduling|appointmentProposal|businessLocationOnly|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
-    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready)\b/im.test(text)
+    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready|no_reply)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
 }

@@ -1516,7 +1516,7 @@ Use "review_required" when a missing/unverified business-specific fact or a non-
 
 Use "needs_human" for an explicit request for human/staff/manager assistance, a complaint/refund/legal dispute, an urgent safety issue, severe or active adverse symptoms, or a case that genuinely requires staff to own the conversation. These get a brief, natural acknowledgement and pause the AI until staff returns control. Urgent safety responses must prioritize appropriate immediate care instead of promoting treatments. For a single unverified business detail or non-urgent clinical suitability question, prefer "review_required" instead so the AI can answer later unrelated enquiries.
 
-Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
+Use "no_reply" ONLY when the latest message is a purely social closing after the customer's question has been answered and there is no pending request, safety concern, language change, booking acceptance, payment, refusal, cancellation, opt-out, or staff follow-up. Never use this outcome for an answer to an open question or invitation. Supply a brief natural acknowledgement in reply as a fallback if the independent closure checks disallow silence. Set serviceQuery, priceQuery, packageQuery, appointmentScheduling and businessLocationOnly false, all appointment fields null. Do not repeat an assessment invitation or price. Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 ${pricingIntentMode === "enabled" ? `CURRENT-TURN DECISION SCOPE:
 - Decide the outcome and intent for the latest customer request, not the backlog of unanswered questions. An earlier unanswered administrative or price question remains for staff; do not repeat it, answer it instead of the new question, or set review_required because of it. When the customer explicitly selects another treatment, that treatment becomes the current topic; a short subsequent question refers to that topic unless the customer changes it again.
 - An earlier clinical or safety concern remains relevant; never imply medical clearance, dismiss clinical review, or override an actual staff takeover. A new independently answerable administrative question can receive a verified non-clinical answer when safe.
@@ -1544,7 +1544,7 @@ ${compactPolicy ? `FINAL DECISION CONSISTENCY:
 STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code fence and no text outside it:
 {
   "reply": "the exact short customer-facing message",
-  "outcome": "normal | review_required | needs_human | booking_ready",
+  "outcome": "normal | review_required | needs_human | booking_ready | no_reply",
   "serviceQuery": false,
   "serviceQuerySource": null,
   "priceQuery": false,
