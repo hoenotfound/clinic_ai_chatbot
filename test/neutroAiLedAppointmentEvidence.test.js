@@ -5,13 +5,13 @@ const {resolveModelAppointmentEvidence}=require("../src/utils/aiLedAppointmentEv
 const {isBriefAcceptance,hasSpecificStaffTimeOffer}=require("../src/services/staffAppointmentAcceptanceService");
 const {parseTerseStaffConfirmedSlot,isTerseBookingCorroborated,createStaffBookingConfirmationService,recordModelConfirmationHold}=require("../src/services/staffBookingConfirmationService");
 const {CONFIRMATION_HOLD_SQL,MODEL_CONFIRMATION_HOLD_SQL}=require("../src/db/staffAppointmentReminderRepo");
-const config={businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",aiPricingIntentMode:"enabled"};
+const config={businessType:"tcm_clinic",businessName:"Neutro Sense TCM Centre",aiPricingIntentMode:"enabled",hours:{weekly:{monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}}}};
 const now=Date.parse("2026-11-26T08:39:10Z");
 const offer="19/12-星期六-\n10am ok?";
 const confirmation="Comfirm appointment - 19/12- Sat - 10am ya 💚☺️";
 const staff=(text,id=10,at=now-60000)=>({role:"assistant",content:"[Verified STAFF message] "+text,pricingVerifiedStaffText:true,contextMessageId:id,pricingCreatedAtMs:at});
 const customer=(text,id=11)=>({role:"user",content:text,contextMessageId:id,pricingCreatedAtMs:now-30000});
-const parsed=(kind,quote)=>({structured:true,outcome:"normal",details:{appointmentIntent:kind,appointmentStaffEvidence:quote}});
+const parsed=(kind,quote)=>({structured:true,outcome:"normal",details:{appointmentScheduling:true,appointmentIntent:kind,appointmentStaffEvidence:quote}});
 const resolve=(history,kind,quote,extra={})=>resolveModelAppointmentEvidence({config,history,parsed:parsed(kind,quote),customerText:history.at(-1).content,inboundId:history.at(-1).contextMessageId,bookingContext:{status:"none"},now,...extra});
 
 test("actual appointment conversation normalizes spaced acceptance and verifies exact staff-confirmed slot",async()=>{
@@ -68,4 +68,32 @@ test("missed staff confirmation can hold sales, never create a CRM slot from mod
   assert.match(CONFIRMATION_HOLD_SQL,/booking_hold_resolved/);
   assert.match(MODEL_CONFIRMATION_HOLD_SQL,/later.id>inbound.id/);
   assert.equal(queries.some(q=>/UPDATE leads|INSERT INTO leads/i.test(q.sql)),false);
+});
+
+
+test("appointment recognition remains independent of pricing and rejects invalid or stale evidence",()=>{
+  const inbound=customer("That works perfectly for me");
+  for(const aiPricingIntentMode of ["off","shadow","enabled"]){
+    assert.ok(resolve([staff(offer),inbound],"accepted",offer,{config:{...config,aiPricingIntentMode}}));
+  }
+  assert.equal(resolve([staff(offer),inbound],"accepted",offer,{config:{...config,aiAppointmentRecognition:false}}),null);
+  for(const bad of ["31/02 10am ok?","19/12 9am ok?","21/12 10am ok?","19/12 Sun 10am ok?","19/12 10am or 11am ok?","19/12 10am not available for appointment"]){
+    assert.equal(resolve([staff(bad),inbound],"accepted",bad),null,bad);
+  }
+  assert.equal(resolve([staff(offer),customer("I like the 3D treatment")],"accepted",offer,{parsed:{...parsed("accepted",offer),serviceQuery:true}}),null);
+  assert.equal(resolve([staff(confirmation,8),customer("20/12 11am please",9),staff("20/12 11am it is",10),customer("Thank you")],"confirmed",confirmation),null);
+  assert.match(CONFIRMATION_HOLD_SQL,/UPDATE contacts c SET needs_attention=true/);
+  assert.match(CONFIRMATION_HOLD_SQL,/attention_reason LIKE 'Booking ready:%'/);
+});
+
+test("old, forwarded, or unrelated staff offers cannot corroborate an appointment",()=>{
+  const slot="2026-12-19T02:00:00.000Z";
+  const turn=(role,content,seconds,staff=false)=>({role,content,created_at:new Date(now+seconds*1000).toISOString(),sent_by_username:staff?"WhatsApp Business App":null});
+  const accepted=turn("user","o k",-10);
+  const source=turn("assistant",offer,-20,true);
+  assert.ok(isTerseBookingCorroborated(confirmation,slot,[turn("assistant","好的，收到",-2),accepted,source],new Date(now).toISOString()));
+  for(const intervening of ["20/12 11am ok?","RM388 for this treatment, okay?"]){
+    assert.equal(isTerseBookingCorroborated(confirmation,slot,[accepted,turn("assistant",intervening,-15,true),source],new Date(now).toISOString()),false);
+  }
+  assert.equal(isTerseBookingCorroborated(confirmation,slot,[accepted,{...source,is_forwarded:true}],new Date(now).toISOString()),false);
 });
