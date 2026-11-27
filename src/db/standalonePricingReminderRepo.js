@@ -150,7 +150,7 @@ LEFT JOIN LATERAL (
 ) verified_ad ON TRUE
 WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND c.mode='ai' AND c.takeover_by IS NULL
-  AND ${followUpAttentionAllowedSql("c")}
+  AND (${followUpAttentionAllowedSql("c")} OR ${deliveryOnlyAttentionSql("c")})
   AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
   AND COALESCE(lead.marketing_consent,'unknown') <> 'opted_out'
   AND inbound.created_at >= $2::timestamptz
@@ -300,7 +300,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
                   AND u.created_at>=inbound.created_at-INTERVAL '24 hours'
                 ORDER BY u.created_at DESC,u.id DESC LIMIT 15) recent
         )=$11::jsonb
-        AND ${followUpAttentionAllowedSql("c")}
+        AND (${followUpAttentionAllowedSql("c")} OR ${deliveryOnlyAttentionSql("c")})
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
         AND NOT EXISTS (
           SELECT 1 FROM whatsapp_sender_followup_treatment_state withdrawal
