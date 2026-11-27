@@ -858,4 +858,9 @@ test("Nov 27 Pulse Wave price replay resolves the delivered conversation in thre
    const mixed=ensureVerifiedPriceReply({...input,reply:reply+"\n"+(language==="zh"?"周末方便过来吗？":language==="en"?"Would weekends work?":"Hujung minggu sesuai?")});
    assert.equal(mixed.optionalClarification,false,language);
  }
+ const {isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ assert.equal(isSafeUnquotedReply("Harga untuk rawatan yang mana satu ya?"),true);
+ for(const reply of ["Harga satu ratus ringgit","Harga dua ratus","Harga untuk rawatan yang mana satu ya? RM388","Harga untuk rawatan yang mana satu ya? Harga satu ratus"]){
+   assert.equal(isSafeUnquotedReply(reply),false,reply);
+ }
 });
