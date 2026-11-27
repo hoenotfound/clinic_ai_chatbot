@@ -490,6 +490,10 @@ test("new customer text can automatically recover an uncertain automated service
    await db.query("UPDATE whatsapp_sender_followup_attempts SET error_code='other_unknown' WHERE message_id=$1",[s.messages[0]]);
    assert.equal(await check(),false);
    assert.equal((await request()).reserved,false);
+   for(const code of ["secondary_staff_unconfirmed","sender_followup_delivery_unconfirmed","sender_followup_after_save_provider_dispatch","sender_followup_after_save_provider_result_persist","secondary_staff_billing_outcome_unverified_no_wamid"]){
+     await db.query("UPDATE whatsapp_sender_followup_attempts SET error_code=$2 WHERE message_id=$1",[s.messages[0],code]);
+     assert.equal(await check(),true,code);
+   }
    await db.query("UPDATE whatsapp_sender_followup_attempts SET error_code='secondary_staff_provider_outcome_unverified' WHERE message_id=$1",[s.messages[0]]);
    const next=await request();
    assert.equal(next.reserved,true);
@@ -500,15 +504,34 @@ test("new customer text can automatically recover an uncertain automated service
    assert.equal((await db.query("SELECT status FROM whatsapp_sender_followup_attempts WHERE message_id=$1",[s.messages[0]])).rows[0].status,"unknown");
    assert.equal((await db.query("SELECT new_message_id,basis FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,fresh);
    assert.equal((await db.query("SELECT COUNT(*)::int AS count FROM whatsapp_sender_unknown_gate_inbox_reviews")).rows[0].count,0,"never invent administrator evidence");
+   assert.deepEqual((await db.query("SELECT authorization_source,recovery_inbound_message_id FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0],{authorization_source:"automatic_fresh_service_reply",recovery_inbound_message_id:inbound});
    // The new text can be accepted before its pricing receipt arrives. Queue
    // retention must not grant dispatch authority, or authorize an old anchor.
-   await db.query("INSERT INTO whatsapp_sender_ai_media_jobs(sender_id,contact_id,inbound_message_id,sequence_no,media_kind,image_url,state,outbound_message_id,expires_at) VALUES($1,$2,$3,0,'promotion','https://example.test/price.png','claimed',$4,NOW()+INTERVAL '1 hour')",[s.sender,s.contact,inbound,fresh]);
-   await db.query("UPDATE whatsapp_sender_billing_gates SET state='awaiting_pricing' WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+   const processing=(await db.query("INSERT INTO inbound_processing_jobs(message_id,contact_id,channel,incoming_payload,status) VALUES($1,$2,'whatsapp','{}','completed') RETURNING id",[inbound,s.contact])).rows[0].id;
+   await db.query("INSERT INTO inbound_outbound_attempts(processing_job_id,inbound_message_id,assistant_message_id,contact_id,origin,outcome,provider_message_id) VALUES($1,$2,$3,$4,'ai_reply','accepted','wamid.recoveredFresh')",[processing,inbound,fresh,s.contact]);
+   const accepted=await billing.recordSecondaryProviderOutcome({reservationId:next.reservationId,acceptedWamid:"wamid.recoveredFresh"},{database,env:autoEnv});
+   assert.equal(accepted.state,"awaiting_pricing");
    assert.equal(await check(inbound,autoEnv,{allowMediaQueueWait:true}),true);
    assert.equal(await check(inbound,autoEnv,{}),false,"queue retention never authorizes dispatch before settlement");
    assert.equal(await check(oldAnchor,autoEnv,{allowMediaQueueWait:true}),false);
-   await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
-   await db.query("UPDATE whatsapp_sender_billing_gates SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+   const receiptService=require("../src/services/whatsappSecondaryReceiptService");
+   const crypto=require("node:crypto");
+   const receiptEnv={...autoEnv,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+     WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+     WHATSAPP_APP_SECRET:"test-recovery-status-secret"};
+   const rawBody=Buffer.from(JSON.stringify({object:"whatsapp_business_account",entry:[{
+     id:receiptEnv.WHATSAPP_SECONDARY_WABA_ID,changes:[{field:"messages",value:{
+       metadata:{phone_number_id:receiptEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},statuses:[{
+         id:"wamid.recoveredFresh",status:"delivered",recipient_id:"60125550000",
+         timestamp:String(Math.floor(Date.now()/1000)),
+         pricing:{type:"free_entry_point",billable:false,category:"service"},
+       }],
+     }}],
+   }]}));
+   const receipt=await receiptService.recordSignedSecondaryStatusBatch({rawBody,
+     signatureHeader:"sha256="+crypto.createHmac("sha256",receiptEnv.WHATSAPP_APP_SECRET).update(rawBody).digest("hex")},{database,env:receiptEnv});
+   assert.equal(receipt.autoReconciled,1);
+   assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact])).rows[0].state,"idle");
    assert.equal(await check(inbound,autoEnv,{}),true,"new-anchor pricing media may use normal eligibility after text settles");
    assert.equal(await check(oldAnchor,autoEnv,{}),false,"original follow-up anchor remains blocked");
  });
