@@ -49,9 +49,81 @@ function signedFailureOrReviewedSql(env=process.env,messageAlias="old_outbound")
    )
  ))`;
 }
+// A separate service response is not a retry of an uncertain follow-up.
+// Existing explicit service-charge acknowledgment covers the NEW message;
+// the old attempt retains UNKNOWN and may still incur a charge.
+function automaticFreshReplyEnabled(env=process.env){
+ return env.WHATSAPP_SECONDARY_SENDER_KEY==="neutro_secondary" &&
+   env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+   env.WHATSAPP_SECONDARY_AUTO_FRESH_REPLY_AFTER_UNKNOWN_FOLLOWUP!=="false";
+}
+function automaticUnknownFollowupSql(attempt="held_attempt",old="old_outbound"){
+ for(const alias of [attempt,old]){
+   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid automatic recovery SQL alias");
+ }
+ return `(
+   ${attempt}.state='unknown' AND ${attempt}.wamid IS NULL
+   AND ${attempt}.billable_authorized=TRUE
+   AND ${attempt}.billing_authorization_source='operator_acknowledged_service'
+   AND ${old}.delivery_status='unknown'
+   AND ${old}.whatsapp_message_id IS NULL AND ${old}.whatsapp_accepted_at IS NULL
+   AND ${old}.is_automated_follow_up=TRUE AND ${old}.sent_by_username IS NULL
+   AND ${old}.whatsapp_template->>'automatedSecondaryFollowup'='true'
+   AND ${old}.whatsapp_template->>'senderKey'='neutro_secondary'
+   AND ${old}.whatsapp_template->>'name' IS NULL
+   AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=${old}.id)
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
+     WHERE r.sender_id=${attempt}.sender_id AND r.reservation_id=${attempt}.reservation_id)
+   AND EXISTS(SELECT 1 FROM whatsapp_sender_followup_attempts old_followup
+     WHERE old_followup.sender_id=${attempt}.sender_id
+       AND old_followup.contact_id=${attempt}.contact_id
+       AND old_followup.message_id=${old}.id
+       AND old_followup.slot_hours IN (2,6,20)
+       AND old_followup.status='unknown'
+       AND old_followup.error_code='secondary_staff_provider_outcome_unverified'
+       AND old_followup.wamid IS NULL
+       AND old_followup.completed_at IS NOT NULL)
+ )`;
+}
+function automaticFreshInboundSql(attempt,old,anchor){
+ for(const alias of [attempt,old]){
+   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid recovery SQL alias");
+ }
+ if(!/^\$[1-9][0-9]*$/.test(anchor))throw Error("Invalid recovery inbound parameter");
+ return `EXISTS (
+   SELECT 1 FROM contacts recovery_contact
+   JOIN whatsapp_sender_conversations recovery_sc
+     ON recovery_sc.contact_id=recovery_contact.id
+     AND recovery_sc.sender_id=${attempt}.sender_id
+     AND recovery_sc.state='bound' AND recovery_sc.customer_wa_id=recovery_contact.whatsapp_number
+   JOIN messages recovery_inbound ON recovery_inbound.id=${anchor}
+     AND recovery_inbound.contact_id=recovery_contact.id
+   JOIN whatsapp_sender_message_context recovery_mc
+     ON recovery_mc.message_id=recovery_inbound.id AND recovery_mc.conversation_id=recovery_sc.id
+   WHERE recovery_contact.id=${attempt}.contact_id
+     AND recovery_contact.whatsapp_sender_id=${attempt}.sender_id
+     AND recovery_contact.mode='ai' AND recovery_contact.takeover_by IS NULL
+     AND recovery_contact.whatsapp_opt_out_at IS NULL
+     AND recovery_inbound.role='user' AND recovery_inbound.whatsapp_message_id IS NOT NULL
+     AND recovery_inbound.source_created_at>${attempt}.updated_at
+     AND recovery_inbound.created_at>${old}.created_at
+     AND recovery_inbound.source_created_at>NOW()-INTERVAL '24 hours'
+     AND recovery_inbound.source_created_at<=NOW()
+     AND recovery_inbound.is_forwarded IS DISTINCT FROM TRUE
+     AND NULLIF(BTRIM(COALESCE(recovery_inbound.content,'')),'') IS NOT NULL
+     AND recovery_inbound.content NOT LIKE '📎 [%'
+     AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+       WHERE imported.message_id=recovery_inbound.id)
+     AND NOT EXISTS(SELECT 1 FROM ai_review_items pending
+       WHERE pending.contact_id=recovery_contact.id AND pending.status='pending')
+     AND NOT EXISTS(SELECT 1 FROM messages newer
+       WHERE newer.contact_id=recovery_contact.id AND newer.role='user'
+         AND (newer.created_at,newer.id)>(recovery_inbound.created_at,recovery_inbound.id))
+ )`;
+}
 // Fresh readable inbound still required to resume AI. No earlier message is
 // replayed; the final transactional reservation enforces current sender rules.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,outboundMessageSql=null}={}){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,allowAutomaticFreshReply=false,outboundMessageSql=null}={}){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
  const baseApproved=signedFailureOrReviewedSql(env,"old_outbound");
  if(baseApproved==="FALSE")return "FALSE";
@@ -80,7 +152,17 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
            AND review_inbound.source_created_at>=inbox_review.reviewed_at
            AND review_inbound.source_created_at>NOW()-INTERVAL '24 hours'
        ))` : "";
- const approved=`(${baseApproved} OR (
+ const autoFresh=allowAutomaticFreshReply && automaticFreshReplyEnabled(env) &&
+   anchorSql!==null && /^\$/.test(anchorSql)
+   ? `(${automaticUnknownFollowupSql()} AND ${automaticFreshInboundSql("held_attempt","old_outbound",anchorSql)})`
+   : "FALSE";
+ const autoUsed=`(${automaticUnknownFollowupSql()} AND EXISTS(
+   SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends used
+   WHERE used.old_reservation_id=held_attempt.reservation_id
+     AND used.sender_id=held_attempt.sender_id AND used.contact_id=held_attempt.contact_id
+     AND used.old_message_id=old_outbound.id
+ ))`;
+ const approved=`(${baseApproved} OR ${autoFresh} OR ${autoUsed} OR (
    held_attempt.wamid IS NULL
    AND old_outbound.whatsapp_message_id IS NULL
    AND old_outbound.whatsapp_accepted_at IS NULL
@@ -151,7 +233,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
   "          AND current_gate.reservation_id=held_attempt.reservation_id",
   "          AND current_gate.contact_id={A}.id",
   "          AND current_gate.message_id=old_outbound.id",
-  "          AND current_gate.updated_at<=NOW()-INTERVAL '30 minutes'",
+  "          AND (current_gate.updated_at<=NOW()-INTERVAL '30 minutes' OR "+autoFresh+")",
   "          AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends older",
   "            WHERE older.sender_id=held_attempt.sender_id",
   "              AND older.contact_id={A}.id",
@@ -244,4 +326,4 @@ function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=p
      )
  )`;
 }
-module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql,reviewedUnknownGateCandidateSql};
+module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql,reviewedUnknownGateCandidateSql,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql};
