@@ -116,7 +116,7 @@ async function claim({contactId,messageId,expectedTemplateSignature=null,origin=
     : row.is_freeform_service===true;
   if(!authorized){await client.query("ROLLBACK");tx=false;return deny("secondary_delivery_content_unverified");}
   const prior=await client.query(`SELECT 1 FROM whatsapp_sender_billing_attempts WHERE message_id=$1
-    UNION ALL SELECT 1 FROM outbound_message_evidence WHERE message_id=$1 LIMIT 1`,[messageId]);
+    UNION ALL SELECT 1 FROM outbound_message_evidence WHERE message_id=$1 AND accepted=TRUE LIMIT 1`,[messageId]);
   if(prior.rows?.length){await client.query("ROLLBACK");tx=false;return deny("secondary_delivery_already_attempted");}
   const reservationId=crypto.randomUUID();
   // Reuse the historical attempt table solely as a durable one-shot delivery
