@@ -1304,7 +1304,14 @@ async function runOnce({
       })){
         // Confirmed pre-provider billing refusal. The old Inbox draft stays
         // cancelled; another scheduler may reclaim only this exact slot.
-      } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
+      } else {
+        // Retain a known provider ID even if the billing write failed. Only
+        // an explicitly no-WAMID outcome can use automatic fresh-reply recovery.
+        if (result?.code==="secondary_staff_billing_outcome_unverified" &&
+            !result?.wamid && result?.unknown===true) {
+          await fail("secondary_staff_billing_outcome_unverified_no_wamid");
+        } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
+      }
     }catch{
       // Never automatically replay this one-shot attempt. Report a fixed,
       // content-free processing phase, not error messages or customer data.
