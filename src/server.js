@@ -32,7 +32,7 @@ const {resolveModelAppointmentEvidence,appointmentRecognitionEnabled}=require(".
 const {recordModelConfirmationHold}=require("./services/staffBookingConfirmationService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, hasConflictingStaffPrice, hasCustomerRequestedPriceReply, staleCommercialIntent } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, resolveModelLedPricingDecision, shouldApplyModelLedPricing, shouldBlockRejectedModelPricing, shouldRewriteRejectedPricingReply, hasConflictingStaffPrice, hasCustomerRequestedPriceReply, staleCommercialIntent } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation,
   resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
