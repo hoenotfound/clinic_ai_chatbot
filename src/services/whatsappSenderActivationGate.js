@@ -97,7 +97,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const fullAi = secondaryAdsOnlyFullAiMode(env);
   // Parity is a separate explicitly enabled mode; an AI-only deployment
   // must not silently inherit manual/media/template authorizations.
-  if (parity && (!aiTextOnly || !ai || !staff || !autoReconcile || !receiptIngress ||
+  if (parity && (!aiTextOnly || !ai || !staff || (!deliveryOnlyEnabled(env) && !autoReconcile) || !receiptIngress ||
       env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED === "true" ||
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED !== "true" ||
       env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true")) {
@@ -168,7 +168,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
       (billedReview && (!template || !receiptIngress)) ||
       (autoReconcile && !receiptIngress) ||
       [...common,...((staff || ai || media) ? sending : [])]
-      .some(key => env[key] !== "true") ||
+      .some(key => !(deliveryOnlyEnabled(env) && ["WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED","WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED"].includes(key)) && env[key] !== "true") ||
       !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "")) ||
       !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID || "")) ||
       !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY || "")) ||
