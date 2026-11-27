@@ -276,18 +276,21 @@ function verified131060InformationReviewSql(alias = "c") {
 // Unlike the text reply rule below, secondary media and follow-ups must NEVER
 // gain the Booking ready exception. This narrow path preserves all downstream
 // appointment, opt-in, window, staff and billing checks.
-function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null) {
+function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null, {outboundMessageSql=null,env=process.env}={}) {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias,process.env,anchorSql)})`;
+    OR ${reviewedDeliveryAttentionSql(alias,env,anchorSql,{outboundMessageSql})})`;
 }
 // A prior outbound AI text can be rejected BEFORE any Meta call because the
 // preceding accepted send is still awaiting a signed billing receipt. Once
 // that contact's gate is idle again, allow only a NEW inbound AI reply to
 // proceed. Preserve the visible delivery-attention banner for staff, and do
 // not waive clinical, booking, marketing, consent, or sender checks.
-function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
+function secondaryResolvedTransientDeliveryAttentionSql(alias = "c", outboundMessageSql=null) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
+  if(outboundMessageSql!==null && !/^\$[1-9][0-9]*$/.test(outboundMessageSql))
+    throw new Error("Invalid outbound message SQL");
+  const reservedCheck=outboundMessageSql===null ? "FALSE" : "cleared_gate.message_id="+outboundMessageSql;
   return `(
     ${alias}.mode='ai'
     AND ${alias}.needs_attention IS TRUE
@@ -321,7 +324,7 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
       WHERE cleared_gate.sender_id=${alias}.whatsapp_sender_id
         AND cleared_gate.owner_contact_id=${alias}.id
         AND (cleared_gate.state='idle' OR (
-          cleared_gate.state='reserved' AND EXISTS (
+          cleared_gate.state='reserved' AND ${reservedCheck} AND EXISTS (
             SELECT 1 FROM whatsapp_sender_billing_attempts next_attempt
             JOIN messages next_draft ON next_draft.id=next_attempt.message_id
               AND next_draft.contact_id=next_attempt.contact_id
@@ -380,7 +383,7 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
   )`;
 }
 
-function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null, env = process.env } = {}) {
+function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null, env = process.env, outboundMessageSql = null } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
     ${alias}.needs_attention IS NOT TRUE
@@ -394,8 +397,8 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
       )
     )
     OR ${verified131060InformationReviewSql(alias)}
-    OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:true})}
+    OR ${secondaryResolvedTransientDeliveryAttentionSql(alias,outboundMessageSql)}
+    OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:true,outboundMessageSql})}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
@@ -412,7 +415,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
 // Only use this for replies to incoming customer messages. It deliberately
 // does NOT replace the ads-only SQL for follow-ups, marketing, or media jobs.
 async function isSecondaryAiReplyEligible(contactId, {
-  database = pool, env = process.env, inboundMessageId = null,
+  database = pool, env = process.env, inboundMessageId = null, outboundMessageId = null,
   allowReviewContinuation = false,
 } = {}) {
   if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts")
@@ -420,8 +423,10 @@ async function isSecondaryAiReplyEligible(contactId, {
   const cutoff = secondaryAllContactReplyActivation(env);
   const id = Number(contactId);
   const mid = inboundMessageId == null ? null : Number(inboundMessageId);
+  const outbound = outboundMessageId == null ? null : Number(outboundMessageId);
   if (!cutoff || !Number.isSafeInteger(id) || id <= 0 ||
       (mid != null && (!Number.isSafeInteger(mid) || mid <= 0)) ||
+      (outbound != null && (mid == null || !Number.isSafeInteger(outbound) || outbound <= 0)) ||
       !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID)
     return false;
   try {
@@ -453,6 +458,7 @@ async function isSecondaryAiReplyEligible(contactId, {
            AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c", {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
               inboundMessageSql: mid != null ? "$5" : null, env,
+              outboundMessageSql: outbound != null ? "$6" : null,
            })}
            AND c.whatsapp_opt_out_at IS NULL
            ${mid==null ? "AND "+legacyAudience : ""}
@@ -461,7 +467,7 @@ async function isSecondaryAiReplyEligible(contactId, {
       mid == null ? [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID] :
         [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-          env.WHATSAPP_SECONDARY_WABA_ID,cutoff,mid]
+          env.WHATSAPP_SECONDARY_WABA_ID,cutoff,mid,...(outbound != null ? [outbound] : [])]
     );
     return result.rows?.[0]?.eligible === true;
   } catch (err) {
@@ -574,13 +580,15 @@ function secondaryAutomationEligibleSql(
 }
 
 async function isSecondaryAutomationEligible(contactId, {
-  database = pool, env = process.env, inboundMessageId,
+  database = pool, env = process.env, inboundMessageId, outboundMessageId=null,
 } = {}) {
   const cutoff = secondaryAutomationActivation(env);
   const cid = Number(contactId);
   const mid = Number(inboundMessageId);
+  const outbound = outboundMessageId == null ? null : Number(outboundMessageId);
   if (!cutoff || !Number.isSafeInteger(cid) || cid <= 0 ||
       !Number.isSafeInteger(mid) || mid <= 0 ||
+      (outbound != null && (!Number.isSafeInteger(outbound) || outbound <= 0)) ||
       env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
       env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
@@ -589,10 +597,10 @@ async function isSecondaryAutomationEligible(contactId, {
       `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
-        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
+        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:outbound!=null?"$6":null,env})}
           AND c.whatsapp_opt_out_at IS NULL`,
       [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
-        originalAdsOnlyCutoff(env)]
+        originalAdsOnlyCutoff(env),...(outbound!=null?[outbound]:[])]
     );
     return out.rows?.length === 1 && out.rows[0].eligible === true;
   } catch (error) {
