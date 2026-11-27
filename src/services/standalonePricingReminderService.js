@@ -172,6 +172,7 @@ function select(candidate,options){
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
     candidate:{...candidate,treatment_interest:matched.service,
+      allowDistinctAfterUncertain:deliveryOnlyEnabled() && candidate.whatsapp_sender_key===SECONDARY,
       // A staff-sent image may have no caption. Preserve it when checking
       // all language variants and uncertain delivery statuses.
       sent_media:(candidate.sent_media||[]).map(m=>({
@@ -449,6 +450,7 @@ async function runOnce(now=new Date()){
           ?new Date(retry).toISOString():soon().toISOString());
       }
       if(result.review)await repo.recordDecision(candidate,"staff_review:"+offer.packageName).catch(()=>{});
+      if(result.review && deliveryOnlyEnabled() && candidate.whatsapp_sender_key===SECONDARY && offer.packageName==='Package A')track(soon().toISOString());
       break;
     }
     // After accepting A on secondary, B cannot be sent until the signed Meta
