@@ -475,7 +475,7 @@ function campaignContinuationPolicy({history,customerText,reply,now=Date.now(),v
     const facts=adminKind==="location"
       ?confirmedSingleBranchLocationAnswer({customerText,branches,language:locale,resolvedLanguage:locale,modelLocationOnly:true,omitInvitation:true})
       :confirmedBusinessHoursAnswer({customerText,hours,language:locale});
-    const valid=facts&&(adminKind==="location"?verifyLocationDraft(reply,facts,{allowNeutralCourtesy:true})==="verified_address_only":verifyBusinessHoursDraft(reply,facts));
+    const valid=facts&&(adminKind==="location"?verifyLocationDraft(reply,facts,{allowNeutralCourtesy:true})==="verified_address_only":verifyBusinessHoursDraft(reply,facts,{allowNeutralCourtesy:true}));
     const fallback=facts?.reply||localized(locale,
       adminKind==="location"?"门店地址需要请同事确认哦 😊":"营业时间需要请门店确认哦 😊",
       adminKind==="location"?"The clinic address needs to be confirmed by our staff. 😊":"Our staff will need to confirm the opening hours. 😊",
