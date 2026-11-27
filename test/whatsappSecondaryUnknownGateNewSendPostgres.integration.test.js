@@ -454,3 +454,55 @@ test("reviewed unknown follow-up permits only a new verified AI text and preserv
    assert.equal((await db.query("SELECT new_message_id FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,fresh);
  });
 });
+
+
+test("new customer text can automatically recover an uncertain automated service follow-up, never replay it",
+ {skip:!connectionString},async()=>{
+ await withSchema(async({db,database})=>{
+   const s=await seed({db,database});
+   const autoEnv={...env,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"};
+   await billing.recordSecondaryProviderOutcome({reservationId:s.original.reservationId},{database,env});
+   await db.query("UPDATE whatsapp_sender_billing_attempts SET billable_authorized=TRUE,billing_authorization_source='operator_acknowledged_service',updated_at=NOW()-INTERVAL '3 minutes' WHERE reservation_id=$1",[s.original.reservationId]);
+   await db.query("UPDATE messages SET delivery_status='unknown',is_automated_follow_up=TRUE,whatsapp_template=$2::jsonb,created_at=NOW()-INTERVAL '4 minutes' WHERE id=$1",[s.messages[0],JSON.stringify({automatedSecondaryFollowup:true,senderKey:"neutro_secondary",slotHours:2})]);
+   const conv=(await db.query("SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+   const oldAnchor=(await db.query("INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) VALUES($1,'user','old enquiry','wamid.oldAnchor',NOW()-INTERVAL '2 hours',NOW()-INTERVAL '2 hours') RETURNING id",[s.contact])).rows[0].id;
+   await db.query("INSERT INTO whatsapp_sender_followup_attempts(sender_id,contact_id,anchor_message_id,slot_hours,message_id,status,error_code,completed_at) VALUES($1,$2,$3,2,$4,'unknown','secondary_staff_provider_outcome_unverified',NOW()-INTERVAL '3 minutes')",[s.sender,s.contact,oldAnchor,s.messages[0]]);
+   await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,attention_reason='Delivery unconfirmed: original video',delivery_attention_message_id=$2 WHERE id=$1",[s.contact,s.messages[0]]);
+   const inbound=(await db.query("INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) VALUES($1,'user','我想先了解费用和地址在哪里','wamid.newAnchor',NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute') RETURNING id",[s.contact])).rows[0].id;
+   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$3),($2,$3)",[oldAnchor,inbound,conv]);
+   const fresh=s.messages[1];
+   const request=(config=autoEnv,anchor=inbound,messageId=fresh)=>billing.reserveSecondaryBillingAttempt({contactId:s.contact,messageId,billableAuthorized:true,freshAiInboundMessageId:anchor},{database,env:config});
+   const check=async(anchor=inbound,config=autoEnv,options={allowAutomaticFreshReply:true},outbound=null)=>{
+     const sql=reviewedDeliveryAttentionSql("c",config,"$2",options);
+     return (await db.query("SELECT "+sql+" AS ok FROM contacts c WHERE c.id=$1",[s.contact,anchor,...(outbound==null?[]:[outbound])])).rows[0].ok;
+   };
+   assert.equal(await check(),true,"fresh inquiry may proceed even before 30 minutes");
+   assert.equal(await check(oldAnchor),false);
+   assert.equal(await check(inbound,{...autoEnv,WHATSAPP_SECONDARY_AUTO_FRESH_REPLY_AFTER_UNKNOWN_FOLLOWUP:"false"}),false);
+   assert.equal(await check(inbound,autoEnv,{}),false,"no scheduled or media bypass");
+   assert.equal((await request({...autoEnv,WHATSAPP_SECONDARY_AUTO_FRESH_REPLY_AFTER_UNKNOWN_FOLLOWUP:"false"})).reserved,false);
+   assert.equal((await request(autoEnv,oldAnchor)).reserved,false);
+   assert.equal((await request(autoEnv,inbound,s.messages[0])).reserved,false);
+   await db.query("UPDATE messages SET is_forwarded=TRUE WHERE id=$1",[inbound]);
+   assert.equal(await check(),false);
+   assert.equal((await request()).reserved,false);
+   await db.query("UPDATE messages SET is_forwarded=FALSE WHERE id=$1",[inbound]);
+   await db.query("UPDATE whatsapp_sender_followup_attempts SET error_code='other_unknown' WHERE message_id=$1",[s.messages[0]]);
+   assert.equal(await check(),false);
+   assert.equal((await request()).reserved,false);
+   await db.query("UPDATE whatsapp_sender_followup_attempts SET error_code='secondary_staff_provider_outcome_unverified' WHERE message_id=$1",[s.messages[0]]);
+   const next=await request();
+   assert.equal(next.reserved,true);
+   assert.equal(await check(),false,"other work cannot proceed during this reservation");
+   assert.equal(await check(inbound,autoEnv,{allowAutomaticFreshReply:true,outboundMessageSql:"$3"},fresh),true);
+   assert.equal(await check(inbound,autoEnv,{allowAutomaticFreshReply:true,outboundMessageSql:"$3"},s.messages[0]),false);
+   assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",[s.original.reservationId])).rows[0].state,"unknown");
+   assert.equal((await db.query("SELECT status FROM whatsapp_sender_followup_attempts WHERE message_id=$1",[s.messages[0]])).rows[0].status,"unknown");
+   assert.equal((await db.query("SELECT new_message_id,basis FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,fresh);
+   assert.equal((await db.query("SELECT COUNT(*)::int AS count FROM whatsapp_sender_unknown_gate_inbox_reviews")).rows[0].count,0,"never invent administrator evidence");
+   await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
+   await db.query("UPDATE whatsapp_sender_billing_gates SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+   assert.equal(await check(inbound,autoEnv,{}),true,"new-anchor pricing media may use normal eligibility after text settles");
+   assert.equal(await check(oldAnchor,autoEnv,{}),false,"original follow-up anchor remains blocked");
+ });
+});
