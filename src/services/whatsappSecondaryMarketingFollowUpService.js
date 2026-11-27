@@ -24,6 +24,7 @@ const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {remoteConversationGoodbyeSql}=require("../utils/whatsappRemoteGoodbyeGuard");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {detachableServiceGateSql}=require("../utils/whatsappSecondaryServiceBilling");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
  hasSecondaryClinicQuietHoursGuard}=
  require("../utils/secondaryDueTimeScheduler");
@@ -427,7 +428,8 @@ const CANDIDATES_SQL=`
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
      WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
-       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+       AND discovery_gate.state IN ('reserved','awaiting_pricing')
+       AND NOT ${detachableServiceGateSql("discovery_gate")})
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
      WHERE discovery_alarm.sender_id=sa.id)
    -- The RM68 event is a different 90-minute offer from the standing RM388
@@ -582,7 +584,8 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
       WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
-        AND gate.state IN ('reserved','awaiting_pricing'))
+        AND gate.state IN ('reserved','awaiting_pricing')
+        AND NOT ${detachableServiceGateSql("gate")})
    -- Old UNKNOWN outcomes are eligible only after a sender-bound staff
    -- review and one-shot authorization at the final billing reservation.
    -- Do not mark the old attempt as successful or replay its original media.
@@ -616,7 +619,8 @@ const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDA
 // rule version must stay eligible. No second claim after Meta ambiguity.
 const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
      WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
-       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+       AND discovery_gate.state IN ('reserved','awaiting_pricing')
+       AND NOT ${detachableServiceGateSql("discovery_gate")})
 `;
 const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  `   AND NOT EXISTS (
@@ -636,8 +640,10 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"
 // Candidate discovery rejects every unsettled reservation. Rechecking an
 // already-claimed slot must allow only its own new reservation, never another.
 const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
- "AND gate.state IN ('reserved','awaiting_pricing'))",
  `AND gate.state IN ('reserved','awaiting_pricing')
+        AND NOT ${detachableServiceGateSql("gate")})`,
+ `AND gate.state IN ('reserved','awaiting_pricing')
+       AND NOT ${detachableServiceGateSql("gate")}
        AND NOT (gate.state='reserved' AND EXISTS (
          SELECT 1 FROM whatsapp_sender_marketing_followup_attempts own
          WHERE own.sender_id=sa.id AND own.contact_id=c.id
