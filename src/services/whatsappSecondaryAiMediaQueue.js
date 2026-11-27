@@ -154,7 +154,7 @@ async function enqueue({
      !Number.isSafeInteger(sequenceOffset)||sequenceOffset<0||
      !Array.isArray(items)||!items.length||items.length+sequenceOffset>MAX_ITEMS||
      !items.every(validItem))return false;
-  if (!await isSecondaryAutomationEligible(contactId, {database,env,inboundMessageId,allowMediaQueueWait:true})) return false;
+  if (!await isSecondaryAutomationEligible(contactId, {database,env,inboundMessageId})) return false;
   const client=await database.connect();
   try{
     await client.query("BEGIN");
@@ -170,7 +170,7 @@ async function enqueue({
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
           AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
-          AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{env,allowMediaQueueWait:true})}
+          AND ${secondaryAutomationAttentionAllowedSql("c","inbound",env)}
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
@@ -285,7 +285,7 @@ const STILL_VALID_SQL=`
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
      AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:"job.outbound_message_id"})}
+     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -367,7 +367,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
          AND (
            job.expires_at<=NOW() OR
-           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c","inbound",{env,allowMediaQueueWait:true})}) OR
+           c.mode<>'ai' OR NOT (${secondaryAutomationAttentionAllowedSql("c","inbound")}) OR
            c.whatsapp_opt_out_at IS NOT NULL OR
            c.whatsapp_marketing_opt_out_at IS NOT NULL OR
            NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6","$7")}) OR
