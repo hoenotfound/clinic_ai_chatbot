@@ -31,6 +31,7 @@ const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[�
 // The downstream service authority still requires a customer-verified treatment.
 const LOCAL_WHATSAPP_PRICE = new RegExp([
   String.raw`(?:什么|什麼|啥)\s*(?:价|價)(?!值|值)(?:钱|錢|格|位)?`,
+  String.raw`|(?:[价價](?:格|钱|錢|位)|收[费費]|[费費]用)\s*(?:怎么|怎麼|怎样|怎樣|如何)\s*(?:算|计算|計算|收)(?=[\s?？!！。呢啊呀啦哦~]*$|[，,;；])`,
   String.raw`|(?:报|報)\s*价(?=\s*(?:[?？!！。~]*$|吗|嗎|呢|一下|给我|給我|看看|发|發|send))`,
   String.raw`|\b(?:quote|quotation)\b\s*(?:me\b|我|一下|给我|給我|[?？])`,
   String.raw`|\b(?:can|could|may|please|pls|send|give|share|need|want)\b.{0,35}\b(?:quote|quotation)\b\s*(?:me\b|for\b|price\b|cost\b|[?？]|$)`,
@@ -228,7 +229,8 @@ function isFirstTrialAmountQuestion(customerText) {
 
 function isStandalonePriceQuestion(customerText) {
   const t = String(customerText || "").normalize("NFKC").trim();
-  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t) ||
+  return /^(?:(?:请问|請問)\s*)?(?:[价價](?:格|钱|錢|位)|收[费費]|[费費]用)\s*(?:怎么|怎麼|怎样|怎樣|如何)\s*(?:算|计算|計算|收)[\s?？!！。呢啊呀啦哦~]*$/iu.test(t) ||
+    /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t) ||
     // A short session-amount question may refer to an already independently
     // confirmed treatment. The context resolver enforces freshness and ownership.
     /^(?:(?:请问|請問|这个|這個|这项|這項|那个|那個)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)[\s?？!！。呢啊呀啦哦咯~]*$/iu.test(t);

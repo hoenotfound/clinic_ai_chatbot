@@ -1,0 +1,581 @@
+{
+  "services": [
+    {
+      "name": "1对1体态评估"
+    },
+    {
+      "name": "徒手体态调理"
+    },
+    {
+      "name": "3D 小颜术"
+    },
+    {
+      "name": "9D 逆龄抗衰"
+    },
+    {
+      "name": "3D + 9D 组合"
+    },
+    {
+      "name": "骨盆调理"
+    },
+    {
+      "name": "脉冲波调理"
+    },
+    {
+      "name": "产后调理"
+    },
+    {
+      "name": "子宫调理"
+    },
+    {
+      "name": "艾灸"
+    },
+    {
+      "name": "草药胸部疏通乳腺护理"
+    }
+  ],
+  "serviceAliases": [
+    {
+      "alias": "体态评估",
+      "officialService": "1对1体态评估"
+    },
+    {
+      "alias": "身体评估",
+      "officialService": "1对1体态评估"
+    },
+    {
+      "alias": "1对1评估",
+      "officialService": "1对1体态评估"
+    },
+    {
+      "alias": "posture assessment",
+      "officialService": "1对1体态评估"
+    },
+    {
+      "alias": "徒手调理",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "体态调整",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "整骨",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "posture adjustment",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "body alignment",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "小颜术",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "3D小颜",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "3D小脸",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "3D调整",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "3D小颜术",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "整骨小颜术",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "小颜整骨",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "美颜整骨",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "3D face bone correction",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "9D",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D抗衰",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D紧致",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "Firm & Lift",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D逆龄抗衰",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D逆龄抗衰精雕",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D逆龄精雕",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D抗衰精雕",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "9D提拉",
+      "officialService": "9D 逆龄抗衰"
+    },
+    {
+      "alias": "3D+9D",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "9D+3D",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "3D + 9D",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "9D + 3D",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "3D9D组合",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "9D3D组合",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "3D 9D 组合",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "9D 3D 组合",
+      "officialService": "3D + 9D 组合"
+    },
+    {
+      "alias": "骨盆",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "骨盆调整",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "骨盆调理",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "骨盆矫正",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "骨盘",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "骨盘调理",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "pelvic adjustment",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "脉冲波",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲波塑形",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "pulse wave",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "pulsewave",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "智能减脂",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "中医减脂",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲波减脂",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "body contouring",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "产后",
+      "officialService": "产后调理"
+    },
+    {
+      "alias": "产后修复",
+      "officialService": "产后调理"
+    },
+    {
+      "alias": "产后恢复",
+      "officialService": "产后调理"
+    },
+    {
+      "alias": "postpartum recovery",
+      "officialService": "产后调理"
+    },
+    {
+      "alias": "postpartum care",
+      "officialService": "产后调理"
+    },
+    {
+      "alias": "子宫",
+      "officialService": "子宫调理"
+    },
+    {
+      "alias": "子宫护理",
+      "officialService": "子宫调理"
+    },
+    {
+      "alias": "womb care",
+      "officialService": "子宫调理"
+    },
+    {
+      "alias": "艾灸调理",
+      "officialService": "艾灸"
+    },
+    {
+      "alias": "moxibustion",
+      "officialService": "艾灸"
+    },
+    {
+      "alias": "胸部护理",
+      "officialService": "草药胸部疏通乳腺护理"
+    },
+    {
+      "alias": "草药胸部护理",
+      "officialService": "草药胸部疏通乳腺护理"
+    },
+    {
+      "alias": "乳腺护理",
+      "officialService": "草药胸部疏通乳腺护理"
+    },
+    {
+      "alias": "胸部疏通",
+      "officialService": "草药胸部疏通乳腺护理"
+    },
+    {
+      "alias": "herbal breast care",
+      "officialService": "草药胸部疏通乳腺护理"
+    },
+    {
+      "alias": "中医智能减脂",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "中医智能脉冲波",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲波治疗",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "中医徒手整骨",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "中医徒手整骨调理",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "徒手矫正",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "脊椎侧弯脉冲波",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脊椎侧弯脉冲波治疗",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "3D",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "全身整骨",
+      "officialService": "徒手体态调理"
+    },
+    {
+      "alias": "脸部整骨",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "骨盆整骨",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "face alignment",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "facial alignment",
+      "officialService": "3D 小颜术"
+    },
+    {
+      "alias": "Pelvic",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "Pelvic Care",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "Pelvic Treatment",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "Pelvis",
+      "officialService": "骨盆调理"
+    },
+    {
+      "alias": "脉冲能量波",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脈衝能量波",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲能量波护理",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲能量波调理",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "脉冲波护理",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "pulse energy wave",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "pulse wave treatment",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "rawatan pulse wave",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "gelombang denyutan",
+      "officialService": "脉冲波调理"
+    },
+    {
+      "alias": "黄金脉冲技术",
+      "officialService": "脉冲波调理"
+    }
+  ],
+  "promotions": [
+    {
+      "name": "骨盆调理套餐",
+      "caption": "",
+      "imageUrl": "",
+      "packages": [
+        {
+          "name": "Package A",
+          "title": "尊享护理配套｜2小时30分钟",
+          "aliases": [
+            "A套餐",
+            "A配套",
+            "RM488配套",
+            "488配套"
+          ],
+          "caption": "本月限时优惠 🔥\n\nRM100 优惠券限时领取（只限100位）\n\n原价优惠 RM488\n优惠后仅需\n RM3️⃣8️⃣8️⃣\n\n尊享护理配套｜2小时30分钟\n包含：\n\n✅骨盆调整与体态矫正疗程\n✅全身通十二经络按摩\n✅子宫草药护理\n✅AI 身体检测",
+          "pricing": {
+            "offer": 388,
+            "normal": 488,
+            "currency": "MYR"
+          },
+          "imageUrl": "https://example.test/package-0.jpg",
+          "followUpMessage": "RM100 优惠券限时领取（只限100位）\n先到先得！🔥",
+          "followUpImageUrl": "https://example.test/followup-0.jpg",
+          "mediaTranslations": {
+            "en": {
+              "caption": "Limited-time offer this month 🔥\nRM100 voucher (limited to 100 customers)\nOriginal price RM488\nAfter voucher, only RM388\n\nPremium Care Package | 2 hours 30 minutes\nIncludes:\n✅ Pelvic adjustment and posture care\n✅ Full-body twelve-meridian massage\n✅ Herbal womb care\n✅ AI body assessment"
+            },
+            "ms": {
+              "caption": "Promosi masa terhad bulan ini 🔥\nBaucar RM100 (terhad kepada 100 pelanggan)\nHarga asal RM488\nSelepas baucar, hanya RM388\n\nPakej Penjagaan Premium | 2 jam 30 minit\nTermasuk:\n✅ Rawatan pelarasan pelvis dan penjagaan postur\n✅ Urutan seluruh badan bagi dua belas meridian\n✅ Penjagaan rahim dengan herba\n✅ Penilaian badan AI"
+            },
+            "zh": {
+              "caption": "本月限时优惠 🔥\n\nRM100 优惠券限时领取（只限100位）\n\n原价优惠 RM488\n优惠后仅需\n RM3️⃣8️⃣8️⃣\n\n尊享护理配套｜2小时30分钟\n包含：\n\n✅骨盆调整与体态矫正疗程\n✅全身通十二经络按摩\n✅子宫草药护理\n✅AI 身体检测"
+            }
+          },
+          "followUpTranslations": {
+            "en": "RM100 voucher available for a limited time (limited to 100 customers)\nFirst come, first served! 🔥",
+            "ms": "Baucar RM100 untuk masa terhad (terhad kepada 100 pelanggan sahaja)\nSiapa cepat, dia dapat! 🔥",
+            "zh": "RM100 优惠券限时领取（只限100位）\n先到先得！🔥"
+          }
+        },
+        {
+          "name": "Package B",
+          "title": "60分钟女性护理配套",
+          "aliases": [
+            "B套餐",
+            "B配套",
+            "RM268配套",
+            "268配套",
+            "女性护理配套"
+          ],
+          "caption": "本月限时优惠 🔥\n RM100 优惠券\n\n原价 RM368\n现在只需 RM2️⃣6️⃣8️⃣\n\n60分钟女性\n护理配套\n\n✅骨盆调整\n与体态矫正疗程\n\n限时礼遇 · 预约专享",
+          "pricing": {
+            "offer": 268,
+            "normal": 368,
+            "currency": "MYR"
+          },
+          "imageUrl": "https://example.test/package-1.jpg",
+          "followUpMessage": "本月限时优惠 🔥\nPackage B 现只需 RM268，预约专享 😊",
+          "followUpImageUrl": "https://example.test/followup-1.jpg",
+          "mediaTranslations": {
+            "en": {
+              "caption": "Limited-time offer this month 🔥\nRM100 voucher promotion\nOriginal price RM368\nNow only RM268\n\n60-minute Women's Care Package\n✅ Pelvic adjustment and posture care\n\nLimited-time appointment offer"
+            },
+            "ms": {
+              "caption": "Promosi masa terhad bulan ini 🔥\nPromosi baucar RM100\nHarga asal RM368\nSekarang hanya RM268\n\nPakej Penjagaan Wanita 60 minit\n✅ Rawatan pelarasan pelvis dan penjagaan postur\n\nTawaran tempahan masa terhad"
+            },
+            "zh": {
+              "caption": "本月限时优惠 🔥\n RM100 优惠券\n\n原价 RM368\n现在只需 RM2️⃣6️⃣8️⃣\n\n60分钟女性\n护理配套\n\n✅骨盆调整\n与体态矫正疗程\n\n限时礼遇 · 预约专享"
+            }
+          },
+          "followUpTranslations": {
+            "en": "Limited-time offer 🔥 Package B is now RM268. Appointment special 😊",
+            "ms": "Promosi masa terhad 🔥 Pakej B kini RM268. Tawaran khas tempahan 😊",
+            "zh": "本月限时优惠 🔥\nPackage B 现只需 RM268，预约专享 😊"
+          }
+        }
+      ],
+      "validFrom": "2000-01-01",
+      "validUntil": "2999-12-31",
+      "linkedService": "骨盆调理",
+      "sendOnPriceQuery": true
+    }
+  ],
+  "rows": [
+    {
+      "role": "user",
+      "content": "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+      "delivery_status": null,
+      "is_automated_follow_up": false,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": false,
+      "ageMs": 76540200
+    },
+    {
+      "role": "assistant",
+      "content": "Hi～欢迎来到 Neutro Sense 😊\n\n想了解骨盆调理对吗～\n\n想问下，你目前比较困扰的是小腹凸、腰髋紧，还是体态不平衡呢？",
+      "delivery_status": "read",
+      "is_automated_follow_up": false,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": false,
+      "ageMs": 76537503
+    },
+    {
+      "role": "assistant",
+      "content": "这个是我们顾客护理后的 Before & After 😊\n从照片可以参考她当次在骨盆/下半身线条和整体体态视觉上的变化。每个人基础状态不同，实际变化会不一样哦～",
+      "delivery_status": "read",
+      "is_automated_follow_up": false,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": true,
+      "ageMs": 76535372
+    },
+    {
+      "role": "assistant",
+      "content": "再给你看一个顾客护理后的 Before & After 😊\n可以参考她当次在体态、下半身线条和整体视觉上的变化。实际效果还是会看每个人本身的状态哦～",
+      "delivery_status": "read",
+      "is_automated_follow_up": false,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": true,
+      "ageMs": 76530737
+    },
+    {
+      "role": "assistant",
+      "content": "Hi～这段影片简单介绍我们怎样从骨盆和整体体态方面了解小腹凸、腰臀紧绷这些困扰 😊 你可以先看看～",
+      "delivery_status": "read",
+      "is_automated_follow_up": true,
+      "sent_by_username": null,
+      "media_mime_type": "video/mp4",
+      "has_media_attachment": false,
+      "ageMs": 69336928
+    },
+    {
+      "role": "assistant",
+      "content": "跟你分享一位顾客的骨盆调理体验 😊 每个人情况不一样，可以当作参考～ 你想先了解护理过程，还是体验当天怎样安排？",
+      "delivery_status": "read",
+      "is_automated_follow_up": true,
+      "sent_by_username": null,
+      "media_mime_type": "video/mp4",
+      "has_media_attachment": false,
+      "ageMs": 54933126
+    },
+    {
+      "role": "assistant",
+      "content": "Hi～如果之后想先了解体态情况，我们中医师也可以先为你安排一个1对1的体态评估+体验哦 😊 你有空时再随时回复我就好～",
+      "delivery_status": "read",
+      "is_automated_follow_up": true,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": false,
+      "ageMs": 4536812
+    },
+    {
+      "role": "user",
+      "content": "价格怎么算",
+      "delivery_status": null,
+      "is_automated_follow_up": false,
+      "sent_by_username": null,
+      "media_mime_type": null,
+      "has_media_attachment": false,
+      "ageMs": 0
+    }
+  ]
+}

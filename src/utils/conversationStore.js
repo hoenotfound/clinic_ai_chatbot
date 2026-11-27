@@ -120,6 +120,13 @@ function withPricingHistoryMetadata(entry, row) {
     },
     // A provider-confirmed bot send can bridge its own priced menu and
     // matching configured promotion artwork. Never infer delivery from captions.
+    pricingDeliveredAssessmentFollowUp: {
+      value: row?.role === "assistant" && !isVerifiedHumanStaffRow(row) &&
+        row.is_automated_follow_up === true &&
+        row.whatsapp_customer_mutation == null &&
+        ["delivered","read"].includes(row.delivery_status),
+      enumerable: false,
+    },
     pricingDeliveredBotMessage: {
       value: row?.role === "assistant" && !isVerifiedHumanStaffRow(row) &&
         row.is_automated_follow_up !== true &&

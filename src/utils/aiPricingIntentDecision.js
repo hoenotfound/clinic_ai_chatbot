@@ -705,7 +705,18 @@ function resolveModelLedPricingDecision({
   complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
-  const intent = modelIntent;
+  // Recover a missing model treatment only from an independently named
+  // customer selection for a current explicit monetary question. The usual
+  // timestamp, staff, conflicting-treatment and package checks below still
+  // apply; an invalid or contradictory model label is not replaced.
+  let intent = modelIntent;
+  if (intent?.structured === true && intent.outcome === "normal" &&
+      intent.priceQuery === true && intent.treatment == null &&
+      intent.promotionOption == null && hasCurrentPriceAmountRequest(original)) {
+    const anchor = verifiedServiceAnchor({customerText:original,conversationHistory,
+      services,serviceAliases});
+    if (anchor) intent = {...intent,treatment:anchor.treatment};
+  }
   if (!intent || intent.structured !== true || intent.outcome !== "normal" ||
       intent.pricingStage === "subsequent_session" ||
       (intent.priceQuery !== true &&
@@ -796,7 +807,21 @@ function resolveModelLedPricingDecision({
     // symptoms. An older bot introduction may name several applications;
     // use the most recent explicitly named service context, while retaining
     // independent customer, staff, and current clinical/safety vetoes.
+    // A delivered automated invitation for the configured complimentary
+    // introductory assessment is not a new paid treatment. Ignore it only
+    // when it names no other service, has no price claim, and follows a
+    // real customer-selected service. Other automated offers remain visible.
+    const isIntroFollowUp=t=>{
+      if (!complimentaryAssessmentExperienceEnabled ||
+          t.pricingDeliveredAssessmentFollowUp!==true || isVerifiedStaffTurn(t)) return false;
+      const copy=pricingMessageText(t);
+      const mentioned=[...new Set(findServicesInText(copy,candidates))];
+      return mentioned.length===1 && mentioned[0]==="1对1体态评估" &&
+        /(?:安排|先|邀请|邀請|预约|預約|体验|體驗|\b(?:arrange|book|try|assessment|penilaian|tempah)\b)/iu.test(copy) &&
+        !hasTreatmentPriceContent(copy);
+    };
     const latestNamedResponse=responses.findLast(t=>
+      !isIntroFollowUp(t) &&
       findServicesInText(pricingMessageText(t),candidates).length>0);
     if (!recommendationOnly && (!latestNamedResponse ||
         !findServicesInText(pricingMessageText(latestNamedResponse),candidates)
