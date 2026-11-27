@@ -9,7 +9,7 @@ const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
-const { recordWorkerWake } = require("../utils/refreshWakeDiagnostics");
+const { recordWorkerWake, recordPresentationWakeSkip } = require("../utils/refreshWakeDiagnostics");
 const { createCoalescedImmediateWake, followUpChangeRequiresWake,
   primaryPipelineChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
@@ -2401,6 +2401,7 @@ const wakeForRealtimeStateChange = createCoalescedImmediateWake(
 realtimeEvents.subscribe("conversation_changed", (payload) => {
   if (!followUpChangeRequiresWake(payload)) {
     recordWorkerWake("primary", "conversation_changed", payload, "ignored");
+    recordPresentationWakeSkip("primary", payload);
     return;
   }
   recordWorkerWake("primary", "conversation_changed", payload,

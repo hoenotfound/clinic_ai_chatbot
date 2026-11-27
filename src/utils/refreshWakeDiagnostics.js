@@ -74,6 +74,20 @@ function recordWorkerWake(lane, type, payload, outcome, env = process.env) {
   count(["wake", lane, safeType, reason, channel, outcome].join("|"));
 }
 
+// Count only explicitly marked, ignored events. These are wake decisions,
+ // not a claim that each event would have caused a separate database scan.
+const PRESENTATION_WAKE_LANES = new Set([
+  "primary", "secondary_service", "secondary_marketing", "staff_waiting", "free_entry",
+]);
+function recordPresentationWakeSkip(lane, payload) {
+  if (!PRESENTATION_WAKE_LANES.has(lane)) return;
+  const reason = payload?.reason === "contact_state" && payload?.inboxPresentationOnly === true
+    ? "inbox_presentation"
+    : lane === "staff_waiting" && payload?.reason === "message_updated" &&
+      payload?.staffWaitingStateUnchanged === true ? "content_or_media" : null;
+  if (reason) count("presentation_wake_skip|" + lane + "|" + reason);
+}
+
 function recordInboxFullList(reason) {
   count("inbox|" + (INBOX_REASONS.has(reason) ? reason : "other"));
 }
@@ -146,7 +160,7 @@ function snapshotRows(store) {
 const snapshot = () => snapshotRows(rows);
 const snapshotSecondaryDue = () => snapshotRows(secondaryDueRows);
 
-module.exports = { recordWorkerWake, recordInboxFullList,
+module.exports = { recordWorkerWake, recordPresentationWakeSkip, recordInboxFullList,
   recordInboxRevisionCheck, recordInboxRevisionFallback, recordSseLifecycle,
   recordSecondaryDueDecision, snapshotSecondaryDue,
   snapshot, classifyChannel, INBOX_REASONS };

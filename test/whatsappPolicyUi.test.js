@@ -296,6 +296,9 @@ test("staff voice sends persist quickly without holding the alert lock across sl
   assert.ok(transcriptIndex > persistIndex && providerIndex > transcriptIndex);
   assert.match(voiceRoute, /mediaKey: voiceMediaKey/);
   assert.match(voiceRoute, /messagesRepo\.setMessageContentById/);
+  assert.match(voiceRoute, /if \(updatedVoiceMessage\) \{[\s\S]*?realtimeEvents\.publish\("conversation_changed", \{[\s\S]*?message: updatedVoiceMessage,[\s\S]*?reason: "message_updated",[\s\S]*?staffWaitingStateUnchanged: true,/);
+  assert.match(voiceRoute, /const finalMessage = await persistSendOutcome\(/);
+  assert.match(voiceRoute, /await contactsRepo\.setDeliveryAttention\(/);
   assert.match(voiceRoute, /voicePreparation\.status === "contact_missing"/);
   assert.match(voiceRoute, /requireStaffMode: currentContact\.mode === "human"/);
   assert.doesNotMatch(voiceRoute, /withContactAlertLock\([\s\S]*transcribeStaffAudio[\s\S]*return \{[\s\S]*status: "ready"/);

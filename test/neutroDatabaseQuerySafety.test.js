@@ -45,7 +45,10 @@ test("only reaction and proven profile-only events are ignored by the follow-up 
   assert.equal(followUpChangeRequiresWake({
     reason: "contact_state", followUpStateUnchanged: true,
   }), false);
+  assert.equal(followUpChangeRequiresWake({reason:"contact_state",inboxPresentationOnly:true}),false);
   for (const payload of [
+    {reason:"contact_state",inboxPresentationOnly:"true"},
+    {reason:"message",inboxPresentationOnly:true},
     {}, null, undefined,
     { reason: "message", contactId: 7 },
     { reason: "contact_state", contactId: 7 },
@@ -159,4 +162,42 @@ test("social profile enrichment preserves Inbox events without waking follow-up 
   assert.match(source, /reason: "contact_state"/);
   assert.match(source, /publishContactChange\(row\.contact_id \|\| row\.id, \{ profileOnly: true, contact: row \}\)/);
   assert.match(source, /followUpStateUnchanged: true/);
+});
+
+
+test("persisted contact publishers mark only name and unread changes as presentation-only",async t=>{
+ const events=require("../src/utils/realtimeEvents");
+ const query=pool.query,publish=events.publish;
+ t.after(()=>{pool.query=query;events.publish=publish;});
+ const calls=[],published=[];
+ let row={id:71,channel:"whatsapp",mode:"ai",needs_attention:false};
+ pool.query=async (sql,params)=>{calls.push({sql,params});return {rows:row?[row]:[]};};
+ events.publish=(event,payload)=>published.push({event,payload});
+ await contactsRepo.setUnread(71,true);
+ assert.match(calls.at(-1).sql,/SET is_unread = \$1, updated_at = now\(\)/);
+ assert.deepEqual(calls.at(-1).params,[true,71]);
+ assert.equal(published.at(-1).payload.inboxPresentationOnly,true);
+ await contactsRepo.updateContactName(71,"Example");
+ assert.match(calls.at(-1).sql,/SET name = \$1, updated_at = now\(\)/);
+ assert.equal(published.at(-1).payload.inboxPresentationOnly,true);
+ for (const update of [
+  ()=>contactsRepo.takeOver(71,"staff"),
+  ()=>contactsRepo.returnToAi(71),
+  ()=>contactsRepo.setAttention(71,false),
+  ()=>contactsRepo.setFollowUp(71,true)
+ ]) {
+  const before=published.length;
+  await update();
+  assert.equal(published.length,before+1);
+  assert.equal(published.at(-1).event,"conversation_changed");
+  assert.equal(published.at(-1).payload.reason,"contact_state");
+  assert.notEqual(published.at(-1).payload.inboxPresentationOnly,true);
+  assert.notEqual(published.at(-1).payload.followUpStateUnchanged,true);
+  assert.equal(followUpChangeRequiresWake(published.at(-1).payload),true);
+ }
+ const before=published.length;
+ row=null;
+ await contactsRepo.setUnread(71,false);
+ await contactsRepo.updateContactName(71,"Missing");
+ assert.equal(published.length,before);
 });

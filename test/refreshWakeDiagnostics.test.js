@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { recordWorkerWake, recordInboxFullList, recordInboxRevisionCheck,
+const { recordWorkerWake, recordPresentationWakeSkip, recordInboxFullList, recordInboxRevisionCheck,
   recordInboxRevisionFallback, recordSseLifecycle, snapshot, classifyChannel,
   recordSecondaryDueDecision, snapshotSecondaryDue } =
   require("../src/utils/refreshWakeDiagnostics");
@@ -191,4 +191,28 @@ test("secondary due counters measure skipped scans without altering existing wak
   "existing wake counters must not include due-scheduler decisions");
  assert.doesNotMatch(JSON.stringify(after), /PRIVATE|id=77|customer=/);
  assert.ok(after.counters.length<=20,"fixed lanes and decision categories stay bounded");
+});
+
+
+test("presentation wake counters are lane-specific, bounded and contain no raw event data", () => {
+ const lanes = ["primary","secondary_service","secondary_marketing","staff_waiting","free_entry"];
+ const payload = {reason:"contact_state",inboxPresentationOnly:true,contactId:123456789,content:"PRIVATE_PRESENTATION"};
+ const total = key => snapshot().counters.find(x=>x.key===key)?.total||0;
+ for (const lane of lanes) {
+   const key = "presentation_wake_skip|"+lane+"|inbox_presentation";
+   const before=total(key);
+   recordPresentationWakeSkip(lane,payload);
+   recordPresentationWakeSkip(lane,{...payload,reason:"message"});
+   recordPresentationWakeSkip(lane,{...payload,inboxPresentationOnly:"true"});
+   assert.equal(total(key),before+1);
+ }
+ const contentKey="presentation_wake_skip|staff_waiting|content_or_media";
+ const before=total(contentKey);
+ recordPresentationWakeSkip("staff_waiting",{reason:"message_updated",staffWaitingStateUnchanged:true});
+ recordPresentationWakeSkip("staff_waiting",{reason:"message",staffWaitingStateUnchanged:true});
+ recordPresentationWakeSkip("primary",{reason:"message_updated",staffWaitingStateUnchanged:true});
+ recordPresentationWakeSkip("PRIVATE_PRESENTATION",payload);
+ assert.equal(total(contentKey),before+1);
+ assert.equal(total("presentation_wake_skip|primary|content_or_media"),0);
+ assert.doesNotMatch(JSON.stringify(snapshot()),/PRIVATE_PRESENTATION|123456789/);
 });

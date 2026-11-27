@@ -89,6 +89,7 @@ test("publishes an updated inbound row so the Inbox does not need a refresh", as
         messageId: 42,
         message: updated,
         reason: "message_updated",
+        staffWaitingStateUnchanged: true,
       },
     },
   ]);
@@ -279,4 +280,27 @@ test("AI history keeps the latest customer photo but never loads assistant-sent 
     { type: "image", mimeType: "image/jpeg", data: "customer-photo-bytes" },
   ]);
   assert.equal(history[3].content, "price?");
+});
+
+
+test("stored media attachment publishes a staff-waiting-only suppression marker",async t=>{
+ const saved=messagesRepo.setMessageMediaKeyById;
+ const published=realtimeEvents.publish;
+ t.after(()=>{messagesRepo.setMessageMediaKeyById=saved;realtimeEvents.publish=published;});
+ const row={id:44,contact_id:7,role:"user",media_mime_type:"image/jpeg"};
+ const events=[];
+ messagesRepo.setMessageMediaKeyById=async (...args)=>{
+  assert.deepEqual(args,[44,7,"media/key","image/jpeg"]);
+  return row;
+ };
+ realtimeEvents.publish=(event,payload)=>events.push({event,payload});
+ assert.equal(await conversationStore.attachStoredMediaForContact(7,44,"media/key","image/jpeg"),row);
+ assert.deepEqual(events,[{event:"conversation_changed",payload:{
+  contactId:7,messageId:44,message:row,reason:"message_updated",staffWaitingStateUnchanged:true,
+ }}]);
+ assert.equal(await conversationStore.attachStoredMediaForContact(7,44,"media/key","image/jpeg",{publish:false}),row);
+ assert.equal(events.length,1);
+ messagesRepo.setMessageMediaKeyById=async()=>null;
+ assert.equal(await conversationStore.attachStoredMediaForContact(7,44,"media/key","image/jpeg"),null);
+ assert.equal(events.length,1);
 });

@@ -23,7 +23,7 @@ function followUpChangeRequiresWake(payload, env = process.env) {
   // Reacting or changing presentation-only state cannot affect a follow-up.
   if (payload?.reason === "reaction") return false;
   if (payload?.reason === "contact_state" &&
-      payload?.followUpStateUnchanged === true) return false;
+      (payload?.followUpStateUnchanged === true || payload?.inboxPresentationOnly === true)) return false;
   // Signed secondary delivery receipts change only the *secondary* message's
   // status. They must not launch a new primary follow-up scan. Require both
   // configured numbers and a verified sender; unknown events, real messages,
