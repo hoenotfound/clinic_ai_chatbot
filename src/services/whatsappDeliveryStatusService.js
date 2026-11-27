@@ -1,3 +1,4 @@
+const { alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
 const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
@@ -94,7 +95,7 @@ function recoveryDelayForResult(result, { runCount }) {
   if (runCount === 1) {
     return STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
   }
-  return IDLE_RECOVERY_INTERVAL_MS;
+  return alignedIdleRecoveryDelay(IDLE_RECOVERY_INTERVAL_MS);
 }
 
 function createWhatsAppDeliveryStatusService({
