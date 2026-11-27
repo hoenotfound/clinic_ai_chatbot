@@ -8,7 +8,7 @@ const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 async function applyStagedSecondaryReceipts({
-  client, senderId, contactId, messageId, reservationId, acceptedWamid, env,
+  client, senderId, contactId, messageId, reservationId, acceptedWamid, env, detached=false,
 }) {
   const owner = await client.query(
     "SELECT c.whatsapp_number,c.whatsapp_user_id,a.recipient_address " +
@@ -187,7 +187,7 @@ async function applyStagedSecondaryReceipts({
        WHERE reservation_id=$1::uuid AND sender_id=$2 AND owner_contact_id=$3 AND state='awaiting_pricing'`,
     [reservationId,senderId,contactId]
   );
-  if (attempt.rowCount!==1 || gate.rowCount!==1) {
+  if (attempt.rowCount!==1 || gate.rowCount!==(detached?0:1)) {
     throw new Error("Early receipt auto-settlement lost reservation ownership");
   }
   return {matched:verified.length,autoReconciled:true,held:false};
