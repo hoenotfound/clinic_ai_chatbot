@@ -348,3 +348,57 @@ test("actual rejected-price boundary retains independently verified guidance and
   }
  }
 });
+
+test("live package A regression preserves all four configured inclusions after removing an unauthorized quote",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const fixture=require("./fixtures/neutro-pricing-assessment-20261127.json");
+ const pack=fixture.promotions[0].packages.find(p=>p.name==="Package A");
+ const cases=[
+  ["zh","Package A 包含什么？","Package A（尊享护理配套｜全程约2小时30分钟）包含：","额外收费 RM999","我们会发送图片给你"],
+  ["en","What does Package A include?","Package A (2 hours 30 minutes) includes:","Price RM999","I will send the image"],
+  ["ms","Apa yang termasuk dalam Pakej A?","Pakej A (2 jam 30 minit) termasuk:","Harga RM999","Saya akan hantar gambar"],
+ ];
+ for(const [language,customerText,heading,wrongPrice,mediaPromise] of cases){
+  const items=pack.mediaTranslations[language].caption.split("\n").filter(x=>x.startsWith("✅"));
+  assert.equal(items.length,4);
+  const valid=[heading,...items].join("\n");
+  const base={customerText,language,pricingDecision:null,priceRequested:false,aiFirstReplyAuthority:true,preserveNaturalReply:true,
+   services:fixture.services,serviceAliases:fixture.serviceAliases,promotions:fixture.promotions};
+  const draft=[heading,items[0],items[1],wrongPrice,items[2],items[3],mediaPromise].join("\n");
+  const result=ensureVerifiedPriceReply({...base,reply:draft});
+  assert.equal(result.restored,true,language);
+  assert.equal(result.reply,valid,language);
+  assert.equal(ensureVerifiedPriceReply({...base,reply:valid}).reply,valid,language);
+  const legacy=ensureVerifiedPriceReply({...base,aiFirstReplyAuthority:false,reply:draft});
+  assert.ok(!legacy.reply.includes(items[3]),"legacy cap remains unchanged");
+ }
+});
+test("AI-first commercial cleanup retains complete clauses rather than cutting at 340 characters",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const lines=Array.from({length:7},()=> "Our practitioner explains the care process and what to expect during your visit.");
+ const safe=lines.join("\n");
+ assert.ok(safe.length>340);
+ const result=ensureVerifiedPriceReply({customerText:"Tell me about the care process",reply:safe+"\nPrice RM999",
+  pricingDecision:null,priceRequested:false,language:"en",aiFirstReplyAuthority:true});
+ assert.equal(result.reply,safe);
+});
+test("simple acknowledgement does not restart treatment introduction after mandatory pricing cleanup",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const [language,customerText,safe,unsafe,expected] of [
+  ["zh","哦","好的呀 😊","骨盆调理现在只需 RM999","好的哦 😊"],
+  ["en","I see","Okay 😊","Price RM999","Of course 😊"],
+  ["ms","Baik","Baik ya 😊","Harga RM999","Baik 😊"]
+ ]){
+  const input={customerText,language,pricingDecision:null,priceRequested:false,aiFirstReplyAuthority:true,preserveNaturalReply:true};
+  const untouched=ensureVerifiedPriceReply({...input,reply:safe});
+  assert.equal(untouched.restored,false);
+  assert.equal(untouched.reply,safe);
+  const corrected=ensureVerifiedPriceReply({...input,reply:unsafe});
+  assert.equal(corrected.restored,true);
+  assert.equal(corrected.reply,expected);
+  const mixed=ensureVerifiedPriceReply({...input,reply:safe+"\n"+unsafe});
+  assert.equal(mixed.reply,safe);
+  assert.doesNotMatch(ensureVerifiedPriceReply({...input,reply:"No charge"}).reply,/no charge/iu);
+  assert.notEqual(ensureVerifiedPriceReply({...input,customerText:customerText+"，多少钱？",priceRequested:true,reply:unsafe}).reply,expected);
+ }
+});
