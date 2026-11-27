@@ -123,7 +123,7 @@ function automaticFreshInboundSql(attempt,old,anchor){
 }
 // Fresh readable inbound still required to resume AI. No earlier message is
 // replayed; the final transactional reservation enforces current sender rules.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,allowAutomaticFreshReply=false,outboundMessageSql=null}={}){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,allowAutomaticFreshReply=false,outboundMessageSql=null,allowMediaQueueWait=false}={}){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
  const baseApproved=signedFailureOrReviewedSql(env,"old_outbound");
  if(baseApproved==="FALSE")return "FALSE";
@@ -131,11 +131,29 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
  // later customer question arrived. Automated work must use that new anchor.
  if(anchorSql!==null && !/^(?:[a-z][a-z0-9_]*|\$[1-9][0-9]*)$/i.test(anchorSql))
    throw Error("Invalid message anchor SQL");
- if(outboundMessageSql!==null && !/^\$[1-9][0-9]*$/.test(outboundMessageSql))
+ if(outboundMessageSql!==null && !/^(?:\$[1-9][0-9]*|job\.outbound_message_id)$/.test(outboundMessageSql))
    throw Error("Invalid outbound message SQL");
- const reservedGate=outboundMessageSql===null
-   ? "current_gate.state='idle'"
-   : "(current_gate.state='idle' OR (current_gate.state='reserved' AND current_gate.contact_id={A}.id AND current_gate.message_id="+outboundMessageSql+"))";
+ const exactOutbound=outboundMessageSql===null ? "FALSE" :
+   "(current_gate.state='reserved' AND current_gate.contact_id={A}.id AND current_gate.message_id="+outboundMessageSql+")";
+ const queueAnchor=anchorSql===null?null:(/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
+ // Queue admission/retention is not dispatch authority. Only wait behind an
+ // exact same-turn direct text or media reservation; the worker still uses
+ // the ordinary billing gate and exact outbound check at actual dispatch.
+ const queueWait=allowMediaQueueWait && queueAnchor!==null ? `(
+   current_gate.state IN ('reserved','awaiting_pricing')
+   AND current_gate.contact_id={A}.id
+   AND (
+     EXISTS(SELECT 1 FROM inbound_outbound_attempts reply
+       WHERE reply.contact_id={A}.id AND reply.inbound_message_id=${queueAnchor}
+         AND reply.assistant_message_id=current_gate.message_id)
+     OR EXISTS(SELECT 1 FROM whatsapp_sender_ai_media_jobs preceding_media
+       WHERE preceding_media.sender_id=current_gate.sender_id
+         AND preceding_media.contact_id={A}.id
+         AND preceding_media.inbound_message_id=${queueAnchor}
+         AND preceding_media.outbound_message_id=current_gate.message_id)
+   )
+ )` : "FALSE";
+ const reservedGate="(current_gate.state='idle' OR "+exactOutbound+" OR "+queueWait+")";
  const anchorCheck=anchorSql===null?"":" AND customer.id="+
    (/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
  // Inbox review is evidence only for the exact old attempt. Before its
