@@ -218,7 +218,7 @@ test("AI reply transport forwards narrow inbound anchor; followups and media do 
   const dispatch=source("src/services/whatsappSecondaryStaffDispatch.js");
   const prompt=source("src/utils/systemPrompt.js");
   assert.match(server,/reviewReplyToInboundMessageId: savedInbound.id/g);
-  assert.match(server,/anchorMessageId: reviewContinuationAnchor/);
+  assert.match(server,/anchorMessageId: directReplyAnchor \|\| recoveryAnchor/);
   assert.match(server,/reviewContinuationTextOnly/);
   assert.match(server,/nonUrgentUrinaryAcknowledgement\(text, mediaLanguage\)/);
   assert.ok(server.includes(String.raw`/^neutro\s+sense\b/iu.test`), "Neutro-only review guard must use proper regex whitespace operators");
