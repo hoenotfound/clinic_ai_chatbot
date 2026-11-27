@@ -28,7 +28,7 @@ function enabled(env) {
 }
 
 const OWNED_SETTLEMENT_ATTEMPT_SQL = `
- SELECT a.reservation_id,a.sender_id,a.contact_id,a.message_id,a.wamid
+ SELECT a.reservation_id,a.sender_id,a.contact_id,a.message_id,a.wamid,a.service_receipt_independent
  FROM whatsapp_sender_billing_attempts a
  JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
  JOIN contacts c ON c.id=a.contact_id AND c.whatsapp_sender_id=sa.id
@@ -106,9 +106,9 @@ async function reconcileVerifiedSecondaryNonbillable({
       [senderId,reservationId]
     );
     const row = gate.rows?.[0];
-    if (gate.rows?.length !== 1 || row.state !== "awaiting_pricing" ||
+    if (gate.rows?.length > 1 || (row && (row.state !== "awaiting_pricing" ||
         String(row.reservation_id) !== reservationId ||
-        !/^wamid\./.test(clean(row.wamid))) {
+        !/^wamid\./.test(clean(row.wamid))))) {
       await client.query("ROLLBACK"); tx = false;
       return deny("secondary_reconciliation_unresolved_or_stale");
     }
@@ -123,13 +123,13 @@ async function reconcileVerifiedSecondaryNonbillable({
     const owner = await client.query(OWNED_SETTLEMENT_ATTEMPT_SQL,
       [reservationId,senderId]);
     const attempt = owner.rows?.[0];
-    if (owner.rows?.length !== 1 || attempt.wamid !== row.wamid) {
+    if (owner.rows?.length !== 1 || (row ? attempt.wamid !== row.wamid : attempt.service_receipt_independent!==true)) {
       await client.query("ROLLBACK"); tx = false;
       return deny("secondary_reconciliation_attempt_mismatch");
     }
-    const hash = crypto.createHash("sha256").update(row.wamid).digest("hex");
+    const hash = crypto.createHash("sha256").update(attempt.wamid).digest("hex");
     const evidence = await client.query(SETTLEMENT_RECEIPTS_SQL, [
-      reservationId,senderId,row.wamid,receiptFingerprint,
+      reservationId,senderId,attempt.wamid,receiptFingerprint,
       env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
       env.WHATSAPP_SECONDARY_WABA_ID,hash
     ]);
@@ -167,7 +167,7 @@ async function reconcileVerifiedSecondaryNonbillable({
       "WHERE sender_id=$1 AND reservation_id=$2::uuid AND state='awaiting_pricing'",
       [senderId,reservationId]
     );
-    if (settledAttempt.rowCount !== 1 || settledGate.rowCount !== 1) {
+    if (settledAttempt.rowCount !== 1 || settledGate.rowCount !== (row ? 1 : 0)) {
       throw new Error("Secondary billing settlement lost its verified reservation");
     }
     await client.query("COMMIT"); tx = false;

@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const { pool } = require("./db");
 const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
 const {reviewedReservationIds,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql,automaticRecoveryBudgetSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {serviceBillingRecordOnlyEnabled}=require("../utils/whatsappSecondaryServiceBilling");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
@@ -208,6 +209,41 @@ async function reserveSecondaryBillingAttempt({
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_sender_alarm");
     }
+    const independentService=serviceApproved && serviceBillingRecordOnlyEnabled(env);
+    // Finished service calls no longer hold later sends. Active dispatches
+    // are serialized; an abandoned 30-minute reservation becomes UNKNOWN,
+    // never retryable. Late original evidence can still be recorded.
+    if (serviceBillingRecordOnlyEnabled(env) &&
+        (serviceApproved || templateApproved || automatedMarketingApproved) &&
+        ["awaiting_pricing","unknown","reserved"].includes(gate.rows[0].state) &&
+        Number(gate.rows[0].message_id)!==mid) {
+      const detached=await client.query(`
+        UPDATE whatsapp_sender_billing_attempts a
+           SET service_receipt_independent=TRUE,
+               state=CASE WHEN a.state='reserved' THEN 'unknown' ELSE a.state END,
+               updated_at=CASE WHEN a.state='reserved' THEN NOW() ELSE a.updated_at END
+         WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
+           AND a.contact_id=$3 AND a.message_id=$4
+           AND a.state=$5 AND a.billable_authorized=TRUE
+           AND a.billing_authorization_source='operator_acknowledged_service'
+           AND (a.state IN ('unknown','awaiting_pricing') OR (
+             a.state='reserved' AND a.updated_at<=NOW()-INTERVAL '30 minutes'
+             AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates expired
+               WHERE expired.sender_id=a.sender_id AND expired.owner_contact_id=a.contact_id
+                 AND expired.reservation_id=a.reservation_id AND expired.message_id=a.message_id
+                 AND expired.state='reserved' AND expired.updated_at<=NOW()-INTERVAL '30 minutes')
+           ))
+        RETURNING a.reservation_id`,
+        [gate.rows[0].reservation_id,senderId,cid,gate.rows[0].message_id,gate.rows[0].state]);
+      if(detached.rowCount===1){
+        const cleared=await client.query(
+          "UPDATE whatsapp_sender_billing_gates SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL,updated_at=NOW() "+
+          "WHERE sender_id=$1 AND owner_contact_id=$2 AND reservation_id=$3::uuid AND state=$4",
+          [senderId,cid,gate.rows[0].reservation_id,gate.rows[0].state]);
+        if(cleared.rowCount!==1)throw Error("Service receipt detachment lost ownership");
+        gate.rows[0].state="idle";
+      }
+    }
     if (gate.rows[0].state !== "idle") {
       // Neutro secondary: a *signed, sender-matched final FAILED receipt*
       // is enough to permit a DIFFERENT fresh message, without two human
@@ -395,15 +431,15 @@ async function reserveSecondaryBillingAttempt({
     const reservationId = crypto.randomUUID();
     await client.query(
       "INSERT INTO whatsapp_sender_billing_attempts " +
-      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source,billing_review_claim_hash,recipient_address) " +
-      "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source,billing_review_claim_hash,recipient_address,service_receipt_independent) " +
+      "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
       [reservationId,senderId,cid,mid,
         billableAuthorized === true,
         serviceApproved ? "operator_acknowledged_service" :
           templateApproved ? "staff_template_billing_review" :
             automatedMarketingApproved ? "operator_approved_marketing_template" : null,
         templateApproved ? owner.rows[0].billing_review_claim_hash : null,
-        recipientAddress]
+        recipientAddress,independentService]
     );
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
@@ -423,7 +459,7 @@ async function reserveSecondaryBillingAttempt({
 }
 
 const OWNED_SECONDARY_RESERVATION_SQL = `
-  SELECT g.sender_id,g.owner_contact_id,g.state,g.reservation_id,g.wamid,a.message_id
+  SELECT g.sender_id,g.owner_contact_id,g.state,g.reservation_id,g.wamid,a.message_id,a.service_receipt_independent
   FROM whatsapp_sender_billing_gates g
   JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
   JOIN whatsapp_sender_billing_attempts a ON a.reservation_id=g.reservation_id
@@ -435,8 +471,8 @@ const OWNED_SECONDARY_RESERVATION_SQL = `
   FOR UPDATE OF g
 `;
 
-// This records Meta HTTP acceptance, NOT verified delivery/billing. No
-// customer-send permission and no gate reset are granted by this function.
+// Record provider outcome, not verified delivery/billing. In independent
+// service mode, release only the exact completed dispatch lock.
 async function recordSecondaryProviderOutcome({
   reservationId, acceptedWamid = null, definitivelyRejected = false,
 }, { database = pool, env = process.env } = {}) {
@@ -469,6 +505,47 @@ async function recordSecondaryProviderOutcome({
       env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
     ]);
     const row = result.rows?.[0];
+    if(result.rows?.length===0){
+      // A stale service dispatch may have been detached while the original
+      // worker was interrupted. Accept only evidence from that exact original
+      // reservation, without touching a newer contact gate or replaying Meta.
+      const historical=await client.query(`
+        SELECT a.sender_id,a.contact_id,a.message_id,a.state,a.wamid
+        FROM whatsapp_sender_billing_attempts a
+        JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
+        JOIN contacts c ON c.id=a.contact_id AND c.whatsapp_sender_id=a.sender_id
+        JOIN messages m ON m.id=a.message_id AND m.contact_id=c.id AND m.role='assistant'
+        WHERE a.reservation_id=$1::uuid AND a.service_receipt_independent=TRUE
+          AND a.billable_authorized=TRUE AND a.billing_authorization_source='operator_acknowledged_service'
+          AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4 AND sa.state='active'
+          AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates live WHERE live.reservation_id=a.reservation_id)
+        FOR UPDATE OF a`,[reservationId,env.WHATSAPP_SECONDARY_SENDER_KEY,
+          env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]);
+      const previous=historical.rows?.[0];
+      if(previous && acceptedWamid && previous.wamid===acceptedWamid &&
+          ["awaiting_pricing","reconciled","unknown"].includes(previous.state)){
+        await client.query("COMMIT"); transaction=false;
+        return {recorded:true,sendAuthorized:false,state:previous.state};
+      }
+      if(previous && !acceptedWamid && !definitivelyRejected && previous.state==="unknown"){
+        await client.query("COMMIT"); transaction=false;
+        return {recorded:true,sendAuthorized:false,state:"unknown"};
+      }
+      if(previous && previous.state==="unknown" && previous.wamid===null &&
+          (acceptedWamid || definitivelyRejected===true)){
+        const nextState=acceptedWamid?"awaiting_pricing":"rejected";
+        const updated=await client.query(
+          "UPDATE whatsapp_sender_billing_attempts SET state=$2,wamid=$3,updated_at=NOW() WHERE reservation_id=$1::uuid AND state='unknown' AND wamid IS NULL",
+          [reservationId,nextState,acceptedWamid]);
+        if(updated.rowCount!==1)throw Error("Detached service evidence ownership changed");
+        const staged=acceptedWamid?await applyStagedSecondaryReceipts({
+          client,senderId:previous.sender_id,contactId:previous.contact_id,messageId:previous.message_id,
+          reservationId,acceptedWamid,env,detached:true,
+        }):null;
+        await client.query("COMMIT"); transaction=false;
+        return {recorded:true,sendAuthorized:false,state:staged?.autoReconciled?"reconciled":staged?.held?"unknown":nextState};
+      }
+    }
     if (result.rows?.length !== 1 ||
         (row.state !== "reserved" &&
           !(row.state === "awaiting_pricing" && acceptedWamid && row.wamid === acceptedWamid))) {
@@ -511,6 +588,15 @@ async function recordSecondaryProviderOutcome({
       client, senderId: row.sender_id, contactId: row.owner_contact_id,
       messageId: row.message_id, reservationId, acceptedWamid, env,
     }) : null;
+    // Preserve the exact attempt and provider evidence, but do not keep
+    // authorized service traffic blocked until a later billing callback.
+    // A staged receipt may already have cleared this reservation.
+    if(row.service_receipt_independent===true && state!=="rejected"){
+      await client.query(
+        "UPDATE whatsapp_sender_billing_gates SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL,updated_at=NOW() "+
+        "WHERE sender_id=$1 AND owner_contact_id=$2 AND reservation_id=$3::uuid AND state IN ('awaiting_pricing','unknown')",
+        [row.sender_id,row.owner_contact_id,reservationId]);
+    }
     await client.query("COMMIT"); transaction = false;
     return {
       recorded:true,sendAuthorized:false,

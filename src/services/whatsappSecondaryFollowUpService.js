@@ -29,6 +29,7 @@ const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFe
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {detachableServiceGateSql,independentUnknownFollowupSql}=require("../utils/whatsappSecondaryServiceBilling");
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
@@ -160,7 +161,7 @@ const PREVIOUS_STEP_SQL=`
           AND preceding_sent.contact_id=c.id
           AND preceding_sent.anchor_message_id=inbound.id
           AND preceding_sent.slot_hours=preceding.slot_hours
-          AND preceding_sent.status='accepted'
+          AND (preceding_sent.status='accepted' OR ${independentUnknownFollowupSql("preceding_sent")})
         ORDER BY preceding_sent.completed_at DESC LIMIT 1),
        (SELECT earlier.completed_at
         FROM whatsapp_sender_followup_attempts earlier
@@ -784,6 +785,7 @@ const CANDIDATES_SQL=`
      WHERE previous.sender_id=sa.id AND previous.contact_id=c.id
        AND previous.anchor_message_id=inbound.id
        AND previous.status IN('unknown','blocked')
+       AND NOT ${independentUnknownFollowupSql("previous")}
    )
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts attempted
@@ -796,7 +798,8 @@ const CANDIDATES_SQL=`
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
      WHERE preflight.sender_id=sa.id AND preflight.owner_contact_id=c.id
-       AND preflight.state IN ('reserved','awaiting_pricing'))
+       AND preflight.state IN ('reserved','awaiting_pricing')
+       AND NOT ${detachableServiceGateSql("preflight")})
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
      WHERE alarm.sender_id=sa.id)
  ORDER BY inbound.created_at,c.id,rule.slot_hours
@@ -914,6 +917,7 @@ const RECHECK_SQL=`
        AND prior_problem.anchor_message_id=inbound.id
        AND prior_problem.id<>attempt.id
        AND prior_problem.status IN('unknown','blocked')
+       AND NOT ${independentUnknownFollowupSql("prior_problem")}
    )
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
  ) AS allowed`;

@@ -275,11 +275,12 @@ function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {},
 }
 
 const { configuredVerifiedScope } = require("../utils/verifiedWhatsAppEventScope");
+const {serviceBillingRecordOnlyEnabled}=require("../utils/whatsappSecondaryServiceBilling");
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
-        a.billable_authorized,a.billing_authorization_source,
+        a.billable_authorized,a.billing_authorization_source,a.service_receipt_independent,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -465,7 +466,24 @@ async function recordSignedSecondaryStatusBatch({
         // with another customer's reservation.
         // Unmatched billing has NO verified reservation/approval at all;
         // it must always alarm, even when operator-approved service sends exist.
-        if (event.pricingBillable === true) {
+        // A signed, valid-recipient, regular service charge may be an early
+        // or late receipt after an authorized service request timed out.
+        // Keep it unattributed in the durable receipt ledger; never guess
+        // which customer was charged. Known WAMID ownership conflicts,
+        // other charge categories and malformed receipts remain alarms.
+        let recordedUnattributedService=false;
+        if(serviceBillingRecordOnlyEnabled(env) && event.recipientVerified===true &&
+           event.pricingBillable===true && event.pricingType==="regular" &&
+           event.pricingCategory==="service"){
+          const known=await client.query(
+            "SELECT 1 FROM whatsapp_sender_billing_attempts WHERE sender_id=$1 AND wamid=$2 LIMIT 1",
+            [senderId,event.wamid]);
+          recordedUnattributedService=known.rows?.length===0;
+        }
+        if (recordedUnattributedService) {
+          console.warn("[Secondary WhatsApp billing] Unattributed authorized-category service receipt recorded; review receipt ledger.");
+        }
+        if (event.pricingBillable === true && !recordedUnattributedService) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
               (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -528,6 +546,7 @@ async function recordSignedSecondaryStatusBatch({
           delivery.rows[0].delivery_status === "failed") {
         failedAlerts.push({
           contactId: attempt.contact_id,
+          independentService: attempt.service_receipt_independent===true,
           messageId: attempt.message_id,
           errorCode: event.failureCode,
           wamid: event.wamid,
@@ -575,8 +594,8 @@ async function recordSignedSecondaryStatusBatch({
       const paidEligible =
         attempt.billable_authorized === true &&
         attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        Boolean(attempt.live_reservation_id) &&
+        ((attempt.gate_state === "awaiting_pricing" && Boolean(attempt.live_reservation_id)) ||
+          (attempt.service_receipt_independent===true && !attempt.live_reservation_id)) &&
         event.pricingBillable === true &&
         event.pricingType === "regular" &&
         (paidTemplateEligible || paidServiceEligible || paidMarketingEligible) &&
@@ -632,7 +651,7 @@ async function recordSignedSecondaryStatusBatch({
             [attempt.sender_id,attempt.reservation_id,event.wamidHash]
           );
         }
-        if (attempt.live_reservation_id) {
+        if (attempt.live_reservation_id || attempt.service_receipt_independent===true) {
           await client.query(
             "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
             "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
@@ -648,8 +667,8 @@ async function recordSignedSecondaryStatusBatch({
       } else if (paidEligible || (
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
         attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        attempt.live_reservation_id &&
+        ((attempt.gate_state === "awaiting_pricing" && attempt.live_reservation_id) ||
+          (attempt.service_receipt_independent===true && !attempt.live_reservation_id)) &&
         event.pricingBillable === false &&
         (event.pricingType === "free_entry_point" ||
           (event.pricingType === "free_customer_service" &&
@@ -718,7 +737,7 @@ async function recordSignedSecondaryStatusBatch({
                    state='awaiting_pricing'`,
             [attempt.reservation_id,attempt.sender_id]
           );
-          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== 1) {
+          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== (attempt.live_reservation_id ? 1 : 0)) {
             throw new Error("Auto-reconciliation lost exact sender ownership");
           }
           autoReconciled++;
@@ -741,7 +760,7 @@ async function recordSignedSecondaryStatusBatch({
       for (const failed of failedAlerts) {
         const code = Number.isInteger(failed.errorCode) && failed.errorCode>0
           ? " Meta code "+failed.errorCode+"." : "";
-        const reason = "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold."+
+        const reason = (failed.independentService ? "Delivery failed: Signed Meta failure recorded for this service message." : "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold.")+
           code+" Staff must reconcile the exact send; do not retry.";
         try {
           await attentionHandler({...failed,reason});
@@ -857,10 +876,11 @@ async function inspectSecondaryRetryHold(reservationId, {
            WHERE r.reservation_id=a.reservation_id AND r.matched
              AND (r.pricing_billable=true OR r.delivery_status='failed')) AS adverse_receipt
        FROM whatsapp_sender_billing_attempts a
-       JOIN whatsapp_sender_billing_gates g
+       LEFT JOIN whatsapp_sender_billing_gates g
          ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
        JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
        WHERE a.reservation_id=$1::uuid
+         AND (g.reservation_id IS NOT NULL OR a.service_receipt_independent=TRUE)
          AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3
          AND sa.meta_account_id=$4`,
       [reservationId,env.WHATSAPP_SECONDARY_SENDER_KEY,
