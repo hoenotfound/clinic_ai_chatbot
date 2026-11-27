@@ -279,6 +279,7 @@ test("older verified-price review path never clears pending clinical review", as
       flagged: true, reviewRequired: true, reviewType: "clinical",
       keywordReason: null, urgentSafety: false, marketingStopQuestion: null,
       text: "价钱？", bookingReady: false, reply: "staff review",
+      languageCheckedModelReply:null,
       serviceQuery: true, serviceQuerySource: "model", priceQuery: true,
       packageQuery: false, details: null, clinicalAcknowledgement: null,
       reviewContinuationTextOnly: false, channel: "whatsapp",
