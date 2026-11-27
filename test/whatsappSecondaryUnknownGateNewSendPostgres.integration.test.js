@@ -500,6 +500,13 @@ test("new customer text can automatically recover an uncertain automated service
    assert.equal((await db.query("SELECT status FROM whatsapp_sender_followup_attempts WHERE message_id=$1",[s.messages[0]])).rows[0].status,"unknown");
    assert.equal((await db.query("SELECT new_message_id,basis FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,fresh);
    assert.equal((await db.query("SELECT COUNT(*)::int AS count FROM whatsapp_sender_unknown_gate_inbox_reviews")).rows[0].count,0,"never invent administrator evidence");
+   // The new text can be accepted before its pricing receipt arrives. Queue
+   // retention must not grant dispatch authority, or authorize an old anchor.
+   await db.query("INSERT INTO whatsapp_sender_ai_media_jobs(sender_id,contact_id,inbound_message_id,sequence_no,media_kind,image_url,state,outbound_message_id,expires_at) VALUES($1,$2,$3,0,'promotion','https://example.test/price.png','claimed',$4,NOW()+INTERVAL '1 hour')",[s.sender,s.contact,inbound,fresh]);
+   await db.query("UPDATE whatsapp_sender_billing_gates SET state='awaiting_pricing' WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
+   assert.equal(await check(inbound,autoEnv,{allowMediaQueueWait:true}),true);
+   assert.equal(await check(inbound,autoEnv,{}),false,"queue retention never authorizes dispatch before settlement");
+   assert.equal(await check(oldAnchor,autoEnv,{allowMediaQueueWait:true}),false);
    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
    await db.query("UPDATE whatsapp_sender_billing_gates SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,wamid=NULL WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact]);
    assert.equal(await check(inbound,autoEnv,{}),true,"new-anchor pricing media may use normal eligibility after text settles");
