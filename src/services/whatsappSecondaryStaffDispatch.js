@@ -316,8 +316,8 @@ async function sendSecondaryStaffText({
     return preBlock("secondary_staff_sender_verification_failed");
   }
 
-  const justBefore = await preview();
-  if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
+  const justBefore = direct?before:await preview();
+  if (!direct && !await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
   if (justBefore.policyAllowed !== true) return preBlock(justBefore.code || "secondary_staff_policy_blocked");
 
   reservationStarted=true;
@@ -434,7 +434,7 @@ async function sendSecondaryStaffText({
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
-    if (!await stillEligible()) {
+    if (!direct && !await stillEligible()) {
       if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
       }
@@ -462,9 +462,8 @@ async function sendSecondaryStaffText({
     if(direct)for(const method of ["sendText","sendInteractiveButtons","sendImageByUrl","sendMediaById","sendTemplatePayload"]){
       actualTransport[method]=async(...args)=>{
         if(customerRequestStarted)throw Error("Duplicate customer request");
-        if(!await stillEligible() || (typeof preSendCheck==="function" && !await preSendCheck()))return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         const finalPolicy=await preview();
-        if(finalPolicy.policyAllowed!==true)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
+        if(finalPolicy.policyAllowed!==true || !await stillEligible() || (typeof preSendCheck==="function" && !await preSendCheck()))return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         const verified=await database.query(delivery.ALLOWED_DELIVERY_SQL,[env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,reserved.reservationId,cid,mid]);
         if(verified.rows?.length!==1)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         if(customerRequestStarted)throw Error("Duplicate customer request");
@@ -478,6 +477,7 @@ async function sendSecondaryStaffText({
       : typeof dispatchTransport === "function"
         ? await dispatchTransport(actualTransport)
         : await actualTransport.sendText(text.trim(), { replyToProviderMessageId });
+    if(direct && !customerRequestStarted)return cancelProvenMarketingBeforeProvider(send?.code || 'secondary_send_cancelled_before_provider');
     // A trusted callback may prove no /messages call occurred. Media
     // preparation and /media upload failures are not customer sends.
     // Only the listed markers and a durably rejected reservation authorize
