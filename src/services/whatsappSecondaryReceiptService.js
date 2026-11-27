@@ -148,17 +148,17 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
           return invalid("status_timestamp_invalid");
-        if (item.pricing !== undefined && (item.pricing === null ||
+        if (!deliveryOnlyEnabled(env) && item.pricing !== undefined && (item.pricing === null ||
             typeof item.pricing !== "object" || Array.isArray(item.pricing) ||
             (item.pricing.billable !== undefined && typeof item.pricing.billable !== "boolean") ||
             (item.pricing.type !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.type))) ||
             (item.pricing.category !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.category)))))
           return invalid("status_pricing_invalid");
-        const pricingType = clean(item.pricing?.type) ||
+        const pricingType = deliveryOnlyEnabled(env) ? null : clean(item.pricing?.type) ||
           (typeof item.pricing?.billable === "boolean" ? "unknown" : null);
-        const pricingBillable = typeof item.pricing?.billable === "boolean" ?
+        const pricingBillable = !deliveryOnlyEnabled(env) && typeof item.pricing?.billable === "boolean" ?
           item.pricing.billable : null;
-        const pricingCategory = clean(item.pricing?.category) || null;
+        const pricingCategory = deliveryOnlyEnabled(env) ? null : clean(item.pricing?.category) || null;
         if (!recipient) {
           // Signed, sender-pinned status with an unusable recipient is not
           // evidence of delivery to any contact. Save only an idempotent
