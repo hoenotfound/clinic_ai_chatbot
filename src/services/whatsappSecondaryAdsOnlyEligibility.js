@@ -362,14 +362,6 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c", outboundMes
             AND released.message_id=unresolved.message_id
             AND released.old_message_retry_prohibited=TRUE
         )
-        AND NOT EXISTS (
-          SELECT 1 FROM whatsapp_sender_owner_attested_unknown_hold_releases released
-          WHERE released.reservation_id=unresolved.reservation_id
-            AND released.sender_id=unresolved.sender_id
-            AND released.contact_id=unresolved.contact_id
-            AND released.message_id=unresolved.message_id
-            AND released.original_message_retry_prohibited=TRUE
-        )
     )
     AND NOT EXISTS (
       SELECT 1 FROM whatsapp_sender_billing_alarms unresolved_alarm
