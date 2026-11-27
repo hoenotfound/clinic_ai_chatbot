@@ -465,6 +465,7 @@ async function sendSecondaryStaffText({
         if(!await stillEligible() || (typeof preSendCheck==="function" && !await preSendCheck()))return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         const verified=await database.query(delivery.ALLOWED_DELIVERY_SQL,[env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,reserved.reservationId,cid,mid]);
         if(verified.rows?.length!==1)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
+        if(customerRequestStarted)throw Error("Duplicate customer request");
         customerRequestStarted=true;
         return transport[method](...args);
       };
