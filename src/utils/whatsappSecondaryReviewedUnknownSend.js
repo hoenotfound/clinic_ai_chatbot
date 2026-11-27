@@ -51,16 +51,56 @@ function signedFailureOrReviewedSql(env=process.env,messageAlias="old_outbound")
 }
 // Fresh readable inbound still required to resume AI. No earlier message is
 // replayed; the final transactional reservation enforces current sender rules.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false}={}){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
- const approved=signedFailureOrReviewedSql(env,"old_outbound");
- if(approved==="FALSE")return "FALSE";
+ const baseApproved=signedFailureOrReviewedSql(env,"old_outbound");
+ if(baseApproved==="FALSE")return "FALSE";
  // The original ad session cannot regain authority just because a DIFFERENT
  // later customer question arrived. Automated work must use that new anchor.
  if(anchorSql!==null && !/^(?:[a-z][a-z0-9_]*|\$[1-9][0-9]*)$/i.test(anchorSql))
    throw Error("Invalid message anchor SQL");
  const anchorCheck=anchorSql===null?"":" AND customer.id="+
    (/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
+ // Inbox review is evidence only for the exact old attempt. Before its
+ // one-shot audit is consumed, only an explicit, fresh AI text anchor can
+ // use it; media/marketing cannot initiate a bypass from this permission.
+ const inboxFreshAnchor=allowInboxAiReview && anchorSql!==null
+   ? ` OR (inbox_review.reviewed_at>=NOW()-INTERVAL '24 hours'
+       AND EXISTS (
+         SELECT 1 FROM messages review_inbound
+         WHERE review_inbound.id=${/^\$/.test(anchorSql)?anchorSql:anchorSql+".id"}
+           AND review_inbound.contact_id=held_attempt.contact_id
+           AND review_inbound.role='user'
+           AND review_inbound.created_at>=inbox_review.reviewed_at
+           AND review_inbound.source_created_at>=inbox_review.reviewed_at
+           AND review_inbound.source_created_at>NOW()-INTERVAL '24 hours'
+       ))` : "";
+ const approved=`(${baseApproved} OR (
+   held_attempt.wamid IS NULL
+   AND old_outbound.whatsapp_message_id IS NULL
+   AND old_outbound.whatsapp_accepted_at IS NULL
+   AND old_outbound.delivery_status='unknown'
+   AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=old_outbound.id)
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
+     WHERE r.sender_id=held_attempt.sender_id AND r.reservation_id=held_attempt.reservation_id)
+   AND EXISTS (
+     SELECT 1 FROM whatsapp_sender_unknown_gate_inbox_reviews inbox_review
+     WHERE inbox_review.reservation_id=held_attempt.reservation_id
+       AND inbox_review.sender_id=held_attempt.sender_id
+       AND inbox_review.contact_id=held_attempt.contact_id
+       AND inbox_review.old_message_id=old_outbound.id
+       AND inbox_review.non_delivery_checked=TRUE
+       AND inbox_review.billing_no_charge_checked=TRUE
+       AND (EXISTS (
+         SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends used_review
+         WHERE used_review.old_reservation_id=held_attempt.reservation_id
+           AND used_review.sender_id=held_attempt.sender_id
+           AND used_review.contact_id=held_attempt.contact_id
+           AND used_review.old_message_id=old_outbound.id
+       )${inboxFreshAnchor})
+   )
+ ))`;
+
  return [
   "(",
   " {A}.mode='ai' AND {A}.needs_attention=TRUE",
@@ -72,7 +112,20 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
   " AND EXISTS(",
   "  SELECT 1 FROM whatsapp_sender_billing_attempts held_attempt",
   "  JOIN messages old_outbound ON old_outbound.id=held_attempt.message_id",
-  "   AND old_outbound.id={A}.delivery_attention_message_id",
+  "   AND (old_outbound.id={A}.delivery_attention_message_id OR EXISTS (",
+  "     SELECT 1 FROM messages blocked_draft",
+  "     WHERE blocked_draft.id={A}.delivery_attention_message_id",
+  "       AND blocked_draft.contact_id={A}.id AND blocked_draft.role='assistant'",
+  "       AND blocked_draft.created_at>old_outbound.created_at",
+  "       AND blocked_draft.delivery_status='failed'",
+  "       AND blocked_draft.whatsapp_message_id IS NULL AND blocked_draft.whatsapp_accepted_at IS NULL",
+  "       AND blocked_draft.delivery_error IN (",
+  "         'An earlier WhatsApp send is unconfirmed. Ask an administrator to review non-delivery and billing before composing a new message.',",
+  "         'The previous WhatsApp message is still being confirmed. Check its delivery before another send.')",
+  "       AND {A}.attention_reason='Delivery failed: ' || blocked_draft.delivery_error",
+  "       AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts b WHERE b.message_id=blocked_draft.id)",
+  "       AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=blocked_draft.id)",
+  "   ))",
   "   AND old_outbound.contact_id={A}.id AND old_outbound.role='assistant'",
   "   AND old_outbound.delivery_status IN ('failed','unknown')",
   "  WHERE held_attempt.sender_id={A}.whatsapp_sender_id",
@@ -99,7 +152,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
   "              AND older.contact_id={A}.id",
   "              AND older.reopened_at>NOW()-INTERVAL '30 days')",
   "        ) OR (",
-  "          current_gate.state='idle'",
+  "          current_gate.state IN ('idle','reserved','awaiting_pricing')",
   "          AND EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends approved_bypass",
   "            WHERE approved_bypass.old_reservation_id=held_attempt.reservation_id",
   "              AND approved_bypass.sender_id=held_attempt.sender_id",
