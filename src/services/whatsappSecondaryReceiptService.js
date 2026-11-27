@@ -279,7 +279,7 @@ const { configuredVerifiedScope } = require("../utils/verifiedWhatsAppEventScope
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
-        a.billable_authorized,a.billing_authorization_source,
+        a.billable_authorized,a.billing_authorization_source,a.service_receipt_independent,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -575,8 +575,8 @@ async function recordSignedSecondaryStatusBatch({
       const paidEligible =
         attempt.billable_authorized === true &&
         attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        Boolean(attempt.live_reservation_id) &&
+        ((attempt.gate_state === "awaiting_pricing" && Boolean(attempt.live_reservation_id)) ||
+          (attempt.service_receipt_independent===true && !attempt.live_reservation_id)) &&
         event.pricingBillable === true &&
         event.pricingType === "regular" &&
         (paidTemplateEligible || paidServiceEligible || paidMarketingEligible) &&
@@ -632,7 +632,7 @@ async function recordSignedSecondaryStatusBatch({
             [attempt.sender_id,attempt.reservation_id,event.wamidHash]
           );
         }
-        if (attempt.live_reservation_id) {
+        if (attempt.live_reservation_id || attempt.service_receipt_independent===true) {
           await client.query(
             "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
             "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
@@ -648,8 +648,8 @@ async function recordSignedSecondaryStatusBatch({
       } else if (paidEligible || (
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
         attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        attempt.live_reservation_id &&
+        ((attempt.gate_state === "awaiting_pricing" && attempt.live_reservation_id) ||
+          (attempt.service_receipt_independent===true && !attempt.live_reservation_id)) &&
         event.pricingBillable === false &&
         (event.pricingType === "free_entry_point" ||
           (event.pricingType === "free_customer_service" &&
@@ -718,7 +718,7 @@ async function recordSignedSecondaryStatusBatch({
                    state='awaiting_pricing'`,
             [attempt.reservation_id,attempt.sender_id]
           );
-          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== 1) {
+          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== (attempt.live_reservation_id ? 1 : 0)) {
             throw new Error("Auto-reconciliation lost exact sender ownership");
           }
           autoReconciled++;
@@ -857,10 +857,11 @@ async function inspectSecondaryRetryHold(reservationId, {
            WHERE r.reservation_id=a.reservation_id AND r.matched
              AND (r.pricing_billable=true OR r.delivery_status='failed')) AS adverse_receipt
        FROM whatsapp_sender_billing_attempts a
-       JOIN whatsapp_sender_billing_gates g
+       LEFT JOIN whatsapp_sender_billing_gates g
          ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
        JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
        WHERE a.reservation_id=$1::uuid
+         AND (g.reservation_id IS NOT NULL OR a.service_receipt_independent=TRUE)
          AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3
          AND sa.meta_account_id=$4`,
       [reservationId,env.WHATSAPP_SECONDARY_SENDER_KEY,
