@@ -383,7 +383,7 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c", outboundMes
   )`;
 }
 
-function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null, env = process.env, outboundMessageSql = null } = {}) {
+function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, allowAutomaticFreshReply = false, inboundMessageSql = null, env = process.env, outboundMessageSql = null } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
     ${alias}.needs_attention IS NOT TRUE
@@ -398,7 +398,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
     )
     OR ${verified131060InformationReviewSql(alias)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias,outboundMessageSql)}
-    OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:allowReviewContinuation,allowAutomaticFreshReply:allowReviewContinuation,outboundMessageSql})}
+    OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:allowAutomaticFreshReply,allowAutomaticFreshReply,outboundMessageSql})}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
@@ -416,7 +416,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
 // does NOT replace the ads-only SQL for follow-ups, marketing, or media jobs.
 async function isSecondaryAiReplyEligible(contactId, {
   database = pool, env = process.env, inboundMessageId = null, outboundMessageId = null,
-  allowReviewContinuation = false,
+  allowReviewContinuation = false, allowAutomaticFreshReply = false,
 } = {}) {
   if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts")
     return isSecondaryAdsOnlyEligible(contactId, { database, env });
@@ -457,6 +457,7 @@ async function isSecondaryAiReplyEligible(contactId, {
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
            AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c", {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
+              allowAutomaticFreshReply: allowAutomaticFreshReply === true && mid != null,
               inboundMessageSql: mid != null ? "$5" : null, env,
               outboundMessageSql: outbound != null ? "$6" : null,
            })}
