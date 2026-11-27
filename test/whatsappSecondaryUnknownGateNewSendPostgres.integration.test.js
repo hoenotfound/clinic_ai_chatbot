@@ -559,3 +559,128 @@ test("new customer text can automatically recover an uncertain automated service
    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
  });
 });
+
+
+test("record-only service billing permits distinct messages, but never replay or an active dispatch", {skip:!connectionString},async()=>{
+  const {independentServiceDeliveryAttentionSql,detachableServiceGateSql}=require("../src/utils/whatsappSecondaryServiceBilling");
+  const receipts=require("../src/services/whatsappSecondaryReceiptService");
+  const crypto=require("node:crypto");
+  const paid={...env,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+    WHATSAPP_SECONDARY_SERVICE_BILLING_RECORD_ONLY:"true",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+    WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+    WHATSAPP_APP_SECRET:"test-independent-service-secret"};
+  await withSchema(async({db,database})=>{
+    const s=await seed({db,database});
+    const conversation=(await db.query("SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+    const gate=async()=> (await db.query("SELECT state,reservation_id FROM whatsapp_sender_billing_gates WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact])).rows[0];
+    const attempt=async(id)=> (await db.query("SELECT state,service_receipt_independent FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",[id])).rows[0];
+    const newMessage=async(text)=>{
+      const id=(await db.query("INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant',$2) RETURNING id",[s.contact,text])).rows[0].id;
+      await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[id,conversation]);
+      return id;
+    };
+    const reserve=(messageId,config=paid)=>billing.reserveSecondaryBillingAttempt({contactId:s.contact,messageId,billableAuthorized:true},{database,env:config});
+    const outcome=(reservationId,acceptedWamid=null)=>billing.recordSecondaryProviderOutcome({reservationId,acceptedWamid},{database,env:paid});
+    const permitted=async(config=paid)=>(await db.query("SELECT "+independentServiceDeliveryAttentionSql("c",config)+" AS ok FROM contacts c WHERE id=$1",[s.contact])).rows[0].ok;
+    assert.equal((await reserve(s.messages[1])).reserved,false,"never overlap a live reserved provider call");
+    // An existing service hold from before deployment: authorization was
+    // originally captured, but the provider outcome remains unknown.
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET billable_authorized=TRUE,billing_authorization_source='operator_acknowledged_service' WHERE reservation_id=$1",[s.original.reservationId]);
+    assert.equal((await outcome(s.original.reservationId)).state,"unknown");
+    await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",[s.messages[0]]);
+    await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,attention_reason='Delivery unconfirmed: original video',delivery_attention_message_id=$2 WHERE id=$1",[s.contact,s.messages[0]]);
+    assert.equal(await permitted(),true);
+    assert.equal(await permitted({...paid,WHATSAPP_SECONDARY_SERVICE_BILLING_RECORD_ONLY:"false"}),false);
+    assert.equal((await db.query("SELECT "+detachableServiceGateSql("g",paid)+" AS ok FROM whatsapp_sender_billing_gates g WHERE g.sender_id=$1",[s.sender])).rows[0].ok,true);
+    assert.equal((await reserve(s.messages[0])).reserved,false,"original uncertain send is never replayed");
+    const reply=await reserve(s.messages[1]);
+    assert.equal(reply.reserved,true,"distinct service reply can detach the prior hold");
+    assert.deepEqual(await attempt(s.original.reservationId),{state:"unknown",service_receipt_independent:true});
+    assert.equal((await outcome(reply.reservationId,"wamid.independentReply")).state,"awaiting_pricing");
+    assert.equal((await gate()).state,"idle","provider receipt no longer holds subsequent service messages");
+    assert.deepEqual(await attempt(reply.reservationId),{state:"awaiting_pricing",service_receipt_independent:true});
+    const queue=require("../src/services/whatsappSecondaryAiMediaQueue");
+    const contactRepo=require("../src/db/contactsRepo");
+    const queueEnv={...paid,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+      WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+      WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+      WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+      WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+      WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-01-01T00:00:00Z",
+      WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-01-01T00:00:00Z",
+      WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-01-01T00:00:00Z"};
+    const inbound=(await db.query("INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) VALUES($1,'user','Price please','wamid.recordOnlyInbound',NOW()) RETURNING id",[s.contact])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[inbound,conversation]);
+    const items=[{imageUrl:"https://example.test/package-a.jpg",caption:"Package A RM388"},
+      {imageUrl:"https://example.test/package-b.jpg",caption:"Package B RM268"}];
+    assert.equal(await queue.enqueue({contactId:s.contact,inboundMessageId:inbound,kind:"promotion",solicitedPricing:true,items},{database,env:queueEnv}),true);
+    const sent=[];
+    const args={database,env:queueEnv,
+      contacts:{getContactById:async()=>({id:s.contact,mode:"ai",whatsapp_sender_key:"neutro_secondary",whatsapp_sender_id:s.sender,whatsapp_number:"60125550000"}),
+        canSendAutomaticReviewMedia:(id,options)=>contactRepo.canSendAutomaticReviewMedia(id,options)},
+      store:{appendMessageForContact:async(id,role,caption,_a,_b,url,_c,options)=>{
+        const mid=(await db.query("INSERT INTO messages(contact_id,role,content,media_url,whatsapp_template,delivery_status) VALUES($1,$2,$3,$4,$5,'queued') RETURNING id",[id,role,caption,url,JSON.stringify(options.whatsappTemplate)])).rows[0].id;
+        await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[mid,conversation]);
+        return {id:mid};
+      }},
+      messageRepo:{setWhatsappMessageId:async(id,wamid)=>db.query("UPDATE messages SET whatsapp_message_id=$2 WHERE id=$1",[id,wamid]),markDeliveryUnknownIfUnconfirmed:async()=>({marked:false})},
+      policy:{previewSecondaryFreeformPolicy:async()=>({policyAllowed:true})},
+      getConfig:()=>({promotions:items.map(x=>({...x,validFrom:"2020-01-01",validUntil:"2099-12-31"}))}),
+      isAuthorizedImage:()=>true,
+      send:async(payload)=>{
+        const claim=await reserve(payload.messageId);
+        assert.equal(claim.reserved,true);
+        const result=await payload.dispatchTransport({sendImageByUrl:async(url,caption)=>{
+          sent.push({url,caption,claim,messageId:payload.messageId});
+          return {success:true,wamid:sent.length===1?"wamid.independentA":"wamid.independentB"};
+        }});
+        assert.equal(result.success,true);
+        assert.equal((await outcome(claim.reservationId,result.wamid)).state,"awaiting_pricing");
+        return result;
+      }};
+    assert.equal((await queue.runOnce(args)).accepted,1);
+    assert.equal((await queue.runOnce(args)).accepted,1);
+    assert.deepEqual(sent.map(x=>x.url),items.map(x=>x.imageUrl));
+    assert.equal((await gate()).state,"idle");
+    const first=sent[0].claim;
+    const second=await reserve(await newMessage("Later staff service reply"));
+    assert.equal(second.reserved,true);
+    const secondImage=sent[1].messageId;
+    const signed=async(wamid,pricing={type:"free_entry_point",billable:false,category:"service"})=>{
+      const rawBody=Buffer.from(JSON.stringify({object:"whatsapp_business_account",entry:[{id:paid.WHATSAPP_SECONDARY_WABA_ID,changes:[{field:"messages",value:{metadata:{phone_number_id:paid.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},statuses:[{id:wamid,status:"delivered",recipient_id:"60125550000",timestamp:String(Math.floor(Date.now()/1000)),pricing}]}}]}]}));
+      return receipts.recordSignedSecondaryStatusBatch({rawBody,signatureHeader:"sha256="+crypto.createHmac("sha256",paid.WHATSAPP_APP_SECRET).update(rawBody).digest("hex")},{database,env:paid});
+    };
+    assert.equal((await signed("wamid.independentReply")).autoReconciled,1);
+    assert.equal((await signed("wamid.independentA",{type:"regular",billable:true,category:"service"})).autoReconciled,1);
+    assert.equal((await gate()).reservation_id,second.reservationId,"late receipts cannot clear a newer active dispatch");
+    assert.equal((await attempt(reply.reservationId)).state,"reconciled");
+    assert.equal((await attempt(first.reservationId)).state,"reconciled");
+    assert.equal((await outcome(second.reservationId)).state,"unknown");
+    assert.equal((await gate()).state,"idle");
+    assert.equal((await reserve(secondImage)).reserved,false,"unique per-message reservation still prohibits replay");
+    const abandonedMessage=await newMessage("Abandoned service dispatch");
+    const abandoned=await reserve(abandonedMessage);
+    assert.equal(abandoned.reserved,true);
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET updated_at=NOW()-INTERVAL '31 minutes' WHERE reservation_id=$1",[abandoned.reservationId]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET updated_at=NOW()-INTERVAL '31 minutes' WHERE reservation_id=$1",[abandoned.reservationId]);
+    const later=await reserve(await newMessage("Distinct new reply"));
+    assert.equal(later.reserved,true);
+    assert.equal((await attempt(abandoned.reservationId)).state,"unknown");
+    assert.equal((await outcome(abandoned.reservationId,"wamid.abandonedLate")).state,"awaiting_pricing");
+    assert.equal((await signed("wamid.abandonedLate")).autoReconciled,1);
+    assert.equal((await gate()).reservation_id,later.reservationId);
+    assert.equal((await outcome(later.reservationId)).state,"unknown");
+    const unmatched=await signed("wamid.unattributedService",{type:"regular",billable:true,category:"service"});
+    assert.equal(unmatched.unmatched,1);
+    assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms")).rows[0].n,0);
+    assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM whatsapp_sender_status_receipts WHERE matched=FALSE AND pricing_billable=TRUE")).rows[0].n,1);
+    await db.query("UPDATE contacts SET attention_reason='AI review requested: clinical' WHERE id=$1",[s.contact]);
+    assert.equal(await permitted(),false,"clinical attention is not a delivery warning");
+    await db.query("UPDATE contacts SET attention_reason='Delivery unconfirmed: original video' WHERE id=$1",[s.contact]);
+    await db.query("INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason) VALUES($1,'provider_billable')",[s.sender]);
+    assert.equal(await permitted(),false,"sender-wide safety alarm still blocks");
+    assert.equal((await reserve(await newMessage("new enquiry"))).code,"secondary_billing_sender_alarm");
+  });
+});
