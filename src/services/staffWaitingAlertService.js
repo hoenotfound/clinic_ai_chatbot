@@ -136,6 +136,39 @@ async function findNextStaffWaitingDueAt(
   return result.rows[0]?.due_at || null;
 }
 
+// One read for idle wakes: retain exactly the existing ownership, unanswered
+// episode and duplicate-alert predicates. If any alerts are sent, calculate
+// the next deadline again afterwards because the alert ledger has changed.
+async function findStaffWaitingAndNextDue(
+  { waitMinutes = STAFF_WAITING_MINUTES, limit = STAFF_WAITING_BATCH_SIZE } = {},
+  query = pool.query.bind(pool)
+) {
+  const result = await query(
+    `WITH eligible AS MATERIALIZED (
+       SELECT c.id AS contact_id,
+         latest_waiting.id AS waiting_since_message_id,
+         latest_waiting.created_at AS waiting_since,
+         latest_waiting.id AS latest_customer_message_id,
+         GREATEST(1,FLOOR(EXTRACT(EPOCH FROM (now()-latest_waiting.created_at))/60)::integer) AS waiting_minutes
+       ${staffWaitingCandidateJoins()}
+     ), ready AS (
+       SELECT * FROM eligible
+       WHERE waiting_since<=now()-($1::integer*interval '1 minute')
+       ORDER BY waiting_since ASC,contact_id ASC LIMIT $2
+     )
+     SELECT COALESCE((SELECT jsonb_agg(to_jsonb(ready) ORDER BY waiting_since,contact_id) FROM ready),'[]'::jsonb) AS candidates,
+       (SELECT MIN(waiting_since+($1::integer*interval '1 minute')) FROM eligible) AS due_at`,
+    [waitMinutes,limit]
+  );
+  const row = result.rows?.[0];
+  if (!row || !Array.isArray(row.candidates) ||
+      !Object.prototype.hasOwnProperty.call(row,"due_at") ||
+      (row.due_at!==null && !Number.isFinite(Date.parse(row.due_at)))) {
+    throw new Error("Invalid staff waiting deadline result");
+  }
+  return { candidates: row.candidates, nextDueAt: row.due_at };
+}
+
 async function isStillWaitingForStaff(
   contactId,
   waitingSinceMessageId,
@@ -285,6 +318,7 @@ const sendStaffWaitingAlert = createStaffWaitingAlertService();
 function createStaffWaitingAlertRunner({
   findWaiting = findWaitingStaffOwnedConversations,
   findNextDue = findNextStaffWaitingDueAt,
+  findWaitingAndNextDue = null,
   sendAlert = sendStaffWaitingAlert,
   env = process.env,
   scheduleRetry = null,
@@ -299,10 +333,9 @@ function createStaffWaitingAlertRunner({
     sweepRunning = true;
     let failedCount = 0;
     try {
-      const candidates = await findWaiting({
-        waitMinutes: STAFF_WAITING_MINUTES,
-        limit: STAFF_WAITING_BATCH_SIZE,
-      });
+      const options = { waitMinutes: STAFF_WAITING_MINUTES, limit: STAFF_WAITING_BATCH_SIZE };
+      const snapshot = findWaitingAndNextDue ? await findWaitingAndNextDue(options) : null;
+      const candidates = snapshot ? snapshot.candidates : await findWaiting(options);
       for (const candidate of candidates) {
         try {
           await sendAlert({
@@ -324,7 +357,9 @@ function createStaffWaitingAlertRunner({
       }
 
       const nextDueAt = failedCount === 0
-        ? await findNextDue({ waitMinutes: STAFF_WAITING_MINUTES })
+        ? (snapshot && candidates.length===0
+          ? snapshot.nextDueAt
+          : await findNextDue({ waitMinutes: STAFF_WAITING_MINUTES }))
         : null;
       return { candidateCount: candidates.length, failedCount, nextDueAt };
     } catch (err) {
@@ -351,6 +386,7 @@ function delayUntilNextStaffWaitingAlert(result) {
 }
 
 const runStaffWaitingAlerts = createStaffWaitingAlertRunner({
+  findWaitingAndNextDue: findStaffWaitingAndNextDue,
   scheduleRetry: wakeStaffWaitingAlerts,
 });
 
@@ -405,6 +441,7 @@ module.exports = {
   createStaffWaitingChangeSignal,
   delayUntilNextStaffWaitingAlert,
   findNextStaffWaitingDueAt,
+  findStaffWaitingAndNextDue,
   findWaitingStaffOwnedConversations,
   isStillWaitingForStaff,
   runStaffWaitingAlerts,

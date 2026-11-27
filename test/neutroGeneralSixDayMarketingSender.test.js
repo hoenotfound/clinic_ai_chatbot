@@ -57,7 +57,11 @@ function fake(slot,language,{validSignature=true,authorized=true,claim=true,acce
   calls.push({sql,args});
   if(sql===svc.CANDIDATES_SQL)return {rows:[]};
   if(sql===generic.CANDIDATES_SQL)return {rows:[candidate]};
-  if(sql===generic.RECHECK_SQL)return {rows:authorized?[candidate]:[]};
+  if(sql===generic.SCOPED_RECHECK_SQL){
+   assert.equal(args.length,10);
+   assert.equal(Number(args[9]),Number(candidate.contact_id));
+   return {rows:authorized?[candidate]:[]};
+  }
   if(sql.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts"))
     return {rows:claim?[{id:123}]:[]};
   return {rows:[],rowCount:1};
@@ -90,7 +94,7 @@ test("all 12 static general variants can use the billed one-shot sender with sco
   assert.equal(send.templateRequest.expectedSignature,f.expected.signature);
   assert.equal(save[8].whatsappTemplate.generalCampaign,true);
   assert.equal(save[8].whatsappTemplate.consentId,101);
-  assert.ok(f.calls.some(x=>x.sql===generic.RECHECK_SQL));
+  assert.ok(f.calls.some(x=>x.sql===generic.SCOPED_RECHECK_SQL));
   assert.ok(f.calls.some(x=>x.sql?.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts")));
  }
 });

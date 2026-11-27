@@ -12,6 +12,7 @@ const {
   createStaffWaitingAlertService,
   createStaffWaitingChangeSignal,
   findWaitingStaffOwnedConversations,
+  findStaffWaitingAndNextDue,
   isStillWaitingForStaff,
   staffWaitingEventKey,
 } = require("../src/services/staffWaitingAlertService");
@@ -417,4 +418,40 @@ test("staff waiting updates coalesce only same-turn events without losing future
   assert.equal(microtasks.length,1);
   microtasks.shift()();
   assert.equal(n,2);
+});
+
+test("combined staff waiting read preserves eligibility and returns the next deadline even when no alert is due", async () => {
+  const dueAt = new Date("2026-11-27T01:00:00Z");
+  const result = await findStaffWaitingAndNextDue({}, async (sql, params) => {
+    assert.deepEqual(params, [STAFF_WAITING_MINUTES, STAFF_WAITING_BATCH_SIZE]);
+    assert.match(sql, /WITH eligible AS MATERIALIZED/);
+    assert.match(sql, /c\.mode = 'human'/);
+    assert.match(sql, /c\.needs_attention = true/);
+    assert.match(sql, /a\.alert_type = 'staff_waiting'/);
+    assert.match(sql, /ORDER BY waiting_since ASC,contact_id ASC LIMIT \$2/);
+    return { rows: [{ candidates: [], due_at: dueAt }] };
+  });
+  assert.deepEqual(result, { candidates: [], nextDueAt: dueAt });
+  await assert.rejects(findStaffWaitingAndNextDue({}, async () => ({ rows: [] })), /Invalid staff waiting deadline/);
+});
+
+test("idle staff waiting wake uses one snapshot but a due alert refreshes the deadline", async () => {
+  const dueAt = new Date("2026-11-27T01:00:00Z");
+  let candidates = [], scans = 0, refreshes = 0, sends = 0;
+  const run = createStaffWaitingAlertRunner({
+    env: enabledEnv,
+    findWaitingAndNextDue: async () => { scans++; return { candidates, nextDueAt: dueAt }; },
+    findWaiting: async () => { throw new Error("unexpected legacy scan"); },
+    findNextDue: async () => { refreshes++; return null; },
+    sendAlert: async () => { sends++; }
+  });
+  assert.deepEqual(await run(), {candidateCount:0,failedCount:0,nextDueAt:dueAt});
+  assert.equal(scans,1);
+  assert.equal(refreshes,0);
+  assert.equal(sends,0);
+  candidates=[{contact_id:12,waiting_since_message_id:46,waiting_minutes:11}];
+  assert.deepEqual(await run(), {candidateCount:1,failedCount:0,nextDueAt:null});
+  assert.equal(scans,2);
+  assert.equal(refreshes,1);
+  assert.equal(sends,1);
 });

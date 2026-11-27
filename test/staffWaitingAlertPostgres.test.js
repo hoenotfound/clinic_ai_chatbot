@@ -4,6 +4,8 @@ const { Client } = require("pg");
 
 const {
   findWaitingStaffOwnedConversations,
+  findStaffWaitingAndNextDue,
+  findNextStaffWaitingDueAt,
 } = require("../src/services/staffWaitingAlertService");
 
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -77,6 +79,8 @@ test(
         client.query.bind(client)
       );
       assert.deepEqual(sameEpisode, []);
+      const idle=await findStaffWaitingAndNextDue({},client.query.bind(client));
+      assert.deepEqual(idle,{candidates:[],nextDueAt:null});
 
       await client.query(`
         INSERT INTO messages (
@@ -97,6 +101,58 @@ test(
       assert.equal(nextEpisode[0].contact_id, 12);
       assert.equal(nextEpisode[0].waiting_since_message_id, 48);
       assert.ok(Number(nextEpisode[0].waiting_minutes) >= 10);
+      // Add 2,000 unrelated chats, a genuinely waiting contact not yet due,
+      // and already-alerted historical staff episodes.
+      await client.query(`
+        INSERT INTO contacts(id,mode,needs_attention)
+        SELECT i,CASE WHEN i<1500 THEN 'ai' ELSE 'human' END,false
+        FROM generate_series(1000,2999) i;
+        INSERT INTO messages(id,contact_id,role,created_at)
+        SELECT 10000+i,i,'user',now()-interval '2 days'
+        FROM generate_series(1000,2999) i;
+        INSERT INTO telegram_immediate_alerts(id,contact_id,alert_type,status,created_at)
+        SELECT 20000+i,i,'staff_waiting','sent',now()-interval '1 day'
+        FROM generate_series(1500,2999) i;
+        INSERT INTO contacts(id,mode) VALUES(3001,'human');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES(13001,3001,'user',now()-interval '2 minutes');
+        CREATE INDEX ON messages(contact_id,created_at DESC,id DESC);
+        CREATE INDEX ON telegram_immediate_alerts(contact_id,alert_type,status,created_at);
+        ANALYZE contacts;
+        ANALYZE messages;
+        ANALYZE telegram_immediate_alerts;
+      `);
+      const options={waitMinutes:10,limit:10};
+      const query=client.query.bind(client);
+      const comparable=rows=>rows.map(row=>({...row,waiting_since:new Date(row.waiting_since).toISOString()}));
+      await client.query("BEGIN");
+      try{
+        const legacy=await findWaitingStaffOwnedConversations(options,query);
+        const due=await findNextStaffWaitingDueAt(options,query);
+        const combined=await findStaffWaitingAndNextDue(options,query);
+        assert.deepEqual(comparable(combined.candidates),comparable(legacy));
+        assert.equal(Date.parse(combined.nextDueAt),Date.parse(due));
+        assert.equal(legacy.length,1);
+        // Compare real PostgreSQL plans, not timing-based assertions.
+        const plans={};
+        for(const [label,fn] of [["oldCandidates",findWaitingStaffOwnedConversations],
+          ["oldDeadline",findNextStaffWaitingDueAt],["combined",findStaffWaitingAndNextDue]]){
+          await fn(options,async(sql,bindings)=>{
+            const result=await query("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql,bindings);
+            const plan=result.rows[0]["QUERY PLAN"][0];
+            plans[label]={ms:plan["Execution Time"],blocks:plan.Plan["Shared Hit Blocks"]+plan.Plan["Shared Read Blocks"]};
+            return query(sql,bindings);
+          });
+        }
+        console.log("staff waiting synthetic benchmark",JSON.stringify(plans));
+        // When nothing is due, the next future deadline still survives.
+        await client.query("INSERT INTO telegram_immediate_alerts(id,contact_id,alert_type,status,created_at) VALUES(81,12,'staff_waiting','sent',now())");
+        const future=await findStaffWaitingAndNextDue(options,query);
+        assert.deepEqual(future.candidates,[]);
+        assert.equal(Date.parse(future.nextDueAt),Date.parse(await findNextStaffWaitingDueAt(options,query)));
+        assert.ok(Date.parse(future.nextDueAt)>Date.now());
+      }finally{await client.query("ROLLBACK");}
+
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
