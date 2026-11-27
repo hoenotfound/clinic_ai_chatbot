@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
 // Neutro's follow-up queue, template billing or retry worker.
@@ -160,7 +161,7 @@ const PREVIOUS_STEP_SQL=`
           AND preceding_sent.contact_id=c.id
           AND preceding_sent.anchor_message_id=inbound.id
           AND preceding_sent.slot_hours=preceding.slot_hours
-          AND preceding_sent.status='accepted'
+          AND (preceding_sent.status='accepted' OR (${deliveryOnlySql()} AND preceding_sent.status='unknown' AND preceding_sent.completed_at IS NOT NULL))
         ORDER BY preceding_sent.completed_at DESC LIMIT 1),
        (SELECT earlier.completed_at
         FROM whatsapp_sender_followup_attempts earlier
@@ -784,6 +785,7 @@ const CANDIDATES_SQL=`
      WHERE previous.sender_id=sa.id AND previous.contact_id=c.id
        AND previous.anchor_message_id=inbound.id
        AND previous.status IN('unknown','blocked')
+       AND NOT (${deliveryOnlySql()} AND previous.status='unknown' AND previous.completed_at IS NOT NULL)
    )
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_attempts attempted
@@ -794,11 +796,11 @@ const CANDIDATES_SQL=`
    )
    -- Discovery only: do not generate a new draft while billing cannot settle.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
+   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
      WHERE preflight.sender_id=sa.id AND preflight.owner_contact_id=c.id
-       AND preflight.state IN ('reserved','awaiting_pricing'))
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
-     WHERE alarm.sender_id=sa.id)
+       AND preflight.state IN ('reserved','awaiting_pricing')))
+   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
+     WHERE alarm.sender_id=sa.id))
  ORDER BY inbound.created_at,c.id,rule.slot_hours
  LIMIT $5
 `;
@@ -914,6 +916,7 @@ const RECHECK_SQL=`
        AND prior_problem.anchor_message_id=inbound.id
        AND prior_problem.id<>attempt.id
        AND prior_problem.status IN('unknown','blocked')
+       AND NOT (${deliveryOnlySql()} AND prior_problem.status='unknown' AND prior_problem.completed_at IS NOT NULL)
    )
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
  ) AS allowed`;
