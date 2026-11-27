@@ -539,38 +539,33 @@ async function listRecentStaffImages(candidate,database=pool){
 // already displayed as staff attention, with no phone/token data returned.
 async function listUnresolvedSecondaryBillingHolds(database=pool){
   const result=await database.query(`
-    SELECT g.owner_contact_id AS contact_id,g.message_id,
+    SELECT DISTINCT ON (attempt.contact_id) attempt.contact_id,attempt.message_id,
       outbound.delivery_error AS verified_delivery_error,
       EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts signed
-        WHERE signed.sender_id=g.sender_id
-          AND signed.reservation_id=g.reservation_id
-          AND signed.matched=TRUE AND signed.delivery_status='failed')
-          AS signed_failed
-    FROM whatsapp_sender_billing_gates g
-    JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
+        WHERE signed.sender_id=attempt.sender_id
+          AND signed.reservation_id=attempt.reservation_id
+          AND signed.matched=TRUE AND signed.delivery_status='failed') AS signed_failed
+    FROM whatsapp_sender_billing_attempts attempt
+    JOIN whatsapp_sender_accounts sa ON sa.id=attempt.sender_id
       AND sa.sender_key='neutro_secondary' AND sa.state='active'
-    JOIN contacts c ON c.id=g.owner_contact_id
+    JOIN contacts c ON c.id=attempt.contact_id
       AND c.whatsapp_sender_id=sa.id AND c.channel='whatsapp'
-    JOIN messages outbound ON outbound.id=g.message_id
+    JOIN messages outbound ON outbound.id=attempt.message_id
       AND outbound.contact_id=c.id AND outbound.role='assistant'
-    JOIN whatsapp_sender_billing_attempts attempt
-      ON attempt.sender_id=g.sender_id
-      AND attempt.reservation_id=g.reservation_id
-      AND attempt.contact_id=c.id AND attempt.message_id=g.message_id
-      AND attempt.state='unknown'
-    WHERE g.state='unknown' AND g.contact_id=c.id
-      -- A hold that has not been acknowledged for THIS exact message still
-      -- deserves attention, even if an older delivery incident was flagged.
-      -- Do not overwrite unrelated clinical or booking staff tasks.
-      AND (
-        c.needs_attention IS DISTINCT FROM TRUE
-        OR (
-          (c.attention_reason LIKE 'Delivery failed:%'
-           OR c.attention_reason LIKE 'Delivery unconfirmed:%')
-          AND c.delivery_attention_message_id IS DISTINCT FROM g.message_id
-        )
-      )
-    ORDER BY g.updated_at ASC LIMIT 25`);
+    WHERE attempt.state='unknown'
+      AND (attempt.service_receipt_independent=TRUE OR EXISTS(
+        SELECT 1 FROM whatsapp_sender_billing_gates g
+        WHERE g.sender_id=attempt.sender_id AND g.owner_contact_id=attempt.contact_id
+          AND g.contact_id=attempt.contact_id AND g.message_id=attempt.message_id
+          AND g.reservation_id=attempt.reservation_id AND g.state='unknown'))
+      -- Do not cycle old detached warnings or overwrite active staff tasks.
+      AND (c.needs_attention IS DISTINCT FROM TRUE OR (
+        (c.attention_reason LIKE 'Delivery failed:%' OR c.attention_reason LIKE 'Delivery unconfirmed:%')
+        AND c.delivery_attention_message_id IS DISTINCT FROM attempt.message_id
+        AND NOT EXISTS(SELECT 1 FROM messages shown
+          WHERE shown.id=c.delivery_attention_message_id AND shown.contact_id=c.id
+            AND (shown.created_at,shown.id)>=(outbound.created_at,outbound.id))))
+    ORDER BY attempt.contact_id,outbound.created_at DESC,outbound.id DESC LIMIT 25`);
   return result.rows||[];
 }
 
