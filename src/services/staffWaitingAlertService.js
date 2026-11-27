@@ -420,15 +420,23 @@ const staffWaitingChangeSignal = createStaffWaitingChangeSignal(
 // deadline. Recalculate immediately while the database is already active.
 // Startup still performs one catch-up sweep for anything overdue after Render
 // Free wakes from a cold start.
-realtimeEvents.subscribe("conversation_changed", (payload) => {
-  if (
-    payload?.reason === "message" ||
-    payload?.reason === "message_updated" ||
-    (payload?.reason === "contact_state" &&
-     payload?.followUpStateUnchanged !== true)
-  ) {
-    staffWaitingChangeSignal();
+function staffWaitingEventRequiresWake(payload) {
+  // These markers are set by narrowly scoped persisted UPDATE operations.
+  // Staff waiting depends on ownership, author, delivery, timestamps and
+  // alert history, not read state, display name, message content or media.
+  // An unmarked message update may still change those fields: keep the wake.
+  if (payload?.reason === "contact_state") {
+    return payload.followUpStateUnchanged !== true &&
+      payload.inboxPresentationOnly !== true;
   }
+  if (payload?.reason === "message_updated") {
+    return payload.staffWaitingStateUnchanged !== true;
+  }
+  return payload?.reason === "message";
+}
+
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (staffWaitingEventRequiresWake(payload)) staffWaitingChangeSignal();
 });
 
 module.exports = {
@@ -446,6 +454,7 @@ module.exports = {
   isStillWaitingForStaff,
   runStaffWaitingAlerts,
   staffWaitingEventKey,
+  staffWaitingEventRequiresWake,
   startStaffWaitingAlerts,
   wakeStaffWaitingAlerts,
 };
