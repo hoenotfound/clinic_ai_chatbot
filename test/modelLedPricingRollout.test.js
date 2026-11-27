@@ -540,7 +540,7 @@ test("rapid guard leaves verified legacy pricing exceptions and Shadow observati
  const fs=require("node:fs"),path=require("node:path");
  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
  assert.match(source,/staleModelPricing = aiPricingEnabled && staleIntent && !legacyPricingApproval\.decision/u);
- assert.match(source,/const selectedPricingApproval = staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
+ assert.match(source,/const selectedPricingApproval = unresolvedAssessmentPrice\s*\? \{decision:null,reason:"assessment_or_treatment_fee_ambiguous"\}\s*:\s*staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
  assert.match(source,/if \(staleModelPricing\) \{[\s\S]*?priceQuery = false;\s*packageQuery = false;\s*modelPricingStage = null;/u);
 });
 
