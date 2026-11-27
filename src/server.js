@@ -3401,12 +3401,16 @@ async function processIncomingMessage(
           : mediaLanguage === "en"
             ? "Which package or treatment do you mean? I can check the correct price for you 😊"
             : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
-        // Preserve only the independently generated non-price answer, not
-        // the earlier unverified AI text or any commercial authorization.
-        if (verifiedPricingNonPriceGuidance && !reply.includes(verifiedPricingNonPriceGuidance))
-          reply += "\n\n"+verifiedPricingNonPriceGuidance;
         replyOverrideAudit.change(staffPriceConflict ? "conflictingStaffPriceFallback" : "rejectedModelPricingFallback",
           beforeRejectedPricing, reply);
+      }
+      // Preserve only independently generated non-price guidance even when
+      // another earlier guard removed it and this fallback was suppressed.
+      // Never reinsert the original model draft or grant media permission.
+      if (verifiedPricingNonPriceGuidance && !reply.includes(verifiedPricingNonPriceGuidance)) {
+        const beforeGuidance=reply;
+        reply += "\n\n"+verifiedPricingNonPriceGuidance;
+        replyOverrideAudit.change("restoreVerifiedNonPriceGuidance",beforeGuidance,reply);
       }
       // Rejected pricing never authorizes stale package or result media,
       // even when the model's safe noncommercial wording is preserved.
