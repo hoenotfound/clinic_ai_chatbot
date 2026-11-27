@@ -35,8 +35,8 @@ async function claim({contactId,messageId},{database=pool,env=process.env}={}){
   // Reuse the historical attempt table solely as a durable one-shot delivery
   // ledger. No billing authorization, per-contact gate or pricing settlement.
   await client.query(`INSERT INTO whatsapp_sender_billing_attempts
-    (reservation_id,sender_id,contact_id,message_id,recipient_address)
-    VALUES($1,$2,$3,$4,$5)`,[reservationId,row.sender_id,contactId,messageId,row.recipient_address]);
+    (reservation_id,sender_id,contact_id,message_id,recipient_address,delivery_only)
+    VALUES($1,$2,$3,$4,$5,TRUE)`,[reservationId,row.sender_id,contactId,messageId,row.recipient_address]);
   await client.query("COMMIT");tx=false;
   return {reserved:true,reservationId,recipientAddress:row.recipient_address,sendAuthorized:false};
  }catch{if(tx)await client.query("ROLLBACK").catch(()=>{});return deny("secondary_delivery_database_unavailable");}
@@ -52,7 +52,7 @@ const ALLOWED_DELIVERY_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id AND mc.conversation_id=sc.id
  WHERE sa.sender_key=$1 AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND a.reservation_id=$4::uuid AND a.contact_id=$5 AND a.message_id=$6
-   AND a.state='reserved' AND a.wamid IS NULL
+   AND a.delivery_only=TRUE AND a.state='reserved' AND a.wamid IS NULL
    AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
    AND a.recipient_address=COALESCE(c.whatsapp_last_customer_address,c.whatsapp_number)`;
 async function record({reservationId,acceptedWamid=null,definitivelyRejected=false},{database=pool,env=process.env}={}){
@@ -67,12 +67,12 @@ async function record({reservationId,acceptedWamid=null,definitivelyRejected=fal
   const owner=await client.query(`SELECT a.sender_id,a.contact_id,a.message_id,a.state,a.wamid FROM whatsapp_sender_billing_attempts a
     JOIN contacts c ON c.id=a.contact_id AND c.whatsapp_sender_id=a.sender_id
     JOIN messages m ON m.id=a.message_id AND m.contact_id=c.id AND m.role='assistant'
-    WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
+    WHERE a.reservation_id=$1::uuid AND a.sender_id=$2 AND a.delivery_only=TRUE
       AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates g WHERE g.reservation_id=a.reservation_id)
     FOR UPDATE OF a`,[reservationId,sender.rows[0].id]);
   const a=owner.rows?.[0];
   if(!a||a.state!=="reserved"){await client.query("ROLLBACK");tx=false;return deny("secondary_delivery_claim_not_found");}
-  const state=acceptedWamid?"reconciled":definitivelyRejected?"rejected":"unknown";
+  const state=acceptedWamid?"accepted":definitivelyRejected?"rejected":"unknown";
   const updated=await client.query("UPDATE whatsapp_sender_billing_attempts SET state=$2,wamid=$3,updated_at=NOW() WHERE reservation_id=$1::uuid AND state='reserved'",[reservationId,state,acceptedWamid]);
   if(updated.rowCount!==1)throw Error("Delivery claim changed");
   if(acceptedWamid)await applyStagedSecondaryReceipts({client,senderId:a.sender_id,contactId:a.contact_id,messageId:a.message_id,reservationId,acceptedWamid,env,deliveryOnly:true});
