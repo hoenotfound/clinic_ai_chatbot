@@ -127,12 +127,13 @@ function selectVerifiedRoutineReply({config,answer,draft,language}={}){
   if(answer.kind==="verified_hours")return verifyBusinessHoursDraft(draft,answer,{allowNeutralCourtesy:true})?draft:fallback;
   // Do not approve additional unverified facts. A model can use different
   // greeting/courtesy around the same verified factual or recovery text.
-  const norm=v=>String(v||"").normalize("NFKC").replace(/[\p{P}\p{S}\s]/gu," ").replace(/\s+/gu," ").trim().toLowerCase();
+  const norm=v=>String(v||"").normalize("NFKC").replace(/[😊☺️🙂💕]/gu,"").replace(/\s+/gu," ").trim().toLowerCase();
   const expected=norm(fallback), value=norm(draft);
   if(expected && value===expected)return draft;
   const index=value.indexOf(expected);
   if(!expected || index<0 || value.indexOf(expected,index+expected.length)>=0)return fallback;
-  const before=value.slice(0,index).trim(),after=value.slice(index+expected.length).trim();
+  const clean=v=>v.replace(/[\p{P}\p{S}]+/gu," ").replace(/\s+/gu," ").trim();
+  const before=clean(value.slice(0,index)),after=clean(value.slice(index+expected.length));
   const lang=String(language||"zh").slice(0,2);
   const prefixes={zh:["","您好","你好","亲爱的","好的","是的"],en:["","hi","hello","of course","sure","yes"],ms:["","hai","helo","baik","boleh","ya"]};
   const suffixes={zh:["","哦","呀","谢谢","谢谢您"],en:["","thanks","thank you"],ms:["","ya","terima kasih"]};
