@@ -275,6 +275,7 @@ function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {},
 }
 
 const { configuredVerifiedScope } = require("../utils/verifiedWhatsAppEventScope");
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
@@ -312,6 +313,7 @@ async function recordSignedSecondaryStatusBatch({
   rawBody, signatureHeader, subsetFromVerifiedWebhook = false,
 }, { database = pool, env = process.env, onFailureAttention = null,
      onFailedVideoCacheInvalidation = null } = {}) {
+  const direct=deliveryOnlyEnabled(env);
   if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
@@ -358,7 +360,7 @@ async function recordSignedSecondaryStatusBatch({
     const senderId = sender.rows[0].id;
     // Share the same sender gate row lock as reservation/reconciliation.
     // This prevents a callback racing the release of an earlier reservation.
-    await client.query(
+    if(!direct)await client.query(
       "SELECT sender_id FROM whatsapp_sender_billing_gates " +
       "WHERE sender_id=$1 FOR UPDATE", [senderId]
     );
@@ -390,7 +392,7 @@ async function recordSignedSecondaryStatusBatch({
       quarantined++;
       // Unexpected Meta billability must stay in human review, regardless
       // of whether the delivery state is known. Alarm only once per audit.
-      if (audit.pricingBillable === true) {
+      if (!direct && audit.pricingBillable === true) {
         await client.query(
           `INSERT INTO whatsapp_sender_billing_alarms
              (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -465,7 +467,7 @@ async function recordSignedSecondaryStatusBatch({
         // with another customer's reservation.
         // Unmatched billing has NO verified reservation/approval at all;
         // it must always alarm, even when operator-approved service sends exist.
-        if (event.pricingBillable === true) {
+        if (!direct && event.pricingBillable === true) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
               (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -550,6 +552,7 @@ async function recordSignedSecondaryStatusBatch({
           );
         }
       }
+      if(direct)continue; // signed delivery evidence is saved above; no billing logic
       const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
@@ -741,7 +744,7 @@ async function recordSignedSecondaryStatusBatch({
       for (const failed of failedAlerts) {
         const code = Number.isInteger(failed.errorCode) && failed.errorCode>0
           ? " Meta code "+failed.errorCode+"." : "";
-        const reason = "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold."+
+        const reason = (direct?"Delivery failed: Signed Meta delivery failure. Do not automatically resend this message.":"Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold.")+
           code+" Staff must reconcile the exact send; do not retry.";
         try {
           await attentionHandler({...failed,reason});
