@@ -6,6 +6,7 @@ const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { createCoalescedImmediateWake } = require("../utils/followUpWakePolicy");
+const { recordPresentationWakeSkip } = require("../utils/refreshWakeDiagnostics");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const {
   formatContactIdentifier,
@@ -437,6 +438,7 @@ function staffWaitingEventRequiresWake(payload) {
 
 realtimeEvents.subscribe("conversation_changed", (payload) => {
   if (staffWaitingEventRequiresWake(payload)) staffWaitingChangeSignal();
+  else recordPresentationWakeSkip("staff_waiting", payload);
 });
 
 module.exports = {
