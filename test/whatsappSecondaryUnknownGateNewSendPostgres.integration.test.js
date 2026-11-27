@@ -575,7 +575,7 @@ test("delivery-only mode ignores historic billing holds and alarms while retaini
    await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,attention_reason='Delivery unconfirmed: old video',delivery_attention_message_id=$2 WHERE id=$1",[s.contact,s.messages[0]]);
    const warning=await db.query("SELECT "+deliveryOnlyAttentionSql("c",direct)+" AS ok FROM contacts c WHERE id=$1",[s.contact]);
    assert.equal(warning.rows[0].ok,true);
-   await db.query("INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason) VALUES($1,'provider_billable')",[s.sender]);
+   await db.query("INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason,latest_wamid_hash) VALUES($1,'provider_billable',repeat('a',64))",[s.sender]);
    const reserve=messageId=>delivery.claim({contactId:s.contact,messageId},{database,env:direct});
    assert.equal((await reserve(s.messages[0])).reserved,false);
    const claims=await Promise.all([reserve(s.messages[1]),reserve(s.messages[1])]);
