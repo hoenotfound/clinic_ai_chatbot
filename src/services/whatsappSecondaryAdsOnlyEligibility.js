@@ -276,10 +276,10 @@ function verified131060InformationReviewSql(alias = "c") {
 // Unlike the text reply rule below, secondary media and follow-ups must NEVER
 // gain the Booking ready exception. This narrow path preserves all downstream
 // appointment, opt-in, window, staff and billing checks.
-function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null, {outboundMessageSql=null,env=process.env}={}) {
+function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null, {outboundMessageSql=null,env=process.env,allowMediaQueueWait=false}={}) {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias,env,anchorSql,{outboundMessageSql})})`;
+    OR ${reviewedDeliveryAttentionSql(alias,env,anchorSql,{outboundMessageSql,allowMediaQueueWait})})`;
 }
 // A prior outbound AI text can be rejected BEFORE any Meta call because the
 // preceding accepted send is still awaiting a signed billing receipt. Once
@@ -581,7 +581,7 @@ function secondaryAutomationEligibleSql(
 }
 
 async function isSecondaryAutomationEligible(contactId, {
-  database = pool, env = process.env, inboundMessageId, outboundMessageId=null,
+  database = pool, env = process.env, inboundMessageId, outboundMessageId=null, allowMediaQueueWait=false,
 } = {}) {
   const cutoff = secondaryAutomationActivation(env);
   const cid = Number(contactId);
@@ -598,7 +598,7 @@ async function isSecondaryAutomationEligible(contactId, {
       `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
-        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:outbound!=null?"$6":null,env})}
+        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:outbound!=null?"$6":null,env,allowMediaQueueWait:allowMediaQueueWait===true})}
           AND c.whatsapp_opt_out_at IS NULL`,
       [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
         originalAdsOnlyCutoff(env),...(outbound!=null?[outbound]:[])]
