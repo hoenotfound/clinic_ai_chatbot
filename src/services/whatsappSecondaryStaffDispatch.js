@@ -237,7 +237,10 @@ async function sendSecondaryStaffText({
       ? await replyAudienceEligible(cid,{
           database,env,
           ...(origin==="ai_reply" && anchorMessageId != null
-            ? {inboundMessageId:anchorMessageId,allowReviewContinuation:true,outboundMessageId:mid} : {}),
+            ? {inboundMessageId:anchorMessageId,
+                allowReviewContinuation:contact.needs_attention===true &&
+                  String(contact.attention_reason||"").startsWith("AI review requested:"),
+                allowAutomaticFreshReply:true,outboundMessageId:mid} : {}),
         })
       : allContactAutomation
         ? await automationAudienceEligible(cid,{
