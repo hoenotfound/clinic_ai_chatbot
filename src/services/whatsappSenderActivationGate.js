@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 // These switches may NOT be enabled piecemeal. The existing single-number
 // deployment remains unchanged when sender-scoped ingress is disabled.
@@ -60,7 +61,7 @@ function secondaryAdsOnlyFullAiMode(env = process.env) {
     audienceValid && timestampValid(cutoff) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") &&
     // Manual IMAGE/VIDEO templates are independent of AI treatment media.
     // Permit them in full-AI mode only when the existing sender-specific staff
     // template lane and billable marketing protections are all enabled. This
@@ -69,19 +70,20 @@ function secondaryAdsOnlyFullAiMode(env = process.env) {
       (env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
        env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
        env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
-       env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
-       env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
-       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true")) &&
+       (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true") &&
+       (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true") &&
+       (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true"))) &&
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true";
 }
 
+function followupsForDeliveryMode(env){return env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true";}
 function assertSecondaryOperationalSafety(env = process.env) {
   assertExpectedSecondaryTarget(env);
   assertSecondaryLifecyclePin(env);
   const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
-  const autoReconcile = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
-  const billedReview = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
+  const autoReconcile = deliveryOnlyEnabled(env)?followupsForDeliveryMode(env):(deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
+  const billedReview = !deliveryOnlyEnabled(env) && env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
   const staff = env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true";
   const media = env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED === "true";
   const template = env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true";
@@ -108,8 +110,8 @@ function assertSecondaryOperationalSafety(env = process.env) {
       env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" || billedReview) &&
       (!followups || env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED !== "true" ||
        env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
-       env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED !== "true" ||
-       !billedReview)) {
+       (!deliveryOnlyEnabled(env)&&env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED !== "true") ||
+       (!deliveryOnlyEnabled(env) && !billedReview))) {
     throw new Error("Unsafe WhatsApp secondary ads-only marketing activation: complete the signed template and billing protections.");
   }
   // Phase A must not silently become staff sending, media or follow-ups.
@@ -140,7 +142,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   // any secondary outbound class without explicitly accepting possible charges.
   const sendingEnabled = staff || media || template || templateMedia || ai || aiMedia || followups;
   if (sendingEnabled &&
-      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
+      (!deliveryOnlyEnabled(env)&&env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true")) {
     throw new Error("Unsafe WhatsApp secondary operational activation: possible Meta service-message charges require explicit sender-specific acknowledgment.");
   }
   if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !aiMedia && !followups) return;
@@ -158,9 +160,9 @@ function assertSecondaryOperationalSafety(env = process.env) {
     "WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED",
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
   ];
-  if ((aiMedia && (!ai || !autoReconcile || !receiptIngress ||
+  if ((aiMedia && (!ai || (!deliveryOnlyEnabled(env) && !autoReconcile) || !receiptIngress ||
                    env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED !== "true")) ||
-      (followups && (!ai || !autoReconcile || !receiptIngress)) ||
+      (followups && (!ai || (!deliveryOnlyEnabled(env) && !autoReconcile) || !receiptIngress)) ||
       (media && !staff) || (template && !staff && !fullAi) ||
       (templateMedia && !template) ||
       (billedReview && (!template || !receiptIngress)) ||
