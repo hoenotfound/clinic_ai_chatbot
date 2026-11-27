@@ -21,6 +21,8 @@ function independentServiceDeliveryAttentionSql(alias="c",env=process.env){
  return `(
    ${alias}.mode='ai' AND ${alias}.needs_attention=TRUE
    AND ${alias}.takeover_by IS NULL AND ${alias}.whatsapp_opt_out_at IS NULL
+   AND EXISTS(SELECT 1 FROM whatsapp_sender_accounts sa
+     WHERE sa.id=${alias}.whatsapp_sender_id AND sa.sender_key='neutro_secondary' AND sa.state='active')
    AND (${alias}.attention_reason LIKE 'Delivery failed:%'
         OR ${alias}.attention_reason LIKE 'Delivery unconfirmed:%')
    AND NOT EXISTS(SELECT 1 FROM ai_review_items pending
