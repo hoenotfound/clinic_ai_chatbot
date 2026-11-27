@@ -269,16 +269,12 @@ async function sendTrackedText(
   // Only a fresh, verified inbound AI text reply may continue while a
   // specific non-urgent AI review is pending. Marketing and fallback messages
   // never inherit this narrow exception.
-  // Every direct AI reply needs its actual inbound anchor, including a
-  // distinct new enquiry after an uncertain secondary follow-up. Eligibility
-  // still decides whether any review exception is appropriate.
-  const directReplyAnchor = origin === "ai_reply" &&
+  const reviewContinuationAnchor = origin === "ai_reply" &&
+    contact.needs_attention === true &&
+    String(contact.attention_reason || "").startsWith("AI review requested:") &&
     Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
     Number(reviewReplyToInboundMessageId) > 0
       ? Number(reviewReplyToInboundMessageId) : null;
-  const reviewContinuationAnchor = contact.needs_attention === true &&
-    String(contact.attention_reason || "").startsWith("AI review requested:")
-      ? directReplyAnchor : null;
   // Only the signed Meta 131060 recovery path may bypass an old contact's
   // ordinary AI audience, and only to send the one fixed treatment menu.
   const recoveryAnchor=origin==="system_fallback" &&
@@ -293,10 +289,9 @@ async function sendTrackedText(
         contactId:contact.id,inboundMessageId:recoveryAnchor,
       });
     const audienceEligible = recoveredMenuAllowed || await isSecondaryAiReplyEligible(contact.id,
-      directReplyAnchor == null ? undefined : {
-        inboundMessageId: directReplyAnchor,
-        allowReviewContinuation: reviewContinuationAnchor != null,
-        allowAutomaticFreshReply: true,
+      reviewContinuationAnchor == null ? undefined : {
+        inboundMessageId: reviewContinuationAnchor,
+        allowReviewContinuation: true,
       }) ||
       (origin === "ai_reply" &&
        await isSecondarySupervisedAiTextTestEligible(contact.id));
@@ -380,7 +375,7 @@ async function sendTrackedText(
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
           contact: verifiedContact, messageId: saved.id, text, origin,
-          interactiveButtons, anchorMessageId: directReplyAnchor || recoveryAnchor,
+          interactiveButtons, anchorMessageId: reviewContinuationAnchor || recoveryAnchor,
           preSendCheck: guarded ? async () =>
             canSend() === true &&
             (typeof latePreSendCheck !== "function" ||
@@ -771,8 +766,6 @@ async function processIncomingMessage(
           // staff. The same permission never applies to unsupported/media
           // messages, history replay, follow-ups or marketing automation.
           allowReviewContinuation: !mediaType && !unsupportedType &&
-            typeof incoming.text === "string" && incoming.text.trim().length > 0,
-          allowAutomaticFreshReply: !mediaType && !unsupportedType &&
             typeof incoming.text === "string" && incoming.text.trim().length > 0,
         }) ||
         (!mediaType && !unsupportedType &&
