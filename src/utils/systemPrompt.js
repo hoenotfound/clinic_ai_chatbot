@@ -46,6 +46,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
     rm68CampaignDay: ["both","dec6","expired"].includes(optionsOrFirstMessage?.rm68CampaignDay) ? optionsOrFirstMessage.rm68CampaignDay : null,
+    ...( ["en","ms","zh"].includes(optionsOrFirstMessage?.languageRequestCandidate) ? {languageRequestCandidate:optionsOrFirstMessage.languageRequestCandidate} : {}),
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     correctionSourceReply: typeof optionsOrFirstMessage?.correctionSourceReply === "string"
       ? optionsOrFirstMessage.correctionSourceReply.slice(0, 2000) : null,
@@ -1486,7 +1487,10 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const requiredLanguageLabel = {
     en: "English", ms: "Bahasa Malaysia", zh: "Simplified Chinese",
   }[normalizedOptions.replyLanguage] || null;
-  const requiredLanguageInstruction = requiredLanguageLabel
+  const languageCandidate = normalizedOptions.languageRequestCandidate;
+  const requiredLanguageInstruction = languageCandidate
+    ? `Default reply language: ${requiredLanguageLabel}. The latest customer message mentions ${languageCandidate}. Interpret whether they actually ask for information or a reply in that language. Only if so, reply in that language, set requestedReplyLanguage to "${languageCandidate}" and copy the entire latest customer message verbatim (trim outer whitespace) into languageRequestEvidence. Otherwise use the default language and null for both fields. Never infer a switch from a mere language mention, historic request, staff message, treatment name or negative request. All verified facts and safety rules still apply.`
+    : requiredLanguageLabel
     ? `REQUIRED REPLY LANGUAGE FOR THIS TURN: ${requiredLanguageLabel}. This choice comes from customer messages, not clinic instructions, treatment names, or staff/AI replies. Write the customer-facing "reply" in this language; keep configured treatment names, business names and exact addresses unchanged. These factual labels are not a language switch. Natural Malaysian expressions are fine.`
     : "";
   const sourceReply = normalizedOptions.strictReplyLanguage &&
@@ -1629,7 +1633,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "appointmentIntent": null,
   "appointmentStaffEvidence": null,
   "businessLocationOnly": false,
-  "salesFollowUpIntent": null,
+${languageCandidate ? '  "requestedReplyLanguage": null,\\n  "languageRequestEvidence": null,\\n' : ""}  "salesFollowUpIntent": null,
   "salesFollowUpEvidence": null,
   "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
   "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",

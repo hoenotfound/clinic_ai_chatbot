@@ -111,6 +111,8 @@ const {
   detectConversationLanguage,
   detectReplyConversationLanguage,
   detectExplicitLanguagePreference,
+  languageRequestCandidate,
+  verifiedModelLanguageRequest,
   isGreetingOrLanguageOnly,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
@@ -1361,7 +1363,7 @@ async function processIncomingMessage(
         console.warn("[Reply language] preference persistence unavailable contact=" + contact.id, error?.code || "unknown");
       }
     }
-    const mediaLanguage = explicitReplyLanguage || detectReplyConversationLanguage(
+    let mediaLanguage = explicitReplyLanguage || detectReplyConversationLanguage(
       readableRecoveryHistory
         .slice()
         .reverse()
@@ -1581,6 +1583,10 @@ async function processIncomingMessage(
           channel,
           metaAdContext,
           replyLanguage: mediaLanguage,
+          // Let the existing model call interpret ambiguous language mentions
+          // only in continuing chats, where no first-intro locale is at stake.
+          languageRequestCandidate: !isFirstMessage && !explicitReplyLanguage
+            ? languageRequestCandidate(text) : null,
           rm68CampaignDay: clinicConfig.businessType === "tcm_clinic" &&
             /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
             hasCampaignConversation(commercialHistory) && stillDiscussingCampaign(commercialHistory,text) &&
@@ -1588,6 +1594,18 @@ async function processIncomingMessage(
         };
         const rawAiReply = await ai.getReply(modelReplyHistory, replyOptions);
         const parsedReply = parseAiReplyResult(rawAiReply);
+        const modelLanguage = verifiedModelLanguageRequest(text,replyOptions.languageRequestCandidate,parsedReply.details);
+        if (modelLanguage) {
+          mediaLanguage=modelLanguage;
+          replyOptions.replyLanguage=modelLanguage;
+          try {
+            await contactsRepo.saveReplyLanguagePreference(contact.id,savedInbound.id,modelLanguage);
+          } catch (error) {
+            console.warn("[Reply language] model preference persistence unavailable contact="+contact.id,error?.code||"unknown");
+          }
+        }
+        // Correction retries must follow the resolved language, not re-decide it.
+        replyOptions.languageRequestCandidate=null;
         originalModelReply = parsedReply.text; // Before language, pricing, location or other rewrites.
         const salesState = salesFollowUpIntent({config:clinicConfig,parsed:parsedReply,customerText:text,keywordReason,urgentSafety,marketingStopQuestion});
         if(salesState){
@@ -3642,7 +3660,7 @@ async function processIncomingMessage(
     // send the fixed welcome text first, then use the sender-specific durable
     // WhatsApp image queue. Do not reuse the generic RM388 promo selector or
     // bypass billing/receipt, ownership, opt-out, or staff takeover checks.
-    if (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
+    if (!reviewContinuationTextOnly && fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {
       const graphic = configuredFirstReplyImage({
         config: clinicConfig,
         businessName: clinicConfig.businessName,

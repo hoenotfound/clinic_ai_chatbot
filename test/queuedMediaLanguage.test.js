@@ -86,3 +86,9 @@ test("final check fails closed when approved caption or image is revoked",async(
     selectedMedia:selected,getConfig:()=>revoked,
   }),false);
 });
+
+test("both queues honor saved language after more than eight newer turns",async()=>{
+ const db={query:async()=>({rows:[{content:"ok",reply_language_preference:"en",reply_language_message_id:99}]})};
+ assert.equal(await latestQueuedLanguagePreference(db,12,13),"en");
+ assert.equal(await latestQueuedLanguagePreference(db,12,100),null);
+});

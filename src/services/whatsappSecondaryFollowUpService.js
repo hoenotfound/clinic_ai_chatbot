@@ -1023,6 +1023,7 @@ async function runOnce({
           slot,originalText:candidate.message_text,
           customerTexts:commercialCustomerTexts,
           languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
+          languagePreference:replyLanguage,
           treatmentInterest:followupTreatment,
           selectedTreatment:followupTreatment,
           clinicConfig,

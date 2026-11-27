@@ -540,7 +540,7 @@ function campaignFollowUp({ candidate, now = Date.now() } = {}) {
   if(recent.some((value,i)=>alternativeDateRequest(value,historicalTime({created_at:times[i]}))) ||
      /(?:applicable charges|regular-care price|requested date|clinic will need to confirm whether|caj yang berkenaan|tarikh yang anda minta|当天的收费|當天的收費|收费需要先请门店确认|其他日期是否可以安排)/iu.test(String(candidate.trigger_message_content||"")))
     return {expired:false,stop:true,message:null};
-  const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh"));
+  const locale=localeFor([], null, detectConversationLanguage(candidate.recent_inbound_messages || [], "zh",candidate.reply_language_preference));
   const {valid,campaign}=rm68CampaignSettings();
   if(!valid)return {expired:true,message:null};
   return {expired:false,message:campaign.followUp[day][locale]};

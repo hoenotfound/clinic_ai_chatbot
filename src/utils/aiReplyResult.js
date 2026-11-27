@@ -351,6 +351,10 @@ function parseStructuredReply(raw) {
     }
   }
   if (typeof parsed.businessLocationOnly === "boolean") details.businessLocationOnly = parsed.businessLocationOnly;
+  if (["en","ms","zh"].includes(parsed.requestedReplyLanguage) && typeof parsed.languageRequestEvidence==="string" && parsed.languageRequestEvidence.length<=300) {
+    details.requestedReplyLanguage=parsed.requestedReplyLanguage;
+    details.languageRequestEvidence=parsed.languageRequestEvidence.trim();
+  }
   if (["declined","deferred","reopened"].includes(parsed.salesFollowUpIntent) &&
       typeof parsed.salesFollowUpEvidence==="string" && parsed.salesFollowUpEvidence.trim().length<=500) {
     details.salesFollowUpIntent=parsed.salesFollowUpIntent;

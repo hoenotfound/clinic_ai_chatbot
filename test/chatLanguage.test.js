@@ -200,3 +200,14 @@ test("saved preference survives the history limit and newer explicit requests wi
   assert.equal(detectConversationLanguage(old,"zh","ms"),"ms");
   assert.equal(detectConversationLanguage(["中文资料",...old],"en","ms"),"zh");
 });
+
+test("ambiguous language mentions require the existing model's exact current evidence",()=>{
+  const {languageRequestCandidate,verifiedModelLanguageRequest}=require("../src/utils/chatLanguage");
+  const text="Any chance you have that in English for my mum?";
+  assert.equal(languageRequestCandidate(text),"en");
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"en",languageRequestEvidence:text}),"en");
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"ms",languageRequestEvidence:text}),null);
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"en",languageRequestEvidence:"older English request"}),null);
+  assert.equal(languageRequestCandidate("English or Chinese?"),null);
+  assert.equal(languageRequestCandidate("English Info pls"),null);
+});

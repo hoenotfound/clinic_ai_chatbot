@@ -137,6 +137,23 @@ function detectExplicitLanguagePreference(input) {
   return null;
 }
 
+// A language mention is evidence for asking the model to interpret intent,
+// NOT a language switch by itself. Only one unambiguous target is eligible.
+function languageRequestCandidate(input) {
+  const text=String(input||"").normalize("NFKC").trim();
+  if(!text || text.length>300 || detectExplicitLanguagePreference(text)) return null;
+  const candidates=[
+    ["en",/\benglish\b|英文|英语|英語/iu],
+    ["ms",/\b(?:malay|bahasa(?: malaysia| melayu)?|bm)\b|马来文|馬來文|马来语|馬來語/iu],
+    ["zh",/\b(?:chinese|mandarin)\b|中文|华语|華語|普通话|普通話/iu],
+  ].filter(([,pattern])=>pattern.test(text));
+  return candidates.length===1?candidates[0][0]:null;
+}
+function verifiedModelLanguageRequest(text, candidate, details) {
+  if(!candidate || candidate!==languageRequestCandidate(text))return null;
+  return details?.requestedReplyLanguage===candidate &&
+    details?.languageRequestEvidence===String(text||"").trim()?candidate:null;
+}
 function isGreetingOrLanguageOnly(input) {
   const text = String(input || "").trim();
   if (!text) return false;
@@ -245,6 +262,8 @@ function detectReplyConversationLanguage(recentMessages, fallback = "en", savedP
 }
 
 module.exports = {
+  languageRequestCandidate,
+  verifiedModelLanguageRequest,
   detectMessageLanguage,
   detectConversationLanguage,
   detectReplyConversationLanguage,

@@ -62,13 +62,13 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  return services.find(service=>normalize(service)===normalize(treatmentInterest))||null;
 }
 function localizedFollowUpText({
- slot,originalText,customerTexts,languageEvidenceTexts,treatmentInterest,clinicConfig,
+ slot,originalText,customerTexts,languageEvidenceTexts,treatmentInterest,clinicConfig,languagePreference=null,
  forceGeneral=false,selectedTreatment=undefined,
 }={}){
  const config=clinicConfig?.automatedFollowUp;
  if(config && [2,6,20].includes(Number(slot))){
    const lang=detectConversationLanguage(
-     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null) ||
+     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null,languagePreference) ||
      detectConversationLanguage(
        Array.isArray(languageEvidenceTexts)?languageEvidenceTexts.filter(x=>typeof x==="string"):[],null);
    if(!lang)return null;
@@ -88,7 +88,7 @@ function localizedFollowUpText({
  if(![2,6].includes(Number(slot)))return originalText;
  const language=detectConversationLanguage(
    Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],
-   null
+   null,languagePreference
  );
  if(language==="zh")return String(originalText||"").trim()||null;
  return translated[Number(slot)]?.[language]||null;
