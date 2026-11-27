@@ -45,7 +45,10 @@ test("only reaction and proven profile-only events are ignored by the follow-up 
   assert.equal(followUpChangeRequiresWake({
     reason: "contact_state", followUpStateUnchanged: true,
   }), false);
+  assert.equal(followUpChangeRequiresWake({reason:"contact_state",inboxPresentationOnly:true}),false);
   for (const payload of [
+    {reason:"contact_state",inboxPresentationOnly:"true"},
+    {reason:"message",inboxPresentationOnly:true},
     {}, null, undefined,
     { reason: "message", contactId: 7 },
     { reason: "contact_state", contactId: 7 },
