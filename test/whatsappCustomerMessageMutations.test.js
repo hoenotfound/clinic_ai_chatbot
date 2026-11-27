@@ -437,5 +437,7 @@ test("existing customer cleanup worker also drains due revoked-media jobs",()=>{
   const service=fs.readFileSync(require.resolve("../src/services/customerDataLifecycleService"),"utf8");
   assert.match(service,/revokedMediaCleanup\.runPending/);
   assert.match(service,/revokedMediaCleanup\.getNextDueAt/);
-  assert.match(service,/mediaCleanupDelay\(dueAt\)/);
+  // The scheduler must pass the real next deadline, together with its clock
+  // and configuration, so only empty-queue maintenance can be aligned.
+  assert.match(service,/delayForResult:\s*\(dueAt\)\s*=>\s*mediaCleanupDelay\(dueAt,\s*now\(\),\s*env\)/);
 });
