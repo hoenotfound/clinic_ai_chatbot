@@ -195,6 +195,8 @@ test(
           true
         );
       `);
+    // Exercise the actual additive production migration in this isolated schema.
+    await client.query(require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/db/migrations/140_customer_reply_language_preference.sql"),"utf8"));
     // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
     // Real production schema already defines both tables.
     await client.query(`

@@ -8,20 +8,29 @@ const { configuredFirstReplyImage } = require("./neutroBreastRm68Campaign");
 // An old Chinese ad prefill must never overrule a newer explicit English request.
 async function latestQueuedLanguagePreference(database, contactId, inboundMessageId) {
   const response = await database.query(
-    `SELECT newer.content
-       FROM messages newer
-       JOIN messages inbound ON inbound.id=$2 AND inbound.contact_id=$1
-      WHERE newer.contact_id=$1 AND newer.role='user'
-        AND newer.media_url IS NULL AND newer.media_mime_type IS NULL
-        AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
-      ORDER BY newer.created_at DESC,newer.id DESC LIMIT 8`,
+    `SELECT newer.content, newer.id AS newer_message_id, c.reply_language_preference, c.reply_language_message_id
+       FROM messages inbound
+       JOIN contacts c ON c.id=inbound.contact_id
+       LEFT JOIN LATERAL (
+         SELECT newer.content,newer.created_at,newer.id FROM messages newer
+         WHERE newer.contact_id=$1 AND newer.role='user'
+           AND newer.whatsapp_customer_mutation IS NULL
+           AND newer.media_url IS NULL AND newer.media_mime_type IS NULL
+           AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+         ORDER BY newer.created_at DESC,newer.id DESC LIMIT 8
+       ) newer ON TRUE
+       WHERE inbound.id=$2 AND inbound.contact_id=$1
+       ORDER BY newer.created_at DESC,newer.id DESC`,
     [contactId, inboundMessageId]
   );
+  const saved=response.rows?.[0];
+  const savedId=Number(saved?.reply_language_message_id || 0);
+  const savedLanguage=savedId>Number(inboundMessageId) && ["en","ms","zh"].includes(saved?.reply_language_preference) ? saved.reply_language_preference : null;
   for (const row of response.rows || []) {
     const language = detectExplicitLanguagePreference(row.content);
-    if (language) return language;
+    if (language && (!savedLanguage || Number(row.newer_message_id)>savedId)) return language;
   }
-  return null;
+  return savedLanguage;
 }
 
 function containsUrl(item, url) {

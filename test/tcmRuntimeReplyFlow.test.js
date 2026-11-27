@@ -13,8 +13,8 @@ const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
   require("../src/utils/neutroReviewContinuation");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
-const { correctReplyLanguage } = require("../src/utils/replyLanguageGuard");
-const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference } =
+const { correctReplyLanguage, clearReplyLanguageMismatch, finalReplyLanguageFallback } = require("../src/utils/replyLanguageGuard");
+const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, latestExplicitLanguageTurn, detectReplyConversationLanguage, detectConversationLanguage } =
   require("../src/utils/chatLanguage");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");
@@ -116,9 +116,8 @@ function harness({ failDelivery = false } = {}) {
         ? state.fakeHistory
         : [{ role: "user", content: state.inbound.at(-1).text }],
     },
-    detectConversationLanguage: () => "en",
-    detectReplyConversationLanguage: () => "en",
-    isGreetingOrLanguageOnly, detectExplicitLanguagePreference,
+    detectConversationLanguage, detectReplyConversationLanguage,
+    isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, latestExplicitLanguageTurn,
     // The primary TCM runtime has no secondary 131060 recovery proof.
     // Its real handler still invokes the prompt-only helper on every turn.
     readableHistoryForRecoverySelection: (history) => history,
@@ -137,7 +136,7 @@ function harness({ failDelivery = false } = {}) {
     },
     appointmentRecognitionEnabled: require("../src/utils/aiLedAppointmentEvidence").appointmentRecognitionEnabled,
     resolveModelAppointmentEvidence: require("../src/utils/aiLedAppointmentEvidence").resolveModelAppointmentEvidence,
-    correctReplyLanguage, parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
+    correctReplyLanguage, clearReplyLanguageMismatch, finalReplyLanguageFallback, parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
     correctUnsupportedBranchReply, isSimpleVisitTimingQuestion, safeVisitTimingReply,
     isDefiniteAppointmentCancellation,cancellationReviewAcknowledgement,
     bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply,

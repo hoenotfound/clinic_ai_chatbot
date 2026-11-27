@@ -161,3 +161,67 @@ test("AI replies and follow-ups use the same customer-language evidence", () => 
   assert.equal(detectConversationLanguage(["骨盆调理 price?"]), "zh",
     "ambiguous name-only shorthand defaults to its existing Chinese template");
 });
+
+test("contextual language information requests are substantive and select the requested locale", () => {
+  const variants = {
+    en: ["English Info pls", "English information please", "Hi, English details please", "Can explain in English?", "Could you explain this in English?", "Send me the information in English please", "请用英文介绍一下"],
+    ms: ["Malay info pls", "BM details please", "Bahasa Malaysia explanation", "Can explain in Malay?", "Boleh terangkan dalam Bahasa Malaysia?", "请用马来文介绍"],
+    zh: ["Mandarin info pls", "Chinese information please", "Can you explain in Mandarin?", "请用中文解释一下", "中文资料"],
+  };
+  for (const [language, messages] of Object.entries(variants)) {
+    for (const message of messages) {
+      assert.equal(detectExplicitLanguagePreference(message), language, message);
+      assert.equal(detectMessageLanguage(message), language, message);
+      assert.equal(isGreetingOrLanguageOnly(message), false, message);
+      assert.equal(detectReplyConversationLanguage([message, "我想了解骨盆调理"]), language, message);
+      assert.equal(detectConversationLanguage(["price?", "ok", message, "我想了解骨盆调理"]), language, message);
+    }
+  }
+  for (const message of ["English price list", "English version of the price list", "My English is not good", "I studied in English"]) {
+    assert.equal(detectExplicitLanguagePreference(message), null, message);
+  }
+  assert.equal(detectConversationLanguage(["English Info pls", "我想了解骨盆调理"]), "en");
+  assert.equal(detectConversationLanguage(["中文", "English Info pls", "我想了解骨盆调理"]), "zh");
+  assert.equal(isGreetingOrLanguageOnly("English please"), true);
+  assert.equal(shouldGenerateLocalizedIntro("English Info pls", "你好，欢迎来到 Neutro Sense"), true);
+});
+
+test("contextual language requests tolerate emoji and named treatment", () => {
+  for (const text of ["English info pls 😊","English info for pelvis pls","可以用英文介绍骨盆吗？","Information in English please","English details about pelvic adjustment"]) {
+    assert.equal(detectExplicitLanguagePreference(text),"en",text);
+    assert.equal(isGreetingOrLanguageOnly(text),false,text);
+  }
+  assert.equal(detectExplicitLanguagePreference("My English teacher"),null);
+  assert.equal(detectExplicitLanguagePreference("English price list"),null);
+});
+test("saved preference survives the history limit and newer explicit requests win", () => {
+  const old=Array(25).fill("price?");
+  assert.equal(detectReplyConversationLanguage(old,"zh","en"),"en");
+  assert.equal(detectConversationLanguage(old,"zh","ms"),"ms");
+  assert.equal(detectConversationLanguage(["中文资料",...old],"en","ms"),"zh");
+});
+
+test("ambiguous language mentions require the existing model's exact current evidence",()=>{
+  const {languageRequestCandidate,verifiedModelLanguageRequest}=require("../src/utils/chatLanguage");
+  const text="Any chance you have that in English for my mum?";
+  assert.equal(languageRequestCandidate(text),"en");
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"en",languageRequestEvidence:text}),"en");
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"ms",languageRequestEvidence:text}),null);
+  assert.equal(verifiedModelLanguageRequest(text,"en",{requestedReplyLanguage:"en",languageRequestEvidence:"older English request"}),null);
+  assert.equal(languageRequestCandidate("English or Chinese?"),null);
+  assert.equal(languageRequestCandidate("English Info pls"),null);
+});
+
+test("saved model language wins over older explicit history but latest direct requests win",()=>{
+  const {latestExplicitLanguageTurn}=require("../src/utils/chatLanguage");
+  assert.equal(detectConversationLanguage(["ok","中文"],"zh","en"),"en");
+  assert.equal(detectConversationLanguage(["BM details please","中文"],"zh","en"),"ms");
+  const history=[{role:"user",contextMessageId:10,content:"中文"},
+    {role:"assistant",contextMessageId:14,content:"English"},
+    {role:"user",contextMessageId:15,content:"English Info pls"},
+    {role:"user",contextMessageId:16,content:"ok"}];
+  const latest=latestExplicitLanguageTurn(history,12);
+  assert.equal(latest.id,15);
+  assert.equal(latest.language,"en");
+  assert.equal(latestExplicitLanguageTurn(history,15),null);
+});

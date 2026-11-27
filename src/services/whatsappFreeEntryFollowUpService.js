@@ -58,7 +58,7 @@ let timerSubscriptions = [];
 // first reply happened shortly before this feature was enabled. No catch-up
 // sends occur outside the normal per-slot due windows.
 const candidateSql = `
-  SELECT c.id AS contact_id, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
+  SELECT c.id AS contact_id, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,c.reply_language_preference,
          origin.created_at AS first_inbound_at,
          first_reply.id AS first_reply_message_id,
          first_reply.created_at AS first_reply_at,

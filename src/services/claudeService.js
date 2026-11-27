@@ -46,7 +46,7 @@ function nullableString() {
   return { type: ["string", "null"] };
 }
 
-function buildConversationOutputSchema() {
+function buildConversationOutputSchema(options = {}) {
   return {
     type: "object",
     properties: {
@@ -72,6 +72,7 @@ function buildConversationOutputSchema() {
       appointmentIntent: { enum: ["accepted", "confirmed", null] },
       appointmentStaffEvidence: nullableString(),
       businessLocationOnly: { type: "boolean" },
+      ...(options.languageRequestCandidate ? {requestedReplyLanguage:{enum:[options.languageRequestCandidate,null]},languageRequestEvidence:nullableString()} : {}),
       salesFollowUpIntent: { enum: ["declined","deferred","reopened",null] },
       salesFollowUpEvidence: nullableString(),
       projectLocation: nullableString(),
@@ -98,6 +99,7 @@ function buildConversationOutputSchema() {
       "appointmentIntent",
       "appointmentStaffEvidence",
       "businessLocationOnly",
+      ...(options.languageRequestCandidate ? ["requestedReplyLanguage","languageRequestEvidence"] : []),
       "salesFollowUpIntent",
       "salesFollowUpEvidence",
       "projectLocation",
@@ -165,7 +167,7 @@ function buildFollowUpOutputSchema() {
 function buildClaudeOutputSchema(options = {}) {
   if (options.surface === "comment_automation") return buildCommentOutputSchema();
   if (options.surface === "follow_up") return buildFollowUpOutputSchema();
-  return buildConversationOutputSchema();
+  return buildConversationOutputSchema(options);
 }
 
 function createClaudeHttpError(status, bodyText, parsedBody = null) {

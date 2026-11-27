@@ -42,7 +42,7 @@ WITH consent_seed AS MATERIALIZED (
 function candidateSql({ contactOnly = false } = {}) {
  return `${contactOnly ? "" : CONSENT_SEED_SQL}
 SELECT
- c.id AS contact_id,c.whatsapp_number, lead.id AS lead_id,
+ c.id AS contact_id,c.whatsapp_number,c.reply_language_preference, lead.id AS lead_id,
  lead.treatment_interest AS service_name, inbound.id AS inbound_id,
  inbound.created_at AS inbound_at,
  anchor.id AS anchor_id, final.id AS third_id,

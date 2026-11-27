@@ -41,7 +41,7 @@ function publish(message,reason) {
 }
 async function sendOne(candidate,settings,now=new Date()) {
   if (!liveEnabled(settings) || quietHoursStatus(now,settings.quietHours).active) return false;
-  const language=detectConversationLanguage(candidate.recent_customer_messages||[],"zh");
+  const language=detectConversationLanguage(candidate.recent_customer_messages||[],"zh",candidate.reply_language_preference);
   const question=consentQuestion({
     serviceName:candidate.service_name,businessName:businessDisplayName(),language,
   });

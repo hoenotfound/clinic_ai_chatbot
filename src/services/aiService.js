@@ -707,6 +707,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     replyLanguage: ["en", "ms", "zh"].includes(optionsOrFirstMessage?.replyLanguage)
       ? optionsOrFirstMessage.replyLanguage : null,
     rm68CampaignDay: ["both","dec6","expired"].includes(optionsOrFirstMessage?.rm68CampaignDay) ? optionsOrFirstMessage.rm68CampaignDay : null,
+    ...( ["en","ms","zh"].includes(optionsOrFirstMessage?.languageRequestCandidate) ? {languageRequestCandidate:optionsOrFirstMessage.languageRequestCandidate} : {}),
     strictReplyLanguage: optionsOrFirstMessage?.strictReplyLanguage === true,
     correctionSourceReply: typeof optionsOrFirstMessage?.correctionSourceReply === "string"
       ? optionsOrFirstMessage.correctionSourceReply.slice(0, 2000) : null,

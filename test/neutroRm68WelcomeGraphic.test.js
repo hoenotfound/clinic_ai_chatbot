@@ -75,7 +75,7 @@ test("package is 90 minutes total including complimentary moxibustion",()=>{
 
 test("first-reply queue runs only after accepted text and uses verified campaign image",()=>{
   const server = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  const anchor=server.indexOf('if (fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {',server.indexOf('const auditResultMediaEarlyExit'));
+  const anchor=server.indexOf('if (!reviewContinuationTextOnly && fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") {',server.indexOf('const auditResultMediaEarlyExit'));
   assert.ok(anchor>0,"find campaign image dispatch after text send");
   const block=server.slice(anchor,server.indexOf('if (rm68CampaignContinuationTextOnly)',anchor));
   assert.match(block,/sendOutcome\.sendResult\.success/);

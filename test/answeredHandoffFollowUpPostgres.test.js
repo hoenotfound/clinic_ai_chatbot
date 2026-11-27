@@ -109,6 +109,8 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         (contact_id, trigger_message_id, follow_up_step, action, reason)
       VALUES (330,1101,1,'skip','Cancelled because clinic staff took over');
     `);
+    // Exercise the actual additive production migration in this isolated schema.
+    await client.query(require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/db/migrations/140_customer_reply_language_preference.sql"),"utf8"));
     // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
     // Real production schema already defines both tables.
     await client.query(`

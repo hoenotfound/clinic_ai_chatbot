@@ -263,7 +263,15 @@ async function correctReplyLanguage(original, history, options, { getReply, pars
   return staffLanguageHandoff(original, language);
 }
 
+function finalReplyLanguageFallback(language, { bookingReady = false } = {}) {
+  if (bookingReady) return bookingAcknowledgement(language);
+  if (language === "ms") return "Maaf, saya belum dapat memberikan maklumat yang tepat dalam Bahasa Malaysia buat masa ini.";
+  if (language === "zh") return "不好意思，刚才没能准确地用中文提供您需要的资料。";
+  return "Sorry, I couldn't provide the information accurately in English just now.";
+}
+
 module.exports = {
+  finalReplyLanguageFallback,
   clearReplyLanguageMismatch,
   correctReplyLanguage,
   sameBookingFacts,

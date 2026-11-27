@@ -366,6 +366,8 @@ test("screening uses actual review persistence and guarded acknowledgement, neve
       keywordReason:null,urgentSafety:false,marketingStopQuestion:false,mediaLanguage:"en",text,commercialHistory:[...history,{role:"user",content:text}],
       clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
       isActiveSafetyConcern:()=>false,isExplicitStaffRequest:()=>false,isDefiniteAppointmentCancellation:()=>false,
+      clearReplyLanguageMismatch:require("../src/utils/replyLanguageGuard").clearReplyLanguageMismatch,
+      recordedReviewAcknowledgement:require("../src/utils/neutroAiReplyAuthority").recordedReviewAcknowledgement,
       screeningAcknowledgement,contactsRepo:{setAiReviewAttention:async(...args)=>actions.push(["review",...args])},
       contact:{id:42},savedInbound:{id:123},categorizeAiReview:()=> "information",
       getAiOwnedContact:async()=>allowed?{id:42}:null,canSendAutomatedReply:()=>allowed,

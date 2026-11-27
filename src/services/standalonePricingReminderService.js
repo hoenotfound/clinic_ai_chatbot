@@ -167,7 +167,7 @@ function select(candidate,options){
     return {offers:[],reason:"unverified_or_clinical_interest"};
   const matched=resolveRecentPricingTreatment(candidate,customerTexts);
   if(!matched.service)return {offers:[],reason:matched.reason};
-  const language=detectConversationLanguage(customerTexts,"zh");
+  const language=detectConversationLanguage(customerTexts,"zh",candidate.reply_language_preference);
   const result=evaluatePricingReminder({
     promotions:getActivePromotions(clinicConfig.promotions||[]),
     candidate:{...candidate,treatment_interest:matched.service,
