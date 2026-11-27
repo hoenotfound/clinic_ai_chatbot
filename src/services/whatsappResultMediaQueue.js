@@ -518,7 +518,7 @@ async function nextDelay(db=pool) {
   );
   // LEAST in PostgreSQL ignores NULL arguments.
   const due = result.rows[0]?.due_at;
-  return due ? Math.max(250,new Date(due).getTime()-Date.now()) : alignedIdleRecoveryDelay(IDLE_MS);
+  return due ? Math.max(250,new Date(due).getTime()-Date.now()) : alignedIdleRecoveryDelay(IDLE_MS, Date.now(), process.env, "Strict RM0 result image queue");
 }
 
 function wake(delay=0) { return worker?.wake(delay) || false; }
