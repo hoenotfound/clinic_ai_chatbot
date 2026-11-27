@@ -225,7 +225,7 @@ const RECENT_DIRECT_RESULT_SQL=`(
   AND job.created_at >= inbound.created_at
   AND job.created_at <= inbound.created_at+INTERVAL '5 minutes'
 )`;
-const READY_SQL=`
+function readySql(env=process.env){return `
  SELECT job.*,c.whatsapp_number,c.whatsapp_sender_id,
         sa.sender_key AS whatsapp_sender_key,
         sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
@@ -244,7 +244,7 @@ const READY_SQL=`
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
    AND (job.preparation_retry_not_before IS NULL OR job.preparation_retry_not_before<=NOW())
    AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound")}
+   AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{env})}
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
    AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -272,8 +272,9 @@ const READY_SQL=`
    )
  ORDER BY job.created_at,job.contact_id,job.sequence_no
  LIMIT $4
-`;
-const STILL_VALID_SQL=`
+`;}
+const READY_SQL=readySql();
+function stillValidSql(env=process.env){return `
  SELECT EXISTS(
    SELECT 1 FROM whatsapp_sender_ai_media_jobs job
    JOIN contacts c ON c.id=job.contact_id AND c.whatsapp_sender_id=job.sender_id
@@ -285,7 +286,7 @@ const STILL_VALID_SQL=`
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
      AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
-     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:"job.outbound_message_id"})}
+     AND job.expires_at>NOW() AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:"job.outbound_message_id",env})}
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
      AND (EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -305,7 +306,8 @@ const STILL_VALID_SQL=`
          AND human.created_at>=inbound.created_at
      )
  ) AS allowed
-`;
+`;}
+const STILL_VALID_SQL=stillValidSql();
 
 // A process can die after the one-shot claim but before a provider result.
 // Such a claim MUST NOT be replayed: Meta may already have accepted the send.
@@ -471,7 +473,7 @@ async function runOnce({
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
  await quarantineStaleClaims({database,env,messageRepo});
  await cancelObsoletePending({database,env});
- const list=await database.query(READY_SQL,[
+ const list=await database.query(readySql(env),[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    Math.max(1,Math.min(10,Number(limit)||5)),
@@ -566,7 +568,7 @@ async function runOnce({
      };
      const policyCancelled=()=>cancelledBeforeProvider("secondary_ai_media_cancelled_before_provider");
      const preSendCheck=async()=>{
-       const check=await database.query(STILL_VALID_SQL,[
+       const check=await database.query(stillValidSql(env),[
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
          env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
          secondaryAutomationActivation(env),
@@ -576,7 +578,7 @@ async function runOnce({
        const current=await contacts.getContactById(job.contact_id);
        if(current?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
           current.mode!=="ai" ||
-          !(await contacts.canSendAutomaticReviewMedia(current.id)))return false;
+          !(await contacts.canSendAutomaticReviewMedia(current.id,{database,env})))return false;
        const preview=await policy.previewSecondaryFreeformPolicy(current,{
          database,env,now:new Date(),purpose:"service",
        });
