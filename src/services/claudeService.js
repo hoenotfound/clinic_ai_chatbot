@@ -46,7 +46,7 @@ function nullableString() {
   return { type: ["string", "null"] };
 }
 
-function buildConversationOutputSchema() {
+function buildConversationOutputSchema(options = {}) {
   return {
     type: "object",
     properties: {
@@ -167,7 +167,7 @@ function buildFollowUpOutputSchema() {
 function buildClaudeOutputSchema(options = {}) {
   if (options.surface === "comment_automation") return buildCommentOutputSchema();
   if (options.surface === "follow_up") return buildFollowUpOutputSchema();
-  return buildConversationOutputSchema();
+  return buildConversationOutputSchema(options);
 }
 
 function createClaudeHttpError(status, bodyText, parsedBody = null) {

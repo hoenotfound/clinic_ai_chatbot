@@ -14,7 +14,7 @@ const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { correctReplyLanguage, clearReplyLanguageMismatch, finalReplyLanguageFallback } = require("../src/utils/replyLanguageGuard");
-const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference } =
+const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, detectReplyConversationLanguage, detectConversationLanguage } =
   require("../src/utils/chatLanguage");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");
@@ -116,9 +116,8 @@ function harness({ failDelivery = false } = {}) {
         ? state.fakeHistory
         : [{ role: "user", content: state.inbound.at(-1).text }],
     },
-    detectConversationLanguage: () => "en",
-    detectReplyConversationLanguage: () => "en",
-    isGreetingOrLanguageOnly, detectExplicitLanguagePreference,
+    detectConversationLanguage, detectReplyConversationLanguage,
+    isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest,
     // The primary TCM runtime has no secondary 131060 recovery proof.
     // Its real handler still invokes the prompt-only helper on every turn.
     readableHistoryForRecoverySelection: (history) => history,

@@ -1633,7 +1633,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "appointmentIntent": null,
   "appointmentStaffEvidence": null,
   "businessLocationOnly": false,
-${languageCandidate ? '  "requestedReplyLanguage": null,\\n  "languageRequestEvidence": null,\\n' : ""}  "salesFollowUpIntent": null,
+${languageCandidate ? '  "requestedReplyLanguage": null,\n  "languageRequestEvidence": null,\n' : ""}  "salesFollowUpIntent": null,
   "salesFollowUpEvidence": null,
   "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
   "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",
