@@ -29,6 +29,7 @@ const {resolveStaffDiscussedFollowUpTopic,assessFollowUpTopicSafety,staffTopicFe
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {deferProvenUnsent,reclaimClause,deferredRetryAtSql,DEFERRED_READY_PREDICATE}=require("./whatsappSecondaryPreSendDeferral");
 const {reviewedUnknownGateCandidateSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {detachableServiceGateSql}=require("../utils/whatsappSecondaryServiceBilling");
 const {isVerifiedFailedVideo,textWithoutVideo}=
   require("./whatsappSecondaryVideoQuarantine");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
@@ -796,7 +797,8 @@ const CANDIDATES_SQL=`
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates preflight
      WHERE preflight.sender_id=sa.id AND preflight.owner_contact_id=c.id
-       AND preflight.state IN ('reserved','awaiting_pricing'))
+       AND preflight.state IN ('reserved','awaiting_pricing')
+       AND NOT ${detachableServiceGateSql("preflight")})
    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm
      WHERE alarm.sender_id=sa.id)
  ORDER BY inbound.created_at,c.id,rule.slot_hours
@@ -1304,14 +1306,7 @@ async function runOnce({
       })){
         // Confirmed pre-provider billing refusal. The old Inbox draft stays
         // cancelled; another scheduler may reclaim only this exact slot.
-      } else {
-        // Retain a known provider ID even if the billing write failed. Only
-        // an explicitly no-WAMID outcome can use automatic fresh-reply recovery.
-        if (result?.code==="secondary_staff_billing_outcome_unverified" &&
-            !result?.wamid && result?.unknown===true) {
-          await fail("secondary_staff_billing_outcome_unverified_no_wamid");
-        } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
-      }
+      } else await fail(result?.code||"sender_followup_delivery_unconfirmed");
     }catch{
       // Never automatically replay this one-shot attempt. Report a fixed,
       // content-free processing phase, not error messages or customer data.
