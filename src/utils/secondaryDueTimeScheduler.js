@@ -156,6 +156,9 @@ async function measureSecondaryWorkerRun(label, run) {
 // conservative: recheck, so opt-outs, bookings and legacy publishers are safe.
 function secondaryEventRequiresWake(type, payload, env = process.env) {
   if (type === "conversation_changed") {
+    // Verified read/name-only writes do not change either secondary selector.
+    // Restrict the marker to its exact event kind; unknown events still wake.
+    if (payload?.reason === "contact_state" && payload?.inboxPresentationOnly === true) return false;
     if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true ||
         payload?.reason === "lead_assignment_recovered") return false;
     if (payload?.channel && payload.channel !== "whatsapp") return false;
