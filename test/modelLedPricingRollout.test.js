@@ -540,7 +540,7 @@ test("rapid guard leaves verified legacy pricing exceptions and Shadow observati
  const fs=require("node:fs"),path=require("node:path");
  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
  assert.match(source,/staleModelPricing = aiPricingEnabled && staleIntent && !legacyPricingApproval\.decision/u);
- assert.match(source,/const selectedPricingApproval = staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
+ assert.match(source,/const selectedPricingApproval = unresolvedAssessmentPrice\s*\? \{decision:null,reason:"assessment_or_treatment_fee_ambiguous"\}\s*:\s*staleModelPricing\s*\? \{decision:null,reason:"stale_current_intent"\}/u);
  assert.match(source,/if \(staleModelPricing\) \{[\s\S]*?priceQuery = false;\s*packageQuery = false;\s*modelPricingStage = null;/u);
 });
 
@@ -741,5 +741,126 @@ test("Nov 27 production replay uses actual follow-up metadata, prices and locali
   assert.deepEqual(media?.packages.map(p=>p.name),["Package A","Package B"]);
   assert.deepEqual(media.packages.map(p=>p.caption),fixture.promotions[0].packages.map(p=>
    language==="zh"?p.caption:p.mediaTranslations[language].caption));
+ }
+});
+
+
+test("Nov 27 Pulse Wave price replay resolves the delivered conversation in three languages",async()=>{
+ const name="脉冲波调理";
+ const offer={...promo(name,388),caption:"首次体验优惠价 RM388",imageUrl:"https://example.test/pulse-zh",
+   mediaTranslations:{en:{caption:"First Trial RM388",imageUrl:"https://example.test/pulse-en"},
+    ms:{caption:"Harga promosi First Trial RM388",imageUrl:"https://example.test/pulse-ms"}}};
+ const bot=(content,ms,extra={})=>({...turn("assistant",content,ms),pricingDeliveredBotMessage:true,...extra});
+ const explanation="脉冲波调理属于全身护理疗程，并非只针对单一部位哦～中医师会根据你的身体状况和需求，针对你比较在意的肚腩、大腿或手臂做针对性加强护理 😊\n\n它主要是帮助身体线条管理和局部紧绷放松，不是保证减固定公斤数的减肥疗程哦～如果想了解更适合你的调理方向，中医师也可以先帮你看看整体状态💚";
+ const history=[
+   turn("user","📎 [Customer sent a WhatsApp message that could not be displayed]",180000),
+   bot("Hi～欢迎来到 Neutro Sense 😊 想了解哪方面的护理呢？",175000),
+   bot("我们也有提供以下护理哦 🥰",169000),
+   turn("user","瘦身",88000),
+   bot("如果你是想针对身体线条或局部塑形，我们这边主要是通过脉冲波调理来做身体线条管理。你主要在意腹部、腰臀腿的线条，还是整体肌肉紧绷或产后调理呢？",82000),
+   turn("user","肚腩大腿手臂要减",35000),
+   bot(explanation,29000),
+ ];
+ const variants=[
+   ["价钱？","zh","请问你平时还是周末过来比较方便呢？","脉冲波调理 的 First Trial 体验优惠价是 RM388 😊",/体验优惠价/u],
+   ["Price?","en","Would weekdays or weekends be more convenient?","The First Trial promotional price for 脉冲波调理 is RM388 😊",/promotional price/u],
+   ["How much?","en","Would weekdays or weekends be more convenient?","The First Trial promotional price for 脉冲波调理 is RM388 😊",/promotional price/u],
+   ["Harga?","ms","Hari biasa atau hujung minggu lebih sesuai?","Harga promosi First Trial untuk 脉冲波调理: RM388 😊",/Harga promosi/u],
+ ];
+ for(const [current,language,draft,good,localized] of variants){
+  const a=args(current,name,{
+    services:[...services,{name},{name:"产后调理"},{name:"1对1体态评估"}],
+    serviceAliases:[...serviceAliases,{alias:"体态评估",officialService:"1对1体态评估"}],
+    promotions:[...promotions,offer],complimentaryAssessmentExperienceEnabled:true,
+    conversationHistory:[...history,turn("user",current,0)],
+  });
+  for(const metadata of [{treatment:name,priceQuery:true},{treatment:null,priceQuery:true},
+    {treatment:null,priceQuery:false},{treatment:"骨盆调理",priceQuery:true}]){
+   const input={...a,modelIntent:{...a.modelIntent,...metadata}};
+   const d=resolveModelLedPricingDecision(input);
+   assert.equal(d?.treatment,name,current+JSON.stringify(metadata));
+   assert.equal(d?.directDeliveredPriceReference,true);
+   assert.deepEqual(d?.prices.map(p=>p.price),["RM388"]);
+   const approval=resolveApprovedPricingAssessment({...input,mode:"enabled",aiDecision:d});
+   assert.equal(approval.reason,"approved");
+   const format=reply=>ensureVerifiedPriceReply({...input,reply,treatment:name,pricingDecision:approval.decision,priceRequested:true,language,preserveNaturalReply:true});
+   const reply=format(draft);
+   assert.match(reply.reply,/RM388/u);
+   assert.match(reply.reply,localized);
+   assert.ok(!reply.reply.includes(draft));
+   assert.equal(format(good).reply,good);
+   assert.equal(format(good).restored,false);
+   assert.ok(!format(good+"\n"+draft).reply.includes(draft));
+   const media=await resolvePricePromotionForReply({...input,language,aiPricingEnabled:true,pricingDecision:approval.decision,treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+   assert.equal(media?.packages?.length,1);
+   const expected=language==="zh"?offer:offer.mediaTranslations[language];
+   assert.equal(media.packages[0].caption,expected.caption);
+   assert.equal(media.packages[0].imageUrl,expected.imageUrl);
+   assert.equal(resolveApprovedPricingAssessment({...input,mode:"shadow",aiDecision:d}).decision,null);
+  }
+  // Recovery bridges are not independent anchors; every intervening turn
+  // must remain recent, delivered when outbound, and consistent in topic.
+  const bridges=[
+    [bot("📷 这是 Neutro Sense 脉冲波调理顾客的 Before & After 参考图 😊 图片仅供个别案例参考，是否适合调理及实际变化需由中医师评估。",20000,{verifiedOutboundImageUrl:"https://example.test/result"})],
+    [bot("有空时可以再回复我们 😊",20000,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true})],
+    [turn("user","这个疗程多久？",20000)],
+  ];
+  for(const bridge of bridges){
+   const input={...a,conversationHistory:[...history,...bridge,a.conversationHistory.at(-1)]};
+   assert.deepEqual(resolveModelLedPricingDecision(input)?.prices.map(p=>p.price),["RM388"]);
+  }
+  const {unresolvedIntroAssessmentPriceReference,introAssessmentPriceClarification}=require("../src/utils/complimentaryAssessmentExperience");
+  for(const intro of [
+    bot("先安排1对1体态评估+体验哦",20000,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true}),
+    bot("我们可以先为您安排1对1体态评估+体验，之后再决定正式护理疗程。",20000),
+  ]){
+    const input={...a,conversationHistory:[...history,intro,a.conversationHistory.at(-1)]};
+    assert.equal(unresolvedIntroAssessmentPriceReference({...input,enabled:true}),true);
+    assert.equal(resolveModelLedPricingDecision(input),null);
+    assert.doesNotMatch(introAssessmentPriceClarification(language),/RM388/u);
+    assert.match(introAssessmentPriceClarification(language),language==="zh"?/免费/u:language==="en"?/free/u:/percuma/u);
+  }
+  // Keep each rejection isolated so older conversation cannot establish an
+  // independent valid anchor in these deliberately ambiguous cases.
+  const short=[turn("user","可以改善全身线条吗？",2000),bot(explanation,1000),turn("user",current,0)];
+  for(const kind of ["unverified","staff","media","competing","greeting","stale","nonprice","clinical","laterSession","noPromo","otherCustomer","otherImage","otherFollowUp","unknownImage","unknownStaff","packageScope"]){
+   const b={...a,modelIntent:{...a.modelIntent},conversationHistory:short.map(t=>({...t}))};
+   if(kind==="unverified")b.conversationHistory[1].pricingDeliveredBotMessage=false;
+   if(kind==="staff")b.conversationHistory[1].pricingStaffAuthored=true;
+   if(kind==="media")b.conversationHistory[1].verifiedOutboundImageUrl="https://example.test/picture";
+   if(kind==="competing")b.conversationHistory[1].content+="也可以选择3D 小颜术。";
+   if(kind==="greeting")b.conversationHistory[0].content="Hi";
+   if(kind==="stale")b.conversationHistory[0].pricingCreatedAtMs-=25*3600000;
+   if(kind==="nonprice"){b.customerText="多久？";b.conversationHistory[2].content=b.customerText;}
+   if(kind==="clinical")b.conversationHistory[0].content="我怀孕了";
+   if(kind==="laterSession")b.modelIntent.pricingStage="subsequent_session";
+   if(kind==="noPromo")b.promotions=[];
+   if(kind==="otherCustomer")b.conversationHistory.splice(2,0,turn("user","我想了解3D 小颜术",500));
+   if(kind==="otherImage")b.conversationHistory.splice(2,0,bot("骨盆调理案例",500,{verifiedOutboundImageUrl:"https://example.test/pelvic"}));
+   if(kind==="otherFollowUp")b.conversationHistory.splice(2,0,bot("也可以了解骨盆调理",500,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true}));
+   if(kind==="unknownImage")b.conversationHistory.splice(2,0,bot("参考图",500,{verifiedOutboundImageUrl:"https://example.test/unknown"}));
+   if(kind==="unknownStaff")b.conversationHistory.splice(2,0,bot("[Verified STAFF message] Hi",500,{pricingStaffAuthored:true}));
+   if(kind==="packageScope")b.modelIntent.promotionOption="Package C";
+   assert.equal(resolveModelLedPricingDecision(b),null,kind);
+  }
+ }
+ const rejected=ensureVerifiedPriceReply({customerText:"价钱？",reply:"请问你平时还是周末过来比较方便呢？",pricingDecision:null,priceRequested:true,language:"zh",services});
+ assert.doesNotMatch(rejected.reply,/平时还是周末/u);
+ assert.match(rejected.reply,/价格/u);
+ assert.equal(rejected.optionalClarification,false);
+ for(const [language,customerText,reply] of [
+   ["zh","价钱？","请问你想了解哪项护理呢？"],
+   ["en","Price?","Which treatment would you like the price for?"],
+   ["ms","Harga?","Harga untuk rawatan yang mana satu ya?"],
+ ]){
+   const input={language,customerText,reply,pricingDecision:null,priceRequested:true,preserveNaturalReply:true,aiFirstReplyAuthority:true};
+   assert.equal(ensureVerifiedPriceReply(input).optionalClarification,true,language);
+   const mixed=ensureVerifiedPriceReply({...input,reply:reply+"\n"+(language==="zh"?"周末方便过来吗？":language==="en"?"Would weekends work?":"Hujung minggu sesuai?")});
+   assert.equal(mixed.optionalClarification,false,language);
+ }
+ const {isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ assert.equal(isSafeUnquotedReply("Harga untuk rawatan yang mana satu ya?"),true);
+ for(const reply of ["Harga satu ratus ringgit","Harga dua ratus","Harga untuk rawatan yang mana satu ya? RM388","Harga untuk rawatan yang mana satu ya? Harga satu ratus"]){
+   assert.equal(isSafeUnquotedReply(reply),false,reply);
  }
 });

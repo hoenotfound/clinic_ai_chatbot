@@ -466,6 +466,7 @@ test("actual downstream outbound reply flow retains cleaned acknowledgements and
   const sends=[];
   const history=[...baseHistory,{role:"user",content:text,pricingCreatedAtMs:now}];
   const ctx={...util,clinicConfig,text,reply,mediaLanguage,history,commercialHistory:history,
+    unresolvedAssessmentPrice:false,
     originalModelReply:reply,languageCheckedModelReply:reply,replyOverrideAudit:util.createReplyOverrideAudit(()=>{}),
     contact:{id:7},savedInbound:{id:41,created_at:new Date(now).toISOString()},processingJobId:1,from:"test",channel:"whatsapp",
     isFirstMessage:false,wasFirstMessage:false,flagged:false,reviewRequired:false,reviewType:null,bookingReady:false,
