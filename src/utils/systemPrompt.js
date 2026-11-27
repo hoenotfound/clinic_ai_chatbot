@@ -5,6 +5,7 @@ const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { resolveAiReplyAuthorityMode } = require("./neutroAiReplyAuthority");
 const { relatedMediaTargets } = require("./relatedServicePolicy");
 const { resolveCompactConversationPolicy, selectCompactFAQs, resolveProductionCompactPolicy } = require("./compactConversationPolicy");
 
@@ -374,7 +375,66 @@ function packageCareInclusionLines(promotions) {
       .filter(Boolean)
   );
 }
-function conversationPromotionsList(conversationContext,pricingIntentMode=config.aiPricingIntentMode) {
+// The existing operator-authored checkmark list is the source of inclusion
+// facts, not a model-generated service description. Keep wrapped lines
+// (e.g. Package B's second line) and avoid leaking price/voucher copy.
+// Use canonical facts if a translation omits any list item.
+function completePackageCareInclusionLines(promotions, language) {
+  const extract = (caption) => {
+    const items = [];
+    let current = [];
+    const finish = () => {
+      if (current.length) items.push(current.join(" "));
+      current = [];
+    };
+    for (const raw of String(caption || "").split(/\r?\n/u)) {
+      const line = raw.trim();
+      if (/^✅/u.test(line)) {
+        finish();
+        const point = line.replace(/^✅\s*/u, "").trim();
+        if (point) current = [point];
+      } else if (!line) {
+        finish();
+      } else if (current.length) {
+        // Non-list commercial footers must not become care inclusions.
+        if (/(?:\b(?:RM|MYR|ringgit|price|voucher|discount|offer|promo(?:tion)?|harga|baucar|tawaran|promosi)\b|原价|原價|优惠|優惠|促销|促銷|限时|限時|礼遇|禮遇|预约专享|預約專享|只需|仅需|僅需|折扣)/iu.test(line)) {
+          finish();
+        } else {
+          current.push(line);
+        }
+      }
+    }
+    finish();
+    const {scanMyrAmounts} = require("./myrAmountClaims");
+    const {hasTreatmentPriceContent} = require("./initialOfferReplyGuard");
+    return items.filter(item => !scanMyrAmounts(item).length &&
+      !hasTreatmentPriceContent(item) &&
+      !/(?:\b(?:voucher|discount|offer|promo(?:tion)?|harga|baucar|tawaran|promosi)\b|优惠券|優惠券|限时|限時|礼遇|禮遇|折扣)/iu.test(item));
+  };
+  const locale = ["en", "ms", "zh"].includes(language) ? language : "zh";
+  return promotions.flatMap(promotion =>
+    (Array.isArray(promotion?.packages) ? promotion.packages : [])
+      .filter(item => item && typeof item === "object")
+      .map(item => {
+        const canonical = extract(item.caption);
+        const translated = locale === "zh" ? [] : extract(item.mediaTranslations?.[locale]?.caption);
+        if (!canonical.length) return null;
+        const name = promptContextText(item.name, 160) || "Unnamed package";
+        // Keep the canonical list as the complete source. Localized copy is
+        // optional phrasing support, never a substitute for missing facts.
+        const translation = translated.length === canonical.length
+          ? "; localized wording: " + translated.join("；") : "";
+        const title = promptContextText(item.title, 260);
+        const {hasTreatmentPriceContent} = require("./initialOfferReplyGuard");
+        const safeTitle = title && !hasTreatmentPriceContent(title) &&
+          !/\b(?:RM|MYR|voucher|discount|harga|baucar)\b|优惠券|優惠券/iu.test(title) ? " | title: " + title : "";
+        return "  - " + name + safeTitle + " | inclusions: " + canonical.join("；") + translation;
+      })
+      .filter(Boolean)
+  );
+}
+
+function conversationPromotionsList(conversationContext,pricingIntentMode=config.aiPricingIntentMode,replyLanguage=null) {
   const active = getActivePromotions(config.promotions || []);
   if (!active.length) return "- None currently configured as active.";
 
@@ -440,12 +500,18 @@ function conversationPromotionsList(conversationContext,pricingIntentMode=config
       /子[宫宮].{0,8}(?:复位|復位|归位|歸位|护理|護理|调理|調理)|(?:uterus|womb).{0,24}(?:care|reposition|realign)/iu.test(
         String(conversationContext?.currentCustomerText || "")
       );
-    const careDetails = wombScopeQuestion ? packageCareInclusionLines(relevant) : [];
+    const completePackageDetails = resolveAiReplyAuthorityMode(config) !== "legacy" &&
+      pricingIntentMode === "enabled" && selected.length === 1 &&
+      conversationContext?.packageDetailIntent === true;
+    const careDetails = completePackageDetails
+      ? completePackageCareInclusionLines(relevant.filter(p => p?.linkedService === selected[0].name), replyLanguage)
+      : wombScopeQuestion ? packageCareInclusionLines(relevant) : [];
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
       ...(careDetails.length ? [
         "- VERIFIED PACKAGE INCLUSIONS for this care-scope question (informational ONLY; no automatic prices, discounts or artwork):",
+        ...(completePackageDetails ? ["- For the named package, answer from the complete configured inclusion list. If asked what is included, include every listed care item in natural wording; keep each package's inclusions separate. Do not turn an inclusion question into a price or package-list request, offer a free paid treatment, or promise artwork. If the package is ambiguous or a fact is missing, clarify rather than guess."] : []),
         ...careDetails,
       ] : []),
       ...compactVerifiedPrices,
@@ -1385,7 +1451,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const includeContactDetails =
     !hasScopedConversationContext || conversationContext.contactIntent === true;
   const promotionsList = hasScopedConversationContext
-    ? conversationPromotionsList(conversationContext,pricingIntentMode)
+    ? conversationPromotionsList(conversationContext,pricingIntentMode,normalizedOptions.replyLanguage)
     : (config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] },pricingIntentMode) : activePromotionsList());
   const sopText = hasScopedConversationContext
     ? filterServiceScopedGuidance(effectiveSop, conversationContext)
@@ -1596,7 +1662,7 @@ ${pricingIntentMode === "enabled" ? "- Use the whole recent conversation, includ
 ${pricingIntentMode === "enabled" ? "- \"promotionOption\" is descriptive internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or refers unambiguously to an option in the recent price menu (such as the cheaper of two displayed prices), set \"promotionOption\" to its exact configured name. If the customer asks the service price/packages generally, set it to null. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. The backend checks configured package identity, customer selection or the preceding menu and its verified amounts. A general question, ambiguous reference, future consent, affordability statement or ordinary interest is not a request to choose a package." : "- \"promotionOption\" is descriptive internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set \"promotionOption\" to that package's exact configured name (for example \"Package B\"). If the customer asks the service price/packages generally, set it to null. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. Outbound media routing does NOT trust this field; the backend independently matches configured package wording from the customer's own current/recent message."}
 ${compactPolicy ? '- All structured metadata is internal, never customer-facing.' : '- "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", and "promotionOption" are internal metadata. Never mention these field names to the customer.'}
 - If the customer's CURRENT request, or the immediately previous customer turn that a short follow-up clearly refers to, explicitly names two or more configured package options, set "promotionOption" to null and answer the requested prices/comparison directly in "reply" from ACTIVE PROMOTIONS. Do not rely on automatic media for a multi-package explicit comparison, because the backend intentionally fails closed rather than choosing or blasting several specifically named options.
-- Otherwise, if "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION says "auto-send on price/package enquiry: yes", keep the pricing portion short and do not repeat the full promotion caption or package details; still answer every distinct current non-price question using verified configured facts, especially location, duration and process. Put price and each non-price answer in separate short paragraphs so independent price validation can keep the other answer. For duration or process use the matching configured treatment/package facts only; distinguish treatment duration from entire promotional visit duration. Media is handled separately and may be blocked by channel, duplicate or takeover checks. When "promotionOption" is null, do not select a package or promise image delivery.
+- Otherwise, if "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION says "auto-send on price/package enquiry: yes", keep the pricing portion short and do not repeat the full promotion caption or package details; still answer every distinct current non-price question using verified configured facts, especially location, duration, process and explicitly requested package inclusions. If asked what a named package includes, cover its entire configured inclusion list in text, rather than relying on media. Put price and each non-price answer in separate short paragraphs so independent price validation can keep the other answer. For duration or process use the matching configured treatment/package facts only; distinguish treatment duration from entire promotional visit duration. Media is handled separately and may be blocked by channel, duplicate or takeover checks. When "promotionOption" is null, do not select a package or promise image delivery.
 - If the matching promotion says "auto-send on price/package enquiry: no", answer the price/package question normally from ACTIVE PROMOTIONS in text.
 ${compactPolicy && conversion.mode === "appointment" ? `- Use canonical configured treatment and branch names. appointmentPreference is the current scheduling preference. Set projectLocation, projectSummary and nextStep to null for clinic appointments.\n${appointmentLocationOutputRule}` : `- The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".

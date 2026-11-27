@@ -521,6 +521,12 @@ function buildConversationPromptContext(
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText) || MAP_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: currentPromotionIntent || carriedPromotionIntent,
+    // Retrieval only: a current inclusion/duration question may need the
+    // configured package facts even when it is not a commercial enquiry.
+    // Do not expand ordinary acknowledgements or stale package topics.
+    packageDetailIntent: !broadIntent && !topicChangeIntent &&
+      relevantServiceNames.length === 1 && currentPromotionIntent &&
+      PROMOTION_DETAIL_PATTERN.test(currentCommercialText),
     // Avoid showing unnecessary prices to the reply model when a customer
     // expresses treatment interest alongside future-offer consent.
     futureFollowUpIntroduction:

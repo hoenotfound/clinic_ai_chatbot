@@ -348,3 +348,157 @@ test("actual rejected-price boundary retains independently verified guidance and
   }
  }
 });
+
+test("live package A regression preserves all four configured inclusions after removing an unauthorized quote",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const fixture=require("./fixtures/neutro-pricing-assessment-20261127.json");
+ const pack=fixture.promotions[0].packages.find(p=>p.name==="Package A");
+ const cases=[
+  ["zh","Package A 包含什么？","Package A（尊享护理配套｜全程约2小时30分钟）包含：","额外收费 RM999","我们会发送图片给你"],
+  ["en","What does Package A include?","Package A (2 hours 30 minutes) includes:","Price RM999","I will send the image"],
+  ["ms","Apa yang termasuk dalam Pakej A?","Pakej A (2 jam 30 minit) termasuk:","Harga RM999","Saya akan hantar gambar"],
+ ];
+ for(const [language,customerText,heading,wrongPrice,mediaPromise] of cases){
+  const items=pack.mediaTranslations[language].caption.split("\n").filter(x=>x.startsWith("✅"));
+  assert.equal(items.length,4);
+  const valid=[heading,...items].join("\n");
+  const base={customerText,language,pricingDecision:null,priceRequested:false,aiFirstReplyAuthority:true,preserveNaturalReply:true,
+   services:fixture.services,serviceAliases:fixture.serviceAliases,promotions:fixture.promotions};
+  const draft=[heading,items[0],items[1],wrongPrice,items[2],items[3],mediaPromise].join("\n");
+  const result=ensureVerifiedPriceReply({...base,reply:draft});
+  assert.equal(result.restored,true,language);
+  assert.equal(result.reply,valid,language);
+  assert.equal(ensureVerifiedPriceReply({...base,reply:valid}).reply,valid,language);
+  const legacy=ensureVerifiedPriceReply({...base,aiFirstReplyAuthority:false,reply:draft});
+  assert.ok(!legacy.reply.includes(items[3]),"legacy cap remains unchanged");
+ }
+});
+test("AI-first commercial cleanup retains complete clauses rather than cutting at 340 characters",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const lines=Array.from({length:7},()=> "Our practitioner explains the care process and what to expect during your visit.");
+ const safe=lines.join("\n");
+ assert.ok(safe.length>340);
+ const result=ensureVerifiedPriceReply({customerText:"Tell me about the care process",reply:safe+"\nPrice RM999",
+  pricingDecision:null,priceRequested:false,language:"en",aiFirstReplyAuthority:true});
+ assert.equal(result.reply,safe);
+});
+test("simple acknowledgement does not restart treatment introduction after mandatory pricing cleanup",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const [language,customerText,safe,unsafe,expected] of [
+  ["zh","哦","好的呀 😊","骨盆调理现在只需 RM999","好的哦 😊"],
+  ["en","I see","Okay 😊","Price RM999","Of course 😊"],
+  ["ms","Baik","Baik ya 😊","Harga RM999","Baik 😊"]
+ ]){
+  const input={customerText,language,pricingDecision:null,priceRequested:false,aiFirstReplyAuthority:true,preserveNaturalReply:true};
+  const untouched=ensureVerifiedPriceReply({...input,reply:safe});
+  assert.equal(untouched.restored,false);
+  assert.equal(untouched.reply,safe);
+  const corrected=ensureVerifiedPriceReply({...input,reply:unsafe});
+  assert.equal(corrected.restored,true);
+  assert.equal(corrected.reply,expected);
+  const mixed=ensureVerifiedPriceReply({...input,reply:safe+"\n"+unsafe});
+  assert.equal(mixed.reply,safe);
+  assert.doesNotMatch(ensureVerifiedPriceReply({...input,reply:"No charge"}).reply,/no charge/iu);
+  assert.notEqual(ensureVerifiedPriceReply({...input,customerText:customerText+"，多少钱？",priceRequested:true,reply:unsafe}).reply,expected);
+ }
+});
+
+test("real prompt retrieval includes complete current package facts without treating detail enquiry as a price request",()=>{
+ const config=require("../src/config/clinicConfig");
+ const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
+ const {buildSystemPrompt}=require("../src/utils/systemPrompt");
+ const fixture=require("./fixtures/neutro-pricing-assessment-20261127.json");
+ const previous={...config};
+ const promotions=fixture.promotions;
+ try{
+  Object.assign(config,{businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled",
+   aiReplyAuthorityMode:"observe",automatedFollowUp:{...config.automatedFollowUp,assessmentFirstPricingEnabled:true},
+   services:fixture.services,serviceAliases:fixture.serviceAliases,promotions});
+  const prefix=[{role:"user",content:"我想了解骨盆调理"},{role:"assistant",content:"骨盆调理目前有 Package A 和 Package B。"},
+    {role:"user",content:"价格怎么算"},{role:"assistant",content:"Package A RM388，Package B RM268"}];
+  for(const [language,currentCustomerText] of [["zh","Package A 包含什么？"],["en","What does Package A include?"],["ms","Apa yang termasuk dalam Pakej A?"]]){
+   const conversationContext=buildConversationPromptContext([...prefix,{role:"user",content:currentCustomerText}]);
+   assert.equal(conversationContext.packageDetailIntent,true,currentCustomerText);
+   assert.deepEqual(conversationContext.relevantServiceNames,["骨盆调理"]);
+   const prompt=buildSystemPrompt({conversationContext,replyLanguage:language});
+   const section=prompt.split("- VERIFIED PACKAGE INCLUSIONS for this care-scope question")[1]?.split("VERIFIED PRICE REFERENCE")[0];
+   assert.ok(section,currentCustomerText);
+   for(const fact of ["骨盆调整与体态矫正疗程","全身通十二经络按摩","子宫草药护理","AI 身体检测","骨盆调整 与体态矫正疗程"])assert.ok(section.includes(fact),fact);
+   assert.doesNotMatch(section,/RM\s*(?:100|388|268|488|368)|优惠券限时领取/u);
+   assert.match(section,/include every listed care item/);
+   if(language==="en")assert.match(section,/Herbal womb care/);
+   if(language==="ms")assert.match(section,/Penjagaan rahim dengan herba/);
+  }
+  for(const text of ["哦","谢谢，我考虑一下","我想了解3D 小颜术"]){
+   const conversationContext=buildConversationPromptContext([...prefix,{role:"user",content:text}]);
+   assert.equal(conversationContext.packageDetailIntent,false,text);
+   assert.doesNotMatch(buildSystemPrompt({conversationContext,replyLanguage:"zh"}),/include every listed care item/);
+  }
+  const context=buildConversationPromptContext([...prefix,{role:"user",content:"Package A 包含什么？"},{role:"assistant",content:"有四项护理。"},{role:"user",content:"需要多久？"}]);
+  assert.equal(context.packageDetailIntent,true);
+  config.aiReplyAuthorityMode="legacy";
+  assert.doesNotMatch(buildSystemPrompt({conversationContext:context,replyLanguage:"zh"}),/include every listed care item/);
+ }finally{Object.assign(config,previous);}
+});
+
+test("actual downstream outbound reply flow retains cleaned acknowledgements and complete package details",async()=>{
+ const fs=require("node:fs"),vm=require("node:vm");
+ const source=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+ const start=source.indexOf("    // Last assembled-text boundary before Meta/Neon outbound reservation.");
+ const end=source.indexOf("    if (sendOutcome.sendResult.cancelled)",source.indexOf("    replyOverrideAudit.flush({contactId:contact.id,inboundId:savedInbound.id,\n      original:originalModelReply,final:reply",start));
+ assert.ok(start>0&&end>start);
+ assert.match(source,/shouldBlockRejectedModelPricing,\s*shouldRewriteRejectedPricingReply,/);
+ const util={};
+ for(const name of ["initialOfferReplyGuard","verifiedPriceReply","aiPricingIntentDecision","neutroAiReplyAuthority",
+  "customerEnquiryEvidence","complimentaryAssessmentExperience","shadowPriceException","neutroComboOfferReply",
+  "unconfirmedMediaPromiseGuard","repeatedPriceClarification","verifiedPricingBusinessFacts","neutroBreastRm68Campaign",
+  "neutroAdministrativeReviewReply","neutroUnverifiedPulseDepth","appointmentCancellationSafety","attentionTriggers",
+  "aiReviewPolicy","appointmentHoursGuard","replyLanguageGuard","verifiedSpecialReply"])
+  Object.assign(util,require("../src/utils/"+name));
+ const fixture=require("./fixtures/neutro-pricing-assessment-20261127.json");
+ const now=Date.now();
+ const baseHistory=[{role:"user",content:"我想了解骨盆调理",pricingCreatedAtMs:now-60000},
+  {role:"assistant",content:"骨盆调理有 Package A 和 Package B。",pricingCreatedAtMs:now-30000,pricingDeliveredBotMessage:true}];
+ const clinicConfig={businessName:"Neutro Sense TCM",businessType:"tcm_clinic",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"observe",
+  automatedFollowUp:{assessmentFirstPricingEnabled:true,complimentaryAssessmentExperienceEnabled:true},services:fixture.services,
+  serviceAliases:fixture.serviceAliases,promotions:fixture.promotions,resultMedia:[],branches:[],hours:{weekly:{monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}}}};
+ const run=async({text,reply,mediaLanguage="zh",rejectedModelPricing=false,owned=true})=>{
+  const sends=[];
+  const history=[...baseHistory,{role:"user",content:text,pricingCreatedAtMs:now}];
+  const ctx={...util,clinicConfig,text,reply,mediaLanguage,history,commercialHistory:history,
+    originalModelReply:reply,languageCheckedModelReply:reply,replyOverrideAudit:util.createReplyOverrideAudit(()=>{}),
+    contact:{id:7},savedInbound:{id:41,created_at:new Date(now).toISOString()},processingJobId:1,from:"test",channel:"whatsapp",
+    isFirstMessage:false,wasFirstMessage:false,flagged:false,reviewRequired:false,reviewType:null,bookingReady:false,
+    priceQuery:false,packageQuery:false,serviceQuery:false,serviceQuerySource:null,details:null,
+    marketingStopQuestion:null,keywordReason:null,urgentSafety:false,clinicalAcknowledgement:null,
+    aiPricingEnabled:true,pricingAuthorityRequired:true,naturalReplyAuthority:true,preserveTwoTreatmentDraft:false,
+    fixedAdFirstReply:null,verifiedPriceService:null,clarifiedPriceService:null,approvedPricingDecision:null,
+    authorizedPricingInput:null,numberedPricingSelection:null,shadowPriceException:null,scopedPackagePrice:null,
+    twoTreatmentQuote:null,staffPriceConflict:false,exceptionalPricingCandidate:null,pricingDecision:null,
+    pelvicPackageComparison:null,modelPricingStage:null,reviewContinuationTextOnly:false,modelLocationOnly:false,
+    rejectedModelPricing,verifiedBookingForHours:null,recoveryPromptProof:null,recoveryOther:false,acceptedSalesDecision:null,
+    aiCancellationKey:null,canSendAutomatedReply:()=>owned,responseAttempted:false,rm68ClinicalConcern:false,
+    resolveNeutroSubsequentPricing:require("../src/services/neutroSubsequentPricingService").createNeutroSubsequentPricingService({
+      wasMediaRecentlySent:async()=>false,hasRecentAcceptedPackageSuggestion:async()=>false}),
+    getAiOwnedContact:async contact=>owned?contact:null,
+    sendTrackedText:async(contact,value)=>{sends.push(value);return {sendResult:{success:true}};},
+    console:{warn(){},info(){},log(){},error(){}},
+  };
+  await vm.runInNewContext("(async()=>{\n"+source.slice(start,end)+"\n})()",ctx);
+  return sends;
+ };
+ for(const [text,reply,expected,mediaLanguage] of [
+   ["哦","骨盆调理现在只需 RM999","好的哦 😊","zh"],
+   ["哦","好的呀 😊","好的呀 😊","zh"],
+   ["I see","Price RM999","Of course 😊","en"],
+   ["Baik","Harga RM999","Baik 😊","ms"],
+ ]){
+   for(const rejectedModelPricing of [true,false]){
+     assert.deepEqual(await run({text,reply,mediaLanguage,rejectedModelPricing}),[expected],text);
+   }
+ }
+ const items=fixture.promotions[0].packages[0].mediaTranslations.zh.caption.split("\n").filter(s=>s.startsWith("✅"));
+ const valid=["Package A 包含：",...items].join("\n");
+ assert.deepEqual(await run({text:"Package A 包含什么？",reply:valid+"\nRM999"}),[valid]);
+ assert.deepEqual(await run({text:"哦",reply:"骨盆调理 RM999",owned:false}),[]);
+});

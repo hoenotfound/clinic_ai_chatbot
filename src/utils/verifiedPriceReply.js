@@ -339,11 +339,16 @@ function nonPriceExplanation(reply,{strictClaims=false}={}) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
   const kept = clauses.map((line) => line.trim()).filter((line) =>
     line && !MEDIA_SEND_PROMISE.test(line) &&
-    (!strictClaims || (!hasComplimentaryPriceClaim(line) && !hasUnsupportedOutcomePromise(line) && !hasClinicalMediaRisk(line))) &&
+    (!strictClaims || (!hasComplimentaryPriceClaim(line) && !hasUnsupportedOutcomePromise(line) && !hasClinicalMediaRisk(line) &&
+      !scanMyrAmounts(line).length && !require("./unconfirmedMediaPromiseGuard").claimsMediaWasOrWillBeSent(line))) &&
     !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
     !/(?:[价價][钱錢格位]|收费|收費|费用|費用|原价|原價|优惠|優惠|折扣|voucher|discount|\b(?:price|pricing|cost|harga|promosi)\b)/iu.test(line)
   );
-  return kept.slice(0, 3).join("\n").slice(0, 340).trim();
+  // The AI-first formatter removes unsupported claims, not valid information.
+  // Every retained clause has passed the same checks; a fixed three-line or
+  // character limit can silently remove verified package inclusions or cut
+  // a sentence in half. Keep the complete sanitized draft in AI-first mode.
+  return (strictClaims ? kept.join("\n") : kept.slice(0, 3).join("\n").slice(0, 340)).trim();
 }
 
 // Compound price + session/duration questions must not retain model-authored
@@ -414,6 +419,15 @@ function configuredDurationAnswer(customerText,service,language,prices){
  const amount=en?[hr?hr+" hour"+(hr!==1?"s":""):"",min?(end!==null?min+"–"+end:min)+" minutes":""].filter(Boolean).join(" "):
   ms?[hr?hr+" jam":"",min?(end!==null?min+"–"+end:min)+" minit":""].filter(Boolean).join(" "):raw;
  return en?"The configured treatment duration is "+(m[1]?"about ":"")+amount+".":ms?"Tempoh rawatan "+(m[1]?"kira-kira ":"ialah ")+amount+".":"这项护理的时间"+amount+"。";
+}
+// A narrow social fallback, not an intent or silence rule. Use only when a
+// mandatory commercial cleanup left no useful text. Never infer agreement
+// to book/pay, reopen sales, opt in, or suppress a legitimate enquiry.
+function acknowledgementAfterCommercialCleanup(customerText,language="zh"){
+  const text=String(customerText||"").normalize("NFKC").trim();
+  if(!/^(?:哦+|噢+|嗯+|好(?:的|哦)?|明白了|了解了|谢谢|謝謝|ok(?:ay)?|noted|i see|got it|thanks|thank you|baik|faham|terima kasih)[。.!！~～\s😊☺️👍🙏]*$/iu.test(text))return "";
+  const locale=String(language||"zh").toLowerCase();
+  return locale.startsWith("ms")?"Baik 😊":locale.startsWith("en")?"Of course 😊":"好的哦 😊";
 }
 function safeNonPriceExplanation(customerText, original, language, service=null,prices=[],strictClaims=false) {
   const recovery = recoveryPeriodGuidance(customerText, language);
@@ -614,7 +628,9 @@ function ensureVerifiedPriceReply({
       const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
         : locale.startsWith("en") ? "I can help explain this treatment 😊"
           : "我可以先帮你介绍这项疗程哦 😊";
-      return { reply: safeText || fallback, restored: true, verifiedNonPriceGuidance };
+      const acknowledgement = aiFirstReplyAuthority &&
+        acknowledgementAfterCommercialCleanup(customerText,language);
+      return { reply: safeText || acknowledgement || fallback, restored: true, verifiedNonPriceGuidance };
     }
     const question = locale.startsWith("ms")
       ? "Harga untuk rawatan yang mana satu ya? Saya boleh bantu semak 😊"
