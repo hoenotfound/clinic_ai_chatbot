@@ -45,7 +45,7 @@ const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartum
 const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote, containsApprovedPriceAmount, isSafeUnquotedReply } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote, containsApprovedPriceAmount, isSafeUnquotedReply, allowsApprovedPromotionWithoutTextQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPulseDepth");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
@@ -85,7 +85,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -2592,12 +2592,13 @@ async function processIncomingMessage(
         language: mediaLanguage,
         allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
         preserveNaturalReply: naturalReplyAuthority,
+        aiFirstReplyAuthority: resolveAiReplyAuthorityMode(clinicConfig)!=="legacy",
       });
       // If there is no approved commercial decision, preserve an already
       // safe non-quote instead of generating another treatment question.
       // Never skip a verified quote, a numbered selection, the configured
       // complimentary fee fact or an independently verified price recovery.
-      if (priced.restored && pricingAuthorityRequired && !approvedPricingDecision &&
+      if (priced.restored && priced.optionalClarification === true && pricingAuthorityRequired && !approvedPricingDecision &&
           !numberedPricingSelection && !shadowPriceException && !scopedPackagePrice &&
           !twoTreatmentQuote && !staffPriceConflict && !verifiedPriceService &&
           !isComplimentaryAssessmentFeeQuestion(text,
@@ -3681,7 +3682,9 @@ async function processIncomingMessage(
       // rules therefore apply to ordinary and repeat-session promotions.
       const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
         !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
-          containsApprovedPriceAmount(reply,{prices:[p]}));
+          containsApprovedPriceAmount(reply,{prices:[p]})) &&
+        !(resolveAiReplyAuthorityMode(clinicConfig)!=="legacy" &&
+          allowsApprovedPromotionWithoutTextQuote({reply,decision:approvedPricingDecision}));
       if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
         comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({
