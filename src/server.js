@@ -85,7 +85,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {selectVerifiedRoutineReply,resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -2884,7 +2884,7 @@ async function processIncomingMessage(
       });
       if (continuity) {
         const verified = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const recovered=routineReviewTextOnlyState(verified,continuity.reply);
+        const recovered=routineReviewTextOnlyState(verified,selectVerifiedRoutineReply({config:clinicConfig,answer:continuity,draft:languageCheckedModelReply,language:mediaLanguage}));
         if(recovered){
           replyOverrideAudit.change("planNeutroReviewContinuation",reply,recovered.reply);
           ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
@@ -2906,7 +2906,7 @@ async function processIncomingMessage(
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const recovered=routineReviewTextOnlyState(reviewEvidence,rm68AvailabilityAnswer);
+        const recovered=routineReviewTextOnlyState(reviewEvidence,selectVerifiedRoutineReply({config:clinicConfig,answer:{kind:"verified_rm68_campaign",reply:rm68AvailabilityAnswer},draft:languageCheckedModelReply,language:mediaLanguage}));
         if(recovered){
           replyOverrideAudit.change("rm68AvailabilityAnswer",reply,recovered.reply);
           ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
@@ -2930,9 +2930,11 @@ async function processIncomingMessage(
       });
       if (adminAnswer) {
         const evidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
-          verifyLocationDraft(languageCheckedModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
-          ? languageCheckedModelReply : adminAnswer.reply;
+        const administrativeReply=resolveAiReplyAuthorityMode(clinicConfig)!=="legacy"
+          ? selectVerifiedRoutineReply({config:clinicConfig,answer:adminAnswer,draft:languageCheckedModelReply,language:mediaLanguage})
+          : naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
+            verifyLocationDraft(languageCheckedModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
+            ? languageCheckedModelReply : adminAnswer.reply;
         const recovered=routineReviewTextOnlyState(evidence,administrativeReply);
         if(recovered){
           replyOverrideAudit.change("administrativeReviewReply",reply,recovered.reply);
