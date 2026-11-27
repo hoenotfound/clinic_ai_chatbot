@@ -85,7 +85,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {suppressConversationalRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -2541,9 +2541,20 @@ async function processIncomingMessage(
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
-        console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
-        replyOverrideAudit.change("guardAssessmentFirstPricingReply",reply,finalOfferGuard.reply);
-        reply = finalOfferGuard.reply;
+        const deferToVerifiedPriceFormatter=deferAssessmentPricingRewrite({
+          config:clinicConfig,audit:replyOverrideAudit,pricingAuthorityRequired,
+          marketingStopQuestion,
+          // Match the mandatory formatter's actual eligibility below.
+          formatterWillRun: !flagged && !marketingStopQuestion &&
+            !preserveTwoTreatmentDraft &&
+            fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026" &&
+            (aiPricingEnabled || clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled===true),
+        });
+        if(!deferToVerifiedPriceFormatter){
+          console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
+          replyOverrideAudit.change("guardAssessmentFirstPricingReply",reply,finalOfferGuard.reply);
+          reply = finalOfferGuard.reply;
+        }
       }
     }
 
