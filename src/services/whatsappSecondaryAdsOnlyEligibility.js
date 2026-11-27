@@ -8,6 +8,7 @@
 const { pool } = require("../db/db");
 const { is131060RecoveryAssistantSql } = require("../utils/whatsapp131060RecoverySql");
 const {reviewedDeliveryAttentionSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {independentServiceDeliveryAttentionSql}=require("../utils/whatsappSecondaryServiceBilling");
 const {secondaryLegacyStaffCutoff,secondaryLegacyStaffAudienceSql} =
   require("./whatsappSecondaryLegacyStaffPolicy");
 
@@ -279,6 +280,7 @@ function verified131060InformationReviewSql(alias = "c") {
 function secondaryAutomationAttentionAllowedSql(alias = "c", anchorSql = null, {outboundMessageSql=null,env=process.env,allowMediaQueueWait=false}={}) {
   return `(${alias}.needs_attention=FALSE
     OR ${verified131060InformationReviewSql(alias)}
+    OR ${independentServiceDeliveryAttentionSql(alias,env)}
     OR ${reviewedDeliveryAttentionSql(alias,env,anchorSql,{outboundMessageSql,allowMediaQueueWait})})`;
 }
 // A prior outbound AI text can be rejected BEFORE any Meta call because the
@@ -389,6 +391,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
       )
     )
     OR ${verified131060InformationReviewSql(alias)}
+    OR ${independentServiceDeliveryAttentionSql(alias,env)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias,outboundMessageSql)}
     OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:allowAutomaticFreshReply,allowAutomaticFreshReply,outboundMessageSql})}
     ${allowReviewContinuation ? `OR (
