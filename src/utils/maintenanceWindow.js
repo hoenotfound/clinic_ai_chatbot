@@ -22,4 +22,16 @@ function createMaintenanceSchedule(intervalMs, startMs = Date.now()) {
     return nextDueAt - nowMs;
   };
 }
-module.exports = { MAINTENANCE_WINDOW_MS, alignedMaintenanceDelay, createMaintenanceSchedule };
+
+// Only call after proving that there is no actionable work or known deadline.
+// Use common UTC boundaries (also local hour boundaries in Malaysia).
+// Round the old maximum deadline DOWN, never extending orphan recovery.
+// A near-boundary first sweep may occur early once; later sweeps align.
+function alignedIdleRecoveryDelay(intervalMs, nowMs = Date.now(), env = process.env) {
+  if (env.NEUTRO_IDLE_MAINTENANCE_ALIGN_ENABLED !== "true") return intervalMs;
+  if (![30 * 60 * 1000, 60 * 60 * 1000].includes(intervalMs) ||
+      !Number.isFinite(nowMs)) return intervalMs;
+  const boundary = Math.floor((nowMs + intervalMs) / intervalMs) * intervalMs;
+  return Math.max(1000, Math.min(intervalMs, boundary - nowMs));
+}
+module.exports = { MAINTENANCE_WINDOW_MS, alignedMaintenanceDelay, createMaintenanceSchedule, alignedIdleRecoveryDelay };
