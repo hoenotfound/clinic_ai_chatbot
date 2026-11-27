@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql}=require("../utils/whatsappSecondaryDeliveryOnly");
 const { randomUUID }=require("node:crypto");
 const { pool }=require("../db/db");
 const { PAST_LEAD_CANDIDATE_SQL }=require("./promotionalBlastPastLeads");
@@ -61,11 +62,11 @@ candidates AS (
     CASE WHEN inbound.content ~ '[一-龥]' THEN 'zh_CN'
          WHEN lower(coalesce(inbound.content,'')) ~ '(boleh|berapa|rawatan|nak |saya |harga)' THEN 'ms'
          ELSE 'en_US' END AS suggested_language,
-    CASE WHEN c.whatsapp_sender_id=2 AND EXISTS (
+    CASE WHEN NOT ${deliveryOnlySql()} AND c.whatsapp_sender_id=2 AND EXISTS (
       SELECT 1 FROM whatsapp_sender_billing_alarms alarm
       WHERE alarm.sender_id=2
     ) THEN 'secondary_billing_alarm'
-    WHEN c.whatsapp_sender_id=2 AND EXISTS (
+    WHEN NOT ${deliveryOnlySql()} AND c.whatsapp_sender_id=2 AND EXISTS (
       SELECT 1 FROM whatsapp_sender_billing_gates gate
       WHERE gate.sender_id=c.whatsapp_sender_id AND gate.owner_contact_id=c.id AND gate.contact_id=c.id AND gate.state<>'idle'
     ) THEN 'secondary_billing_unresolved'
