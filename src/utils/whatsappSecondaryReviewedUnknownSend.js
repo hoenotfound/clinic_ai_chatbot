@@ -1,4 +1,5 @@
 "use strict";
+const {detachableServiceGateSql}=require("./whatsappSecondaryServiceBilling");
 
 // Operator-approved, reservation-specific override. An unknown receipt,
 // failed delivery, or 30-minute timeout alone is NOT review evidence.
@@ -49,191 +50,18 @@ function signedFailureOrReviewedSql(env=process.env,messageAlias="old_outbound")
    )
  ))`;
 }
-// A separate service response is not a retry of an uncertain follow-up.
-// Existing explicit service-charge acknowledgment covers the NEW message;
-// the old attempt retains UNKNOWN and may still incur a charge.
-function automaticFreshReplyEnabled(env=process.env){
- return env.WHATSAPP_SECONDARY_SENDER_KEY==="neutro_secondary" &&
-   env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
-   env.WHATSAPP_SECONDARY_AUTO_FRESH_REPLY_AFTER_UNKNOWN_FOLLOWUP!=="false";
-}
-function automaticUnknownFollowupSql(attempt="held_attempt",old="old_outbound"){
- for(const alias of [attempt,old]){
-   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid automatic recovery SQL alias");
- }
- return `(
-   ${attempt}.state='unknown' AND ${attempt}.wamid IS NULL
-   AND ${attempt}.billable_authorized=TRUE
-   AND ${attempt}.billing_authorization_source='operator_acknowledged_service'
-   AND ${old}.delivery_status='unknown'
-   AND ${old}.whatsapp_message_id IS NULL AND ${old}.whatsapp_accepted_at IS NULL
-   AND ${old}.is_automated_follow_up=TRUE AND ${old}.sent_by_username IS NULL
-   AND ${old}.whatsapp_template->>'automatedSecondaryFollowup'='true'
-   AND ${old}.whatsapp_template->>'senderKey'='neutro_secondary'
-   AND ${old}.whatsapp_template->>'name' IS NULL
-   AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=${old}.id)
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
-     WHERE r.sender_id=${attempt}.sender_id AND r.reservation_id=${attempt}.reservation_id)
-   AND EXISTS(SELECT 1 FROM whatsapp_sender_followup_attempts old_followup
-     WHERE old_followup.sender_id=${attempt}.sender_id
-       AND old_followup.contact_id=${attempt}.contact_id
-       AND old_followup.message_id=${old}.id
-       AND old_followup.slot_hours IN (2,6,20)
-       AND old_followup.status='unknown'
-       AND old_followup.error_code IN ('secondary_staff_provider_outcome_unverified',
-        'secondary_staff_unconfirmed','sender_followup_delivery_unconfirmed',
-        'sender_followup_after_save_provider_dispatch','sender_followup_after_save_provider_result_persist',
-        'secondary_staff_billing_outcome_unverified_no_wamid')
-       AND old_followup.wamid IS NULL
-       AND old_followup.completed_at IS NOT NULL)
- )`;
-}
-// Bound new risk without blocking every subsequent incident for a month.
-function automaticRecoveryBudgetSql(attempt="held_attempt"){
- if(!/^[a-z][a-z0-9_]*$/i.test(attempt))throw Error("Invalid recovery budget alias");
- return `(
-   NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends recent
-     WHERE recent.sender_id=${attempt}.sender_id AND recent.contact_id=${attempt}.contact_id
-       AND recent.reopened_at>NOW()-INTERVAL '24 hours')
-   AND (SELECT COUNT(*) FROM whatsapp_sender_unknown_gate_new_sends recent
-     WHERE recent.sender_id=${attempt}.sender_id AND recent.contact_id=${attempt}.contact_id
-       AND recent.reopened_at>NOW()-INTERVAL '30 days')<3
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends recent
-     JOIN whatsapp_sender_billing_attempts recovery_send
-       ON recovery_send.sender_id=recent.sender_id
-       AND recovery_send.contact_id=recent.contact_id
-       AND recovery_send.message_id=recent.new_message_id
-     WHERE recent.sender_id=${attempt}.sender_id AND recent.contact_id=${attempt}.contact_id
-       AND recovery_send.state IN ('reserved','awaiting_pricing','unknown'))
- )`;
-}
-function automaticFreshInboundSql(attempt,old,anchor){
- for(const alias of [attempt,old]){
-   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid recovery SQL alias");
- }
- if(!/^\$[1-9][0-9]*$/.test(anchor))throw Error("Invalid recovery inbound parameter");
- return `EXISTS (
-   SELECT 1 FROM contacts recovery_contact
-   JOIN whatsapp_sender_conversations recovery_sc
-     ON recovery_sc.contact_id=recovery_contact.id
-     AND recovery_sc.sender_id=${attempt}.sender_id
-     AND recovery_sc.state='bound' AND recovery_sc.customer_wa_id=recovery_contact.whatsapp_number
-   JOIN messages recovery_inbound ON recovery_inbound.id=${anchor}
-     AND recovery_inbound.contact_id=recovery_contact.id
-   JOIN whatsapp_sender_message_context recovery_mc
-     ON recovery_mc.message_id=recovery_inbound.id AND recovery_mc.conversation_id=recovery_sc.id
-   WHERE recovery_contact.id=${attempt}.contact_id
-     AND recovery_contact.whatsapp_sender_id=${attempt}.sender_id
-     AND recovery_contact.mode='ai' AND recovery_contact.takeover_by IS NULL
-     AND recovery_contact.whatsapp_opt_out_at IS NULL
-     AND recovery_inbound.role='user' AND recovery_inbound.whatsapp_message_id IS NOT NULL
-     AND recovery_inbound.source_created_at>${attempt}.updated_at
-     AND NOT EXISTS(SELECT 1 FROM messages staff_after
-       WHERE staff_after.contact_id=recovery_contact.id AND staff_after.role='assistant'
-         AND staff_after.sent_by_username IS NOT NULL
-         AND staff_after.created_at>=recovery_inbound.created_at
-         AND (staff_after.whatsapp_message_id IS NOT NULL OR staff_after.whatsapp_accepted_at IS NOT NULL OR
-              EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=staff_after.id AND e.accepted=TRUE)))
-     AND recovery_inbound.created_at>${old}.created_at
-     AND recovery_inbound.source_created_at>NOW()-INTERVAL '24 hours'
-     AND recovery_inbound.source_created_at<=NOW()
-     AND recovery_inbound.is_forwarded IS DISTINCT FROM TRUE
-     AND NULLIF(BTRIM(COALESCE(recovery_inbound.content,'')),'') IS NOT NULL
-     AND recovery_inbound.content NOT LIKE '📎 [%'
-     AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
-       WHERE imported.message_id=recovery_inbound.id)
-     AND NOT EXISTS(SELECT 1 FROM ai_review_items pending
-       WHERE pending.contact_id=recovery_contact.id AND pending.status='pending')
-     AND NOT EXISTS(SELECT 1 FROM messages newer
-       WHERE newer.contact_id=recovery_contact.id AND newer.role='user'
-         AND (newer.created_at,newer.id)>(recovery_inbound.created_at,recovery_inbound.id))
- )`;
-}
 // Fresh readable inbound still required to resume AI. No earlier message is
 // replayed; the final transactional reservation enforces current sender rules.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,allowAutomaticFreshReply=false,outboundMessageSql=null,allowMediaQueueWait=false}={}){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
- const baseApproved=signedFailureOrReviewedSql(env,"old_outbound");
- if(baseApproved==="FALSE")return "FALSE";
+ const approved=signedFailureOrReviewedSql(env,"old_outbound");
+ if(approved==="FALSE")return "FALSE";
  // The original ad session cannot regain authority just because a DIFFERENT
  // later customer question arrived. Automated work must use that new anchor.
  if(anchorSql!==null && !/^(?:[a-z][a-z0-9_]*|\$[1-9][0-9]*)$/i.test(anchorSql))
    throw Error("Invalid message anchor SQL");
- if(outboundMessageSql!==null && !/^(?:\$[1-9][0-9]*|job\.outbound_message_id)$/.test(outboundMessageSql))
-   throw Error("Invalid outbound message SQL");
- const exactOutbound=outboundMessageSql===null ? "FALSE" :
-   "(current_gate.state='reserved' AND current_gate.contact_id={A}.id AND current_gate.message_id="+outboundMessageSql+")";
- const queueAnchor=anchorSql===null?null:(/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
- // Queue admission/retention is not dispatch authority. Only wait behind an
- // exact same-turn direct text or media reservation; the worker still uses
- // the ordinary billing gate and exact outbound check at actual dispatch.
- const queueWait=allowMediaQueueWait && queueAnchor!==null ? `(
-   current_gate.state IN ('reserved','awaiting_pricing')
-   AND current_gate.contact_id={A}.id
-   AND (
-     EXISTS(SELECT 1 FROM inbound_outbound_attempts reply
-       WHERE reply.contact_id={A}.id AND reply.inbound_message_id=${queueAnchor}
-         AND reply.assistant_message_id=current_gate.message_id)
-     OR EXISTS(SELECT 1 FROM whatsapp_sender_ai_media_jobs preceding_media
-       WHERE preceding_media.sender_id=current_gate.sender_id
-         AND preceding_media.contact_id={A}.id
-         AND preceding_media.inbound_message_id=${queueAnchor}
-         AND preceding_media.outbound_message_id=current_gate.message_id)
-   )
- )` : "FALSE";
- const reservedGate="(current_gate.state='idle' OR "+exactOutbound+" OR "+queueWait+")";
  const anchorCheck=anchorSql===null?"":" AND customer.id="+
    (/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
- // Inbox review is evidence only for the exact old attempt. Before its
- // one-shot audit is consumed, only an explicit, fresh AI text anchor can
- // use it; media/marketing cannot initiate a bypass from this permission.
- const inboxFreshAnchor=allowInboxAiReview && anchorSql!==null
-   ? ` OR (inbox_review.reviewed_at>=NOW()-INTERVAL '24 hours'
-       AND EXISTS (
-         SELECT 1 FROM messages review_inbound
-         WHERE review_inbound.id=${/^\$/.test(anchorSql)?anchorSql:anchorSql+".id"}
-           AND review_inbound.contact_id=held_attempt.contact_id
-           AND review_inbound.role='user'
-           AND review_inbound.created_at>=inbox_review.reviewed_at
-           AND review_inbound.source_created_at>=inbox_review.reviewed_at
-           AND review_inbound.source_created_at>NOW()-INTERVAL '24 hours'
-       ))` : "";
- const autoFresh=allowAutomaticFreshReply && automaticFreshReplyEnabled(env) &&
-   anchorSql!==null && /^\$/.test(anchorSql)
-   ? `(${automaticUnknownFollowupSql()} AND ${automaticFreshInboundSql("held_attempt","old_outbound",anchorSql)} AND ${automaticRecoveryBudgetSql()})`
-   : "FALSE";
- const autoUsed=`(${automaticUnknownFollowupSql()} AND EXISTS(
-   SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends used
-   WHERE used.old_reservation_id=held_attempt.reservation_id
-     AND used.sender_id=held_attempt.sender_id AND used.contact_id=held_attempt.contact_id
-     AND used.old_message_id=old_outbound.id
- ))`;
- const approved=`(${baseApproved} OR ${autoFresh} OR ${autoUsed} OR (
-   held_attempt.wamid IS NULL
-   AND old_outbound.whatsapp_message_id IS NULL
-   AND old_outbound.whatsapp_accepted_at IS NULL
-   AND old_outbound.delivery_status='unknown'
-   AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=old_outbound.id)
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
-     WHERE r.sender_id=held_attempt.sender_id AND r.reservation_id=held_attempt.reservation_id)
-   AND EXISTS (
-     SELECT 1 FROM whatsapp_sender_unknown_gate_inbox_reviews inbox_review
-     WHERE inbox_review.reservation_id=held_attempt.reservation_id
-       AND inbox_review.sender_id=held_attempt.sender_id
-       AND inbox_review.contact_id=held_attempt.contact_id
-       AND inbox_review.old_message_id=old_outbound.id
-       AND inbox_review.non_delivery_checked=TRUE
-       AND inbox_review.billing_no_charge_checked=TRUE
-       AND (EXISTS (
-         SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends used_review
-         WHERE used_review.old_reservation_id=held_attempt.reservation_id
-           AND used_review.sender_id=held_attempt.sender_id
-           AND used_review.contact_id=held_attempt.contact_id
-           AND used_review.old_message_id=old_outbound.id
-       )${inboxFreshAnchor})
-   )
- ))`;
-
  return [
   "(",
   " {A}.mode='ai' AND {A}.needs_attention=TRUE",
@@ -245,20 +73,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
   " AND EXISTS(",
   "  SELECT 1 FROM whatsapp_sender_billing_attempts held_attempt",
   "  JOIN messages old_outbound ON old_outbound.id=held_attempt.message_id",
-  "   AND (old_outbound.id={A}.delivery_attention_message_id OR EXISTS (",
-  "     SELECT 1 FROM messages blocked_draft",
-  "     WHERE blocked_draft.id={A}.delivery_attention_message_id",
-  "       AND blocked_draft.contact_id={A}.id AND blocked_draft.role='assistant'",
-  "       AND blocked_draft.created_at>old_outbound.created_at",
-  "       AND blocked_draft.delivery_status='failed'",
-  "       AND blocked_draft.whatsapp_message_id IS NULL AND blocked_draft.whatsapp_accepted_at IS NULL",
-  "       AND blocked_draft.delivery_error IN (",
-  "         'An earlier WhatsApp send is unconfirmed. Ask an administrator to review non-delivery and billing before composing a new message.',",
-  "         'The previous WhatsApp message is still being confirmed. Check its delivery before another send.')",
-  "       AND {A}.attention_reason='Delivery failed: ' || blocked_draft.delivery_error",
-  "       AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts b WHERE b.message_id=blocked_draft.id)",
-  "       AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=blocked_draft.id)",
-  "   ))",
+  "   AND old_outbound.id={A}.delivery_attention_message_id",
   "   AND old_outbound.contact_id={A}.id AND old_outbound.role='assistant'",
   "   AND old_outbound.delivery_status IN ('failed','unknown')",
   "  WHERE held_attempt.sender_id={A}.whatsapp_sender_id",
@@ -279,13 +94,13 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
   "          AND current_gate.reservation_id=held_attempt.reservation_id",
   "          AND current_gate.contact_id={A}.id",
   "          AND current_gate.message_id=old_outbound.id",
-  "          AND (current_gate.updated_at<=NOW()-INTERVAL '30 minutes' OR "+autoFresh+")",
-  "          AND ("+autoFresh+" OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends older",
+  "          AND current_gate.updated_at<=NOW()-INTERVAL '30 minutes'",
+  "          AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends older",
   "            WHERE older.sender_id=held_attempt.sender_id",
   "              AND older.contact_id={A}.id",
-  "              AND older.reopened_at>NOW()-INTERVAL '30 days'))",
+  "              AND older.reopened_at>NOW()-INTERVAL '30 days')",
   "        ) OR (",
-  "          "+reservedGate,
+  "          current_gate.state='idle'",
   "          AND EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends approved_bypass",
   "            WHERE approved_bypass.old_reservation_id=held_attempt.reservation_id",
   "              AND approved_bypass.sender_id=held_attempt.sender_id",
@@ -327,6 +142,7 @@ function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=p
    WHERE preflight_gate.sender_id=${senderAlias}.id
      AND preflight_gate.owner_contact_id=${contactAlias}.id
      AND preflight_gate.state='unknown'
+     AND NOT ${detachableServiceGateSql("preflight_gate",env)}
      AND NOT EXISTS (
        SELECT 1 FROM whatsapp_sender_billing_attempts held_attempt
        JOIN messages failed_video ON failed_video.id=held_attempt.message_id
@@ -372,4 +188,4 @@ function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=p
      )
  )`;
 }
-module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql,reviewedUnknownGateCandidateSql,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql,automaticRecoveryBudgetSql};
+module.exports={reviewedReservationIds,reviewReservationSql,reviewedDeliveryAttentionSql,reviewedUnknownGateCandidateSql};
