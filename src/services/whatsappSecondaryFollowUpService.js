@@ -1,5 +1,5 @@
 "use strict";
-const {deliveryOnlySql}=require("../utils/whatsappSecondaryDeliveryOnly");
+const {deliveryOnlySql,deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 // Independent, opt-in-only sender follow-ups. These messages never enter
 // Neutro's follow-up queue, template billing or retry worker.
@@ -819,8 +819,8 @@ function enabled(env) {
    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-   env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
-   env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+   (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true") &&
+   (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
    env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true";
 }
 
