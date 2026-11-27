@@ -380,7 +380,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
     )
     OR ${verified131060InformationReviewSql(alias)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias,process.env,inboundMessageSql)}
+    OR ${reviewedDeliveryAttentionSql(alias,process.env,inboundMessageSql,{allowInboxAiReview:true})}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
