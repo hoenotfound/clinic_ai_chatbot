@@ -176,7 +176,7 @@ test("unapproved pricing may preserve neutral wording but never unverified comme
 test("runtime only suppresses optional wording and optional combo media, not verified price or action decisions",()=>{
  const fs=require("node:fs"),path=require("node:path");
  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
- assert.match(server,/priced\.restored && pricingAuthorityRequired && !approvedPricingDecision/u);
+ assert.match(server,/priced\.restored && priced\.optionalClarification === true && pricingAuthorityRequired && !approvedPricingDecision/u);
  assert.match(server,/!twoTreatmentQuote && !staffPriceConflict && !verifiedPriceService/u);
  assert.match(server,/isSafeUnquotedReply\(reply\) &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"unapprovedPriceClarification"\)/u);
  assert.match(server,/comboOfferDecision\?\.mode==="suggestion" &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"optionalComboUpsell"\)\)\s*comboOfferDecision=null/u);
@@ -208,5 +208,59 @@ test("assessment-first text rewrite is deferred only when the mandatory verified
   const verified=ensureVerifiedPriceReply({customerText:"价格怎么算",reply,pricingDecision:null,
     priceRequested:true,preserveNaturalReply:true});
   assert.doesNotMatch(verified.reply,/RM999/u);
+ }
+});
+
+test("zero-cost claims are not neutral and cannot escape the price formatter",()=>{
+ const {isSafeUnquotedReply,hasComplimentaryPriceClaim,ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["不收费","不收取费用","收费为零","无需付款","No charge","at no cost","You don't have to pay","Zero fees","Tanpa caj","Tidak perlu bayar","Bayaran sifar"]){
+  assert.equal(hasComplimentaryPriceClaim(reply),true,reply);
+  assert.equal(isSafeUnquotedReply(reply),false,reply);
+  for(const priceRequested of [false,true]){
+   const result=ensureVerifiedPriceReply({customerText:priceRequested?"多少钱":"如何护理",reply,
+    pricingDecision:null,priceRequested,aiFirstReplyAuthority:true});
+   assert.equal(result.restored,true,reply);
+   assert.notEqual(result.optionalClarification,true,reply);
+   assert.equal(hasComplimentaryPriceClaim(result.reply),false,reply);
+  }
+ }
+});
+test("only optional price clarification may be suppressed; frequency and recovery facts remain mandatory",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const base={pricingDecision:null,priceRequested:true,preserveNaturalReply:true,aiFirstReplyAuthority:true};
+ const safe=ensureVerifiedPriceReply({...base,customerText:"多少钱",reply:"请问你想了解哪项护理呢？"});
+ assert.equal(safe.optionalClarification,true);
+ for(const [customerText,reply] of [["多少钱？需要做几次？","保证三次见效"],["多少钱？恢复期多久？","没有恢复期"],["How much and how long is recovery?","No downtime guaranteed."],["Berapa harga? Berapa kali?","Tiga sesi dijamin."]]){
+  const result=ensureVerifiedPriceReply({...base,customerText,reply});
+  assert.equal(result.restored,true,customerText);
+  assert.equal(result.optionalClarification,false,customerText);
+  assert.notEqual(result.reply,reply);
+ }
+});
+test("verified complimentary assessment wording is preserved only for that exact offer",()=>{
+ const {verifiedComplimentaryAssessmentDraft,ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const config=require("../src/config/clinicConfig");
+ const prev=config.automatedFollowUp;
+ try{
+  config.automatedFollowUp={...prev,complimentaryAssessmentExperienceEnabled:true};
+  const input={customerText:"1对1体态评估收费吗？",language:"zh",aiFirstReplyAuthority:true,preserveNaturalReply:true,pricingDecision:null};
+  const good="是的😊 1对1体态评估+体验是免费的哦";
+  assert.equal(verifiedComplimentaryAssessmentDraft(good,"zh"),true);
+  assert.equal(ensureVerifiedPriceReply({...input,reply:good}).reply,good);
+  for(const reply of ["骨盆调理不收费","1对1体态评估+体验免费，正式疗程也免费","1对1体态评估+体验免费，保证一次见效","1对1体态评估+体验免费，已帮你预约"]){
+   assert.equal(verifiedComplimentaryAssessmentDraft(reply,"zh"),false);
+   assert.notEqual(ensureVerifiedPriceReply({...input,reply}).reply,reply);
+  }
+ }finally{config.automatedFollowUp=prev;}
+});
+test("neutral wording cannot veto independently approved promotion artwork",()=>{
+ const {allowsApprovedPromotionWithoutTextQuote}=require("../src/utils/verifiedPriceReply");
+ const decision={source:"model_led_customer_context",type:"price",treatment:"骨盆调理",prices:[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]};
+ for(const reply of ["目前有两个护理配套哦 😊","Of course, we have two care packages.","Boleh, kami ada dua pakej penjagaan."]){
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision,reply}),true,reply);
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision:null,reply}),false);
+ }
+ for(const reply of ["Package A RM999","Package A RM388","不收费","No charge","我会发送图片给你","保证三次见效"]){
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision,reply}),false,reply);
  }
 });
