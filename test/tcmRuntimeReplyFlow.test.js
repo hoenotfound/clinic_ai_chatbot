@@ -117,7 +117,7 @@ function harness({ failDelivery = false } = {}) {
         : [{ role: "user", content: state.inbound.at(-1).text }],
     },
     detectConversationLanguage, detectReplyConversationLanguage,
-    isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest,
+    isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, latestExplicitLanguageTurn,
     // The primary TCM runtime has no secondary 131060 recovery proof.
     // Its real handler still invokes the prompt-only helper on every turn.
     readableHistoryForRecoverySelection: (history) => history,

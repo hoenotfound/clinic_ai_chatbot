@@ -172,7 +172,8 @@ function isGreetingOrLanguageOnly(input) {
   const withoutGreeting = text
     .replace(/^(?:(?:hi|hello|hey|hai|你好|您好|嗨|哈喽|哈囉|salam|assalamualaikum)[!！,.，。\s]*)/iu, "")
     .trim();
-  const candidate = (withoutGreeting || text).replace(/[!！.。?？]+$/u, "").trim();
+  const candidate = (withoutGreeting || text).normalize("NFKC")
+    .replace(/[\s.!！。?？,，\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]+$/gu,"").trim();
   if (detectExplicitLanguagePreference(candidate)) {
     return /^(?:english(?: (?:pls|please))?|in english(?: please| pls)?|please in english|speak english|reply in english|please (?:reply|speak) in english|can (?:you|u) (?:reply|speak) in english|bm|bahasa(?: malaysia| melayu)?|malay|in malay|in bahasa|speak malay|reply in malay|please (?:reply|speak) in (?:malay|bahasa malaysia)|中文|华语|華語|国语|國語|普通话|普通話|讲中文|講中文|用中文|请用中文|請用中文|中文回复|中文回覆|mandarin|chinese|in chinese|speak chinese|reply in chinese)$/iu.test(candidate);
   }

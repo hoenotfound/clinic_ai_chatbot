@@ -254,7 +254,7 @@ test("database proof requires a first Meta 131060 error and an accepted same-inb
 test("server restores verified ad-first treatment after an intervening recovery menu", () => {
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   const section=server.slice(server.indexOf("const history = await conversationStore.getHistoryForContact"),
-    server.indexOf("const mediaLanguage = detectReplyConversationLanguage"));
+    server.indexOf("const explicitReplyLanguage = detectExplicitLanguagePreference"));
   assert.match(section,/isVerifiedAdInbound/);
   assert.match(section,/preclaimed\?\.verifiedUnavailableFirstAd === true/);
   assert.match(section,/firstAdProofRepo\.getVerifiedFirstAdMessage/);

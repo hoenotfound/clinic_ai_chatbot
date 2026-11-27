@@ -361,3 +361,15 @@ test("final language fallback preserves booking uncertainty and does not invent 
     }
   }
 });
+
+test("ambiguous language decision is supported by both provider contracts without a separate call",()=>{
+ const opts=normalizeReplyOptions({replyLanguage:"zh",languageRequestCandidate:"en",channel:"whatsapp"});
+ const prompt=buildGeminiRequest([{role:"user",content:"Any chance you have that in English for my mum?"}],opts,"gemini-3.8-flash").request.config.systemInstruction;
+ assert.match(prompt,/set requestedReplyLanguage to "en"/);
+ assert.match(prompt,/"requestedReplyLanguage": null,\s*"languageRequestEvidence": null,/);
+ const {buildClaudeOutputSchema}=require("../src/services/claudeService");
+ const schema=buildClaudeOutputSchema(opts);
+ assert.deepEqual(schema.properties.requestedReplyLanguage.enum,["en",null]);
+ assert.ok(schema.required.includes("languageRequestEvidence"));
+ assert.equal(buildClaudeOutputSchema({}).properties.requestedReplyLanguage,undefined);
+});
