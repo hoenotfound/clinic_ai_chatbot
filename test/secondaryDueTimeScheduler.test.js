@@ -164,6 +164,7 @@ test("exact due timer sleeps, booking/opt-out events wake immediately, and stop 
  assert.equal(runs,1,"no five-minute polling while waiting for the due slot");
  events.publish("conversation_changed",{reason:"reaction",contactId:90});
  events.publish("conversation_changed",{reason:"contact_state",followUpStateUnchanged:true});
+ events.publish("conversation_changed",{reason:"contact_state",inboxPresentationOnly:true,contactId:90});
  await Promise.resolve();
  assert.equal(scheduler.state().dueAt,time("2026-11-02T03:00:00Z"));
  events.publish("conversation_changed",{reason:"message",contactId:90});
@@ -696,4 +697,20 @@ test("ordinary and all enabled marketing hints are batched in one SQL statement"
  const generalOnly=marketing.combinedPotentialDueSql({extended:false,general:true});
  assert.ok(generalOnly.includes(general.POTENTIAL_DUE_SQL));
  assert.equal(generalOnly.split(" UNION ALL").length-1,1);
+});
+
+
+test("only verified Inbox presentation writes skip secondary worker wakes",()=> {
+ const check=(type,payload)=>secondaryEventRequiresWake(type,payload,{});
+ assert.equal(check("conversation_changed",{reason:"contact_state",inboxPresentationOnly:true}),false);
+ for (const payload of [
+  {reason:"contact_state"},
+  {reason:"contact_state",inboxPresentationOnly:false},
+  {reason:"contact_state",inboxPresentationOnly:"true"},
+  {reason:"message",inboxPresentationOnly:true},
+  {reason:"message_updated",staffWaitingStateUnchanged:true},
+  {reason:"booking_confirmed",inboxPresentationOnly:true},
+  {reason:"whatsapp_marketing_opt_out",inboxPresentationOnly:true}
+ ]) assert.equal(check("conversation_changed",payload),true,JSON.stringify(payload));
+ assert.equal(check("pipeline_changed",{reason:"appointment_set",inboxPresentationOnly:true}),true);
 });
