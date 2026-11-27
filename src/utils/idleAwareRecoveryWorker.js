@@ -33,7 +33,7 @@ function createIdleAwareRecoveryWorker({
       return { pending: await hasPendingWork() };
     },
     delayForResult: result =>
-      result.pending ? activeIntervalMs : alignedIdleRecoveryDelay(emptyIntervalMs, (clock.now || Date.now)()),
+      result.pending ? activeIntervalMs : alignedIdleRecoveryDelay(emptyIntervalMs, (clock.now || Date.now)(), process.env, label),
   });
 }
 
