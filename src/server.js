@@ -2344,7 +2344,8 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
         !fixedAdFirstReply && !twoTreatmentQuote &&
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
-        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision ||
+          hasCustomerRequestedPriceReply({customerText:text}))) {
       try {
         const staleIntent = staleCommercialIntent({customerText:text,conversationHistory:commercialHistory,
           services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
