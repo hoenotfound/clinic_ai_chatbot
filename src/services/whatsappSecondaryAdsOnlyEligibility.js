@@ -320,7 +320,22 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
       SELECT 1 FROM whatsapp_sender_billing_gates cleared_gate
       WHERE cleared_gate.sender_id=${alias}.whatsapp_sender_id
         AND cleared_gate.owner_contact_id=${alias}.id
-        AND cleared_gate.state='idle'
+        AND (cleared_gate.state='idle' OR (
+          cleared_gate.state='reserved' AND EXISTS (
+            SELECT 1 FROM whatsapp_sender_billing_attempts next_attempt
+            JOIN messages next_draft ON next_draft.id=next_attempt.message_id
+              AND next_draft.contact_id=next_attempt.contact_id
+            WHERE next_attempt.reservation_id=cleared_gate.reservation_id
+              AND next_attempt.sender_id=cleared_gate.sender_id
+              AND next_attempt.contact_id=${alias}.id
+              AND next_attempt.message_id=cleared_gate.message_id
+              AND next_attempt.state='reserved'
+              AND next_draft.role='assistant'
+              AND next_draft.id<>${alias}.delivery_attention_message_id
+              AND next_draft.whatsapp_message_id IS NULL
+            )
+          )
+        )
     )
     -- An idle gate alone cannot authorize recovery while an older unknown
     -- reservation still lacks a recorded review or a new-send audit.
@@ -365,7 +380,7 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
   )`;
 }
 
-function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null } = {}) {
+function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuation = false, inboundMessageSql = null, env = process.env } = {}) {
   if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid contact SQL alias");
   return `(
     ${alias}.needs_attention IS NOT TRUE
@@ -380,7 +395,7 @@ function secondaryReplyAttentionAllowedSql(alias = "c", { allowReviewContinuatio
     )
     OR ${verified131060InformationReviewSql(alias)}
     OR ${secondaryResolvedTransientDeliveryAttentionSql(alias)}
-    OR ${reviewedDeliveryAttentionSql(alias,process.env,inboundMessageSql,{allowInboxAiReview:true})}
+    OR ${reviewedDeliveryAttentionSql(alias,env,inboundMessageSql,{allowInboxAiReview:true})}
     ${allowReviewContinuation ? `OR (
       ${alias}.mode='ai'
       AND ${alias}.needs_attention IS TRUE
@@ -437,7 +452,7 @@ async function isSecondaryAiReplyEligible(contactId, {
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
            AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c", {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
-              inboundMessageSql: mid != null ? "$5" : null,
+              inboundMessageSql: mid != null ? "$5" : null, env,
            })}
            AND c.whatsapp_opt_out_at IS NULL
            ${mid==null ? "AND "+legacyAudience : ""}
@@ -477,7 +492,7 @@ async function eligibleSecondaryAiReplyContactIds(ids, {
        WHERE c.id=ANY($1::integer[]) AND c.channel='whatsapp'
          AND sa.sender_key='neutro_secondary' AND sa.state='active'
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-         AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c")}
+         AND c.mode='ai' AND ${secondaryReplyAttentionAllowedSql("c",{env})}
          AND c.whatsapp_opt_out_at IS NULL
          AND ${secondaryLegacyStaffAudienceSql("c",null,env)}`,
       [valid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
