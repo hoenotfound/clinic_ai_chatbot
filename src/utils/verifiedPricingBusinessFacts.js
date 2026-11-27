@@ -87,10 +87,20 @@ function confirmedBusinessHoursAnswer({customerText,hours,language="zh"}={}){
   const reply=({en:"Opening hours:",ms:"Waktu operasi:",zh:"营业时间："}[locale])+"\n"+rows.join("\n");
   return {kind:"verified_hours",reply,language:locale,rows};
 }
-function verifyBusinessHoursDraft(reply,facts){
+function verifyBusinessHoursDraft(reply,facts,{allowNeutralCourtesy=false}={}){
   if(!facts||typeof reply!=="string")return false;
   const norm=v=>String(v).normalize("NFKC").replace(/[😊☺️🙂💕]/gu,"").replace(/\s+/gu," ").trim().toLowerCase();
-  return norm(reply)===norm(facts.reply);
+  const value=norm(reply), expected=norm(facts.reply);
+  if(value===expected)return true;
+  if(!allowNeutralCourtesy||!expected)return false;
+  // Preserve courtesy around the complete configured schedule, not extra facts.
+  const index=value.indexOf(expected);
+  if(index<0||value.indexOf(expected,index+expected.length)>=0)return false;
+  const clean=v=>v.replace(/[\p{P}\p{S}]+/gu," ").replace(/\s+/gu," ").trim();
+  const before=clean(value.slice(0,index)),after=clean(value.slice(index+expected.length));
+  const starts={zh:["","您好","你好","亲爱的","好的","是的"],en:["","hi","hello","sure","of course","yes"],ms:["","hai","helo","baik","boleh","ya"]};
+  const ends={zh:["","哦","呀","呢","谢谢","谢谢您"],en:["","thank you","thanks"],ms:["","ya","terima kasih"]};
+  return (starts[facts.language]||[]).includes(before)&&(ends[facts.language]||[]).includes(after);
 }
 
 function singleBranchLocationFacts(branches, language = "zh") {
