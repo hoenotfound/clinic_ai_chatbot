@@ -718,3 +718,28 @@ test("Nov 27: pricing after delivered assessment follow-up preserves the custome
    turn("user","我想了解脉冲波调理",1000),history.at(-1)]}),null);
  }
 });
+
+test("Nov 27 production replay uses actual follow-up metadata, prices and localized captions",async()=>{
+ const fixture=require("./fixtures/neutro-pricing-assessment-20261127.json");
+ const {withPricingHistoryMetadata}=require("../src/utils/conversationStore");
+ const history=fixture.rows.map((row,i)=>withPricingHistoryMetadata({role:row.role,content:row.content},
+  {...row,id:i+1,created_at:new Date(now-row.ageMs)}));
+ assert.equal(history.length,8);
+ assert.equal(history.at(-2).pricingDeliveredAssessmentFollowUp,true);
+ assert.equal(JSON.stringify(history).includes("pricingDeliveredAssessmentFollowUp"),false);
+ for(const language of ["zh","en","ms"]){
+  const input=args("价格怎么算","骨盆调理",{services:fixture.services,serviceAliases:fixture.serviceAliases,
+   promotions:fixture.promotions,conversationHistory:history,complimentaryAssessmentExperienceEnabled:true});
+  const candidate=resolveModelLedPricingDecision(input);
+  assert.deepEqual(candidate?.prices.map(p=>p.price),["RM388","RM268"]);
+  const approval=resolveApprovedPricingAssessment({...input,mode:"enabled",aiDecision:candidate});
+  assert.equal(approval.reason,"approved");
+  const media=await resolvePricePromotionForReply({...input,language,aiPricingEnabled:true,
+   pricingDecision:approval.decision,treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+   textSendSucceeded:true,contactId:1,wasPromoRecentlySent:async()=>false,
+   hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+  assert.deepEqual(media?.packages.map(p=>p.name),["Package A","Package B"]);
+  assert.deepEqual(media.packages.map(p=>p.caption),fixture.promotions[0].packages.map(p=>
+   language==="zh"?p.caption:p.mediaTranslations[language].caption));
+ }
+});
