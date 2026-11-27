@@ -1089,12 +1089,12 @@ async function nextPotentialDueAt(active, database = pool) {
 function nextPollDelay(due, nowMs = Date.now()) {
   const nextDueAt = due && typeof due === "object" && "nextDueAt" in due
     ? due.nextDueAt : due;
-  if (!nextDueAt) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs);
+  if (!nextDueAt) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs, process.env, "WhatsApp extended follow-up scheduler");
   const dueMs = new Date(nextDueAt).getTime();
   if (!Number.isFinite(dueMs)) return CHECK_INTERVAL_MS;
   // Already-due work is retried promptly only when the actual candidate
   // sweep found actionable work. An obsolete hint cannot force 5m polling.
-  if (dueMs <= nowMs) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs);
+  if (dueMs <= nowMs) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs, process.env, "WhatsApp extended follow-up scheduler");
   return Math.max(1000, Math.min(IDLE_CHECK_INTERVAL_MS, dueMs - nowMs));
 }
 
@@ -1120,17 +1120,17 @@ function freeEntryQuietDelay(nowMs = Date.now(), quiet = clinicConfig.automatedF
   return status.active && Number.isFinite(end) && end > nowMs ? end - nowMs : null;
 }
 
-async function runAndSchedule() {
-  const quietDelay = freeEntryQuietDelay();
+async function runAndSchedule({ clock = Date.now, sweep = run, readSettings = settings, readHint = nextPotentialDueAt } = {}) {
+  const quietDelay = freeEntryQuietDelay(clock());
   if (quietDelay !== null) return quietDelay;
-  const result = await run();
+  const result = await sweep();
   if (result?.skipped === true || result?.reason === "template_catalog_unavailable") {
     return CHECK_INTERVAL_MS;
   }
-  const configured = settings();
-  if (!configured) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS);
-  const hint = await nextPotentialDueAt(configured);
-  return followUpDelayForResult(result, hint);
+  const configured = readSettings();
+  if (!configured) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, clock(), process.env, "WhatsApp extended follow-up scheduler");
+  const hint = await readHint(configured);
+  return followUpDelayForResult(result, hint, clock());
 }
 
 function wake(delayMs = CHECK_INTERVAL_MS) {
