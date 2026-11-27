@@ -9,6 +9,22 @@ function usesNaturalReplyAuthority(config) {
     /^neutro\s+sense\b/iu.test(String(config.businessName || config.clinicName || "")) &&
     config.aiPricingIntentMode === "enabled";
 }
+// Keep the existing AI-led action and review policy independent of the
+// conversational rewrite rollout. Legacy means the current deployed behavior,
+// not disabling verified pricing, appointment or sales state safeguards.
+function resolveAiReplyAuthorityMode(config) {
+  if (!usesNaturalReplyAuthority(config)) return "legacy";
+  return ["observe","enabled"].includes(config.aiReplyAuthorityMode)
+    ? config.aiReplyAuthorityMode : "legacy";
+}
+// Only explicitly classified optional rewrites use this boundary. Never call
+// it for factual correction, safety, consent, language or action validation.
+function suppressConversationalRewrite(config,audit,reason) {
+  const mode=resolveAiReplyAuthorityMode(config);
+  if(mode==="legacy") return false;
+  if(mode==="observe") audit?.suppressed?.(reason);
+  return true;
+}
 // Use only after a new review has actually been persisted.
 function recordedReviewAcknowledgement(category, language="zh") {
   const lang=String(language).toLowerCase().slice(0,2);
@@ -89,14 +105,16 @@ function routineReviewTextOnlyState(evidence,reply){
     details:null,clinicalAcknowledgement:null,reviewContinuationTextOnly:true};
 }
 function createReplyOverrideAudit(log=console.info) {
-  const reasons=new Set();
+  const reasons=new Set(), suppressed=new Set();
   return {
+    suppressed(reason){suppressed.add(reason);},
     change(reason,before,after){if(typeof before==="string"&&typeof after==="string"&&before!==after)reasons.add(reason);return after;},
     note(reason){reasons.add(reason);},
     flush({contactId,inboundId,original,final,outcome}={}){
-      if(!reasons.size&&!(typeof original==="string"&&typeof final==="string"&&original!==final))return;
-      if(!reasons.size)reasons.add("unattributed");
-      log("[Reply authority] "+JSON.stringify({contactId,inboundId,reasons:[...reasons],changed:typeof original==="string"&&typeof final==="string"?original!==final:null,outcome}));
+      const changed=typeof original==="string"&&typeof final==="string"?original!==final:null;
+      if(!reasons.size&&!suppressed.size&&!changed)return;
+      if(!reasons.size&&changed)reasons.add("unattributed");
+      log("[Reply authority] "+JSON.stringify({contactId,inboundId,reasons:[...reasons],...(suppressed.size?{suppressed:[...suppressed]}:{}),changed,outcome}));
     }
   };
 }
@@ -164,4 +182,4 @@ async function persistSalesFollowUpIntent({contactId,inboundId,customerText,inte
     throw error;
   }finally{client.release();}
 }
-module.exports={salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={resolveAiReplyAuthorityMode,suppressConversationalRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
