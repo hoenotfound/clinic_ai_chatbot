@@ -50,10 +50,10 @@ function improveRepeatedPriceClarification({
  const label=two?"3D 小颜术和9D 逆龄抗衰":chosen.name;
  const locale=String(language||"").toLowerCase();
  const message=locale.startsWith("en")
-   ?"You've already specified "+label+". I can't verify its current price, so the centre needs to confirm the accurate amount."
+   ?"For "+label+", the centre needs to confirm the current price so we don't give you an incorrect amount."
    :locale.startsWith("ms")
-     ?"Anda sudah nyatakan "+label+". Saya belum dapat sahkan harga terkini; pihak pusat perlu mengesahkan jumlah yang tepat."
-     :"明白，你已经说明想了解"+label+"的价格了 😊 我这边暂时无法核对准确金额，需要由门店同事确认，避免给错报价。";
+     ?"Untuk "+label+", pihak pusat perlu mengesahkan harga terkini supaya jumlah yang diberikan tepat."
+     :"关于"+label+"的费用，我这边暂时无法核对准确金额，需要由门店同事确认，避免给错报价。";
  return {reply:message,changed:true};
 }
 module.exports={improveRepeatedPriceClarification};
