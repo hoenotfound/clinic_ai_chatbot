@@ -161,3 +161,27 @@ test("AI replies and follow-ups use the same customer-language evidence", () => 
   assert.equal(detectConversationLanguage(["骨盆调理 price?"]), "zh",
     "ambiguous name-only shorthand defaults to its existing Chinese template");
 });
+
+test("contextual language information requests are substantive and select the requested locale", () => {
+  const variants = {
+    en: ["English Info pls", "English information please", "Hi, English details please", "Can explain in English?", "Could you explain this in English?", "Send me the information in English please", "请用英文介绍一下"],
+    ms: ["Malay info pls", "BM details please", "Bahasa Malaysia explanation", "Can explain in Malay?", "Boleh terangkan dalam Bahasa Malaysia?", "请用马来文介绍"],
+    zh: ["Mandarin info pls", "Chinese information please", "Can you explain in Mandarin?", "请用中文解释一下", "中文资料"],
+  };
+  for (const [language, messages] of Object.entries(variants)) {
+    for (const message of messages) {
+      assert.equal(detectExplicitLanguagePreference(message), language, message);
+      assert.equal(detectMessageLanguage(message), language, message);
+      assert.equal(isGreetingOrLanguageOnly(message), false, message);
+      assert.equal(detectReplyConversationLanguage([message, "我想了解骨盆调理"]), language, message);
+      assert.equal(detectConversationLanguage(["price?", "ok", message, "我想了解骨盆调理"]), language, message);
+    }
+  }
+  for (const message of ["English price list", "English version of the price list", "My English is not good", "I studied in English"]) {
+    assert.equal(detectExplicitLanguagePreference(message), null, message);
+  }
+  assert.equal(detectConversationLanguage(["English Info pls", "我想了解骨盆调理"]), "en");
+  assert.equal(detectConversationLanguage(["中文", "English Info pls", "我想了解骨盆调理"]), "zh");
+  assert.equal(isGreetingOrLanguageOnly("English please"), true);
+  assert.equal(shouldGenerateLocalizedIntro("English Info pls", "你好，欢迎来到 Neutro Sense"), true);
+});
