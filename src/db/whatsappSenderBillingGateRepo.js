@@ -7,7 +7,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("./db");
 const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
-const {reviewedReservationIds,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {reviewedReservationIds,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql,automaticRecoveryBudgetSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
@@ -231,6 +231,7 @@ async function reserveSecondaryBillingAttempt({
       const autoProof=autoEnabled ? `(
         ${automaticUnknownFollowupSql("a","old")}
         AND ${automaticFreshInboundSql("a","old","$8")}
+        AND ${automaticRecoveryBudgetSql("a")}
         AND EXISTS (
           SELECT 1 FROM messages fresh
           JOIN messages inbound ON inbound.id=$8 AND inbound.contact_id=fresh.contact_id
@@ -328,13 +329,13 @@ async function reserveSecondaryBillingAttempt({
           AND a.contact_id=$3 AND a.message_id=$4
           AND a.state='unknown' AND a.message_id<>$7
           AND (g.updated_at<=NOW()-INTERVAL '30 minutes' OR ${autoProof})
-          -- One reviewed bypass maximum per contact in a rolling 30 days.
-          -- The old reservation's primary-key audit already blocks replay.
-          AND NOT EXISTS (
+          -- Automatic recovery has its own bounded budget. Manual/signed
+          -- recovery retains the original one-per-30-day limit.
+          AND (${autoProof} OR NOT EXISTS (
             SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends prior
             WHERE prior.sender_id=a.sender_id AND prior.contact_id=a.contact_id
               AND prior.reopened_at>NOW()-INTERVAL '30 days'
-          )
+          ))
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_sender_status_receipts r
             WHERE r.sender_id=a.sender_id AND r.reservation_id=a.reservation_id
@@ -364,10 +365,14 @@ async function reserveSecondaryBillingAttempt({
       // transaction under the sender and contact locks.
       await client.query(
         "INSERT INTO whatsapp_sender_unknown_gate_new_sends "+
-        "(old_reservation_id,sender_id,contact_id,old_message_id,new_message_id,basis) "+
-        "VALUES($1,$2,$3,$4,$5,$6)",
+        "(old_reservation_id,sender_id,contact_id,old_message_id,new_message_id,basis,authorization_source,recovery_inbound_message_id) "+
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
         [approved.reservation_id,senderId,cid,gate.rows[0].message_id,mid,
-         approved.release_basis]
+         approved.release_basis,
+         approved.automatic_fresh_reply===true ? "automatic_fresh_service_reply" :
+           approved.release_basis==="signed_failed" ? "signed_failure" :
+           approved.inbox_reviewed===true ? "inbox_review" : "operator_allowlist",
+         approved.automatic_fresh_reply===true ? id(freshAiInboundMessageId) : null]
       );
       if (approved.automatic_fresh_reply === true) {
         console.info("[Secondary WhatsApp fresh reply after unknown follow-up]", JSON.stringify({
