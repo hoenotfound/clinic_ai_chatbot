@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql,deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 const { runFollowUpRead } = require("../utils/namedFollowUpRead");
 // Never share primary Neutro marketing templates, opt-in or billing entries.
 // Exact one-shot sender, contact, inbound and template authorization required.
@@ -218,7 +219,7 @@ const CANDIDATES_SQL=`
    FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
    WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
  ) lead ON TRUE
- WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
+ WHERE rule.enabled=TRUE AND (${deliveryOnlySql()} OR rule.operator_billing_approved=TRUE)
    AND rule.slot_hours IN(48,66)
    AND ${MARKETING_AUTOMATION_ELIGIBLE_SQL}
    -- Refuse stopped or ambiguous customer choices. For a verified change
@@ -402,6 +403,7 @@ const CANDIDATES_SQL=`
      WHERE bad.sender_id=sa.id AND bad.contact_id=c.id
        AND bad.anchor_message_id=inbound.id
        AND bad.status IN('unknown','blocked')
+       AND NOT (${deliveryOnlySql()} AND bad.status='unknown' AND bad.completed_at IS NOT NULL)
    )
    -- An actual customer reply changes the anchor, not the marketing
    -- session. A previous claimed or ambiguous slot must never be replayed.
@@ -425,11 +427,11 @@ const CANDIDATES_SQL=`
    -- Discovery must not consume a one-shot slot for an unreviewed hold.
    -- The billing reservation validates this evidence again under a lock.
    AND ${reviewedUnknownGateCandidateSql("c","sa")}
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
      WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
-       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
-     WHERE discovery_alarm.sender_id=sa.id)
+       AND discovery_gate.state IN ('reserved','awaiting_pricing')))
+   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms discovery_alarm
+     WHERE discovery_alarm.sender_id=sa.id))
    -- The RM68 event is a different 90-minute offer from the standing RM388
    -- Pulse Wave template. Skip unapproved generic 48h/66h/Day4/Day6
    -- templates for this verified RM68 session (also on pre-send rechecks).
@@ -579,10 +581,10 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
  .replace("attempted.anchor_message_id=inbound.id",
   "attempted.anchor_message_id=qualified_session.origin_id")
  .replace("ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
-  `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
+  `AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id))
+   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
       WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
-        AND gate.state IN ('reserved','awaiting_pricing'))
+        AND gate.state IN ('reserved','awaiting_pricing')))
    -- Old UNKNOWN outcomes are eligible only after a sender-bound staff
    -- review and one-shot authorization at the final billing reservation.
    -- Do not mark the old attempt as successful or replay its original media.
@@ -614,9 +616,9 @@ const EXTENDED_POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(EXTENDED_CANDIDA
 
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
-const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
+const MARKETING_DISCOVERY_RESERVATION_GUARD=`   AND (${deliveryOnlySql()} OR NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates discovery_gate
      WHERE discovery_gate.sender_id=sa.id AND discovery_gate.owner_contact_id=c.id
-       AND discovery_gate.state IN ('reserved','awaiting_pricing'))
+       AND discovery_gate.state IN ('reserved','awaiting_pricing')))
 `;
 const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
  `   AND NOT EXISTS (
@@ -636,7 +638,7 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"
 // Candidate discovery rejects every unsettled reservation. Rechecking an
 // already-claimed slot must allow only its own new reservation, never another.
 const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_RESERVATION_GUARD,"").replace(
- "AND gate.state IN ('reserved','awaiting_pricing'))",
+ "AND gate.state IN ('reserved','awaiting_pricing')))",
  `AND gate.state IN ('reserved','awaiting_pricing')
        AND NOT (gate.state='reserved' AND EXISTS (
          SELECT 1 FROM whatsapp_sender_marketing_followup_attempts own
@@ -644,7 +646,7 @@ const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(MARKETING_DISCOVERY_R
            AND own.anchor_message_id=qualified_session.origin_id
            AND own.slot_hours=rule.slot_hours AND own.status='claimed'
            AND own.message_id IS NOT NULL AND own.message_id=gate.message_id
-       )))`
+       ))))`
 ).replace(
  `   AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
