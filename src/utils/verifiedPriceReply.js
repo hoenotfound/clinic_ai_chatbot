@@ -286,7 +286,10 @@ function isSafeUnquotedReply(reply) {
   // automatically neutral merely because they lack RM. A price discussion
   // containing quantities stays on the existing verification path.
   const priceTerms=/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/iu;
-  if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(text))return false;
+  // Malay "yang mana satu" means "which one", not a monetary quantity.
+  // Normalize only this exact interrogative idiom; all other numbers stay guarded.
+  const quantityText=text.replace(/\byang\s+mana\s+satu\b/giu,"yang mana");
+  if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(quantityText))return false;
   // Do not use this eligibility check to release an unsupported clinical
   // promise or an unverified payment/booking claim.
   if (hasClinicalMediaRisk(text) || hasUnsupportedOutcomePromise(text)) return false;
