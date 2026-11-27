@@ -8,7 +8,7 @@ const { createAdaptiveWorkerTimer } = require("./adaptiveWorkerTimer");
 const { createCoalescedImmediateWake } = require("./followUpWakePolicy");
 const { recordWorkerRun } = require("./workerActivityMetrics");
 const { withDatabaseActivitySource } = require("./databaseActivityContext");
-const { recordWorkerWake, recordSecondaryDueDecision } =
+const { recordWorkerWake, recordSecondaryDueDecision, recordPresentationWakeSkip } =
   require("./refreshWakeDiagnostics");
 
 const IDLE_RECHECK_MS = 60 * 60 * 1000;
@@ -207,6 +207,7 @@ function createSecondaryDueScheduler({
     // disrupt scheduling, and booking/opt-out signals retain their timing.
     if (!eligible) {
       recordWorkerWake(lane, type, payload, "ignored", env);
+      if (type === "conversation_changed") recordPresentationWakeSkip(lane, payload);
       return;
     }
     const statusOnly = type === "conversation_changed" &&
