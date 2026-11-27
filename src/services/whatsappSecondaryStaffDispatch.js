@@ -237,11 +237,11 @@ async function sendSecondaryStaffText({
       ? await replyAudienceEligible(cid,{
           database,env,
           ...(origin==="ai_reply" && anchorMessageId != null
-            ? {inboundMessageId:anchorMessageId,allowReviewContinuation:true} : {}),
+            ? {inboundMessageId:anchorMessageId,allowReviewContinuation:true,outboundMessageId:mid} : {}),
         })
       : allContactAutomation
         ? await automationAudienceEligible(cid,{
-            database,env,inboundMessageId:anchorMessageId
+            database,env,inboundMessageId:anchorMessageId,outboundMessageId:mid
           })
         : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
