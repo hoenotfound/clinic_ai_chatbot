@@ -4121,6 +4121,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
             messageId: updatedVoiceMessage.id,
             message: updatedVoiceMessage,
             reason: "message_updated",
+            // Transcription only; the send outcome retains its own event.
+            staffWaitingStateUnchanged: true,
           });
         }
       } catch (transcriptSaveErr) {
