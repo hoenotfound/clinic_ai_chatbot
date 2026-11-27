@@ -616,7 +616,11 @@ function ensureVerifiedPriceReply({
       SESSION_OR_DURATION_QUESTION.test(String(customerText||"")) ||
       hasClinicalMediaRisk(customerText) || hasClinicalMediaRisk(original) || hasUnsupportedOutcomePromise(original);
     // Do not retain unsupported complimentary claims in the fallback prose.
-    const safeText = safeNonPriceExplanation(customerText, original, language,null,[],aiFirstReplyAuthority);
+    // A standalone price question needs a price or a focused clarification,
+    // not an unrelated booking invitation salvaged from the AI draft.
+    const standalonePrice = priceRequested && isStandalonePriceQuestion(customerText) &&
+      hasExplicitPriceRequest(customerText);
+    const safeText = safeNonPriceExplanation(customerText, standalonePrice ? "" : original, language,null,[],aiFirstReplyAuthority);
     // Only independently generated recovery/session guidance may survive a
     // later rejected-price fallback. Never reinsert arbitrary model prose.
     const verifiedNonPriceGuidance = aiFirstReplyAuthority &&
@@ -640,7 +644,7 @@ function ensureVerifiedPriceReply({
     return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true, verifiedNonPriceGuidance,
       // Mark only a genuinely optional clarification. The caller cannot
       // restore a draft after a factual/safety correction.
-      optionalClarification: !needsFactualCorrection && !unverifiedFree &&
+      optionalClarification: !standalonePrice && !needsFactualCorrection && !unverifiedFree &&
         !mediaPromise && !unsolicitedAmount && isSafeUnquotedReply(original) };
   }
   // A verified customer-selected pelvic treatment remains the pricing
@@ -786,7 +790,9 @@ function ensureVerifiedPriceReply({
   const canPreserveCompleteQuote=!preserveNaturalReply || (!otherQuestion &&
     !hasClinicalMediaRisk(customerText) && !recoveryPeriodGuidance(customerText,language) &&
     !SESSION_OR_DURATION_QUESTION.test(String(customerText||"")));
-  const preservedModelQuote = aiLed && canPreserveCompleteQuote &&
+  const directPriceOnly = aiLed && pricingDecision.directDeliveredPriceReference === true &&
+    isStandalonePriceQuestion(customerText);
+  const preservedModelQuote = aiLed && canPreserveCompleteQuote && !directPriceOnly &&
     (pricingDecision.source === "model_led_customer_context" ||
       (preserveNaturalReply && pricingDecision.source === "customer_current_offer"))
     ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
@@ -819,7 +825,7 @@ function ensureVerifiedPriceReply({
     Boolean(recoveryGuidance) || otherQuestion;
   const explanation = recoveryGuidance ||
     (hasClinicalMediaRisk(customerText) ||
-      ((priceOnlyResponse === true ||
+      ((priceOnlyResponse === true || directPriceOnly ||
         (aiLed && ["meta_ad", "customer_current_offer"].includes(pricingDecision.source))) && !independentServiceQuestion)
       ? "" : safeNonPriceExplanation(customerText, original, language,preserveNaturalReply?services.find(s=>s.name===treatment):null,prices,aiFirstReplyAuthority));
   const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
