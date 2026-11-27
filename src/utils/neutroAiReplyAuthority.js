@@ -19,7 +19,12 @@ function resolveAiReplyAuthorityMode(config) {
 }
 // Only explicitly classified optional rewrites use this boundary. Never call
 // it for factual correction, safety, consent, language or action validation.
+const OPTIONAL_CONVERSATIONAL_REWRITES=new Set([
+  "unapprovedPriceClarification","improveRepeatedPriceClarification",
+  "rejectedModelPricingClarification","optionalComboUpsell",
+]);
 function suppressConversationalRewrite(config,audit,reason) {
+  if(!OPTIONAL_CONVERSATIONAL_REWRITES.has(reason))return false;
   const mode=resolveAiReplyAuthorityMode(config);
   if(mode==="legacy") return false;
   if(mode==="observe") audit?.suppressed?.(reason);
