@@ -1955,6 +1955,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       }
       const name=String(req.body?.templateName||"").trim();
       const languageCode=String(req.body?.languageCode||"").trim();
+      const direct=require('../utils/whatsappSecondaryDeliveryOnly').deliveryOnlyEnabled();
       const prepared=await secondaryTemplate.prepareSecondaryStaffTemplate(contact,{
         name,languageCode,values,mediaAttachment,
         billingAcknowledged:req.body?.billingAcknowledged===true ||
@@ -1970,12 +1971,12 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
           templateName:name,languageCode,
         }
       );
-      if(!review || review.evidence!=="unknown" ||
+      if(!review || (!direct && (review.evidence!=="unknown" ||
           (req.body?.billingAcknowledged!==true &&
-           req.body?.billingAcknowledged!=="true")){
+           req.body?.billingAcknowledged!=="true")))){
         return res.status(409).json({
           code:"secondary_billing_review_expired",
-          error:"Review the possible Meta charge before sending this secondary WhatsApp template.",
+          error:direct?"Refresh the approved template list before sending.":"Review the possible Meta charge before sending this secondary WhatsApp template.",
         });
       }
       // Retain the exact secondary template attachment in the existing private
@@ -1997,11 +1998,11 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         }
       }
       const claimed=await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
-        contact.id,req.session?.username,req.body
+        contact.id,req.session?.username,direct?{...req.body,billingAcknowledged:true}:req.body
       );
       if(!claimed.claimed)return res.status(409).json({
         code:claimed.code||"secondary_billing_review_already_used",
-        error:"This template billing confirmation was already used. Check delivery first.",
+        error:direct?"This template request was already used. Check delivery first.":"This template billing confirmation was already used. Check delivery first.",
       });
       const current=await telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,async()=>{
