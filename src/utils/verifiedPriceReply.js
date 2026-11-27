@@ -792,7 +792,7 @@ function ensureVerifiedPriceReply({
     !SESSION_OR_DURATION_QUESTION.test(String(customerText||"")));
   const directPriceOnly = aiLed && pricingDecision.directDeliveredPriceReference === true &&
     isStandalonePriceQuestion(customerText);
-  const preservedModelQuote = aiLed && canPreserveCompleteQuote && !directPriceOnly &&
+  const preservedModelQuote = aiLed && canPreserveCompleteQuote &&
     (pricingDecision.source === "model_led_customer_context" ||
       (preserveNaturalReply && pricingDecision.source === "customer_current_offer"))
     ? preserveVerifiedModelQuote({reply:original,treatment,prices,firstTrialQuote})
