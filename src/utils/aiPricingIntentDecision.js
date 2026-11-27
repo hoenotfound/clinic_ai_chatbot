@@ -699,6 +699,38 @@ function staleCommercialIntent({customerText,conversationHistory=[],services=[],
   return false;
 }
 
+// A customer's explicit standalone price question immediately after a
+// delivered, single-treatment explanation is itself engagement with that
+// explanation. No earlier question/answer pair or repeated service name is
+// needed. Never use drafts, automated follow-ups, staff text, media captions,
+// greetings, or ambiguous service descriptions as this conversational proof.
+function directDeliveredPriceReference({customerText,conversationHistory=[],services=[],serviceAliases=[],now=Date.now()}={}) {
+  const current=String(customerText||"").trim();
+  if (!isStandalonePriceQuestion(current) || !hasCurrentPriceAmountRequest(current) ||
+      hasClinicalMediaRisk(current) || SPECIFIC_ADMIN_FEE.test(current) ||
+      REFUSAL.test(current) || RESET.test(current) || AD_BROAD_TOPIC.test(current)) return null;
+  const turns=Array.isArray(conversationHistory)?conversationHistory:[];
+  const end=turns.length-1, last=turns[end], bot=turns[end-1], prior=turns[end-2];
+  if (last?.role!=="user" || pricingMessageText(last).trim()!==current ||
+      bot?.role!=="assistant" || bot.pricingDeliveredBotMessage!==true ||
+      isVerifiedStaffTurn(bot) || bot.verifiedOutboundImageUrl ||
+      prior?.role!=="user" || !isRecentPricingThread(turns,end-2,now)) return null;
+  const before=pricingMessageText(prior).trim(), copy=pricingMessageText(bot).trim();
+  if (!before || isGreetingOrLanguageOnly(before) || RESET.test(before) ||
+      REFUSAL.test(before) || AD_NEGATED_TOPIC.test(before) || AD_BROAD_TOPIC.test(before) ||
+      UNRELATED.test(before) || hasClinicalMediaRisk(before) || hasExplicitPriceRequest(before) ||
+      /^(?:谢谢|謝謝|嗯|哦|好(?:的)?|明白了|了解了|thanks?|thank you|ok(?:ay)?|noted|baik|terima kasih)[\s.!！。😊🙏]*$/iu.test(before) ||
+      copy.length<30 || hasTreatmentPriceContent(copy) || hasCommercialReplyContent(copy)) return null;
+  const candidates=serviceCandidates(services,serviceAliases);
+  const names=[...new Set(findServicesInText(copy,candidates))];
+  if (names.length!==1 || assistantIntroducesCompetingPaidService(bot,names[0],candidates) ||
+      findServicesInText(before,candidates).some(name=>name!==names[0])) return null;
+  // A recent delivered explanation and explicit customer question must both
+  // be present; the ordinary clinical, staff, package and price checks below
+  // still apply, including older conflicting customer treatment choices.
+  return {treatment:names[0],index:end-1};
+}
+
 function resolveModelLedPricingDecision({
   modelIntent, customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
@@ -710,6 +742,17 @@ function resolveModelLedPricingDecision({
   // timestamp, staff, conflicting-treatment and package checks below still
   // apply; an invalid or contradictory model label is not replaced.
   let intent = modelIntent;
+  const directReference=directDeliveredPriceReference({
+    customerText:original,conversationHistory,services,serviceAliases,now,
+  });
+  // Recover missing commercial metadata only from an explicit customer
+  // request and this independently verified delivered explanation.
+  if (directReference && intent?.structured===true && intent.outcome==="normal" &&
+      intent.pricingStage!=="subsequent_session" && intent.promotionOption==null &&
+      intent.packageQuery!==true &&
+      (intent.treatment==null || intent.treatment===directReference.treatment)) {
+    intent={...intent,priceQuery:true,treatment:directReference.treatment};
+  }
   if (intent?.structured === true && intent.outcome === "normal" &&
       intent.priceQuery === true && intent.treatment == null &&
       intent.promotionOption == null && hasCurrentPriceAmountRequest(original)) {
@@ -775,6 +818,7 @@ function resolveModelLedPricingDecision({
       (direct && direct.name !== intent.treatment) ||
       (RESET.test(current) && !direct)) return null;
   let anchorIndex=turns.length-1;
+  let usedDirectReference=false;
   if (!direct) {
     // Search the bounded recent conversation for the latest genuine
     // customer-named service, allowing ordinary intermediate questions.
@@ -800,7 +844,13 @@ function resolveModelLedPricingDecision({
       break;
     }
     const recommendationOnly=anchorIndex<0;
-    if (recommendationOnly) anchorIndex=engagedRecommendationAnchor({turns,treatment:intent.treatment,candidates,current,now});
+    if (recommendationOnly) {
+      anchorIndex=engagedRecommendationAnchor({turns,treatment:intent.treatment,candidates,current,now});
+      if (anchorIndex<0 && directReference?.treatment===intent.treatment) {
+        anchorIndex=directReference.index;
+        usedDirectReference=true;
+      }
+    }
     if (anchorIndex<0 || !isRecentPricingThread(turns,anchorIndex,now)) return null;
     const responses=turns.slice(anchorIndex+1,-1).filter(t=>t.role==="assistant");
     // Assistant explanations and generic safety disclaimers are not customer
@@ -930,6 +980,7 @@ function resolveModelLedPricingDecision({
     type:intent.priceQuery===true ? "price" : "package_options",
     treatment:intent.treatment,source:independent?"current_customer":"model_led_customer_context",
     clarifiedPriceService:intent.treatment,prices,servicePrice:null,
+    ...(usedDirectReference?{directDeliveredPriceReference:true}:{}),
     ...(independent?{scopedPriceText:independent.priceText,scopedRefusedTreatment:independent.refusedTreatment}:{}),
   });
 }
