@@ -286,7 +286,10 @@ function isSafeUnquotedReply(reply) {
   // automatically neutral merely because they lack RM. A price discussion
   // containing quantities stays on the existing verification path.
   const priceTerms=/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/iu;
-  if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(text))return false;
+  // Malay "yang mana satu" means "which one", not a monetary quantity.
+  // Normalize only this exact interrogative idiom; all other numbers stay guarded.
+  const quantityText=text.replace(/\byang\s+mana\s+satu\b/giu,"yang mana");
+  if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(quantityText))return false;
   // Do not use this eligibility check to release an unsupported clinical
   // promise or an unverified payment/booking claim.
   if (hasClinicalMediaRisk(text) || hasUnsupportedOutcomePromise(text)) return false;
@@ -616,7 +619,17 @@ function ensureVerifiedPriceReply({
       SESSION_OR_DURATION_QUESTION.test(String(customerText||"")) ||
       hasClinicalMediaRisk(customerText) || hasClinicalMediaRisk(original) || hasUnsupportedOutcomePromise(original);
     // Do not retain unsupported complimentary claims in the fallback prose.
-    const safeText = safeNonPriceExplanation(customerText, original, language,null,[],aiFirstReplyAuthority);
+    // A standalone price question needs a price or a focused clarification,
+    // not an unrelated booking invitation salvaged from the AI draft.
+    const standalonePrice = priceRequested && isStandalonePriceQuestion(customerText) &&
+      hasExplicitPriceRequest(customerText);
+    // Preserve a bounded, already relevant clarification in AI-first mode.
+    // Do not classify a booking invitation or a mixed sales pitch as optional.
+    const focusedClarification = standalonePrice && /^(?:请问|請問|想问|想問|想了解|你想|您想|which|what|harga|rawatan|pakej)[^\n。！？!?]{0,100}[?？](?:\s*(?:我(?:可以)?帮你确认|我(?:可以)?幫你確認|I can help (?:you )?check|Saya boleh bantu semak))?[\s😊☺️。.!！]*$/iu.test(original) &&
+      /(?:哪(?:一)?(?:项|項|种|種|个|個)?|什么|什麼|which|what|mana|apa)/iu.test(original) &&
+      /(?:护理|護理|疗程|療程|配套|套餐|treatment|package|rawatan|pakej)/iu.test(original) &&
+      !/(?:预约|預約|周末|週末|平时|平時|过来|過來|几时|幾時|booking|appointment|weekdays?|weekends?|book|temujanji|hujung minggu|tempah)/iu.test(original);
+    const safeText = safeNonPriceExplanation(customerText, standalonePrice ? "" : original, language,null,[],aiFirstReplyAuthority);
     // Only independently generated recovery/session guidance may survive a
     // later rejected-price fallback. Never reinsert arbitrary model prose.
     const verifiedNonPriceGuidance = aiFirstReplyAuthority &&
@@ -640,7 +653,7 @@ function ensureVerifiedPriceReply({
     return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true, verifiedNonPriceGuidance,
       // Mark only a genuinely optional clarification. The caller cannot
       // restore a draft after a factual/safety correction.
-      optionalClarification: !needsFactualCorrection && !unverifiedFree &&
+      optionalClarification: (!standalonePrice || focusedClarification) && !needsFactualCorrection && !unverifiedFree &&
         !mediaPromise && !unsolicitedAmount && isSafeUnquotedReply(original) };
   }
   // A verified customer-selected pelvic treatment remains the pricing
@@ -786,6 +799,8 @@ function ensureVerifiedPriceReply({
   const canPreserveCompleteQuote=!preserveNaturalReply || (!otherQuestion &&
     !hasClinicalMediaRisk(customerText) && !recoveryPeriodGuidance(customerText,language) &&
     !SESSION_OR_DURATION_QUESTION.test(String(customerText||"")));
+  const directPriceOnly = aiLed && pricingDecision.directDeliveredPriceReference === true &&
+    isStandalonePriceQuestion(customerText);
   const preservedModelQuote = aiLed && canPreserveCompleteQuote &&
     (pricingDecision.source === "model_led_customer_context" ||
       (preserveNaturalReply && pricingDecision.source === "customer_current_offer"))
@@ -819,7 +834,7 @@ function ensureVerifiedPriceReply({
     Boolean(recoveryGuidance) || otherQuestion;
   const explanation = recoveryGuidance ||
     (hasClinicalMediaRisk(customerText) ||
-      ((priceOnlyResponse === true ||
+      ((priceOnlyResponse === true || directPriceOnly ||
         (aiLed && ["meta_ad", "customer_current_offer"].includes(pricingDecision.source))) && !independentServiceQuestion)
       ? "" : safeNonPriceExplanation(customerText, original, language,preserveNaturalReply?services.find(s=>s.name===treatment):null,prices,aiFirstReplyAuthority));
   const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"

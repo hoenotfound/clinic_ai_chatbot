@@ -83,7 +83,7 @@ const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   isBreastLumpConcern } =
   require("./utils/aiReviewPolicy");
-const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
+const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply, unresolvedIntroAssessmentPriceReference, introAssessmentPriceClarification } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {selectVerifiedRoutineReply,resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
@@ -2351,7 +2351,8 @@ async function processIncomingMessage(
         !isExplicitStaffRequest(text) && !verifiedFirstReadableAd &&
         !fixedAdFirstReply && !twoTreatmentQuote &&
         !numberedPricingSelection && !scopedPackagePrice && modelPricingIntent &&
-        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision)) {
+        (modelPricingIntent.priceQuery || modelPricingIntent.packageQuery || legacyPricingApproval.decision ||
+          hasCustomerRequestedPriceReply({customerText:text}))) {
       try {
         const staleIntent = staleCommercialIntent({customerText:text,conversationHistory:commercialHistory,
           services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
@@ -2408,7 +2409,23 @@ async function processIncomingMessage(
         console.warn("[Semantic pricing] evaluation failed",error?.code || error?.name || "unknown");
       }
     }
-    const selectedPricingApproval = staleModelPricing
+    // Both legacy and model-led pricing must respect the same unresolved
+    // reference to the free assessment. Do not authorize a paid quote or
+    // artwork merely because the previous topic happened to be paid care.
+    const unresolvedAssessmentPrice = aiPricingEnabled && !flagged && !bookingReady &&
+      !keywordReason && !marketingStopQuestion && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !hasClinicalMediaRisk(text) &&
+      !isExplicitStaffRequest(text) && !fixedAdFirstReply && !twoTreatmentQuote &&
+      !numberedPricingSelection && !scopedPackagePrice &&
+      modelPricingStage !== "subsequent_session" &&
+      unresolvedIntroAssessmentPriceReference({
+        customerText:text,conversationHistory:commercialHistory,
+        services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+        enabled:clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+      });
+    const selectedPricingApproval = unresolvedAssessmentPrice
+      ? {decision:null,reason:"assessment_or_treatment_fee_ambiguous"}
+      : staleModelPricing
       ? {decision:null,reason:"stale_current_intent"}
       : rejectedModelPricing
       ? {decision:null,reason:"model_price_scope_unverified"}
@@ -2430,6 +2447,14 @@ async function processIncomingMessage(
     const pricingApproval = staffPriceConflict
       ? {decision:null,reason:"conflicting_staff_quote"} : selectedPricingApproval;
     const approvedPricingDecision = pricingApproval.decision;
+    // Only a fully approved recovery may correct the turn's treatment.
+    // Downstream duration, booking guard and result-media selection consume
+    // the same verified identity; no new booking or service intent is created.
+    if (aiPricingEnabled && approvedPricingDecision?.directDeliveredPriceReference === true) {
+      details = {...details,treatment:approvedPricingDecision.treatment};
+      priceQuery = true;
+      packageQuery = false;
+    }
     if (staleModelPricing) {
       // Do not propagate the rejected model flags into later pricing/media
       // helpers. Keep treatment, service and all non-commercial intent intact.
@@ -3482,6 +3507,22 @@ async function processIncomingMessage(
         reviewContinuationTextOnly=true;
         priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
       }
+    }
+    // A delivered introductory offer may have made the referent ambiguous.
+    // Keep the final answer text-only and distinguish the verified free
+    // assessment from paid care, without overriding a real safety/booking
+    // outcome or a separately verified campaign/special price.
+    if (unresolvedAssessmentPrice && !flagged && !bookingReady && !keywordReason &&
+        !marketingStopQuestion && !urgentSafety && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !staffPriceConflict && !rm68CampaignContinuationTextOnly &&
+        !repeatVisitPriceReply && !pelvicPackageComparison && !comboOfferDecision) {
+      replyOverrideAudit.change("assessmentOrTreatmentFeeClarification",reply,introAssessmentPriceClarification(mediaLanguage));
+      reply = introAssessmentPriceClarification(mediaLanguage);
+      reviewContinuationTextOnly = true;
+      priceQuery = false;
+      packageQuery = false;
+      serviceQuery = false;
+      serviceQuerySource = null;
     }
     // Campaign-specific final language validation, including downstream overrides.
     if (!flagged && !bookingReady && (rm68CampaignContinuationTextOnly || reviewContinuationTextOnly || fixedAdFirstReply?.campaignKey === "neutro_breast_rm68_2026") &&
