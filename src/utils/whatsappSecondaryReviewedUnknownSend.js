@@ -1,4 +1,5 @@
 "use strict";
+const {detachableServiceGateSql}=require("./whatsappSecondaryServiceBilling");
 
 // Operator-approved, reservation-specific override. An unknown receipt,
 // failed delivery, or 30-minute timeout alone is NOT review evidence.
@@ -327,6 +328,7 @@ function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=p
    WHERE preflight_gate.sender_id=${senderAlias}.id
      AND preflight_gate.owner_contact_id=${contactAlias}.id
      AND preflight_gate.state='unknown'
+     AND NOT ${detachableServiceGateSql("preflight_gate",env)}
      AND NOT EXISTS (
        SELECT 1 FROM whatsapp_sender_billing_attempts held_attempt
        JOIN messages failed_video ON failed_video.id=held_attempt.message_id
