@@ -8,7 +8,7 @@ const hash = value => crypto.createHash("sha256").update(value).digest("hex");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 async function applyStagedSecondaryReceipts({
-  client, senderId, contactId, messageId, reservationId, acceptedWamid, env,
+  client, senderId, contactId, messageId, reservationId, acceptedWamid, env, deliveryOnly=false,
 }) {
   const owner = await client.query(
     "SELECT c.whatsapp_number,c.whatsapp_user_id,a.recipient_address " +
@@ -82,6 +82,7 @@ async function applyStagedSecondaryReceipts({
     if (delivery.rowCount !== 1) throw new Error("Early receipt message ownership mismatch");
   }
 
+  if(deliveryOnly)return {matched:verified.length,autoReconciled:false,held:false};
   const failed = verified.some(r=>r.delivery_status==='failed');
   const priced = verified.filter(r=>r.pricing_billable !== null || r.pricing_type !== null);
   const paid = priced.some(r=>r.pricing_billable === true);
