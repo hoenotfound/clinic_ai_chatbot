@@ -129,3 +129,66 @@ test("sales preference write locks conversation, accepts older decisions and is 
  assert.match(SALES_STATE_INSERT_SQL,/existing\.metadata->>'inboundMessageId'/);
  assert.equal(calls.at(-1).sql,"COMMIT");
 });
+
+test("AI reply authority rollout is independent, scoped and reversible",()=>{
+ const {resolveAiReplyAuthorityMode,suppressConversationalRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const base={businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled"};
+ for(const mode of [undefined,"legacy","invalid"]){
+  const config={...base,aiReplyAuthorityMode:mode};
+  assert.equal(resolveAiReplyAuthorityMode(config),"legacy");
+  assert.equal(suppressConversationalRewrite(config,null,"unapprovedPriceClarification"),false);
+ }
+ for(const mode of ["observe","enabled"]){
+  const config={...base,aiReplyAuthorityMode:mode};
+  assert.equal(resolveAiReplyAuthorityMode(config),mode);
+  for(const reason of ["unapprovedPriceClarification","improveRepeatedPriceClarification","rejectedModelPricingClarification","optionalComboUpsell"])
+   assert.equal(suppressConversationalRewrite(config,null,reason),true,reason);
+  for(const reason of ["clinicalSafety","ensureVerifiedPriceReply","guardAiAppointmentReply","marketingStopReply","guardUnconfirmedMediaPromise","correctReplyLanguage","staffPriceConflict","fixedAdFirstReply"])
+   assert.equal(suppressConversationalRewrite(config,null,reason),false,reason);
+  assert.equal(resolveAiReplyAuthorityMode({...config,aiPricingIntentMode:"shadow"}),"legacy");
+  assert.equal(resolveAiReplyAuthorityMode({...config,businessName:"Other Clinic"}),"legacy");
+ }
+});
+test("observation records skipped optional rewrites without storing content",()=>{
+ const {suppressConversationalRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const logs=[],audit=createReplyOverrideAudit(x=>logs.push(x));
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"observe"};
+ assert.equal(suppressConversationalRewrite(config,audit,"improveRepeatedPriceClarification"),true);
+ audit.flush({contactId:1,inboundId:2,original:"private draft",final:"private draft",outcome:"normal"});
+ assert.equal(logs.length,1);
+ assert.match(logs[0],/"suppressed":\["improveRepeatedPriceClarification"\]/u);
+ assert.match(logs[0],/"changed":false/u);
+ assert.doesNotMatch(logs[0],/private|unattributed/u);
+ const enabled=createReplyOverrideAudit(x=>logs.push(x));
+ assert.equal(suppressConversationalRewrite({...config,aiReplyAuthorityMode:"enabled"},enabled,"optionalComboUpsell"),true);
+ enabled.flush({original:"unchanged",final:"unchanged",outcome:"normal"});
+ assert.equal(logs.length,1);
+});
+test("unapproved pricing may preserve neutral wording but never unverified commercial claims",()=>{
+ const {isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["你想了解哪个护理配套的费用呢？","我可以先帮你确认目前的价格哦 😊","你是想了解正式护理还是评估呢？","Which treatment do you mean?","Let me check the price with the centre.","Harga rawatan yang mana ya?","Saya boleh semak harga dahulu."]){
+  assert.equal(isSafeUnquotedReply(reply),true,reply);
+ }
+ for(const reply of ["Package A RM388","现在只需 RM2️⃣6️⃣8️⃣","费用 88","Price 88","It costs eighty ringgit","费用八百","免费的","It is free","Percuma","RM100 优惠券","I'll send you the package details","我现在发给你参考看看","Saya akan hantar gambar promosi",""]){
+  assert.equal(isSafeUnquotedReply(reply),false,reply);
+ }
+});
+test("runtime only suppresses optional wording and optional combo media, not verified price or action decisions",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ assert.match(server,/priced\.restored && pricingAuthorityRequired && !approvedPricingDecision/u);
+ assert.match(server,/!twoTreatmentQuote && !staffPriceConflict && !verifiedPriceService/u);
+ assert.match(server,/isSafeUnquotedReply\(reply\) &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"unapprovedPriceClarification"\)/u);
+ assert.match(server,/comboOfferDecision\?\.mode==="suggestion" &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"optionalComboUpsell"\)\)\s*comboOfferDecision=null/u);
+ assert.match(server,/staffPriceConflict \|\| !isSafeUnquotedReply\(reply\)/u);
+ assert.match(server,/reviewContinuationTextOnly = true;/u);
+ assert.match(server,/guardAiAppointmentReply/u);
+ assert.match(server,/resolveApprovedPricingAssessment/u);
+ assert.match(server,/guardUnfulfilledPriceQuote/u);
+ const repo=fs.readFileSync(path.join(__dirname,"../src/db/configRepo.js"),"utf8");
+ const routes=fs.readFileSync(path.join(__dirname,"../src/routes/config.js"),"utf8");
+ const settings=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/Settings.jsx"),"utf8");
+ assert.match(repo,/"aiReplyAuthorityMode"/u);
+ assert.match(routes,/aiReplyAuthorityMode: \(v\) => \["legacy", "observe", "enabled"\]\.includes\(v\)/u);
+ assert.match(settings,/value=\{form\.aiReplyAuthorityMode\}/u);
+});
