@@ -14,7 +14,7 @@ const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { correctReplyLanguage, clearReplyLanguageMismatch, finalReplyLanguageFallback } = require("../src/utils/replyLanguageGuard");
-const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, detectReplyConversationLanguage, detectConversationLanguage } =
+const { isGreetingOrLanguageOnly, detectExplicitLanguagePreference, languageRequestCandidate, verifiedModelLanguageRequest, latestExplicitLanguageTurn, detectReplyConversationLanguage, detectConversationLanguage } =
   require("../src/utils/chatLanguage");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts, correctUnsupportedBranchReply } = require("../src/utils/verifiedPricingBusinessFacts");

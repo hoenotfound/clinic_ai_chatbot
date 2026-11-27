@@ -8,7 +8,7 @@ const { configuredFirstReplyImage } = require("./neutroBreastRm68Campaign");
 // An old Chinese ad prefill must never overrule a newer explicit English request.
 async function latestQueuedLanguagePreference(database, contactId, inboundMessageId) {
   const response = await database.query(
-    `SELECT newer.content, c.reply_language_preference, c.reply_language_message_id
+    `SELECT newer.content, newer.id AS newer_message_id, c.reply_language_preference, c.reply_language_message_id
        FROM messages inbound
        JOIN contacts c ON c.id=inbound.contact_id
        LEFT JOIN LATERAL (
@@ -23,12 +23,14 @@ async function latestQueuedLanguagePreference(database, contactId, inboundMessag
        ORDER BY newer.created_at DESC,newer.id DESC`,
     [contactId, inboundMessageId]
   );
+  const saved=response.rows?.[0];
+  const savedId=Number(saved?.reply_language_message_id || 0);
+  const savedLanguage=savedId>Number(inboundMessageId) && ["en","ms","zh"].includes(saved?.reply_language_preference) ? saved.reply_language_preference : null;
   for (const row of response.rows || []) {
     const language = detectExplicitLanguagePreference(row.content);
-    if (language) return language;
+    if (language && (!savedLanguage || Number(row.newer_message_id)>savedId)) return language;
   }
-  const saved=response.rows?.[0];
-  return Number(saved?.reply_language_message_id)>Number(inboundMessageId) && ["en","ms","zh"].includes(saved?.reply_language_preference) ? saved.reply_language_preference : null;
+  return savedLanguage;
 }
 
 function containsUrl(item, url) {

@@ -154,6 +154,18 @@ function verifiedModelLanguageRequest(text, candidate, details) {
   return details?.requestedReplyLanguage===candidate &&
     details?.languageRequestEvidence===String(text||"").trim()?candidate:null;
 }
+// The live conversation snapshot exposes durable inbound IDs. This also
+// captures an explicit request in an earlier suppressed typing-burst turn.
+function latestExplicitLanguageTurn(history, savedMessageId=0) {
+  let latest=null;
+  for(const row of Array.isArray(history)?history:[]) {
+    const id=Number(row?.contextMessageId);
+    if(row?.role!=="user" || !Number.isSafeInteger(id) || id<=Number(savedMessageId||0) || (latest && id<=latest.id))continue;
+    const language=detectExplicitLanguagePreference(row.content);
+    if(language)latest={id,language};
+  }
+  return latest;
+}
 function isGreetingOrLanguageOnly(input) {
   const text = String(input || "").trim();
   if (!text) return false;
@@ -236,11 +248,10 @@ const ENGLISH_ADMIN_SHORTHAND =
 function detectConversationLanguage(recentMessages, fallback = "en", savedPreference = null) {
   // Explicit preferences survive bounded history. A newer explicit request wins.
   if (["en", "ms", "zh"].includes(savedPreference)) {
-    for (const message of recentMessages || []) {
-      const explicit = detectExplicitLanguagePreference(message);
-      if (explicit) return explicit;
-    }
-    return savedPreference;
+    // Worker snapshots are newest-first, but older explicit messages can
+    // predate a saved model-understood request. Only the newest inbound
+    // can immediately supersede the stored value without message IDs.
+    return detectExplicitLanguagePreference(recentMessages?.[0]) || savedPreference;
   }
   let ambiguousChinese = false;
   for (const message of recentMessages || []) {
@@ -264,6 +275,7 @@ function detectReplyConversationLanguage(recentMessages, fallback = "en", savedP
 module.exports = {
   languageRequestCandidate,
   verifiedModelLanguageRequest,
+  latestExplicitLanguageTurn,
   detectMessageLanguage,
   detectConversationLanguage,
   detectReplyConversationLanguage,

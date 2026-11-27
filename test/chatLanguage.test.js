@@ -211,3 +211,17 @@ test("ambiguous language mentions require the existing model's exact current evi
   assert.equal(languageRequestCandidate("English or Chinese?"),null);
   assert.equal(languageRequestCandidate("English Info pls"),null);
 });
+
+test("saved model language wins over older explicit history but latest direct requests win",()=>{
+  const {latestExplicitLanguageTurn}=require("../src/utils/chatLanguage");
+  assert.equal(detectConversationLanguage(["ok","中文"],"zh","en"),"en");
+  assert.equal(detectConversationLanguage(["BM details please","中文"],"zh","en"),"ms");
+  const history=[{role:"user",contextMessageId:10,content:"中文"},
+    {role:"assistant",contextMessageId:14,content:"English"},
+    {role:"user",contextMessageId:15,content:"English Info pls"},
+    {role:"user",contextMessageId:16,content:"ok"}];
+  const latest=latestExplicitLanguageTurn(history,12);
+  assert.equal(latest.id,15);
+  assert.equal(latest.language,"en");
+  assert.equal(latestExplicitLanguageTurn(history,15),null);
+});

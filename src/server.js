@@ -113,6 +113,7 @@ const {
   detectExplicitLanguagePreference,
   languageRequestCandidate,
   verifiedModelLanguageRequest,
+  latestExplicitLanguageTurn,
   isGreetingOrLanguageOnly,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
@@ -1356,9 +1357,13 @@ async function processIncomingMessage(
       }
     }
     const explicitReplyLanguage = detectExplicitLanguagePreference(text);
-    if (explicitReplyLanguage && typeof contactsRepo.saveReplyLanguagePreference === "function") {
+    const newerLanguageTurn=explicitReplyLanguage
+      ? {id:savedInbound.id,language:explicitReplyLanguage}
+      : latestExplicitLanguageTurn(readableRecoveryHistory,contact.reply_language_message_id);
+    const currentSavedPreference=newerLanguageTurn?.language || contact.reply_language_preference;
+    if (newerLanguageTurn && typeof contactsRepo.saveReplyLanguagePreference === "function") {
       try {
-        await contactsRepo.saveReplyLanguagePreference(contact.id, savedInbound.id, explicitReplyLanguage);
+        await contactsRepo.saveReplyLanguagePreference(contact.id,newerLanguageTurn.id,newerLanguageTurn.language);
       } catch (error) {
         console.warn("[Reply language] preference persistence unavailable contact=" + contact.id, error?.code || "unknown");
       }
@@ -1368,7 +1373,7 @@ async function processIncomingMessage(
         .slice()
         .reverse()
         .filter((message) => message?.role === "user")
-        .map((message) => message.content), "en", contact.reply_language_preference
+        .map((message) => message.content), "en", currentSavedPreference
     );
     const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
     const commercialHistory = secondaryAiConversation ? scopeRecoveryCommercialHistory(history) : history;
