@@ -12,6 +12,7 @@ const messagesRepo = require("../db/messagesRepo");
 const mediaStorage = require("./mediaStorageService");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { recordPresentationWakeSkip } = require("../utils/refreshWakeDiagnostics");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { pendingAcceptedAppointmentAllowedSql } = require("../utils/pendingAcceptedAppointmentFollowUp");
@@ -1137,7 +1138,7 @@ function freeEntryDueEventRequiresWake(type, payload) {
     if (payload?.reason === "reaction" ||
         payload?.reason === "lead_assignment_recovered" ||
         (payload?.reason === "contact_state" &&
-          payload?.followUpStateUnchanged === true)) return false;
+          (payload?.followUpStateUnchanged === true || payload?.inboxPresentationOnly === true))) return false;
     // Only a signed, already-processed automated follow-up receipt is
     // explicitly marked presentation-only. An unverified receipt still wakes.
     if (payload?.reason === "delivery_status" &&
@@ -1167,9 +1168,10 @@ function start({
   });
   timerSubscriptions = [
     events.subscribe("conversation_changed", (payload) => {
-      if (payload?.contactId != null &&
-          freeEntryDueEventRequiresWake("conversation_changed",payload))
+      if (payload?.contactId == null) return;
+      if (freeEntryDueEventRequiresWake("conversation_changed",payload))
         wake(CHECK_INTERVAL_MS);
+      else recordPresentationWakeSkip("free_entry", payload);
     }),
     events.subscribe("pipeline_changed", (payload) => {
       if ((payload?.contactId != null || payload?.leadId != null) &&

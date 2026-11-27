@@ -382,6 +382,8 @@ async function attachStoredMediaForContact(
       messageId: updated.id,
       message: updated,
       reason: "message_updated",
+      // This UPDATE changes content/media only, not staff waiting eligibility.
+      staffWaitingStateUnchanged: true,
     });
   }
   return updated;
@@ -403,6 +405,8 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
       messageId: updated.id,
       message: updated,
       reason: "message_updated",
+      // This UPDATE changes content/media only, not staff waiting eligibility.
+      staffWaitingStateUnchanged: true,
     });
   }
   return updated;

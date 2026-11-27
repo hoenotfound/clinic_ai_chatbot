@@ -20,7 +20,7 @@ function legacyMalaysianLocalNumber(normalizedNumber) {
   return match ? `0${match[1]}` : null;
 }
 
-function publishContactChange(id, { profileOnly = false, contact = null } = {}) {
+function publishContactChange(id, { profileOnly = false, inboxPresentationOnly = false, contact = null } = {}) {
   if (!id) return;
   realtimeEvents.publish("conversation_changed", {
     // No lookup: only a verified, already loaded sender record can scope this
@@ -31,6 +31,9 @@ function publishContactChange(id, { profileOnly = false, contact = null } = {}) 
     // Profile name/photo updates change the Inbox display only.
     // Preserve the event; avoid an unnecessary follow-up eligibility sweep.
     ...(profileOnly ? { followUpStateUnchanged: true } : {}),
+    // Only the name/read-state writers below may set this narrower marker.
+    // Keep SSE and all other workers unchanged; do not infer from a row snapshot.
+    ...(inboxPresentationOnly ? { inboxPresentationOnly: true } : {}),
   });
 }
 
@@ -474,7 +477,7 @@ async function updateContactName(id, name) {
     [name || null, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id, { contact: updated });
+  if (updated) publishContactChange(updated.id, { contact: updated, inboxPresentationOnly: true });
   return updated;
 }
 
@@ -1859,7 +1862,7 @@ async function setUnread(id, isUnread) {
     [isUnread, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id, { contact: updated });
+  if (updated) publishContactChange(updated.id, { contact: updated, inboxPresentationOnly: true });
   return updated;
 }
 

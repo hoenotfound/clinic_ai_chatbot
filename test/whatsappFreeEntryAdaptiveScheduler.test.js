@@ -243,3 +243,17 @@ test("overdue quiet-hour reminders wait for quiet-hours end, not repeated polls"
     cfg.automatedFollowUp = original;
   }
 });
+
+
+test("extended scheduler ignores read/name-only events without ignoring genuine changes",()=> {
+ const wake=worker.freeEntryDueEventRequiresWake;
+ assert.equal(wake("conversation_changed",{reason:"contact_state",inboxPresentationOnly:true}),false);
+ for(const payload of [
+  {reason:"contact_state"},
+  {reason:"contact_state",inboxPresentationOnly:"true"},
+  {reason:"message",inboxPresentationOnly:true},
+  {reason:"message_updated",staffWaitingStateUnchanged:true},
+  {reason:"whatsapp_opt_out",inboxPresentationOnly:true}
+ ]) assert.equal(wake("conversation_changed",payload),true);
+ assert.equal(wake("pipeline_changed",{reason:"appointment_set",inboxPresentationOnly:true}),true);
+});
