@@ -1,5 +1,5 @@
 "use strict";
-const {deliveryOnlySql}=require("../utils/whatsappSecondaryDeliveryOnly");
+const {deliveryOnlySql,deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 const { alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
 
 
@@ -128,10 +128,10 @@ function enabled(env=process.env){
     secondaryUsesPrimaryClinicContent(env) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true") &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true") &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
     env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true";
 }
 function validItem(item){
