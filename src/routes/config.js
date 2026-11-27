@@ -194,6 +194,7 @@ const VALIDATORS = {
     v.every((b) => isPlainObject(b) && isNonEmptyString(b.name) && isString(b.address) && isString(b.phone)),
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
+  aiReplyAuthorityMode: (v) => ["legacy", "observe", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
   recoveryTreatmentOrder: (v) => require("../services/whatsapp131060Recovery").validRecoveryOrder(v),
   adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
