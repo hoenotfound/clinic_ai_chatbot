@@ -95,7 +95,7 @@ function recoveryDelayForResult(result, { runCount }) {
   if (runCount === 1) {
     return STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
   }
-  return alignedIdleRecoveryDelay(IDLE_RECOVERY_INTERVAL_MS);
+  return alignedIdleRecoveryDelay(IDLE_RECOVERY_INTERVAL_MS, Date.now(), process.env, "WhatsApp delivery-status recovery");
 }
 
 function createWhatsAppDeliveryStatusService({
