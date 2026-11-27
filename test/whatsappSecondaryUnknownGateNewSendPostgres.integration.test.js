@@ -559,3 +559,45 @@ test("new customer text can automatically recover an uncertain automated service
    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
  });
 });
+
+
+test("delivery-only mode ignores historic billing holds and alarms while retaining per-message and sender identity", {skip:!connectionString},async()=>{
+ const delivery=require("../src/db/whatsappSecondaryDeliveryRepo");
+ const receipts=require("../src/services/whatsappSecondaryReceiptService");
+ const {deliveryOnlyAttentionSql}=require("../src/utils/whatsappSecondaryDeliveryOnly");
+ const crypto=require("node:crypto");
+ const direct={...env,WHATSAPP_SECONDARY_DELIVERY_ONLY:"true",
+   WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",WHATSAPP_APP_SECRET:"delivery-only-test-secret"};
+ await withSchema(async({db,database})=>{
+   const s=await seed({db,database});
+   await billing.recordSecondaryProviderOutcome({reservationId:s.original.reservationId},{database,env});
+   await db.query("UPDATE messages SET delivery_status='unknown' WHERE id=$1",[s.messages[0]]);
+   await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,attention_reason='Delivery unconfirmed: old video',delivery_attention_message_id=$2 WHERE id=$1",[s.contact,s.messages[0]]);
+   const warning=await db.query("SELECT "+deliveryOnlyAttentionSql("c",direct)+" AS ok FROM contacts c WHERE id=$1",[s.contact]);
+   assert.equal(warning.rows[0].ok,true);
+   await db.query("INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason) VALUES($1,'provider_billable')",[s.sender]);
+   const reserve=messageId=>delivery.claim({contactId:s.contact,messageId},{database,env:direct});
+   assert.equal((await reserve(s.messages[0])).reserved,false);
+   const claims=await Promise.all([reserve(s.messages[1]),reserve(s.messages[1])]);
+   assert.equal(claims.filter(x=>x.reserved).length,1);
+   const next=claims.find(x=>x.reserved);
+   assert.equal((await delivery.record({reservationId:next.reservationId,acceptedWamid:"wamid.deliveryOnly"},{database,env:direct})).state,"accepted");
+   const rawBody=Buffer.from(JSON.stringify({object:"whatsapp_business_account",entry:[{id:direct.WHATSAPP_SECONDARY_WABA_ID,changes:[{field:"messages",value:{metadata:{phone_number_id:direct.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},statuses:[{id:"wamid.deliveryOnly",recipient_id:"60125550000",status:"delivered",timestamp:String(Math.floor(Date.now()/1000)),pricing:{type:"regular",billable:true,category:"service"}}]}}]}]}));
+   const signatureHeader="sha256="+crypto.createHmac("sha256",direct.WHATSAPP_APP_SECRET).update(rawBody).digest("hex");
+   const result=await receipts.recordSignedSecondaryStatusBatch({rawBody,signatureHeader},{database,env:direct});
+   assert.equal(result.accepted,true);assert.equal(result.matched,1);
+   assert.equal((await db.query("SELECT delivery_status FROM messages WHERE id=$1",[s.messages[1]])).rows[0].delivery_status,"delivered");
+   assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact])).rows[0].state,"unknown");
+   assert.equal((await db.query("SELECT COUNT(*)::int n FROM whatsapp_sender_auto_reconciliations")).rows[0].n,0);
+   const conv=(await db.query("SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+   const another=(await db.query("INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','new distinct reply') RETURNING id",[s.contact])).rows[0].id;
+   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[another,conv]);
+   const pending=await reserve(another);
+   assert.equal(pending.reserved,true);
+   assert.equal((await delivery.record({reservationId:pending.reservationId},{database,env:direct})).state,"unknown");
+   assert.equal((await reserve(another)).reserved,false);
+   assert.equal((await delivery.claim({contactId:s.contact+999,messageId:another},{database,env:direct})).reserved,false);
+   await db.query("UPDATE contacts SET attention_reason='AI review requested: clinical' WHERE id=$1",[s.contact]);
+   assert.equal((await db.query("SELECT "+deliveryOnlyAttentionSql("c",direct)+" AS ok FROM contacts c WHERE id=$1",[s.contact])).rows[0].ok,false);
+ });
+});
