@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const {deliveryOnlyAttentionSql}=require("../utils/whatsappSecondaryDeliveryOnly");
 const { secondaryLegacyStaffCutoff } = require("../services/whatsappSecondaryLegacyStaffPolicy");
 const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
@@ -443,16 +444,16 @@ async function hasPendingClinicalAiReview(id) {
   }
 }
 
-async function canSendAutomaticReviewMedia(id) {
+async function canSendAutomaticReviewMedia(id,{database=pool,env=process.env}={}) {
   try {
-    const result = await pool.query(
+    const result = await database.query(
       `SELECT (
          c.mode = 'ai'
          AND (
            c.needs_attention = false OR (
              c.needs_attention = true
              AND c.attention_reason LIKE 'AI review requested:%'
-           )
+           ) OR ${deliveryOnlyAttentionSql("c",env)}
          )
          AND NOT EXISTS (
            SELECT 1 FROM ai_review_items r
