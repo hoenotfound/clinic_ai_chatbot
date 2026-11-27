@@ -83,6 +83,46 @@ function complimentaryAssessmentFeeReply(language = "zh") {
   return "是的～我们中医师的1对1体态评估 + 体验是免费的 😊 如果之后选择正式疗程或其他付费配套，费用才会另外计算。";
 }
 
+// A bare price question immediately after a delivered introductory offer
+// can refer to the assessment rather than to an earlier paid treatment.
+// A generic automated reminder may bridge an explicitly customer-selected
+// paid topic, as before; it cannot independently establish a paid topic.
+function unresolvedIntroAssessmentPriceReference({customerText,conversationHistory=[],services=[],serviceAliases=[],enabled=false,now=Date.now()}={}){
+  if(!enabled)return false;
+  const current=String(customerText||"").normalize("NFKC").trim();
+  if(!/^(?:(?:请问|請問|nak\s+tahu)\s*)?(?:how\s+much|price|cost|harga|berapa|brapa|brp|berapa\s+ya|多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價格|价位|價位)[\s?？。.!！]*$/iu.test(current))return false;
+  const turns=Array.isArray(conversationHistory)?conversationHistory:[];
+  const last=turns.at(-1), preceding=turns.at(-2);
+  if(last?.role!=="user" || String(last.content||"").normalize("NFKC").trim()!==current ||
+     preceding?.role!=="assistant" || preceding.pricingStaffAuthored===true ||
+     STAFF_MESSAGE.test(String(preceding.content||"").trim()) || preceding.verifiedOutboundImageUrl ||
+     !(preceding.pricingDeliveredBotMessage===true || preceding.pricingDeliveredAssessmentFollowUp===true))return false;
+  const answer=String(preceding.content||"");
+  if(!ASSESSMENT.test(answer)||!INTRO_EXPERIENCE.test(answer))return false;
+  const {isRecentPricingThread}=require("./priceFollowUpContext");
+  if(!isRecentPricingThread(turns,turns.length-2,now))return false;
+  if(preceding.pricingDeliveredAssessmentFollowUp===true){
+    const {safeServiceFromCustomer}=require("./initialOfferReplyGuard");
+    // An automated assessment reminder is not a conversational topic switch
+    // if the latest substantive customer turn explicitly selected paid care.
+    const prior=turns.slice(0,-2).filter(t=>t?.role==="user").at(-1);
+    const at=prior?.pricingCreatedAtMs;
+    const name=prior && safeServiceFromCustomer(prior.content,services,serviceAliases)?.name;
+    if(name && Number.isFinite(at) && at>=now-24*3600000 &&
+       at<=preceding.pricingCreatedAtMs &&
+       !ASSESSMENT.test(name) && !ASSESSMENT.test(String(prior.content||"")))return false;
+  }
+  return true;
+}
+function introAssessmentPriceClarification(language="zh"){
+  const locale=String(language||"").toLowerCase();
+  return locale.startsWith("ms")
+    ? "Penilaian postur 1-ke-1 + sesi pengenalan adalah percuma 😊 Rawatan penuh adalah berasingan. Awak tanya tentang penilaian atau harga rawatan penuh?"
+    : locale.startsWith("en")
+      ? "Our 1-on-1 posture assessment + introductory experience is free 😊 Full treatments are priced separately. Did you mean the assessment or the full treatment?"
+      : "中医师的1对1体态评估 + 体验是免费的 😊 正式疗程会另外收费。你想问的是评估体验，还是正式疗程的价格呢？";
+}
+
 // "How much?" after an invitation that discusses BOTH the introductory
 // assessment and paid hands-on care is ambiguous. Never quote an unrelated
 // pelvic package or describe a full treatment as free.
@@ -114,4 +154,6 @@ module.exports = {
   isComplimentaryAssessmentFeeQuestion,
   complimentaryAssessmentFeeReply,
   ambiguousAssessmentOrTreatmentFeeReply,
+  unresolvedIntroAssessmentPriceReference,
+  introAssessmentPriceClarification,
 };
