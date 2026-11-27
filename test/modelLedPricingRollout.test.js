@@ -663,3 +663,58 @@ test("Stage 18 independently verified two-treatment drafts preserve exact wordin
   assert.match(source,/naturalTwoTreatmentQuote\?\.verifiedQuote === true/);
   assert.match(source,/!preserveTwoTreatmentDraft \|\| reply !== naturalTwoTreatmentQuote.reply/);
 });
+
+test("Nov 27: pricing after delivered assessment follow-up preserves the customer's established treatment",async()=>{
+ const {hasCurrentPriceAmountRequest}=require("../src/utils/aiPricingIntentDecision");
+ const {hasExplicitPriceRequest,isStandalonePriceQuestion}=require("../src/utils/customerEnquiryEvidence");
+ const {guardAssessmentFirstPricingReply}=require("../src/utils/initialOfferReplyGuard");
+ const contextServices=[...services,{name:"1对1体态评估"},{name:"子宫调理"},{name:"脉冲波调理"}];
+ const aliases=[...serviceAliases,{alias:"体态评估",officialService:"1对1体态评估"},
+  {alias:"骨盆",officialService:"骨盆调理"}];
+ const followUp={...turn("assistant","Hi～如果之后想先了解体态情况，我们中医师也可以先为你安排一个1对1的体态评估+体验哦 😊 你有空时再随时回复我就好～",75*60000),pricingDeliveredAssessmentFollowUp:true};
+ for(const question of ["价格怎么算","价钱如何计算？","How much does it cost?","Berapa harga?"]){
+  const a=args(question,"骨盆调理",{
+   services:contextServices,serviceAliases:aliases,complimentaryAssessmentExperienceEnabled:true,
+   conversationHistory:[
+    turn("user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",21*3600000+15*60000),
+    turn("assistant","Hi～欢迎来到 Neutro Sense 😊 想了解骨盆调理对吗～",21*3600000+14*60000),
+    turn("assistant","跟你分享一位顾客的骨盆调理体验 😊 每个人情况不一样，可以当作参考～ 你想先了解护理过程，还是体验当天怎样安排？",15*3600000+15*60000),
+    followUp,turn("user",question,0),
+   ],
+  });
+  for(const intent of [a.modelIntent,{...a.modelIntent,treatment:null}]){
+   const candidate=resolveModelLedPricingDecision({...a,modelIntent:intent});
+   assert.equal(candidate?.treatment,"骨盆调理",question);
+   assert.deepEqual(candidate?.prices?.map(p=>p.price),["RM388","RM268"],question);
+   const approval=resolveApprovedPricingAssessment({...a,mode:"enabled",aiDecision:candidate});
+   assert.equal(approval.reason,"approved");
+   const raw="骨盆调理 Package A：RM388\nPackage B：RM268";
+   assert.equal(guardAssessmentFirstPricingReply({...a,reply:raw,treatment:candidate.treatment,
+    verifiedPricingIntent:true,requireVerifiedTreatment:true}).replaced,false);
+   const media=await resolvePricePromotionForReply({...a,aiPricingEnabled:true,
+    pricingDecision:approval.decision,treatment:candidate.treatment,verifiedServiceFromText:candidate.treatment,
+    textSendSucceeded:true,contactId:1,wasPromoRecentlySent:async()=>false,
+    hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+   assert.equal(media?.packages?.length,2,question);
+  }
+  if(question==="价格怎么算"||question==="价钱如何计算？"){
+   assert.equal(hasCurrentPriceAmountRequest(question),true);
+   assert.equal(hasExplicitPriceRequest(question),true);
+   assert.equal(isStandalonePriceQuestion(question),true);
+   assert.equal(resolveAiPricingDecision({...a,priceQuery:true,treatment:"骨盆调理"})?.treatment,"骨盆调理");
+  }
+  const history=a.conversationHistory;
+  for(const replacement of [
+   {...followUp,pricingDeliveredAssessmentFollowUp:false},
+   {...followUp,content:"体态评估 RM200，欢迎预约"},
+   {...followUp,content:"体态评估和脉冲波调理，欢迎预约"},
+   {...followUp,pricingStaffAuthored:true},
+  ]){
+   assert.equal(resolveModelLedPricingDecision({...a,conversationHistory:[...history.slice(0,-2),replacement,history.at(-1)]}),null);
+  }
+  assert.equal(resolveModelLedPricingDecision({...a,complimentaryAssessmentExperienceEnabled:false}),null);
+  assert.equal(resolveModelLedPricingDecision({...a,modelIntent:{...a.modelIntent,treatment:"脉冲波调理"}}),null);
+  assert.equal(resolveModelLedPricingDecision({...a,conversationHistory:[...history.slice(0,-1),
+   turn("user","我想了解脉冲波调理",1000),history.at(-1)]}),null);
+ }
+});
