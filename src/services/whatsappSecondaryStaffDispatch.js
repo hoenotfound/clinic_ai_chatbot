@@ -322,7 +322,7 @@ async function sendSecondaryStaffText({
 
   reservationStarted=true;
   let reserved = await reserveAttempt({
-    contactId: cid, messageId: mid,
+    contactId: cid, messageId: mid, origin,
     // Freeform service messages may be charged after Meta's monthly free
     // allowance. Operator acknowledgment is separate from a template's
     // individual staff review and must be captured in the durable attempt.
@@ -407,7 +407,7 @@ async function sendSecondaryStaffText({
   };
   let providerBoundaryReached=false;
   try {
-    const fresh = await preview();
+    const fresh = direct?justBefore:await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
       if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
@@ -423,13 +423,13 @@ async function sendSecondaryStaffText({
       await markUnknown();
       return block(fresh.code || "secondary_staff_policy_changed");
     }
-    const state = await database.query(direct?delivery.ALLOWED_DELIVERY_SQL:ALLOWED_RESERVATION_SQL, [
+    const state = direct?null:await database.query(ALLOWED_RESERVATION_SQL, [
       env.WHATSAPP_SECONDARY_SENDER_KEY,
       env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
       env.WHATSAPP_SECONDARY_WABA_ID,
       reserved.reservationId, cid, mid,
     ]);
-    if (state.rows?.length !== 1) {
+    if (!direct && state.rows?.length !== 1) {
       if (queuedOrigin || direct) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
@@ -463,6 +463,8 @@ async function sendSecondaryStaffText({
       actualTransport[method]=async(...args)=>{
         if(customerRequestStarted)throw Error("Duplicate customer request");
         if(!await stillEligible() || (typeof preSendCheck==="function" && !await preSendCheck()))return {success:false,definitivelyRejected:true,preProviderCancelled:true};
+        const finalPolicy=await preview();
+        if(finalPolicy.policyAllowed!==true)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         const verified=await database.query(delivery.ALLOWED_DELIVERY_SQL,[env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,reserved.reservationId,cid,mid]);
         if(verified.rows?.length!==1)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
         if(customerRequestStarted)throw Error("Duplicate customer request");
