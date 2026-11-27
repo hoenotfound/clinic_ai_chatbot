@@ -7,7 +7,7 @@
 const crypto = require("node:crypto");
 const { pool } = require("./db");
 const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
-const {reviewedReservationIds}=require("../utils/whatsappSecondaryReviewedUnknownSend");
+const {reviewedReservationIds,automaticFreshReplyEnabled,automaticUnknownFollowupSql,automaticFreshInboundSql}=require("../utils/whatsappSecondaryReviewedUnknownSend");
 const { normalizeCustomerAddress, isBsuid } = require("../utils/whatsappCustomerIdentity");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
@@ -213,7 +213,9 @@ async function reserveSecondaryBillingAttempt({
       // is enough to permit a DIFFERENT fresh message, without two human
       // reviewers or a manually curated UUID allowlist. This does not assert
       // the failed send was free, and never retries the historical message.
-      // Unconfirmed/no-WAMID attempts still require explicit review.
+      // An uncertain automated service follow-up may allow a distinct new
+      // customer-initiated AI text under existing service-charge approval.
+      // Other unconfirmed/no-WAMID attempts still require explicit review.
       // Reserved, awaiting_pricing and sender-wide alarms always block.
       if (gate.rows[0].state !== "unknown" ||
           env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary") {
@@ -224,8 +226,29 @@ async function reserveSecondaryBillingAttempt({
         env.WHATSAPP_SECONDARY_UNKNOWN_GATE_NEW_SEND_BYPASS_ENABLED === "true" &&
         reviewedReservationIds(env).includes(
           String(gate.rows[0].reservation_id||"").toLowerCase());
+      const autoEnabled=automaticFreshReplyEnabled(env) && serviceApproved &&
+        id(freshAiInboundMessageId)!=null;
+      const autoProof=autoEnabled ? `(
+        ${automaticUnknownFollowupSql("a","old")}
+        AND ${automaticFreshInboundSql("a","old","$8")}
+        AND EXISTS (
+          SELECT 1 FROM messages fresh
+          JOIN messages inbound ON inbound.id=$8 AND inbound.contact_id=fresh.contact_id
+          WHERE fresh.id=$7 AND fresh.contact_id=a.contact_id
+            AND fresh.role='assistant' AND fresh.sent_by_username IS NULL
+            AND fresh.is_automated_follow_up IS DISTINCT FROM TRUE
+            AND fresh.whatsapp_template IS NULL AND fresh.whatsapp_interactive IS NULL
+            AND fresh.media_url IS NULL AND fresh.media_key IS NULL
+            AND fresh.media_base64 IS NULL AND fresh.media_mime_type IS NULL
+            AND fresh.whatsapp_message_id IS NULL AND fresh.whatsapp_accepted_at IS NULL
+            AND fresh.created_at>=inbound.created_at
+            AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts prev WHERE prev.message_id=fresh.id)
+            AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e WHERE e.message_id=fresh.id)
+        )
+      )` : "FALSE";
       const proof = await client.query(`
         SELECT a.reservation_id,
+          ${autoProof} AS automatic_fresh_reply,
           EXISTS (
             SELECT 1 FROM whatsapp_sender_unknown_gate_inbox_reviews review
             JOIN messages fresh ON fresh.id=$7 AND fresh.contact_id=a.contact_id
@@ -304,7 +327,7 @@ async function reserveSecondaryBillingAttempt({
         WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
           AND a.contact_id=$3 AND a.message_id=$4
           AND a.state='unknown' AND a.message_id<>$7
-          AND g.updated_at<=NOW()-INTERVAL '30 minutes'
+          AND (g.updated_at<=NOW()-INTERVAL '30 minutes' OR ${autoProof})
           -- One reviewed bypass maximum per contact in a rolling 30 days.
           -- The old reservation's primary-key audit already blocks replay.
           AND NOT EXISTS (
@@ -326,7 +349,7 @@ async function reserveSecondaryBillingAttempt({
         await client.query("ROLLBACK"); inTransaction = false;
         return deny("secondary_billing_previous_send_unresolved");
       }
-      if (approved.release_basis !== "signed_failed" && !manuallyReviewed && approved.inbox_reviewed !== true) {
+      if (approved.release_basis !== "signed_failed" && !manuallyReviewed && approved.inbox_reviewed !== true && approved.automatic_fresh_reply !== true) {
         await client.query("ROLLBACK"); inTransaction = false;
         // No-WAMID remains a possible provider send; the operator bypass
         // setting must be enabled before any manual UUID review is relevant.
@@ -346,6 +369,12 @@ async function reserveSecondaryBillingAttempt({
         [approved.reservation_id,senderId,cid,gate.rows[0].message_id,mid,
          approved.release_basis]
       );
+      if (approved.automatic_fresh_reply === true) {
+        console.info("[Secondary WhatsApp fresh reply after unknown follow-up]", JSON.stringify({
+          oldMessageId:gate.rows[0].message_id,newMessageId:mid,
+          inboundMessageId:id(freshAiInboundMessageId),oldChargeUnverified:true,
+        }));
+      }
       const reopened = await client.query(
         "UPDATE whatsapp_sender_billing_gates SET "+
         "state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL,"+
