@@ -511,8 +511,23 @@ test("new customer text can automatically recover an uncertain automated service
    await db.query("INSERT INTO inbound_outbound_attempts(processing_job_id,inbound_message_id,assistant_message_id,contact_id,origin,outcome,provider_message_id) VALUES($1,$2,$3,$4,'ai_reply','accepted','wamid.recoveredFresh')",[processing,inbound,fresh,s.contact]);
    const accepted=await billing.recordSecondaryProviderOutcome({reservationId:next.reservationId,acceptedWamid:"wamid.recoveredFresh"},{database,env:autoEnv});
    assert.equal(accepted.state,"awaiting_pricing");
+   const queue=require("../src/services/whatsappSecondaryAiMediaQueue");
+   const queueEnv={...autoEnv,
+     WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+     WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+     WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+     WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+     WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-01-01T00:00:00Z",
+     WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-01-01T00:00:00Z",
+     WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:"2026-01-01T00:00:00Z"};
    assert.equal(await check(inbound,autoEnv,{allowMediaQueueWait:true}),true);
    assert.equal(await check(inbound,autoEnv,{}),false,"queue retention never authorizes dispatch before settlement");
+   assert.equal(await queue.enqueue({contactId:s.contact,inboundMessageId:inbound,kind:"promotion",solicitedPricing:true,
+     items:[{imageUrl:"https://example.test/package-a.png",caption:"Package A RM388"},
+            {imageUrl:"https://example.test/package-b.png",caption:"Package B RM268"}]},
+     {database,env:queueEnv}),true,"both selected pricing images are durably queued while text settles");
+   assert.equal((await db.query("SELECT COUNT(*)::int AS count FROM whatsapp_sender_ai_media_jobs WHERE inbound_message_id=$1 AND state='pending'",[inbound])).rows[0].count,2);
    assert.equal(await check(oldAnchor,autoEnv,{allowMediaQueueWait:true}),false);
    const receiptService=require("../src/services/whatsappSecondaryReceiptService");
    const crypto=require("node:crypto");
@@ -534,5 +549,13 @@ test("new customer text can automatically recover an uncertain automated service
    assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1 AND owner_contact_id=$2",[s.sender,s.contact])).rows[0].state,"idle");
    assert.equal(await check(inbound,autoEnv,{}),true,"new-anchor pricing media may use normal eligibility after text settles");
    assert.equal(await check(oldAnchor,autoEnv,{}),false,"original follow-up anchor remains blocked");
+   const {automaticRecoveryBudgetSql}=require("../src/utils/whatsappSecondaryReviewedUnknownSend");
+   const budget=async()=> (await db.query("SELECT "+automaticRecoveryBudgetSql("a")+" AS ok FROM whatsapp_sender_billing_attempts a WHERE a.reservation_id=$1",[s.original.reservationId])).rows[0].ok;
+   assert.equal(await budget(),false,"same-day repeat is bounded");
+   await db.query("UPDATE whatsapp_sender_unknown_gate_new_sends SET reopened_at=NOW()-INTERVAL '25 hours' WHERE old_reservation_id=$1",[s.original.reservationId]);
+   assert.equal(await budget(),true,"a later separate incident is no longer blocked for a full month after the new reply settles");
+   await db.query("UPDATE whatsapp_sender_billing_attempts SET state='unknown' WHERE reservation_id=$1",[next.reservationId]);
+   assert.equal(await budget(),false,"never stack unresolved recovery replies");
+   await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reconciled' WHERE reservation_id=$1",[next.reservationId]);
  });
 });
