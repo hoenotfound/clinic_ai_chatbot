@@ -414,3 +414,43 @@ test("Inbox review authorises only one newly composed message by the reviewing a
     assert.equal((await request(await newMessage("admin"))).reserved,false,"another message cannot bypass an active reservation");
   });
 });
+
+
+test("reviewed unknown follow-up permits only a new verified AI text and preserves the original attempt",
+ {skip:!connectionString},async()=>{
+ await withSchema(async({db,database})=>{
+   const s=await seed({db,database});
+   const approvedEnv={...env,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"};
+   await billing.recordSecondaryProviderOutcome({reservationId:s.original.reservationId},{database,env});
+   await db.query("UPDATE messages SET delivery_status='unknown',created_at=NOW()-INTERVAL '1 hour' WHERE id=$1",[s.messages[0]]);
+   await db.query("UPDATE whatsapp_sender_billing_gates SET updated_at=NOW()-INTERVAL '40 minutes' WHERE sender_id=$1",[s.sender]);
+   const error="An earlier WhatsApp send is unconfirmed. Ask an administrator to review non-delivery and billing before composing a new message.";
+   const failed=(await db.query("INSERT INTO messages(contact_id,role,content,delivery_status,delivery_error,created_at) VALUES($1,'assistant','blocked address','failed',$2,NOW()-INTERVAL '20 minutes') RETURNING id",[s.contact,error])).rows[0].id;
+   await db.query("UPDATE contacts SET mode='ai',needs_attention=TRUE,attention_reason=$2,delivery_attention_message_id=$3 WHERE id=$1",[s.contact,"Delivery failed: "+error,failed]);
+   const conv=(await db.query("SELECT id FROM whatsapp_sender_conversations WHERE sender_id=$1 AND contact_id=$2",[s.sender,s.contact])).rows[0].id;
+   const inbound=(await db.query("INSERT INTO messages(contact_id,role,content,whatsapp_message_id,created_at,source_created_at) VALUES($1,'user','费用和地址','wamid.freshAI',NOW()-INTERVAL '5 minutes',NOW()-INTERVAL '5 minutes') RETURNING id",[s.contact])).rows[0].id;
+   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[inbound,conv]);
+   const fresh=s.messages[1];
+   const request=()=>billing.reserveSecondaryBillingAttempt({contactId:s.contact,messageId:fresh,billableAuthorized:true,freshAiInboundMessageId:inbound},{database,env:approvedEnv});
+   const check=async(options={},outbound=null)=>{
+      const sql=reviewedDeliveryAttentionSql("c",approvedEnv,"$2",options);
+      return (await db.query("SELECT "+sql+" AS ok FROM contacts c WHERE c.id=$1",[s.contact,inbound,...(outbound==null?[]:[outbound])])).rows[0].ok;
+   };
+   assert.equal(await check({allowInboxAiReview:true}),false);
+   assert.equal((await request()).reserved,false);
+   await db.query("INSERT INTO whatsapp_sender_unknown_gate_inbox_reviews(reservation_id,sender_id,contact_id,old_message_id,actor,reason,non_delivery_checked,billing_no_charge_checked,reviewed_at) VALUES($1,$2,$3,$4,'admin','Verified no delivery or billing charge',TRUE,TRUE,NOW()-INTERVAL '10 minutes')",[s.original.reservationId,s.sender,s.contact,s.messages[0]]);
+   assert.equal(await check(),false,"automation cannot initiate a bypass");
+   assert.equal(await check({allowInboxAiReview:true}),true);
+   await db.query("UPDATE messages SET source_created_at=NOW()-INTERVAL '15 minutes' WHERE id=$1",[inbound]);
+   assert.equal(await check({allowInboxAiReview:true}),false);
+   assert.equal((await request()).reserved,false,"a pre-review inbound must not be replayed");
+   await db.query("UPDATE messages SET source_created_at=NOW()-INTERVAL '5 minutes' WHERE id=$1",[inbound]);
+   const next=await request();
+   assert.equal(next.reserved,true);
+   assert.equal(await check({allowInboxAiReview:true}),false,"other AI work must wait");
+   assert.equal(await check({allowInboxAiReview:true,outboundMessageSql:"$3"},fresh),true,"own reserved send remains eligible");
+   assert.equal(await check({allowInboxAiReview:true,outboundMessageSql:"$3"},failed),false);
+   assert.equal((await db.query("SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",[s.original.reservationId])).rows[0].state,"unknown");
+   assert.equal((await db.query("SELECT new_message_id FROM whatsapp_sender_unknown_gate_new_sends WHERE old_reservation_id=$1",[s.original.reservationId])).rows[0].new_message_id,fresh);
+ });
+});
