@@ -116,7 +116,7 @@ test("urgent safety handling bypasses model generation and first-message intro c
   assert.ok(replyAt > aiCallAt, "reply composition should follow deterministic/model selection");
   assert.match(
     serverSource,
-    /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/
+    /fallbackHandoffReply\([\s\S]*?\{ urgent: true, language: mediaLanguage \}/
   );
 });
 
@@ -162,7 +162,7 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
 
   const promoCall = serverSource.slice(promoResolveAt, resultResolveAt);
   const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 1200);
-  assert.match(serverSource, /const mediaLanguage = detectReplyConversationLanguage\(/);
+  assert.match(serverSource, /let mediaLanguage = explicitReplyLanguage \|\| detectReplyConversationLanguage\(/);
   assert.match(serverSource, /\.reverse\(\)[\s\S]*?message\?\.role === "user"/);
   assert.match(promoCall, /language: mediaLanguage/);
   assert.match(resultCall, /serviceQuery,/);

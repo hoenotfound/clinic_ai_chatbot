@@ -59,6 +59,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
       );
     `);
+    // Exercise the actual additive production migration in this isolated schema.
+    await client.query(require("node:fs").readFileSync(require("node:path").join(__dirname,"../src/db/migrations/140_customer_reply_language_preference.sql"),"utf8"));
     // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
     // Real production schema already defines both tables.
     await client.query(`
