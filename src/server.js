@@ -3507,7 +3507,7 @@ async function processIncomingMessage(
     // outcome or a separately verified campaign/special price.
     if (unresolvedAssessmentPrice && !flagged && !bookingReady && !keywordReason &&
         !marketingStopQuestion && !urgentSafety && !isActiveSafetyConcern(text) &&
-        !isExplicitStaffRequest(text) && !rm68CampaignContinuationTextOnly &&
+        !isExplicitStaffRequest(text) && !staffPriceConflict && !rm68CampaignContinuationTextOnly &&
         !repeatVisitPriceReply && !pelvicPackageComparison && !comboOfferDecision) {
       replyOverrideAudit.change("assessmentOrTreatmentFeeClarification",reply,introAssessmentPriceClarification(mediaLanguage));
       reply = introAssessmentPriceClarification(mediaLanguage);
