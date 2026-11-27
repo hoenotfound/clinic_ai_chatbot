@@ -169,7 +169,7 @@ test("secondary button sender is not a generic interactive-message bypass", () =
  assert.match(src,/secondary_131060_recovery_menu_invalid/);
   assert.match(src,/!recoveryActivation\(env\)/);
   assert.match(src,/!validRecoveryTreatmentButtons\(interactiveButtons\)/);
-  assert.match(src,/transport\.sendInteractiveButtons\(text\.trim\(\), interactiveButtons\)/);
+  assert.match(src,/(?:actualTransport|transport)\.sendInteractiveButtons\(text\.trim\(\), interactiveButtons\)/);
   assert.match(src,/await stillEligible\(\)/);
   assert.match(src,/reserveSecondaryBillingAttempt/);
 });

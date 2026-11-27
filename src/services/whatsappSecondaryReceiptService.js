@@ -148,17 +148,17 @@ function normalizedSignedEvents(rawBody, env, onInvalid = () => {},
           return invalid("status_recipient_invalid");
         if (item.timestamp !== undefined && !numeric(item.timestamp))
           return invalid("status_timestamp_invalid");
-        if (item.pricing !== undefined && (item.pricing === null ||
+        if (!deliveryOnlyEnabled(env) && item.pricing !== undefined && (item.pricing === null ||
             typeof item.pricing !== "object" || Array.isArray(item.pricing) ||
             (item.pricing.billable !== undefined && typeof item.pricing.billable !== "boolean") ||
             (item.pricing.type !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.type))) ||
             (item.pricing.category !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.category)))))
           return invalid("status_pricing_invalid");
-        const pricingType = clean(item.pricing?.type) ||
+        const pricingType = deliveryOnlyEnabled(env) ? null : clean(item.pricing?.type) ||
           (typeof item.pricing?.billable === "boolean" ? "unknown" : null);
-        const pricingBillable = typeof item.pricing?.billable === "boolean" ?
+        const pricingBillable = !deliveryOnlyEnabled(env) && typeof item.pricing?.billable === "boolean" ?
           item.pricing.billable : null;
-        const pricingCategory = clean(item.pricing?.category) || null;
+        const pricingCategory = deliveryOnlyEnabled(env) ? null : clean(item.pricing?.category) || null;
         if (!recipient) {
           // Signed, sender-pinned status with an unusable recipient is not
           // evidence of delivery to any contact. Save only an idempotent
@@ -275,11 +275,12 @@ function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {},
 }
 
 const { configuredVerifiedScope } = require("../utils/verifiedWhatsAppEventScope");
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
-        a.billable_authorized,a.billing_authorization_source,
+        a.billable_authorized,a.billing_authorization_source,a.delivery_only,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -294,7 +295,7 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
    AND m.role='assistant' AND (m.whatsapp_message_id IS NULL OR m.whatsapp_message_id=$1)
  JOIN whatsapp_sender_message_context mc
    ON mc.message_id=m.id AND mc.conversation_id=sc.id
- WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled')
+ WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled','accepted')
    AND (g.reservation_id IS NULL OR
        (g.state IN ('awaiting_pricing','unknown') AND g.wamid=$1))
    AND sc.customer_wa_id=c.whatsapp_number
@@ -312,6 +313,7 @@ async function recordSignedSecondaryStatusBatch({
   rawBody, signatureHeader, subsetFromVerifiedWebhook = false,
 }, { database = pool, env = process.env, onFailureAttention = null,
      onFailedVideoCacheInvalidation = null } = {}) {
+  const direct=deliveryOnlyEnabled(env);
   if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
@@ -358,7 +360,7 @@ async function recordSignedSecondaryStatusBatch({
     const senderId = sender.rows[0].id;
     // Share the same sender gate row lock as reservation/reconciliation.
     // This prevents a callback racing the release of an earlier reservation.
-    await client.query(
+    if(!direct)await client.query(
       "SELECT sender_id FROM whatsapp_sender_billing_gates " +
       "WHERE sender_id=$1 FOR UPDATE", [senderId]
     );
@@ -390,7 +392,7 @@ async function recordSignedSecondaryStatusBatch({
       quarantined++;
       // Unexpected Meta billability must stay in human review, regardless
       // of whether the delivery state is known. Alarm only once per audit.
-      if (audit.pricingBillable === true) {
+      if (!direct && audit.pricingBillable === true) {
         await client.query(
           `INSERT INTO whatsapp_sender_billing_alarms
              (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -465,7 +467,7 @@ async function recordSignedSecondaryStatusBatch({
         // with another customer's reservation.
         // Unmatched billing has NO verified reservation/approval at all;
         // it must always alarm, even when operator-approved service sends exist.
-        if (event.pricingBillable === true) {
+        if (!direct && event.pricingBillable === true) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
               (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -550,6 +552,7 @@ async function recordSignedSecondaryStatusBatch({
           );
         }
       }
+      if(direct || attempt.delivery_only===true)continue; // signed delivery evidence is saved above; no billing logic
       const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
@@ -741,7 +744,7 @@ async function recordSignedSecondaryStatusBatch({
       for (const failed of failedAlerts) {
         const code = Number.isInteger(failed.errorCode) && failed.errorCode>0
           ? " Meta code "+failed.errorCode+"." : "";
-        const reason = "Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold."+
+        const reason = (direct?"Delivery failed: Signed Meta delivery failure. Do not automatically resend this message.":"Delivery failed: Signed Meta failure left a secondary WhatsApp billing hold.")+
           code+" Staff must reconcile the exact send; do not retry.";
         try {
           await attentionHandler({...failed,reason});

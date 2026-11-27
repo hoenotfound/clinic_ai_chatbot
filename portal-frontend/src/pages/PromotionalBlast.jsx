@@ -56,6 +56,7 @@ export default function PromotionalBlast() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [billingApproved, setBillingApproved] = useState(false);
+  const [secondaryDeliveryOnly,setSecondaryDeliveryOnly]=useState(false);
   const [consentReviewed, setConsentReviewed] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState([]);
@@ -96,6 +97,7 @@ export default function PromotionalBlast() {
     try {
       const data = await api.getPromotionalBlastPreview(key);
       if (data.campaignKey !== key) throw new Error("Campaign configuration changed.");
+      setSecondaryDeliveryOnly(data.secondaryDeliveryOnly===true);
       setRecipients(data.recipients || []);
       setSelected({});
       setRelatedReview({});
@@ -138,7 +140,7 @@ export default function PromotionalBlast() {
 
   async function start() {
     if (sending || targets.length === 0 || !hasCampaignImage(currentCampaign,file) || !currentCampaign ||
-        !billingApproved || !consentReviewed) return;
+        (!billingApproved && !(secondaryDeliveryOnly && targets.every(person=>person.senderId===2))) || !consentReviewed) return;
     if (!window.confirm(
       `Send "${currentCampaign.title}" to ${targets.length} selected customers?\n\nMeta may charge for these sends. Each contact will be checked again. No automatic retries will occur.`
     )) return;
@@ -453,8 +455,7 @@ export default function PromotionalBlast() {
           <p className="text-xs text-[var(--color-text-muted)]">
             Eligibility is rechecked at claim time and immediately before sending.
             Staff-owned, booked, opted-out, inactive or recently messaged chats are excluded.
-            Secondary billing holds are checked per customer. Sender-wide billing alarms
-            still stop the number. Quiet hours from Tools are respected.
+            {secondaryDeliveryOnly ? 'Secondary delivery warnings do not block new messages.' : 'Secondary billing holds and sender-wide billing alarms are checked.'} Quiet hours from Tools are respected.
           </p>
         </section>
 
@@ -465,15 +466,15 @@ export default function PromotionalBlast() {
               onChange={event => setConsentReviewed(event.target.checked)} />
             <span>I reviewed these contacts and their recorded permission for related WhatsApp promotions.</span>
           </label>
-          <label className="flex items-start gap-3 text-sm">
+          {!(secondaryDeliveryOnly && targets.length>0 && targets.every(person=>person.senderId===2)) && <label className="flex items-start gap-3 text-sm">
             <input type="checkbox" disabled={sending} checked={billingApproved}
               onChange={event => setBillingApproved(event.target.checked)} />
             <span>I understand Meta may charge for every MARKETING template, even during an ad-originated free-entry period.</span>
-          </label>
+          </label>}
           {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           <div className="flex flex-wrap gap-3">
             <button type="button" onClick={() => void start()}
-              disabled={sending || loading || !hasCampaignImage(currentCampaign,file) || !targets.length || !billingApproved || !consentReviewed}
+              disabled={sending || loading || !hasCampaignImage(currentCampaign,file) || !targets.length || (!billingApproved && !(secondaryDeliveryOnly && targets.every(person=>person.senderId===2))) || !consentReviewed}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
               {sending ? "Sending one at a time…" : `Review and send ${targets.length} selected`}
             </button>

@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 // OFF by default. This is the production sender-qualified history bridge for
 // the already verified second Neutro Business App number, NOT a pre-QR
@@ -114,21 +115,21 @@ function liveOperationsAllowed(env){
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true") &&
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true") &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true") &&
       env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
       env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
       typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
       env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
       (env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true") &&
+        (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true")) &&
       (env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED!=="true" ||
         env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true") &&
       (env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED!=="true" ||
@@ -140,11 +141,11 @@ function liveOperationsAllowed(env){
       (env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED!=="true" ||
         (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
          env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED==="true" &&
-         env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED==="true" &&
-         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==="true")) &&
-      (env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED!=="true" ||
+         (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED==="true") &&
+         (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==="true"))) &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED!=="true" ||
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true") &&
-      (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED!=="true" ||
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED!=="true" ||
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true") &&
       !DISALLOWED.some(key=>!PARITY_OPERATIONS.has(key) && env[key]==="true");
   }
@@ -161,13 +162,13 @@ function liveOperationsAllowed(env){
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true") &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true") &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true") &&
       env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
       env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
@@ -180,19 +181,19 @@ function liveOperationsAllowed(env){
   }
   if(automation){
     const followups=env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true";
-    const autoReconcile=env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true";
+    const autoReconcile=deliveryOnlyEnabled(env)?followups:(deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true");
     if(followups!==autoReconcile ||
        (env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true" && !followups))return false;
     return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true") &&
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true") &&
       env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
       env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
@@ -206,12 +207,12 @@ function liveOperationsAllowed(env){
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
     env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true") &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true") &&
     typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
     env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
     !DISALLOWED.some(key=>!STAFF_TEXT_OPERATIONS.has(key) && env[key]==="true");

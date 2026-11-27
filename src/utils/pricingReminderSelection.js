@@ -154,6 +154,10 @@ function evaluatePricingReminder({
         Number(message.social_provider_id_count) >= 2;
     });
     if (accepted) return false;
+    // The secondary delivery-only scheduler may skip a known consumed
+    // attempt for this exact graphic, but never treats it as delivered.
+    if (candidate.allowDistinctAfterUncertain===true &&
+        matchingMedia.every(message=>message.distinct_attempt_consumed===true))return false;
     needsReview = true;
     return false;
   });

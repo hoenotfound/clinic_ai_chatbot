@@ -283,7 +283,7 @@ export default function WhatsAppTemplateModal({
   }
 
   async function sendTemplate() {
-    if (!selected || !catalog?.eligibility?.allowed || !billingAcknowledged ||
+    if (!selected || !catalog?.eligibility?.allowed || (!catalog?.deliveryOnly && !billingAcknowledged) ||
         !catalog?.billingAdvisory?.reviewTokens?.[selectedKey]) return;
     setSending(true);
     setActionError("");
@@ -353,7 +353,7 @@ export default function WhatsAppTemplateModal({
     selected?.sendable === true &&
     allValuesFilled &&
     (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
-    billingAcknowledged &&
+    (catalog?.deliveryOnly || billingAcknowledged) &&
     Boolean(catalog?.billingAdvisory?.reviewTokens?.[selectedKey]) &&
     !sending;
 
@@ -617,7 +617,7 @@ export default function WhatsAppTemplateModal({
                     )}
                   </div>
 
-                  <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-amber-900">
+                  {!catalog?.deliveryOnly && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-amber-900">
                     <p className="text-xs font-bold">Meta billing — this template may cost money</p>
                     <p className="mt-1.5 text-[11px] leading-5">
                       {catalog?.billingAdvisory?.evidence === "recent_billable_message"
@@ -648,7 +648,7 @@ export default function WhatsAppTemplateModal({
                       />
                       <span>I understand Meta may charge for this manual template send.</span>
                     </label>
-                  </div>
+                  </div>}
 
                   {selected.category === "MARKETING" && (
                     <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-amber-800">

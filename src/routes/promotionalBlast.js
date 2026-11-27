@@ -2,6 +2,8 @@
 const express=require("express");
 const { hasCapability }=require("../utils/permissions");
 const blast=require("../services/promotionalBlastService");
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
+const {pool}=require("../db/db");
 const router=express.Router();
 
 router.use((req,res,next)=>{
@@ -76,7 +78,7 @@ router.get("/preview",async(req,res)=>{
         suggestedLanguage:row.suggested_language,expiresAt:row.safe_expires_at,
         blockedReason:row.blocked_reason,alreadyClaimed:row.already_claimed===true,
       })),
-      checkedAt:new Date().toISOString(),possibleMetaCharges:true,
+      checkedAt:new Date().toISOString(),possibleMetaCharges:true,secondaryDeliveryOnly:deliveryOnlyEnabled(),
     });
   }catch(error){
     console.error("[Promotional blast] Preview unavailable:",error?.message);
@@ -89,12 +91,16 @@ router.post("/claim",async(req,res)=>{
   const lang=String(req.body?.languageCode||"");
   const key=blast.validKey(req.body?.campaignKey);
   if(!key||!Number.isSafeInteger(id)||id<1||!blast.LANGUAGES.has(lang)||
-    req.body?.billingAcknowledged!==true||req.body?.marketingConsentReviewed!==true) {
+    req.body?.marketingConsentReviewed!==true) {
     return res.status(400).json({
       error:"Choose an eligible contact, review the marketing consent and acknowledge possible Meta charges.",
     });
   }
   try{
+    if(req.body?.billingAcknowledged!==true){
+      const direct=deliveryOnlyEnabled() && (await pool.query(`SELECT 1 FROM contacts c JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id WHERE c.id=$1 AND sa.sender_key='neutro_secondary' AND sa.state='active'`,[id])).rowCount===1;
+      if(!direct)return res.status(400).json({error:'Acknowledge possible Meta charges for this sender.'});
+    }
     const claim=await blast.claimRecipient(id,lang,req.session?.username,{
       campaign:key,relatedOfferReviewed:req.body?.relatedOfferReviewed===true,
     });

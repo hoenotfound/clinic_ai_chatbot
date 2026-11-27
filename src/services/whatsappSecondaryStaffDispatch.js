@@ -8,6 +8,8 @@ const templateTools = require("./whatsappTemplateService");
 const senderRepo = require("../db/whatsappSenderConversationRepo");
 const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
+const delivery=require("../db/whatsappSecondaryDeliveryRepo");
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
@@ -68,6 +70,9 @@ async function sendSecondaryStaffText({
   const preBlock=code=>queuedOrigin
     ? {...block(code),preProviderCancelled:true,noReservation:true}
     : block(code);
+  const direct=deliveryOnlyEnabled(env);
+  const reserveAttempt=direct?delivery.claim:billingRepo.reserveSecondaryBillingAttempt;
+  const recordOutcome=direct?delivery.record:billingRepo.recordSecondaryProviderOutcome;
   let reservationStarted=false;
   try {
   // Only two verified interactive flows are permitted: 131060 treatment
@@ -104,7 +109,7 @@ async function sendSecondaryStaffText({
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
   const parity = aiTextOnly && parityRequested &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
   const fullAiRequested = env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED === "true";
   const fullAi = secondaryAdsOnlyFullAiMode(env);
   const elevatedAi = parity || fullAi;
@@ -112,12 +117,12 @@ async function sendSecondaryStaffText({
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true") &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     (parity || fullAi || env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true") &&
     (elevatedAi || env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") &&
-    (elevatedAi || (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
-      (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true")) &&
+    (elevatedAi || direct || (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
+      ((deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true"))) &&
     (elevatedAi || env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true") &&
     env.WHATSAPP_COEXISTENCE_ENABLED === "true" &&
     secondaryUsesPrimaryClinicContent(env);
@@ -135,18 +140,18 @@ async function sendSecondaryStaffText({
       ((!aiTextOnly || (elevatedAi && aiTextAuthorized)) && origin === "ai_media" &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+        (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
       (origin === "followup" &&
         env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
         (!aiTextOnly || aiTextAuthorized) &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") ||
+        (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true")) ||
       (origin === "marketing_followup" && elevatedAi && aiTextAuthorized &&
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
-        env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+        (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true") &&
+        (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true") &&
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
         templateRequest?.automatedMarketingApproved === true);
   if ((parityRequested && !parity) || (fullAiRequested && !fullAi) ||
@@ -169,12 +174,12 @@ async function sendSecondaryStaffText({
       (templateRequest && (!["staff","marketing_followup"].includes(origin) ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
         typeof dispatchTransport !== "function" ||
-        templateRequest.billingConfirmed !== true)) ||
+        (!direct && templateRequest.billingConfirmed !== true))) ||
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" ||
-      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED !== "true" ||
+      (!direct && (!deliveryOnlyEnabled(env)&&env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED !== "true")) ||
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED !== "true" ||
-      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true") {
+      (!direct && (!deliveryOnlyEnabled(env)&&env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true"))) {
     return preBlock("secondary_staff_send_disabled");
   }
   const cid = Number(contact?.id);
@@ -311,18 +316,18 @@ async function sendSecondaryStaffText({
     return preBlock("secondary_staff_sender_verification_failed");
   }
 
-  const justBefore = await preview();
-  if (!await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
+  const justBefore = direct?before:await preview();
+  if (!direct && !await stillEligible())return preBlock("secondary_ads_only_contact_ineligible");
   if (justBefore.policyAllowed !== true) return preBlock(justBefore.code || "secondary_staff_policy_blocked");
 
   reservationStarted=true;
-  let reserved = await billingRepo.reserveSecondaryBillingAttempt({
-    contactId: cid, messageId: mid,
+  let reserved = await reserveAttempt({
+    contactId: cid, messageId: mid, origin,
     // Freeform service messages may be charged after Meta's monthly free
     // allowance. Operator acknowledgment is separate from a template's
     // individual staff review and must be captured in the durable attempt.
     billableAuthorized: Boolean(templateRequest) ||
-      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
+      (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true"),
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
         freshAiInboundMessageId: origin === "ai_reply" && !dispatchTransport && !templateRequest && !hasInteractive
           ? anchorMessageId : null,
@@ -341,7 +346,7 @@ async function sendSecondaryStaffText({
   // Follow-ups may wait only for the PRE-provider billing gate, never retry Meta.
   const waitingScheduledFollowup = origin === "followup" ||
     origin === "marketing_followup";
-  if ((waitingStaffMedia || waitingAutomatedText || waitingScheduledFollowup) &&
+  if (!direct && (waitingStaffMedia || waitingAutomatedText || waitingScheduledFollowup) &&
       !reserved.reserved &&
       reserved.code === "secondary_billing_previous_send_unresolved") {
     const maxWaitChecks = (waitingAutomatedText || waitingScheduledFollowup) ? 8 : 4;
@@ -355,10 +360,10 @@ async function sendSecondaryStaffText({
       if (currentPolicy.policyAllowed !== true) {
         return preBlock(currentPolicy.code || "secondary_staff_policy_changed");
       }
-      reserved = await billingRepo.reserveSecondaryBillingAttempt({
+      reserved = await reserveAttempt({
         contactId: cid, messageId: mid,
         billableAuthorized: Boolean(templateRequest) ||
-          env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
+          (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true"),
         expectedTemplateSignature: templateRequest?.expectedSignature || null,
         freshAiInboundMessageId: origin === "ai_reply" && !dispatchTransport && !templateRequest && !hasInteractive
           ? anchorMessageId : null,
@@ -376,7 +381,7 @@ async function sendSecondaryStaffText({
   // most-recent address, but it must not rewrite a reserved destination.
   if (reserved.recipientAddress && transport.recipientAddress &&
       reserved.recipientAddress !== transport.recipientAddress) {
-    await billingRepo.recordSecondaryProviderOutcome({
+    await recordOutcome({
       reservationId: reserved.reservationId, definitivelyRejected: true,
     }, { database, env });
     return block("secondary_recipient_changed_before_provider");
@@ -384,14 +389,14 @@ async function sendSecondaryStaffText({
   // Once reserved, fail/timeout/connection errors cannot silently unlock it.
   // This prevents accidental second sends after an ambiguous Meta response.
   const markUnknown = async () => {
-    await billingRepo.recordSecondaryProviderOutcome({
+    await recordOutcome({
       reservationId: reserved.reservationId,
     }, { database, env }).catch(() => {});
   };
   // Only proven pre-message cancellations may settle a reservation as rejected.
   // Actual ambiguous provider sends retain their existing protective holds.
   const cancelProvenMarketingBeforeProvider = async (code) => {
-    const outcome = await billingRepo.recordSecondaryProviderOutcome({
+    const outcome = await recordOutcome({
       reservationId: reserved.reservationId, definitivelyRejected: true,
     }, { database, env }).catch(() => null);
     if (outcome?.recorded === true && outcome.state === "rejected") {
@@ -402,9 +407,9 @@ async function sendSecondaryStaffText({
   };
   let providerBoundaryReached=false;
   try {
-    const fresh = await preview();
+    const fresh = direct?justBefore:await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
       }
       await markUnknown();
@@ -412,25 +417,25 @@ async function sendSecondaryStaffText({
         unknown: true, ambiguous: true };
     }
     if (fresh.policyAllowed !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider(fresh.code || "secondary_staff_policy_changed");
       }
       await markUnknown();
       return block(fresh.code || "secondary_staff_policy_changed");
     }
-    const state = await database.query(ALLOWED_RESERVATION_SQL, [
+    const state = direct?null:await database.query(ALLOWED_RESERVATION_SQL, [
       env.WHATSAPP_SECONDARY_SENDER_KEY,
       env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
       env.WHATSAPP_SECONDARY_WABA_ID,
       reserved.reservationId, cid, mid,
     ]);
-    if (state.rows?.length !== 1) {
-      if (queuedOrigin) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
+    if (!direct && state.rows?.length !== 1) {
+      if (queuedOrigin || direct) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
-    if (!await stillEligible()) {
-      if (queuedOrigin) {
+    if (!direct && !await stillEligible()) {
+      if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
       }
       await markUnknown();
@@ -441,7 +446,7 @@ async function sendSecondaryStaffText({
     // possible point before calling Meta. The consumed billing hold stays
     // unknown even when cancellation prevents the provider call.
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || direct) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_before_provider");
       }
       await markUnknown();
@@ -450,12 +455,29 @@ async function sendSecondaryStaffText({
 
     }
 
+    // In direct mode guard each actual customer request, including callbacks
+    // that upload media before sending. A callback cannot send twice.
+    let customerRequestStarted=false;
+    const actualTransport=direct?{...transport}:transport;
+    if(direct)for(const method of ["sendText","sendInteractiveButtons","sendImageByUrl","sendMediaById","sendTemplatePayload"]){
+      actualTransport[method]=async(...args)=>{
+        if(customerRequestStarted)throw Error("Duplicate customer request");
+        const finalPolicy=await preview();
+        if(finalPolicy.policyAllowed!==true || !await stillEligible() || (typeof preSendCheck==="function" && !await preSendCheck()))return {success:false,definitivelyRejected:true,preProviderCancelled:true};
+        const verified=await database.query(delivery.ALLOWED_DELIVERY_SQL,[env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,reserved.reservationId,cid,mid]);
+        if(verified.rows?.length!==1)return {success:false,definitivelyRejected:true,preProviderCancelled:true};
+        if(customerRequestStarted)throw Error("Duplicate customer request");
+        customerRequestStarted=true;
+        return transport[method](...args);
+      };
+    }
     providerBoundaryReached=true;
     const send = (recoveryMenu || generalConsentMenu)
-      ? await transport.sendInteractiveButtons(text.trim(), interactiveButtons)
+      ? await actualTransport.sendInteractiveButtons(text.trim(), interactiveButtons)
       : typeof dispatchTransport === "function"
-        ? await dispatchTransport(transport)
-        : await transport.sendText(text.trim(), { replyToProviderMessageId });
+        ? await dispatchTransport(actualTransport)
+        : await actualTransport.sendText(text.trim(), { replyToProviderMessageId });
+    if(direct && !customerRequestStarted)return cancelProvenMarketingBeforeProvider(send?.code || 'secondary_send_cancelled_before_provider');
     // A trusted callback may prove no /messages call occurred. Media
     // preparation and /media upload failures are not customer sends.
     // Only the listed markers and a durably rejected reservation authorize
@@ -499,7 +521,7 @@ async function sendSecondaryStaffText({
         ambiguous: send?.ambiguous === true,
       }));
     }
-    const evidence = await billingRepo.recordSecondaryProviderOutcome({
+    const evidence = await recordOutcome({
       reservationId: reserved.reservationId,
       acceptedWamid: accepted ? send.wamid : null,
       definitivelyRejected: !accepted && send?.definitivelyRejected === true,
@@ -512,7 +534,7 @@ async function sendSecondaryStaffText({
         // committed. Do not tell the AI pipeline a completed send occurred.
         success: false, wamid: accepted ? send.wamid : null,
         unknown: true, ambiguous: true, retryable: false,
-        code: "secondary_staff_billing_outcome_unverified",
+        code: direct?"secondary_staff_delivery_outcome_unverified":"secondary_staff_billing_outcome_unverified",
         error: "Provider outcome requires staff review; do not resend.",
       };
     }
@@ -529,7 +551,7 @@ async function sendSecondaryStaffText({
       code: "secondary_staff_provider_outcome_unverified",
       error: "Delivery needs staff review; do not resend." };
   } catch {
-    if (queuedOrigin && !providerBoundaryReached) return cancelProvenMarketingBeforeProvider("secondary_pre_provider_preflight_exception");
+    if ((queuedOrigin || direct) && !providerBoundaryReached) return cancelProvenMarketingBeforeProvider("secondary_pre_provider_preflight_exception");
     await markUnknown();
     return {
       success: false, wamid: null, unknown: true, ambiguous: true,

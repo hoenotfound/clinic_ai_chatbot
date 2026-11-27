@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 
 // The secondary template catalog has NO shared primary cache. All live
 // validation uses the secondary sender's exact WABA and token, with nonbillable/billable
@@ -17,7 +18,7 @@ function configured(env) {
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
-    env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+    (deliveryOnlyEnabled(env)||env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true") &&
     env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
     /^[0-9]+$/.test(clean(env.WHATSAPP_SECONDARY_WABA_ID)) &&
     clean(env.WHATSAPP_SECONDARY_TOKEN);
@@ -77,6 +78,7 @@ async function listSecondaryApprovedTemplates(contact,{
       success:true,templates:safeTemplates,
       reusableMedia:[],
       cached:false,
+      deliveryOnly:deliveryOnlyEnabled(env),
       billingAdvisory:{
         evidence:"unknown",reviewedAt:new Date(now).toISOString(),
         freeEntry:{verified:false,sendReady:false,blockedReason:null},
@@ -102,7 +104,7 @@ async function prepareSecondaryStaffTemplate(contact,{
 },{
   env=process.env,database=pool,fetchImpl=global.fetch,
 }={}) {
-  if(!configured(env)||billingAcknowledged!==true) return denied("secondary_template_billing_ack_required");
+  if(!configured(env)||(!deliveryOnlyEnabled(env)&&billingAcknowledged!==true)) return denied("secondary_template_billing_ack_required");
   if (!/^[a-z0-9_]+$/.test(clean(name)) ||
       !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(clean(languageCode))) {
     return denied("secondary_template_invalid");

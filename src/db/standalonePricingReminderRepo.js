@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql,deliveryOnlyAttentionSql}=require("../utils/whatsappSecondaryDeliveryOnly");
 // Standalone Neutro pricing reminder. Never depends on Follow-up 3 or
 // changes the existing follow-up scheduler's customer/marketing eligibility.
 const { pool } = require("./db");
@@ -60,10 +61,10 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.reply_language_preferenc
        EXISTS (SELECT 1 FROM messages first_price
          WHERE first_price.pricing_reminder_anchor_id=inbound.id
            AND first_price.pricing_reminder_package_key='Package A'
-           AND first_price.whatsapp_message_id LIKE 'wamid.%'
+           AND ((first_price.whatsapp_message_id LIKE 'wamid.%'
            AND (first_price.delivery_status IN ('sent','delivered','read')
              OR (first_price.delivery_status='pending'
-               AND first_price.whatsapp_accepted_at IS NOT NULL))
+               AND first_price.whatsapp_accepted_at IS NOT NULL))) OR (${deliveryOnlySql()} AND EXISTS(SELECT 1 FROM whatsapp_sender_accounts direct_sender WHERE direct_sender.id=sa.id AND direct_sender.sender_key='neutro_secondary') AND first_price.delivery_status IN ('unknown','failed') AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts attempted WHERE attempted.message_id=first_price.id AND attempted.sender_id=sa.id AND attempted.contact_id=first_price.contact_id AND attempted.state IN ('unknown','accepted','reconciled','awaiting_pricing'))))
        ) AS has_accepted_package_a,
        (SELECT MIN(retry.retry_after) FROM pricing_reminder_preflight_retries retry
         WHERE retry.anchor_id=inbound.id AND retry.attempts<3) AS next_preflight_retry_at,
@@ -99,8 +100,9 @@ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.reply_language_preferenc
        (SELECT COALESCE(jsonb_agg(jsonb_build_object(
          'media_url',media.media_url,'content',media.content,
          'delivery_status',media.delivery_status,
-         'whatsapp_message_id',media.whatsapp_message_id)),'[]'::jsonb)
-        FROM (SELECT x.media_url,x.content,x.delivery_status,x.whatsapp_message_id
+         'whatsapp_message_id',media.whatsapp_message_id,'distinct_attempt_consumed',media.distinct_attempt_consumed)),'[]'::jsonb)
+        FROM (SELECT x.media_url,x.content,x.delivery_status,x.whatsapp_message_id,
+                     (x.pricing_reminder_anchor_id=inbound.id AND (${deliveryOnlySql()} AND EXISTS(SELECT 1 FROM whatsapp_sender_accounts direct_sender WHERE direct_sender.id=sa.id AND direct_sender.sender_key='neutro_secondary') AND x.delivery_status IN ('unknown','failed') AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts attempted WHERE attempted.message_id=x.id AND attempted.sender_id=sa.id AND attempted.contact_id=x.contact_id AND attempted.state IN ('unknown','accepted','reconciled','awaiting_pricing')))) AS distinct_attempt_consumed
               FROM messages x WHERE x.contact_id=c.id AND x.role='assistant'
                 AND x.media_url IS NOT NULL AND x.media_url<>''
                 AND x.delivery_status IS DISTINCT FROM 'cancelled'
@@ -149,7 +151,7 @@ LEFT JOIN LATERAL (
 ) verified_ad ON TRUE
 WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
   AND c.mode='ai' AND c.takeover_by IS NULL
-  AND ${followUpAttentionAllowedSql("c")}
+  AND (${followUpAttentionAllowedSql("c")} OR ${deliveryOnlyAttentionSql("c")})
   AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
   AND COALESCE(lead.marketing_consent,'unknown') <> 'opted_out'
   AND inbound.created_at >= $2::timestamptz
@@ -213,9 +215,9 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
       EXISTS(SELECT 1 FROM messages a
         WHERE a.pricing_reminder_anchor_id=inbound.id
           AND a.pricing_reminder_package_key='Package A'
-          AND a.whatsapp_message_id LIKE 'wamid.%'
+          AND ((a.whatsapp_message_id LIKE 'wamid.%'
           AND (a.delivery_status IN ('sent','delivered','read') OR
-            (a.delivery_status='pending' AND a.whatsapp_accepted_at IS NOT NULL)))
+            (a.delivery_status='pending' AND a.whatsapp_accepted_at IS NOT NULL))) OR (${deliveryOnlySql()} AND EXISTS(SELECT 1 FROM whatsapp_sender_accounts direct_sender WHERE direct_sender.id=sa.id AND direct_sender.sender_key='neutro_secondary') AND a.delivery_status IN ('unknown','failed') AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts attempted WHERE attempted.message_id=a.id AND attempted.sender_id=sa.id AND attempted.contact_id=a.contact_id AND attempted.state IN ('unknown','accepted','reconciled','awaiting_pricing')))))
       AND NOT EXISTS(SELECT 1 FROM messages uncertain
         WHERE uncertain.pricing_reminder_anchor_id=inbound.id
           AND uncertain.pricing_reminder_package_key <> 'Package A'
@@ -299,7 +301,7 @@ async function stillEligible(candidate,messageId,{senderKeys,activatedAt},offer,
                   AND u.created_at>=inbound.created_at-INTERVAL '24 hours'
                 ORDER BY u.created_at DESC,u.id DESC LIMIT 15) recent
         )=$11::jsonb
-        AND ${followUpAttentionAllowedSql("c")}
+        AND (${followUpAttentionAllowedSql("c")} OR ${deliveryOnlyAttentionSql("c")})
         AND sa.id=$5 AND sa.sender_key=ANY($6::text[]) AND sa.state='active'
         AND NOT EXISTS (
           SELECT 1 FROM whatsapp_sender_followup_treatment_state withdrawal
@@ -398,14 +400,14 @@ async function claimAdditional(candidate,offer,database=pool){
            $6,TRUE,'fixed','unknown','Scheduled pricing graphic awaiting Meta acceptance.'
     FROM lock WHERE EXISTS(
       SELECT 1 FROM messages previous WHERE previous.pricing_reminder_anchor_id=$2
-        AND previous.contact_id=$1 AND previous.whatsapp_message_id IS NOT NULL
+        AND previous.contact_id=$1 AND ((previous.whatsapp_message_id IS NOT NULL
         AND (previous.delivery_status IN ('sent','delivered','read') OR
-             (previous.delivery_status='pending' AND previous.whatsapp_accepted_at IS NOT NULL))
+             (previous.delivery_status='pending' AND previous.whatsapp_accepted_at IS NOT NULL))) OR (${deliveryOnlySql()} AND EXISTS(SELECT 1 FROM whatsapp_sender_accounts direct_sender WHERE direct_sender.id=$7 AND direct_sender.sender_key='neutro_secondary') AND previous.delivery_status IN ('unknown','failed') AND EXISTS(SELECT 1 FROM whatsapp_sender_billing_attempts attempted WHERE attempted.message_id=previous.id AND attempted.sender_id=$7 AND attempted.contact_id=previous.contact_id AND attempted.state IN ('unknown','accepted','reconciled','awaiting_pricing'))))
         AND previous.pricing_reminder_package_key='Package A'
         AND (
           EXISTS(SELECT 1 FROM whatsapp_sender_accounts own
                  WHERE own.id=$7 AND own.sender_key<>'neutro_secondary')
-          OR EXISTS (
+          OR ${deliveryOnlySql()} OR EXISTS (
             SELECT 1 FROM whatsapp_sender_billing_attempts att
             JOIN whatsapp_sender_status_receipts receipt
               ON receipt.sender_id=att.sender_id
@@ -421,7 +423,7 @@ async function claimAdditional(candidate,offer,database=pool){
         WHERE c.id=$1 AND c.mode='ai' AND c.takeover_by IS NULL
           AND c.whatsapp_sender_id=$7
           AND (
-            sa.sender_key<>'neutro_secondary' OR EXISTS(
+            sa.sender_key<>'neutro_secondary' OR ${deliveryOnlySql()} OR EXISTS(
               SELECT 1 FROM whatsapp_sender_billing_gates gate
               WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
                 -- Final reservation enforces idle/strict new-send override.

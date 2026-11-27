@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql}=require("../utils/whatsappSecondaryDeliveryOnly");
 const {pool}=require("../db/db");
 const {createAdaptiveWorkerTimer}=require("../utils/adaptiveWorkerTimer");
 const {automatedRepliesEnabled}=require("./automaticReplyControl");
@@ -20,11 +21,11 @@ WITH ready AS (
    AND a.inbound_message_id=q.inbound_message_id AND a.contact_id=c.id
    AND a.origin='system_fallback' AND a.outcome='accepted'
    AND a.provider_message_id=first_menu.whatsapp_message_id
- JOIN whatsapp_sender_billing_gates g ON g.sender_id=c.whatsapp_sender_id
+ LEFT JOIN whatsapp_sender_billing_gates g ON g.sender_id=c.whatsapp_sender_id
    AND g.owner_contact_id=c.id AND g.state='idle'
  WHERE q.state='pending' AND q.expires_at>NOW()
    AND first_menu.delivery_status IS DISTINCT FROM 'failed'
-   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=g.sender_id)
+   AND (${deliveryOnlySql()} OR (g.sender_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=g.sender_id)))
  ORDER BY q.expires_at,q.first_message_id LIMIT 1 FOR UPDATE OF q SKIP LOCKED
 )
 UPDATE whatsapp_131060_continuations q SET state='claimed',updated_at=NOW()

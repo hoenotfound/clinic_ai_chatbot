@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlyEnabled}=require("./whatsappSecondaryDeliveryOnly");
 
 // Operator-approved, reservation-specific override. An unknown receipt,
 // failed delivery, or 30-minute timeout alone is NOT review evidence.
@@ -318,6 +319,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
 // reservation and provider evidence checks. Refuse unreviewed UNKNOWN gates
 // before inserting a one-shot marketing attempt or issuing a template.
 function reviewedUnknownGateCandidateSql(contactAlias="c",senderAlias="sa",env=process.env){
+ if(deliveryOnlyEnabled(env))return "TRUE";
  for(const alias of [contactAlias,senderAlias]){
   if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid SQL alias");
  }
