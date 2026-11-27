@@ -6,7 +6,7 @@
 const { safeServiceFromCustomer, hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion, isContextualAdServiceEnquiry, LOCAL_WHATSAPP_PRICE } = require("./customerEnquiryEvidence");
-const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
+const { isComplimentaryAssessmentFeeQuestion, unresolvedIntroAssessmentPriceReference } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -714,12 +714,12 @@ function directDeliveredPriceReference({customerText,conversationHistory=[],serv
   const namesOf=t=>[...new Set(findServicesInText(pricingMessageText(t),candidates))];
   const ack=value=>/^(?:谢谢|謝謝|嗯|哦|好(?:的)?|明白了|了解了|thanks?|thank you|ok(?:ay)?|noted|baik|terima kasih)[\s.!！。😊🙏]*$/iu.test(value);
   const blocked=value=>RESET.test(value)||REFUSAL.test(value)||AD_NEGATED_TOPIC.test(value)||
-    AD_BROAD_TOPIC.test(value)||hasClinicalMediaRisk(value)||SPECIFIC_ADMIN_FEE.test(value)||
+    AD_BROAD_TOPIC.test(value)||SPECIFIC_ADMIN_FEE.test(value)||
     hasFuturePromotionPermissionWithoutPrice(value);
   for(let i=end-1;i>floor;i--){
     const bot=turns[i],copy=pricingMessageText(bot).trim();
     if(isVerifiedStaffTurn(bot)) return null;
-    if(bot?.role==="user" && blocked(copy)) return null;
+    if(bot?.role==="user" && (blocked(copy)||hasClinicalMediaRisk(copy))) return null;
     if(bot?.role!=="assistant" || bot.pricingDeliveredBotMessage!==true ||
        bot.verifiedOutboundImageUrl || !namesOf(bot).length) continue;
     const names=namesOf(bot);
@@ -732,7 +732,7 @@ function directDeliveredPriceReference({customerText,conversationHistory=[],serv
       const value=pricingMessageText(t).trim(), mentioned=namesOf(t);
       if(isVerifiedStaffTurn(t) || !value || blocked(value)) return null;
       if(t.role==="user"){
-        if(mentioned.some(n=>n!==treatment) || isGreetingOrLanguageOnly(value) ||
+        if(hasClinicalMediaRisk(value)||mentioned.some(n=>n!==treatment) || isGreetingOrLanguageOnly(value) ||
            (UNRELATED.test(value)&&!isBriefLocationHoursQuestion(value)) ||
            !(ack(value)||mentioned.includes(treatment)||BRIDGE.test(value)||
              isBriefLocationHoursQuestion(value)||hasCurrentPriceAmountRequest(value))) return null;
@@ -758,7 +758,7 @@ function directDeliveredPriceReference({customerText,conversationHistory=[],serv
         if(namesOf(prior).some(n=>n!==treatment)) return null;
         continue;
       }
-      if(prior?.role!=="user" || !before || blocked(before) ||
+      if(prior?.role!=="user" || !before || blocked(before) || hasClinicalMediaRisk(before) ||
          isGreetingOrLanguageOnly(before) || UNRELATED.test(before) ||
          hasExplicitPriceRequest(before) || namesOf(prior).some(n=>n!==treatment)) return null;
       if(ack(before)) continue;
@@ -776,6 +776,8 @@ function resolveModelLedPricingDecision({
   complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
 } = {}) {
   const original = String(customerText || "").trim();
+  if(unresolvedIntroAssessmentPriceReference({customerText:original,conversationHistory,services,serviceAliases,
+    enabled:complimentaryAssessmentExperienceEnabled,now}))return null;
   // Recover a missing model treatment only from an independently named
   // customer selection for a current explicit monetary question. The usual
   // timestamp, staff, conflicting-treatment and package checks below still
