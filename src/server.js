@@ -2558,6 +2558,7 @@ async function processIncomingMessage(
       }
     }
 
+    let verifiedPricingNonPriceGuidance = "";
     // A real price question must receive an amount even when the model tries
     // to move straight to the assessment. Use only this verified treatment's
     // active configured packages, never a guessed amount or stacked voucher.
@@ -2612,6 +2613,7 @@ async function processIncomingMessage(
       }
       replyOverrideAudit.change("ensureVerifiedPriceReply",reply,priced.reply);
       reply = priced.reply;
+      verifiedPricingNonPriceGuidance = priced.verifiedNonPriceGuidance || "";
       if (priced.restored && approvedPricingDecision?.source ===
           "customer_returning_treatment_price") {
         const beforeFeeClarification=reply;
@@ -2652,7 +2654,10 @@ async function processIncomingMessage(
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
         text, commercialHistory, mediaLanguage
       );
-      if (feeClarification) reply = replyOverrideAudit.change("ambiguousAssessmentOrTreatmentFeeReply",reply,feeClarification);
+      if (feeClarification) {
+        const corrected = [feeClarification,verifiedPricingNonPriceGuidance].filter(Boolean).join("\n\n");
+        reply = replyOverrideAudit.change("ambiguousAssessmentOrTreatmentFeeReply",reply,corrected);
+      }
     }
 
     if (twoTreatmentQuote) {
@@ -3396,6 +3401,10 @@ async function processIncomingMessage(
           : mediaLanguage === "en"
             ? "Which package or treatment do you mean? I can check the correct price for you 😊"
             : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
+        // Preserve only the independently generated non-price answer, not
+        // the earlier unverified AI text or any commercial authorization.
+        if (verifiedPricingNonPriceGuidance && !reply.includes(verifiedPricingNonPriceGuidance))
+          reply += "\n\n"+verifiedPricingNonPriceGuidance;
         replyOverrideAudit.change(staffPriceConflict ? "conflictingStaffPriceFallback" : "rejectedModelPricingFallback",
           beforeRejectedPricing, reply);
       }
