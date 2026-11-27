@@ -51,7 +51,7 @@ function signedFailureOrReviewedSql(env=process.env,messageAlias="old_outbound")
 }
 // Fresh readable inbound still required to resume AI. No earlier message is
 // replayed; the final transactional reservation enforces current sender rules.
-function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false}={}){
+function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{allowInboxAiReview=false,outboundMessageSql=null}={}){
  if(!/^[a-z][a-z0-9_]*$/i.test(alias))throw Error("Invalid contact SQL alias");
  const baseApproved=signedFailureOrReviewedSql(env,"old_outbound");
  if(baseApproved==="FALSE")return "FALSE";
@@ -59,6 +59,11 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
  // later customer question arrived. Automated work must use that new anchor.
  if(anchorSql!==null && !/^(?:[a-z][a-z0-9_]*|\$[1-9][0-9]*)$/i.test(anchorSql))
    throw Error("Invalid message anchor SQL");
+ if(outboundMessageSql!==null && !/^\$[1-9][0-9]*$/.test(outboundMessageSql))
+   throw Error("Invalid outbound message SQL");
+ const reservedGate=outboundMessageSql===null
+   ? "current_gate.state='idle'"
+   : "(current_gate.state='idle' OR (current_gate.state='reserved' AND current_gate.contact_id={A}.id AND current_gate.message_id="+outboundMessageSql+"))";
  const anchorCheck=anchorSql===null?"":" AND customer.id="+
    (/^\$/.test(anchorSql)?anchorSql:anchorSql+".id");
  // Inbox review is evidence only for the exact old attempt. Before its
@@ -152,7 +157,7 @@ function reviewedDeliveryAttentionSql(alias="c",env=process.env,anchorSql=null,{
   "              AND older.contact_id={A}.id",
   "              AND older.reopened_at>NOW()-INTERVAL '30 days')",
   "        ) OR (",
-  "          current_gate.state IN ('idle','reserved','awaiting_pricing')",
+  "          "+reservedGate,
   "          AND EXISTS(SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends approved_bypass",
   "            WHERE approved_bypass.old_reservation_id=held_attempt.reservation_id",
   "              AND approved_bypass.sender_id=held_attempt.sender_id",
