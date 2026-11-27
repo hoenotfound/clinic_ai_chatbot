@@ -275,6 +275,11 @@ function isSafeUnquotedReply(reply) {
   if(!text || hasTreatmentPriceContent(text) || scanMyrAmounts(text).length ||
       MEDIA_SEND_PROMISE.test(text) ||
       /(?:\b(?:free|complimentary|gratis)\b|免费|免費|\bpercuma\b)/iu.test(text)) return false;
+  // Unprefixed small amounts and spelled-out monetary claims are not
+  // automatically neutral merely because they lack RM. A price discussion
+  // containing quantities stays on the existing verification path.
+  const priceTerms=/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/iu;
+  if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(text))return false;
   const neutral=text.replace(/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/giu," ");
   if(hasCommercialReplyContent(neutral))return false;
   return !require("./unconfirmedMediaPromiseGuard").guardUnconfirmedMediaPromise(text).changed;
