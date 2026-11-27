@@ -291,8 +291,12 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
   return `(
     ${alias}.mode='ai'
     AND ${alias}.needs_attention IS TRUE
-    AND ${alias}.attention_reason =
-      'Delivery failed: The previous WhatsApp message is still being confirmed. Check its delivery before another send.'
+    AND ${alias}.takeover_by IS NULL
+    AND ${alias}.whatsapp_opt_out_at IS NULL
+    AND ${alias}.attention_reason IN (
+      'Delivery failed: The previous WhatsApp message is still being confirmed. Check its delivery before another send.',
+      'Delivery failed: An earlier WhatsApp send is unconfirmed. Ask an administrator to review non-delivery and billing before composing a new message.'
+    )
     AND EXISTS (
       SELECT 1 FROM messages failed_text
       WHERE failed_text.id=${alias}.delivery_attention_message_id
@@ -300,8 +304,12 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
         AND failed_text.role='assistant'
         AND failed_text.delivery_status='failed'
         AND failed_text.whatsapp_message_id IS NULL
-        AND failed_text.delivery_error =
-          'The previous WhatsApp message is still being confirmed. Check its delivery before another send.'
+        AND failed_text.whatsapp_accepted_at IS NULL
+        AND ${alias}.attention_reason='Delivery failed: ' || failed_text.delivery_error
+        AND NOT EXISTS (
+          SELECT 1 FROM outbound_message_evidence evidence
+          WHERE evidence.message_id=failed_text.id
+        )
         AND NOT EXISTS (
           SELECT 1 FROM whatsapp_sender_billing_attempts failed_attempt
           WHERE failed_attempt.contact_id=${alias}.id
@@ -313,6 +321,37 @@ function secondaryResolvedTransientDeliveryAttentionSql(alias = "c") {
       WHERE cleared_gate.sender_id=${alias}.whatsapp_sender_id
         AND cleared_gate.owner_contact_id=${alias}.id
         AND cleared_gate.state='idle'
+    )
+    -- An idle gate alone cannot authorize recovery while an older unknown
+    -- reservation still lacks a recorded review or a new-send audit.
+    AND NOT EXISTS (
+      SELECT 1 FROM whatsapp_sender_billing_attempts unresolved
+      WHERE unresolved.sender_id=${alias}.whatsapp_sender_id
+        AND unresolved.contact_id=${alias}.id
+        AND unresolved.state='unknown'
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_unknown_gate_new_sends reviewed
+          WHERE reviewed.old_reservation_id=unresolved.reservation_id
+            AND reviewed.sender_id=unresolved.sender_id
+            AND reviewed.contact_id=unresolved.contact_id
+            AND reviewed.old_message_id=unresolved.message_id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_unknown_hold_releases released
+          WHERE released.reservation_id=unresolved.reservation_id
+            AND released.sender_id=unresolved.sender_id
+            AND released.contact_id=unresolved.contact_id
+            AND released.message_id=unresolved.message_id
+            AND released.old_message_retry_prohibited=TRUE
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_sender_owner_attested_unknown_hold_releases released
+          WHERE released.reservation_id=unresolved.reservation_id
+            AND released.sender_id=unresolved.sender_id
+            AND released.contact_id=unresolved.contact_id
+            AND released.message_id=unresolved.message_id
+            AND released.original_message_retry_prohibited=TRUE
+        )
     )
     AND NOT EXISTS (
       SELECT 1 FROM whatsapp_sender_billing_alarms unresolved_alarm
