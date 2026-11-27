@@ -269,9 +269,10 @@ async function sendTrackedText(
   // Only a fresh, verified inbound AI text reply may continue while a
   // specific non-urgent AI review is pending. Marketing and fallback messages
   // never inherit this narrow exception.
+  // Every direct AI reply needs its actual inbound anchor, including a
+  // distinct new enquiry after an uncertain secondary follow-up. Eligibility
+  // still decides whether any review exception is appropriate.
   const reviewContinuationAnchor = origin === "ai_reply" &&
-    contact.needs_attention === true &&
-    String(contact.attention_reason || "").startsWith("AI review requested:") &&
     Number.isSafeInteger(Number(reviewReplyToInboundMessageId)) &&
     Number(reviewReplyToInboundMessageId) > 0
       ? Number(reviewReplyToInboundMessageId) : null;
