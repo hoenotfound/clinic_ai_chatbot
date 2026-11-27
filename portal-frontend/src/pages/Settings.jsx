@@ -2898,6 +2898,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     closingPlaybook: config.closingPlaybook || "",
     sop: config.sop || "",
     aiPricingIntentMode: config.aiPricingIntentMode || "off",
+    aiReplyAuthorityMode: config.aiReplyAuthorityMode || "legacy",
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
     ...(config.services?.some(s=>s.name==="脉冲波调理") ? {recoveryTreatmentOrder: config.recoveryTreatmentOrder || RECOVERY_BUTTON_OPTIONS.map(([id])=>id)} : {}),
     adFirstReply: {
@@ -2937,6 +2938,16 @@ function AiBehaviorTab({ config, onSaved, onError }) {
         title="AI Behavior"
         description="Read literally by the AI as instructions, not just background — edit carefully, since these directly shape every reply."
       />
+      {config.businessType === "tcm_clinic" && /^neutro\s+sense\b/i.test(config.businessName || config.clinicName || "") &&
+        <Field label="AI reply authority" hint="Controls optional conversational rewrites. Verified prices, clinical safety, staff takeover, appointments and delivery checks always apply.">
+          <select className={inputClass} value={form.aiReplyAuthorityMode}
+            onChange={event => setForm({...form,aiReplyAuthorityMode:event.target.value})}>
+            <option value="legacy">Current behavior</option>
+            <option value="observe">AI-first observation: preserve replies and log skipped rewrites</option>
+            <option value="enabled">AI-first: preserve safe conversational replies</option>
+          </select>
+          {form.aiPricingIntentMode !== "enabled" && <p className="mt-2 text-xs text-[var(--color-text-muted)]">AI-first requires verified AI pricing decisions to be enabled. Until then current behavior remains active.</p>}
+        </Field>}
       <Field label="AI pricing graphic decisions" hint="Per-client rollout. Shadow logs AI pricing decisions without changing what gets sent.">
         <select className={inputClass} value={form.aiPricingIntentMode}
           onChange={(event) => setForm({ ...form, aiPricingIntentMode: event.target.value })}>

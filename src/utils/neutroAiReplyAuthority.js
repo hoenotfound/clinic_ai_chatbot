@@ -9,6 +9,39 @@ function usesNaturalReplyAuthority(config) {
     /^neutro\s+sense\b/iu.test(String(config.businessName || config.clinicName || "")) &&
     config.aiPricingIntentMode === "enabled";
 }
+// Keep the existing AI-led action and review policy independent of the
+// conversational rewrite rollout. Legacy means the current deployed behavior,
+// not disabling verified pricing, appointment or sales state safeguards.
+function resolveAiReplyAuthorityMode(config) {
+  if (!usesNaturalReplyAuthority(config)) return "legacy";
+  return ["observe","enabled"].includes(config.aiReplyAuthorityMode)
+    ? config.aiReplyAuthorityMode : "legacy";
+}
+// Only explicitly classified optional rewrites use this boundary. Never call
+// it for factual correction, safety, consent, language or action validation.
+const OPTIONAL_CONVERSATIONAL_REWRITES=new Set([
+  "unapprovedPriceClarification","improveRepeatedPriceClarification",
+  "rejectedModelPricingClarification","optionalComboUpsell",
+]);
+function suppressConversationalRewrite(config,audit,reason) {
+  if(!OPTIONAL_CONVERSATIONAL_REWRITES.has(reason))return false;
+  const mode=resolveAiReplyAuthorityMode(config);
+  if(mode==="legacy") return false;
+  if(mode==="observe") audit?.suppressed?.(reason);
+  return true;
+}
+// The assessment-first price guard is redundant only when the exact same
+// turn will pass the independently approved price formatter immediately
+// afterward. This is a transfer of factual validation, not a bypass.
+function deferAssessmentPricingRewrite({config,audit,pricingAuthorityRequired,
+  formatterWillRun,marketingStopQuestion}={}) {
+  const mode=resolveAiReplyAuthorityMode(config);
+  if(mode==="legacy" || pricingAuthorityRequired!==true ||
+      formatterWillRun!==true || marketingStopQuestion ||
+      config?.automatedFollowUp?.assessmentFirstPricingEnabled!==true)return false;
+  if(mode==="observe")audit?.suppressed?.("assessmentFirstPriceRewriteDeferred");
+  return true;
+}
 // Use only after a new review has actually been persisted.
 function recordedReviewAcknowledgement(category, language="zh") {
   const lang=String(language).toLowerCase().slice(0,2);
@@ -82,6 +115,30 @@ function routineReviewRecoveryEligible({config,naturalReplyAuthority,flagged,rev
 }
 // Late recovery is text-only. Keep the actual state transition centralized
 // and require affirmative evidence; pending or unknown is never clearance.
+// Routine information recovery may clear a model's mistaken review only
+// after the caller independently verifies the facts and fresh clinical
+// evidence. Preserve a verified draft where possible; never restore an
+// unchecked review draft or alter the review state here.
+function selectVerifiedRoutineReply({config,answer,draft,language}={}){
+  const fallback=answer?.reply;
+  if(resolveAiReplyAuthorityMode(config)==="legacy" || !fallback || typeof draft!=="string" || !draft.trim())return fallback;
+  const {verifyLocationDraft,verifyBusinessHoursDraft}=require("./verifiedPricingBusinessFacts");
+  if(answer.kind==="verified_location")return verifyLocationDraft(draft,answer,{allowNeutralCourtesy:true})==="verified_address_only"?draft:fallback;
+  if(answer.kind==="verified_hours")return verifyBusinessHoursDraft(draft,answer,{allowNeutralCourtesy:true})?draft:fallback;
+  // Do not approve additional unverified facts. A model can use different
+  // greeting/courtesy around the same verified factual or recovery text.
+  const norm=v=>String(v||"").normalize("NFKC").replace(/[😊☺️🙂💕]/gu,"").replace(/\s+/gu," ").trim().toLowerCase();
+  const expected=norm(fallback), value=norm(draft);
+  if(expected && value===expected)return draft;
+  const index=value.indexOf(expected);
+  if(!expected || index<0 || value.indexOf(expected,index+expected.length)>=0)return fallback;
+  const clean=v=>v.replace(/[\p{P}\p{S}]+/gu," ").replace(/\s+/gu," ").trim();
+  const before=clean(value.slice(0,index)),after=clean(value.slice(index+expected.length));
+  const lang=String(language||"zh").slice(0,2);
+  const prefixes={zh:["","您好","你好","亲爱的","好的","是的"],en:["","hi","hello","of course","sure","yes"],ms:["","hai","helo","baik","boleh","ya"]};
+  const suffixes={zh:["","哦","呀","谢谢","谢谢您"],en:["","thanks","thank you"],ms:["","ya","terima kasih"]};
+  return (prefixes[lang]||[]).includes(before)&&(suffixes[lang]||[]).includes(after)?draft:fallback;
+}
 function routineReviewTextOnlyState(evidence,reply){
   if(evidence?.pendingClinicalReview!==false||typeof reply!=="string"||!reply.trim())return null;
   return {reply,flagged:false,reviewRequired:false,reviewType:null,bookingReady:false,
@@ -89,14 +146,16 @@ function routineReviewTextOnlyState(evidence,reply){
     details:null,clinicalAcknowledgement:null,reviewContinuationTextOnly:true};
 }
 function createReplyOverrideAudit(log=console.info) {
-  const reasons=new Set();
+  const reasons=new Set(), suppressed=new Set();
   return {
+    suppressed(reason){suppressed.add(reason);},
     change(reason,before,after){if(typeof before==="string"&&typeof after==="string"&&before!==after)reasons.add(reason);return after;},
     note(reason){reasons.add(reason);},
     flush({contactId,inboundId,original,final,outcome}={}){
-      if(!reasons.size&&!(typeof original==="string"&&typeof final==="string"&&original!==final))return;
-      if(!reasons.size)reasons.add("unattributed");
-      log("[Reply authority] "+JSON.stringify({contactId,inboundId,reasons:[...reasons],changed:typeof original==="string"&&typeof final==="string"?original!==final:null,outcome}));
+      const changed=typeof original==="string"&&typeof final==="string"?original!==final:null;
+      if(!reasons.size&&!suppressed.size&&!changed)return;
+      if(!reasons.size&&changed)reasons.add("unattributed");
+      log("[Reply authority] "+JSON.stringify({contactId,inboundId,reasons:[...reasons],...(suppressed.size?{suppressed:[...suppressed]}:{}),changed,outcome}));
     }
   };
 }
@@ -164,4 +223,4 @@ async function persistSalesFollowUpIntent({contactId,inboundId,customerText,inte
     throw error;
   }finally{client.release();}
 }
-module.exports={salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={selectVerifiedRoutineReply,resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};

@@ -129,3 +129,222 @@ test("sales preference write locks conversation, accepts older decisions and is 
  assert.match(SALES_STATE_INSERT_SQL,/existing\.metadata->>'inboundMessageId'/);
  assert.equal(calls.at(-1).sql,"COMMIT");
 });
+
+test("AI reply authority rollout is independent, scoped and reversible",()=>{
+ const {resolveAiReplyAuthorityMode,suppressConversationalRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const base={businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled"};
+ for(const mode of [undefined,"legacy","invalid"]){
+  const config={...base,aiReplyAuthorityMode:mode};
+  assert.equal(resolveAiReplyAuthorityMode(config),"legacy");
+  assert.equal(suppressConversationalRewrite(config,null,"unapprovedPriceClarification"),false);
+ }
+ for(const mode of ["observe","enabled"]){
+  const config={...base,aiReplyAuthorityMode:mode};
+  assert.equal(resolveAiReplyAuthorityMode(config),mode);
+  for(const reason of ["unapprovedPriceClarification","improveRepeatedPriceClarification","rejectedModelPricingClarification","optionalComboUpsell"])
+   assert.equal(suppressConversationalRewrite(config,null,reason),true,reason);
+  for(const reason of ["clinicalSafety","ensureVerifiedPriceReply","guardAiAppointmentReply","marketingStopReply","guardUnconfirmedMediaPromise","correctReplyLanguage","staffPriceConflict","fixedAdFirstReply"])
+   assert.equal(suppressConversationalRewrite(config,null,reason),false,reason);
+  assert.equal(resolveAiReplyAuthorityMode({...config,aiPricingIntentMode:"shadow"}),"legacy");
+  assert.equal(resolveAiReplyAuthorityMode({...config,businessName:"Other Clinic"}),"legacy");
+ }
+});
+test("observation records skipped optional rewrites without storing content",()=>{
+ const {suppressConversationalRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const logs=[],audit=createReplyOverrideAudit(x=>logs.push(x));
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"observe"};
+ assert.equal(suppressConversationalRewrite(config,audit,"improveRepeatedPriceClarification"),true);
+ audit.flush({contactId:1,inboundId:2,original:"private draft",final:"private draft",outcome:"normal"});
+ assert.equal(logs.length,1);
+ assert.match(logs[0],/"suppressed":\["improveRepeatedPriceClarification"\]/u);
+ assert.match(logs[0],/"changed":false/u);
+ assert.doesNotMatch(logs[0],/private|unattributed/u);
+ const enabled=createReplyOverrideAudit(x=>logs.push(x));
+ assert.equal(suppressConversationalRewrite({...config,aiReplyAuthorityMode:"enabled"},enabled,"optionalComboUpsell"),true);
+ enabled.flush({original:"unchanged",final:"unchanged",outcome:"normal"});
+ assert.equal(logs.length,1);
+});
+test("unapproved pricing may preserve neutral wording but never unverified commercial claims",()=>{
+ const {isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["你想了解哪个护理配套的费用呢？","我可以先帮你确认目前的价格哦 😊","你是想了解正式护理还是评估呢？","Which treatment do you mean?","Let me check the price with the centre.","Harga rawatan yang mana ya?","Saya boleh semak harga dahulu."]){
+  assert.equal(isSafeUnquotedReply(reply),true,reply);
+ }
+ for(const reply of ["Package A RM388","现在只需 RM2️⃣6️⃣8️⃣","费用 88","Price 88","It costs eighty ringgit","费用八百","免费的","It is free","Percuma","RM100 优惠券","I'll send you the package details","我现在发给你参考看看","Saya akan hantar gambar promosi",""]){
+  assert.equal(isSafeUnquotedReply(reply),false,reply);
+ }
+});
+test("runtime only suppresses optional wording and optional combo media, not verified price or action decisions",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+ assert.match(server,/priced\.restored && priced\.optionalClarification === true && pricingAuthorityRequired && !approvedPricingDecision/u);
+ assert.match(server,/!twoTreatmentQuote && !staffPriceConflict && !verifiedPriceService/u);
+ assert.match(server,/isSafeUnquotedReply\(reply\) &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"unapprovedPriceClarification"\)/u);
+ assert.match(server,/comboOfferDecision\?\.mode==="suggestion" &&\s*suppressConversationalRewrite\(clinicConfig,replyOverrideAudit,"optionalComboUpsell"\)\)\s*comboOfferDecision=null/u);
+ assert.match(server,/staffPriceConflict \|\| !isSafeUnquotedReply\(reply\)/u);
+ assert.match(server,/reviewContinuationTextOnly = true;/u);
+ assert.match(server,/guardAiAppointmentReply/u);
+ assert.match(server,/resolveApprovedPricingAssessment/u);
+ assert.match(server,/guardUnfulfilledPriceQuote/u);
+ const repo=fs.readFileSync(path.join(__dirname,"../src/db/configRepo.js"),"utf8");
+ const routes=fs.readFileSync(path.join(__dirname,"../src/routes/config.js"),"utf8");
+ const settings=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/Settings.jsx"),"utf8");
+ assert.match(repo,/"aiReplyAuthorityMode"/u);
+ assert.match(routes,/aiReplyAuthorityMode: \(v\) => \["legacy", "observe", "enabled"\]\.includes\(v\)/u);
+ assert.match(settings,/value=\{form\.aiReplyAuthorityMode\}/u);
+});
+
+test("assessment-first text rewrite is deferred only when the mandatory verified price formatter will run",()=>{
+ const {deferAssessmentPricingRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",
+  aiReplyAuthorityMode:"enabled",automatedFollowUp:{assessmentFirstPricingEnabled:true}};
+ const args={config,pricingAuthorityRequired:true,formatterWillRun:true};
+ assert.equal(deferAssessmentPricingRewrite(args),true);
+ for(const changes of [{formatterWillRun:false},{pricingAuthorityRequired:false},{marketingStopQuestion:"stop"},
+  {config:{...config,aiReplyAuthorityMode:"legacy"}},{config:{...config,automatedFollowUp:{}}}]){
+  assert.equal(deferAssessmentPricingRewrite({...args,...changes}),false);
+ }
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["骨盆调理 RM999","Price RM999","RM999"]){
+  const verified=ensureVerifiedPriceReply({customerText:"价格怎么算",reply,pricingDecision:null,
+    priceRequested:true,preserveNaturalReply:true});
+  assert.doesNotMatch(verified.reply,/RM999/u);
+ }
+});
+
+test("zero-cost claims are not neutral and cannot escape the price formatter",()=>{
+ const {isSafeUnquotedReply,hasComplimentaryPriceClaim,ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["不收费","不收取费用","收费为零","无需付款","No charge","at no cost","You don't have to pay","Zero fees","Tanpa caj","Tidak perlu bayar","Bayaran sifar"]){
+  assert.equal(hasComplimentaryPriceClaim(reply),true,reply);
+  assert.equal(isSafeUnquotedReply(reply),false,reply);
+  for(const priceRequested of [false,true]){
+   const result=ensureVerifiedPriceReply({customerText:priceRequested?"多少钱":"如何护理",reply,
+    pricingDecision:null,priceRequested,aiFirstReplyAuthority:true});
+   assert.equal(result.restored,true,reply);
+   assert.notEqual(result.optionalClarification,true,reply);
+   assert.equal(hasComplimentaryPriceClaim(result.reply),false,reply);
+  }
+ }
+});
+test("only optional price clarification may be suppressed; frequency and recovery facts remain mandatory",()=>{
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const base={pricingDecision:null,priceRequested:true,preserveNaturalReply:true,aiFirstReplyAuthority:true};
+ const safe=ensureVerifiedPriceReply({...base,customerText:"多少钱",reply:"请问你想了解哪项护理呢？"});
+ assert.equal(safe.optionalClarification,true);
+ for(const [customerText,reply] of [["多少钱？需要做几次？","保证三次见效"],["多少钱？恢复期多久？","没有恢复期"],["How much and how long is recovery?","No downtime guaranteed."],["Berapa harga? Berapa kali?","Tiga sesi dijamin."]]){
+  const result=ensureVerifiedPriceReply({...base,customerText,reply});
+  assert.equal(result.restored,true,customerText);
+  assert.equal(result.optionalClarification,false,customerText);
+  assert.notEqual(result.reply,reply);
+ }
+});
+test("verified complimentary assessment wording is preserved only for that exact offer",()=>{
+ const {verifiedComplimentaryAssessmentDraft,ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ const config=require("../src/config/clinicConfig");
+ const prev=config.automatedFollowUp;
+ try{
+  config.automatedFollowUp={...prev,complimentaryAssessmentExperienceEnabled:true};
+  const input={customerText:"1对1体态评估收费吗？",language:"zh",aiFirstReplyAuthority:true,preserveNaturalReply:true,pricingDecision:null};
+  const good="是的😊 1对1体态评估+体验是免费的哦";
+  assert.equal(verifiedComplimentaryAssessmentDraft(good,"zh"),true);
+  assert.equal(ensureVerifiedPriceReply({...input,reply:good}).reply,good);
+  for(const reply of ["骨盆调理不收费","1对1体态评估+体验免费，正式疗程也免费","1对1体态评估+体验免费，保证一次见效","1对1体态评估+体验免费，已帮你预约"]){
+   assert.equal(verifiedComplimentaryAssessmentDraft(reply,"zh"),false);
+   assert.notEqual(ensureVerifiedPriceReply({...input,reply}).reply,reply);
+  }
+ }finally{config.automatedFollowUp=prev;}
+});
+test("neutral wording cannot veto independently approved promotion artwork",()=>{
+ const {allowsApprovedPromotionWithoutTextQuote}=require("../src/utils/verifiedPriceReply");
+ const decision={source:"model_led_customer_context",type:"price",treatment:"骨盆调理",prices:[{name:"Package A",price:"RM388"},{name:"Package B",price:"RM268"}]};
+ for(const reply of ["目前有两个护理配套哦 😊","Of course, we have two care packages.","Boleh, kami ada dua pakej penjagaan."]){
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision,reply}),true,reply);
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision:null,reply}),false);
+ }
+ for(const reply of ["Package A RM999","Package A RM388","不收费","No charge","我会发送图片给你","保证三次见效"]){
+  assert.equal(allowsApprovedPromotionWithoutTextQuote({decision,reply}),false,reply);
+ }
+});
+
+test("verified administrative and campaign drafts can retain courtesy without changing facts or review state",()=>{
+ const {selectVerifiedRoutineReply,routineReviewTextOnlyState}=require("../src/utils/neutroAiReplyAuthority");
+ const {confirmedBusinessHoursAnswer,verifyBusinessHoursDraft}=require("../src/utils/verifiedPricingBusinessFacts");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"enabled"};
+ const answer=confirmedBusinessHoursAnswer({customerText:"Opening hours?",language:"en",hours:{weekly:{
+  monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}
+ }}});
+ assert.ok(answer);
+ const draft="Hello 😊 "+answer.reply+" Thank you.";
+ assert.equal(verifyBusinessHoursDraft(draft,answer,{allowNeutralCourtesy:true}),true);
+ assert.equal(selectVerifiedRoutineReply({config,answer,draft,language:"en"}),draft);
+ for(const bad of [draft+" Monday appointments available.",draft.replace("20:00","22:00"),draft+" RM68",draft+" Booked."]){
+  assert.equal(verifyBusinessHoursDraft(bad,answer,{allowNeutralCourtesy:true}),false);
+  assert.equal(selectVerifiedRoutineReply({config,answer,draft:bad,language:"en"}),answer.reply);
+ }
+ const campaign={kind:"verified_rm68_campaign",reply:"The centre needs to confirm availability."};
+ const campaignDraft="Of course! "+campaign.reply+" Thanks!";
+ assert.equal(selectVerifiedRoutineReply({config,answer:campaign,draft:campaignDraft,language:"en"}),campaignDraft);
+ assert.equal(selectVerifiedRoutineReply({config,answer:campaign,draft:campaignDraft+" You're booked.",language:"en"}),campaign.reply);
+ assert.equal(selectVerifiedRoutineReply({config:{...config,aiReplyAuthorityMode:"legacy"},answer:campaign,draft:campaignDraft,language:"en"}),campaign.reply);
+ assert.equal(routineReviewTextOnlyState({pendingClinicalReview:true},campaignDraft),null);
+});
+
+test("verified complimentary assessment invitations remain natural without authorizing free paid treatments",()=>{
+ const {ensureVerifiedPriceReply,verifiedComplimentaryAssessmentInvitation}=require("../src/utils/verifiedPriceReply");
+ const config=require("../src/config/clinicConfig"),previous=config.automatedFollowUp;
+ try {
+  const good=[
+   ["zh","我们可以先帮您安排免费的1对1体态评估及体验哦 😊"],
+   ["en","We can arrange a complimentary 1-on-1 posture assessment and introductory experience."],
+   ["ms","Kami boleh aturkan penilaian postur 1-ke-1 dan sesi pengenalan percuma."]
+  ];
+  for(const enabled of [true,false]){
+   config.automatedFollowUp={...previous,complimentaryAssessmentExperienceEnabled:enabled};
+   for(const [language,reply] of good){
+    assert.equal(verifiedComplimentaryAssessmentInvitation(reply,language),true,reply);
+    const input={customerText:"I want to know about pelvic care",reply,language,pricingDecision:null,
+      aiFirstReplyAuthority:true,preserveNaturalReply:true,priceRequested:false};
+    const result=ensureVerifiedPriceReply(input);
+    assert.equal(result.reply===reply,enabled,reply);
+   }
+  }
+  config.automatedFollowUp={...previous,complimentaryAssessmentExperienceEnabled:true};
+  const correct=good[0][1];
+  const combined="我们会先了解您的体态情况。"+correct;
+  assert.equal(ensureVerifiedPriceReply({customerText:"想了解骨盆调理",reply:combined,pricingDecision:null,aiFirstReplyAuthority:true}).reply,combined);
+  for(const reply of [correct+"，正式疗程也免费",correct+"。骨盆调理不收费",correct+"。已预约成功，免费",correct+"。保证三次见效",correct+"。RM999"]){
+   const result=ensureVerifiedPriceReply({customerText:"想了解骨盆调理",reply,pricingDecision:null,aiFirstReplyAuthority:true});
+   assert.notEqual(result.reply,reply,reply);
+  }
+ }finally{config.automatedFollowUp=previous;}
+});
+test("actual rejected-price boundary retains independently verified guidance and never reauthorizes media",()=>{
+ const fs=require("node:fs"),vm=require("node:vm");
+ const {ensureVerifiedPriceReply,isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ const {suppressConversationalRewrite,createReplyOverrideAudit}=require("../src/utils/neutroAiReplyAuthority");
+ const source=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+ const start=source.indexOf("    if ((staffPriceConflict || rejectedModelPricing) && !flagged");
+ const end=source.indexOf("    // A generic recovery choice",start);
+ assert.ok(start>0&&end>start);
+ for(const [text,draft,language] of [
+  ["多少钱？恢复期多久？","保证没有恢复期","zh"],
+  ["How much and how many sessions?","Guaranteed cure after three sessions","en"],
+  ["Berapa harga? Berapa kali?","Tiga sesi dijamin.","ms"]
+ ]){
+  const result=ensureVerifiedPriceReply({customerText:text,reply:draft,language,pricingDecision:null,priceRequested:true,aiFirstReplyAuthority:true});
+  assert.ok(result.verifiedNonPriceGuidance,text);
+  for(const staffPriceConflict of [true,false]){
+   const ctx={text,reply:result.reply,verifiedPricingNonPriceGuidance:result.verifiedNonPriceGuidance,
+    staffPriceConflict,rejectedModelPricing:!staffPriceConflict,flagged:false,bookingReady:false,
+    rm68CampaignContinuationTextOnly:false,repeatVisitPriceReply:null,marketingStopQuestion:false,
+    reviewContinuationTextOnly:false,naturalReplyAuthority:true,mediaLanguage:language,
+    clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"enabled"},
+    replyOverrideAudit:createReplyOverrideAudit(()=>{}),isSafeUnquotedReply,suppressConversationalRewrite,
+    shouldRewriteRejectedPricingReply:()=>true};
+   const final=vm.runInNewContext(source.slice(start,end)+"\n({reply,reviewContinuationTextOnly})",ctx);
+   assert.ok(final.reply.includes(result.verifiedNonPriceGuidance),final.reply);
+   assert.equal(final.reply.split(result.verifiedNonPriceGuidance).length,2);
+   assert.equal(final.reviewContinuationTextOnly,true);
+   assert.ok(!final.reply.includes(draft));
+  }
+ }
+});

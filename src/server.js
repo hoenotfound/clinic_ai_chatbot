@@ -45,7 +45,7 @@ const { resolveNeutroPostpartumBudgetQuote } = require("./utils/neutroPostpartum
 const { resolveNeutroComboOfferReply, resolveContextualNeutroComboQuestion, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote, containsApprovedPriceAmount } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote, containsApprovedPriceAmount, isSafeUnquotedReply, allowsApprovedPromotionWithoutTextQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { needsUnverifiedPulseDepthReview } = require("./utils/neutroUnverifiedPulseDepth");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
@@ -85,7 +85,7 @@ const { categorizeAiReview, hasClinicalMediaRisk, isUrinaryLeakageConcern,
   require("./utils/aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
-const {routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
+const {selectVerifiedRoutineReply,resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,salesFollowUpIntent,persistSalesFollowUpIntent,createReplyOverrideAudit,createClinicalReviewEvidenceReader}=require("./utils/neutroAiReplyAuthority");
 const { resolveNeutroFacialDeviceReview } = require("./utils/neutroFacialDeviceReview");
 const { isSimpleGreeting, safeGreetingReply } = require("./utils/simpleGreetingReviewRecovery");
 const { planNeutroReviewContinuation, nonUrgentUrinaryAcknowledgement } =
@@ -2541,12 +2541,24 @@ async function processIncomingMessage(
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
-        console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
-        replyOverrideAudit.change("guardAssessmentFirstPricingReply",reply,finalOfferGuard.reply);
-        reply = finalOfferGuard.reply;
+        const deferToVerifiedPriceFormatter=deferAssessmentPricingRewrite({
+          config:clinicConfig,audit:replyOverrideAudit,pricingAuthorityRequired,
+          marketingStopQuestion,
+          // Match the mandatory formatter's actual eligibility below.
+          formatterWillRun: !flagged && !marketingStopQuestion &&
+            !preserveTwoTreatmentDraft &&
+            fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026" &&
+            (aiPricingEnabled || clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled===true),
+        });
+        if(!deferToVerifiedPriceFormatter){
+          console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
+          replyOverrideAudit.change("guardAssessmentFirstPricingReply",reply,finalOfferGuard.reply);
+          reply = finalOfferGuard.reply;
+        }
       }
     }
 
+    let verifiedPricingNonPriceGuidance = "";
     // A real price question must receive an amount even when the model tries
     // to move straight to the assessment. Use only this verified treatment's
     // active configured packages, never a guessed amount or stacked voucher.
@@ -2554,7 +2566,7 @@ async function processIncomingMessage(
         fixedAdFirstReply?.campaignKey !== "neutro_breast_rm68_2026" &&
         (aiPricingEnabled ||
          clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true)) {
-      const priced = ensureVerifiedPriceReply({
+      let priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
         priceOnlyResponse: pricingAuthorityRequired
@@ -2581,12 +2593,27 @@ async function processIncomingMessage(
         language: mediaLanguage,
         allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
         preserveNaturalReply: naturalReplyAuthority,
+        aiFirstReplyAuthority: resolveAiReplyAuthorityMode(clinicConfig)!=="legacy",
       });
+      // If there is no approved commercial decision, preserve an already
+      // safe non-quote instead of generating another treatment question.
+      // Never skip a verified quote, a numbered selection, the configured
+      // complimentary fee fact or an independently verified price recovery.
+      if (priced.restored && priced.optionalClarification === true && pricingAuthorityRequired && !approvedPricingDecision &&
+          !numberedPricingSelection && !shadowPriceException && !scopedPackagePrice &&
+          !twoTreatmentQuote && !staffPriceConflict && !verifiedPriceService &&
+          !isComplimentaryAssessmentFeeQuestion(text,
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled===true,
+            commercialHistory) && isSafeUnquotedReply(reply) &&
+          suppressConversationalRewrite(clinicConfig,replyOverrideAudit,"unapprovedPriceClarification")) {
+        priced={reply,restored:false};
+      }
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
       }
       replyOverrideAudit.change("ensureVerifiedPriceReply",reply,priced.reply);
       reply = priced.reply;
+      verifiedPricingNonPriceGuidance = priced.verifiedNonPriceGuidance || "";
       if (priced.restored && approvedPricingDecision?.source ===
           "customer_returning_treatment_price") {
         const beforeFeeClarification=reply;
@@ -2627,7 +2654,10 @@ async function processIncomingMessage(
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
         text, commercialHistory, mediaLanguage
       );
-      if (feeClarification) reply = replyOverrideAudit.change("ambiguousAssessmentOrTreatmentFeeReply",reply,feeClarification);
+      if (feeClarification) {
+        const corrected = [feeClarification,verifiedPricingNonPriceGuidance].filter(Boolean).join("\n\n");
+        reply = replyOverrideAudit.change("ambiguousAssessmentOrTreatmentFeeReply",reply,corrected);
+      }
     }
 
     if (twoTreatmentQuote) {
@@ -2644,7 +2674,7 @@ async function processIncomingMessage(
     // Only a verified current price request may surface the separate 3D + 9D
     // combo. Reuse the SAME trusted, timestamped customer session as the
     // existing two-treatment resolver. No new pricing graphics are authorized.
-    const comboOfferDecision = !flagged && !bookingReady &&
+    let comboOfferDecision = !flagged && !bookingReady &&
       !marketingStopQuestion && clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNeutroComboOfferReply({
@@ -2664,6 +2694,11 @@ async function processIncomingMessage(
           promotions:clinicConfig.promotions,
           language:mediaLanguage,
         }) : null;
+    // An unsolicited combo upsell is a sales decision, not fact repair.
+    // Suppress both the appended pitch and its associated media authority.
+    if (comboOfferDecision?.mode==="suggestion" &&
+        suppressConversationalRewrite(clinicConfig,replyOverrideAudit,"optionalComboUpsell"))
+      comboOfferDecision=null;
     if (comboOfferDecision) {
       const beforeCombo=reply;
       reply = ["direct","contextual"].includes(comboOfferDecision.mode)
@@ -2738,7 +2773,8 @@ async function processIncomingMessage(
         allowFirstContext: clinicConfig.businessType === "tcm_clinic" &&
           /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")),
       });
-      if (repeated.changed) {
+      if (repeated.changed &&
+          !suppressConversationalRewrite(clinicConfig,replyOverrideAudit,"improveRepeatedPriceClarification")) {
         console.warn("[Reply guard] Avoided repeated pricing clarification.");
         replyOverrideAudit.change("improveRepeatedPriceClarification",reply,repeated.reply);
         reply = repeated.reply;
@@ -2853,7 +2889,7 @@ async function processIncomingMessage(
       });
       if (continuity) {
         const verified = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const recovered=routineReviewTextOnlyState(verified,continuity.reply);
+        const recovered=routineReviewTextOnlyState(verified,selectVerifiedRoutineReply({config:clinicConfig,answer:continuity,draft:languageCheckedModelReply,language:mediaLanguage}));
         if(recovered){
           replyOverrideAudit.change("planNeutroReviewContinuation",reply,recovered.reply);
           ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
@@ -2875,7 +2911,7 @@ async function processIncomingMessage(
       });
       if (rm68AvailabilityAnswer) {
         const reviewEvidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const recovered=routineReviewTextOnlyState(reviewEvidence,rm68AvailabilityAnswer);
+        const recovered=routineReviewTextOnlyState(reviewEvidence,selectVerifiedRoutineReply({config:clinicConfig,answer:{kind:"verified_rm68_campaign",reply:rm68AvailabilityAnswer},draft:languageCheckedModelReply,language:mediaLanguage}));
         if(recovered){
           replyOverrideAudit.change("rm68AvailabilityAnswer",reply,recovered.reply);
           ({reply,flagged,reviewRequired,reviewType,bookingReady,serviceQuery,serviceQuerySource,priceQuery,packageQuery,details,clinicalAcknowledgement,reviewContinuationTextOnly}=recovered);
@@ -2899,9 +2935,11 @@ async function processIncomingMessage(
       });
       if (adminAnswer) {
         const evidence = (naturalReplyAuthority ? await readRoutineReviewEvidence() : await contactsRepo.getTcmReviewEvidence(contact.id, savedInbound.id));
-        const administrativeReply=naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
-          verifyLocationDraft(languageCheckedModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
-          ? languageCheckedModelReply : adminAnswer.reply;
+        const administrativeReply=resolveAiReplyAuthorityMode(clinicConfig)!=="legacy"
+          ? selectVerifiedRoutineReply({config:clinicConfig,answer:adminAnswer,draft:languageCheckedModelReply,language:mediaLanguage})
+          : naturalReplyAuthority&&adminAnswer.kind==="verified_location"&&
+            verifyLocationDraft(languageCheckedModelReply,adminAnswer,{allowNeutralCourtesy:true})==="verified_address_only"
+            ? languageCheckedModelReply : adminAnswer.reply;
         const recovered=routineReviewTextOnlyState(evidence,administrativeReply);
         if(recovered){
           replyOverrideAudit.change("administrativeReviewReply",reply,recovered.reply);
@@ -3347,10 +3385,11 @@ async function processIncomingMessage(
       const beforeRejectedPricing = reply;
       // A rejected commercial action remains text-only. It need not replace
       // a safe answer to a demonstrably noncommercial question.
-      if (!naturalReplyAuthority || shouldRewriteRejectedPricingReply({
+      if ((!naturalReplyAuthority || shouldRewriteRejectedPricingReply({
         reply, customerText: text, services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
-      })) {
+      })) && (staffPriceConflict || !isSafeUnquotedReply(reply) ||
+        !suppressConversationalRewrite(clinicConfig,replyOverrideAudit,"rejectedModelPricingClarification"))) {
         reply = staffPriceConflict
         ? (mediaLanguage === "ms"
           ? "Harga yang dikongsi sebelum ini perlu kami semak dengan pihak pusat dahulu supaya tidak beri harga yang salah ya 😊"
@@ -3364,6 +3403,14 @@ async function processIncomingMessage(
             : "请问你指的是哪一个配套或疗程呢？我帮你确认正确的价格哦 😊");
         replyOverrideAudit.change(staffPriceConflict ? "conflictingStaffPriceFallback" : "rejectedModelPricingFallback",
           beforeRejectedPricing, reply);
+      }
+      // Preserve only independently generated non-price guidance even when
+      // another earlier guard removed it and this fallback was suppressed.
+      // Never reinsert the original model draft or grant media permission.
+      if (verifiedPricingNonPriceGuidance && !reply.includes(verifiedPricingNonPriceGuidance)) {
+        const beforeGuidance=reply;
+        reply += "\n\n"+verifiedPricingNonPriceGuidance;
+        replyOverrideAudit.change("restoreVerifiedNonPriceGuidance",beforeGuidance,reply);
       }
       // Rejected pricing never authorizes stale package or result media,
       // even when the model's safe noncommercial wording is preserved.
@@ -3650,7 +3697,9 @@ async function processIncomingMessage(
       // rules therefore apply to ordinary and repeat-session promotions.
       const semanticQuoteMismatch = approvedPricingDecision?.source === "model_led_customer_context" &&
         !comboMediaPricingDecision && !approvedPricingDecision.prices.every(p =>
-          containsApprovedPriceAmount(reply,{prices:[p]}));
+          containsApprovedPriceAmount(reply,{prices:[p]})) &&
+        !(resolveAiReplyAuthorityMode(clinicConfig)!=="legacy" &&
+          allowsApprovedPromotionWithoutTextQuote({reply,decision:approvedPricingDecision}));
       if (semanticQuoteMismatch) pricingMediaSkipReason="approved_text_quote_changed";
       const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
         comboMediaUnavailable || semanticQuoteMismatch ? null : await resolvePricePromotionForReply({

@@ -162,6 +162,7 @@ test("verified RM68 availability review can recover without silencing clinical r
     let flagged = true, reviewRequired = true;
     let reviewType = input.reviewType || "information";
     let reply = "model asked for staff review";
+    const languageCheckedModelReply = input.checkedDraft || null;
     let bookingReady = false, clinicalAcknowledgement = null;
     let priceQuery = false, packageQuery = false, serviceQuery = false;
     let serviceQuerySource = null, details = null, reviewContinuationTextOnly = false;
@@ -171,7 +172,7 @@ test("verified RM68 availability review can recover without silencing clinical r
     ${fragment}
     return { flagged, reviewRequired, reply, reviewContinuationTextOnly };
   })`, {
-    routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+    selectVerifiedRoutineReply: require("../src/utils/neutroAiReplyAuthority").selectVerifiedRoutineReply, resolveAiReplyAuthorityMode: require("../src/utils/neutroAiReplyAuthority").resolveAiReplyAuthorityMode, routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
     isActiveSafetyConcern: text => /urgent|emergency/iu.test(text),
     hasClinicalMediaRisk,
     isExplicitStaffRequest: text => /人工|staff/iu.test(text),
@@ -332,7 +333,7 @@ test("real final campaign boundary checks booking-ready and respects service swi
   const source=server.slice(start,end);
   const run=(text,history,selected=false)=>vm.runInNewContext(
     "(function(){"+source+"\nreturn {reply,bookingReady,details,rm68BlocksBooking,rm68CampaignContinuationTextOnly};})()",{
-      routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
+      selectVerifiedRoutineReply: require("../src/utils/neutroAiReplyAuthority").selectVerifiedRoutineReply, resolveAiReplyAuthorityMode: require("../src/utils/neutroAiReplyAuthority").resolveAiReplyAuthorityMode, routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}),
       flagged:false,bookingReady:true,marketingStopQuestion:false,keywordReason:null,urgentSafety:false,
       mediaLanguage:"en",text,reply:"Your event appointment is confirmed for RM68 on December 5.",details:{appointmentPreference:"December 5"},
       fixedAdFirstReply:null,staffPriceConflict:false,clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense TCM"},
@@ -359,7 +360,7 @@ test("screening uses actual review persistence and guarded acknowledgement, neve
   const text="Any ultrasound screening";
   for(const allowed of [true,false]){
     const actions=[];
-    const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
+    const context={selectVerifiedRoutineReply: require("../src/utils/neutroAiReplyAuthority").selectVerifiedRoutineReply, resolveAiReplyAuthorityMode: require("../src/utils/neutroAiReplyAuthority").resolveAiReplyAuthorityMode, routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, originalModelReply:null,
       flagged:false,reviewRequired:false,reviewType:null,bookingReady:true,priceQuery:true,packageQuery:true,
       serviceQuery:true,serviceQuerySource:"model",clinicalAcknowledgement:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:false,mediaLanguage:"en",text,commercialHistory:[...history,{role:"user",content:text}],
@@ -483,7 +484,7 @@ test("actual server review boundary routes Hui's alternative date for staff even
   const text="December 5 and 6, I am not available\nIs that possible to do the treatment and checking today";
   const commercialHistory=[...history,{role:"user",content:"Any ultrasound screening"},{role:"user",content:text}];
   for(const bookingReady of [true,false]){
-    const context={routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
+    const context={selectVerifiedRoutineReply: require("../src/utils/neutroAiReplyAuthority").selectVerifiedRoutineReply, resolveAiReplyAuthorityMode: require("../src/utils/neutroAiReplyAuthority").resolveAiReplyAuthorityMode, routineReviewTextOnlyState: require("../src/utils/neutroAiReplyAuthority").routineReviewTextOnlyState, routineReviewRecoveryEligible: require("../src/utils/neutroAiReplyAuthority").routineReviewRecoveryEligible, replyOverrideAudit: require("../src/utils/neutroAiReplyAuthority").createReplyOverrideAudit(()=>{}), naturalReplyAuthority:false, modelPricingIntent:null, ...helpers,text,commercialHistory,bookingReady,flagged:false,fixedAdFirstReply:null,staffPriceConflict:false,safeServiceFromCustomer:()=>null,reviewRequired:false,reviewType:null,
       keywordReason:null,urgentSafety:false,marketingStopQuestion:null,mediaLanguage:"en",
       clinicalAcknowledgement:null,serviceQuery:true,serviceQuerySource:"model",priceQuery:true,packageQuery:true,details:{treatment:"pulse wave"},
       savedInbound:{id:24036,created_at:new Date(early).toISOString()},

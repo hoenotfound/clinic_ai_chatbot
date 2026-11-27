@@ -737,3 +737,98 @@ test("temporary private image preparation failure requeues only a proven rejecte
  assert.equal(result.accepted,0);
  assert.equal(args.calls.filter(c=>c.upload||c.sendMediaById).length,0);
 });
+
+test("actual post-reply promotion boundary queues approved localized artwork through real secondary enqueue, independent of neutral wording",async()=>{
+ const fs=require("node:fs"),vm=require("node:vm");
+ const {resolveModelLedPricingDecision}=require("../src/utils/aiPricingIntentDecision");
+ const {resolveApprovedPricingAssessment}=require("../src/utils/approvedPricingDecision");
+ const {resolvePricePromotionForReply,selectPromoDuplicateCheck}=require("../src/utils/pricePromotionTrigger");
+ const {containsApprovedPriceAmount,allowsApprovedPromotionWithoutTextQuote}=require("../src/utils/verifiedPriceReply");
+ const {resolveAiReplyAuthorityMode}=require("../src/utils/neutroAiReplyAuthority");
+ const {planPromotionMediaPacing}=require("../src/utils/resultMediaPacing");
+ const {resolveNeutroComboMediaPricingDecision}=require("../src/utils/neutroComboOfferReply");
+ const source=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+ const start=source.indexOf("    // Honor the just-recorded marketing opt-out on this turn.");
+ const end=source.indexOf("        for (const promoPackage of (queuedPromotions",start);
+ assert.ok(start>0&&end>start);
+ // Execute the production handler's entire post-reply decision and actual
+ // queue call, stopping just before the direct-primary send loop. The
+ // real secondary enqueue implementation runs against a database stub.
+ const fragment=source.slice(start,end)+"\n} }\nreturn {automaticPromoMediaSent,queuedPromotionCount};";
+ const services=[{name:"骨盆调理"}],serviceAliases=[{alias:"pelvic care",officialService:"骨盆调理"}];
+ const packages=[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"骨盆调理 Package A RM388",pricing:{offer:388,currency:"MYR"},
+   mediaTranslations:{en:{caption:"Pelvic care Package A RM388",imageUrl:"https://example.test/a-en.jpg"},ms:{caption:"Penjagaan pelvis Package A RM388"}}},
+  {name:"Package B",imageUrl:"https://example.test/b.jpg",caption:"骨盆调理 Package B RM268",pricing:{offer:268,currency:"MYR"},
+   mediaTranslations:{en:{caption:"Pelvic care Package B RM268",imageUrl:"https://example.test/b-en.jpg"},ms:{caption:"Penjagaan pelvis Package B RM268"}}}];
+ const promotions=[{name:"Pelvic Care",linkedService:"骨盆调理",sendOnPriceQuery:true,validFrom:"2000-01-01",validUntil:"2099-12-31",packages}];
+ const now=Date.now(),text="骨盆调理多少钱？";
+ const commercialHistory=[{role:"user",content:text,pricingCreatedAtMs:now}];
+ const pricingInput={modelIntent:{structured:true,outcome:"normal",priceQuery:true,treatment:"骨盆调理",promotionOption:null},
+  customerText:text,conversationHistory:commercialHistory,services,serviceAliases,promotions,now};
+ const candidate=resolveModelLedPricingDecision(pricingInput);
+ assert.ok(candidate);
+ const approval=resolveApprovedPricingAssessment({...pricingInput,mode:"enabled",aiDecision:candidate});
+ assert.equal(approval.reason,"approved");
+ async function run({reply="目前有两个护理配套哦 😊",language="zh",mode="enabled",decision=approval.decision,
+   accepted=true,attention=false,queueOwner=true,duplicate=false,unconfirmed=false,optOut=false,
+   textOnly=false,expired=false,disabled=false}={}){
+  const writes=[],audits=[],queueCalls=[];
+  const client={query:async(sql,args)=>{
+   if(sql.includes("SELECT c.whatsapp_sender_id AS sender_id"))
+    return queueOwner?{rows:[{sender_id:9,created_at:new Date(now)}],rowCount:1}:{rows:[],rowCount:0};
+   if(sql.includes("INSERT INTO whatsapp_sender_ai_media_jobs"))writes.push(args);
+   return {rows:[],rowCount:1};
+  },release(){}};
+  const database={query:async()=>({rows:[{eligible:true}],rowCount:1}),connect:async()=>client};
+  const env={...approved,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+   ...(disabled?{WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"false"}:{})};
+  const clinicConfig={businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:mode,
+   services,serviceAliases,promotions:expired?promotions.map(p=>({...p,validUntil:"2000-01-02"})):promotions,resultMedia:[]};
+  const messageRepo={wasMediaRecentlySent:async()=>duplicate,wasPromoRecentlySent:async()=>duplicate,
+    hasUnconfirmedMediaDelivery:async()=>unconfirmed};
+  const context={reply,text,channel:"whatsapp",mediaLanguage:language,clinicConfig,commercialHistory,
+   contact:{id:21},savedInbound:{id:41},wasFirstMessage:false,keywordReason:null,marketingStopQuestion:optOut,
+   fixedAdFirstReply:null,rm68CampaignContinuationTextOnly:false,reviewContinuationTextOnly:textOnly,
+   repeatVisitPriceReply:null,pelvicPackageComparison:null,twoTreatmentQuote:null,comboOfferDecision:null,
+   approvedPricingDecision:decision,pricingAuthorityRequired:true,verifiedPriceService:decision?services[0]:null,
+   priceQuery:true,packageQuery:false,metaAdContext:null,details:null,numberedPricingSelection:null,shadowPriceException:null,scopedPackagePrice:null,
+   flagged:false,bookingReady:false,staleModelPricing:false,pricingDecision:decision,pricingApproval:approval,aiPricingMode:"enabled",
+   sendOutcome:{sendResult:{success:accepted}},secondaryAiConversation:true,
+   contactsRepo:{canSendAutomaticReviewMedia:async()=>!attention,setDeliveryAttention:async()=>{}},
+   messagesRepo:messageRepo,resultMediaDecisionRepo:{recordDecision:async x=>audits.push(x)},
+   pricingDecisionAuditRepo:{recordDecision:async x=>audits.push(x)},
+   resolveNeutroComboMediaPricingDecision,containsApprovedPriceAmount,allowsApprovedPromotionWithoutTextQuote,
+   resolveAiReplyAuthorityMode,resolvePricePromotionForReply,selectPromoDuplicateCheck,planPromotionMediaPacing,
+   secondaryAiMediaQueue:{enqueue:async input=>{queueCalls.push(input);return worker.enqueue(input,{database,env});}},
+   whatsappResultMediaQueue:{enqueue:async()=>assert.fail("primary queue must not receive secondary promotion")},
+   whatsappZeroCostGuard:{enabled:()=>false},console:{info(){},warn(){},error(){}}
+  };
+  await vm.runInNewContext("(async()=>{\n"+fragment+"\n})()",context);
+  return {writes,audits,queueCalls};
+ }
+ for(const [language,reply] of [["zh","目前有两个护理配套哦 😊"],["en","Of course, we have two care packages."],["ms","Boleh, kami ada dua pakej penjagaan."]]){
+  const r=await run({language,reply});
+  assert.equal(r.queueCalls.length,1);
+  assert.equal(r.writes.length,2);
+  for(let i=0;i<packages.length;i++){
+   const expected=packages[i].mediaTranslations[language]||packages[i];
+   assert.deepEqual(Array.from(r.writes[i].slice(0,6)),[9,21,41,i,"promotion",true]);
+   assert.equal(r.writes[i][6],expected.imageUrl||packages[i].imageUrl);
+   assert.equal(r.writes[i][7],expected.caption);
+  }
+ }
+ for(const options of [{accepted:false},{attention:true},{duplicate:true},{unconfirmed:true},{optOut:true},
+  {textOnly:true},{expired:true},{decision:null},{reply:"Package A RM999"},{reply:"不收费"},{mode:"legacy"}]){
+  const r=await run(options);
+  assert.equal(r.queueCalls.length,0,JSON.stringify(options));
+  assert.equal(r.writes.length,0,JSON.stringify(options));
+ }
+ for(const options of [{queueOwner:false},{disabled:true}]){
+  const r=await run(options);
+  assert.equal(r.queueCalls.length,1);
+  assert.equal(r.writes.length,0,JSON.stringify(options));
+  assert.ok(r.audits.some(x=>x.reason==="secondary_media_not_enabled"));
+ }
+ const quoted=await run({mode:"legacy",reply:"骨盆调理 Package A RM388，Package B RM268"});
+ assert.equal(quoted.writes.length,2);
+});
