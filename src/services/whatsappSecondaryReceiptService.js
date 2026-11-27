@@ -280,7 +280,7 @@ const {deliveryOnlyEnabled}=require("../utils/whatsappSecondaryDeliveryOnly");
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
-        a.billable_authorized,a.billing_authorization_source,
+        a.billable_authorized,a.billing_authorization_source,a.delivery_only,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -295,7 +295,7 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
    AND m.role='assistant' AND (m.whatsapp_message_id IS NULL OR m.whatsapp_message_id=$1)
  JOIN whatsapp_sender_message_context mc
    ON mc.message_id=m.id AND mc.conversation_id=sc.id
- WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled')
+ WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled','accepted')
    AND (g.reservation_id IS NULL OR
        (g.state IN ('awaiting_pricing','unknown') AND g.wamid=$1))
    AND sc.customer_wa_id=c.whatsapp_number
@@ -552,7 +552,7 @@ async function recordSignedSecondaryStatusBatch({
           );
         }
       }
-      if(direct)continue; // signed delivery evidence is saved above; no billing logic
+      if(direct || attempt.delivery_only===true)continue; // signed delivery evidence is saved above; no billing logic
       const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
