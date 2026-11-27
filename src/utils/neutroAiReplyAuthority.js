@@ -115,6 +115,29 @@ function routineReviewRecoveryEligible({config,naturalReplyAuthority,flagged,rev
 }
 // Late recovery is text-only. Keep the actual state transition centralized
 // and require affirmative evidence; pending or unknown is never clearance.
+// Routine information recovery may clear a model's mistaken review only
+// after the caller independently verifies the facts and fresh clinical
+// evidence. Preserve a verified draft where possible; never restore an
+// unchecked review draft or alter the review state here.
+function selectVerifiedRoutineReply({config,answer,draft,language}={}){
+  const fallback=answer?.reply;
+  if(resolveAiReplyAuthorityMode(config)==="legacy" || !fallback || typeof draft!=="string" || !draft.trim())return fallback;
+  const {verifyLocationDraft,verifyBusinessHoursDraft}=require("./verifiedPricingBusinessFacts");
+  if(answer.kind==="verified_location")return verifyLocationDraft(draft,answer,{allowNeutralCourtesy:true})==="verified_address_only"?draft:fallback;
+  if(answer.kind==="verified_hours")return verifyBusinessHoursDraft(draft,answer,{allowNeutralCourtesy:true})?draft:fallback;
+  // Do not approve additional unverified facts. A model can use different
+  // greeting/courtesy around the same verified factual or recovery text.
+  const norm=v=>String(v||"").normalize("NFKC").replace(/[\p{P}\p{S}\s]/gu," ").replace(/\s+/gu," ").trim().toLowerCase();
+  const expected=norm(fallback), value=norm(draft);
+  if(expected && value===expected)return draft;
+  const index=value.indexOf(expected);
+  if(!expected || index<0 || value.indexOf(expected,index+expected.length)>=0)return fallback;
+  const before=value.slice(0,index).trim(),after=value.slice(index+expected.length).trim();
+  const lang=String(language||"zh").slice(0,2);
+  const prefixes={zh:["","您好","你好","亲爱的","好的","是的"],en:["","hi","hello","of course","sure","yes"],ms:["","hai","helo","baik","boleh","ya"]};
+  const suffixes={zh:["","哦","呀","谢谢","谢谢您"],en:["","thanks","thank you"],ms:["","ya","terima kasih"]};
+  return (prefixes[lang]||[]).includes(before)&&(suffixes[lang]||[]).includes(after)?draft:fallback;
+}
 function routineReviewTextOnlyState(evidence,reply){
   if(evidence?.pendingClinicalReview!==false||typeof reply!=="string"||!reply.trim())return null;
   return {reply,flagged:false,reviewRequired:false,reviewType:null,bookingReady:false,
@@ -199,4 +222,4 @@ async function persistSalesFollowUpIntent({contactId,inboundId,customerText,inte
     throw error;
   }finally{client.release();}
 }
-module.exports={resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={selectVerifiedRoutineReply,resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
