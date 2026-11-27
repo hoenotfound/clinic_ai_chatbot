@@ -270,19 +270,46 @@ const MEDIA_SEND_PROMISE = /(?:我|我们|我們).{0,15}(?:发|發|传|傳|分�
 // A missing commercial candidate may restrict amounts and media without
 // dictating conversational wording. Neutral price/fee terminology is not a
 // price claim. Keep the existing numeric, offer, voucher and delivery vetoes.
+// Zero-cost wording is a financial claim, even without an RM amount.
+function hasComplimentaryPriceClaim(reply) {
+  return /(?:免费|免費|免收费|免收費|不收(?:取)?(?:费用|費用|费|費|钱|錢)|(?:无|無|无需|無需|不用|不必|不需要|不需|免)(?:任何)?(?:付费|付費|付款|费用|費用|收费|收費|钱|錢)|(?:收费|收費|费用|費用|价钱|價錢|价格|價格)(?:为|為|是|等于|等於|:|：)?\s*(?:零|0)(?!\d)|零(?:费用|費用|收费|收費)|\b(?:free|complimentary|gratis|no\s+(?:additional\s+)?(?:charge|cost|fee|payment)s?|at\s+no\s+cost|zero\s+(?:charge|cost|fee)s?|without\s+(?:any\s+)?(?:charge|cost|fee|payment)|(?:do not|don't|does not|doesn't|need not|no need to)\s+(?:need to\s+|have to\s+)?pay|percuma|tanpa\s+(?:sebarang\s+)?(?:caj|bayaran|kos)|(?:tidak|tak)\s+(?:perlu\s+)?(?:bayar|dikenakan\s+caj)|(?:caj|bayaran|kos)\s*(?:sifar|kosong|0))\b)/iu.test(normalizeMoneyText(reply));
+}
 function isSafeUnquotedReply(reply) {
   const text=String(reply||"").trim();
   if(!text || hasTreatmentPriceContent(text) || scanMyrAmounts(text).length ||
       MEDIA_SEND_PROMISE.test(text) ||
-      /(?:\b(?:free|complimentary|gratis)\b|免费|免費|\bpercuma\b)/iu.test(text)) return false;
+      hasComplimentaryPriceClaim(text)) return false;
   // Unprefixed small amounts and spelled-out monetary claims are not
   // automatically neutral merely because they lack RM. A price discussion
   // containing quantities stays on the existing verification path.
   const priceTerms=/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/iu;
   if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(text))return false;
+  // Do not use this eligibility check to release an unsupported clinical
+  // promise or an unverified payment/booking claim.
+  if (hasClinicalMediaRisk(text) || /(?:保证|保證|一定.{0,12}(?:见效|見效|有效|治好)|包治|零恢复期|零恢復期|无需恢复|無需恢復|\b(?:guarantee[ds]?|cure[ds]?|zero downtime|no downtime|guaranteed results?|pasti sembuh|dijamin|tiada masa pemulihan)\b)/iu.test(text)) return false;
   const neutral=text.replace(/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/giu," ");
   if(hasCommercialReplyContent(neutral))return false;
   return !require("./unconfirmedMediaPromiseGuard").guardUnconfirmedMediaPromise(text).changed;
+}
+// Strictly scoped to the configured introductory offer. Permit natural
+// wording/courtesy, but fail closed for any other service or factual clause.
+function verifiedComplimentaryAssessmentDraft(reply,language="zh"){
+  const text=String(reply||"").normalize("NFKC").trim();
+  if(!text || scanMyrAmounts(text).length || MEDIA_SEND_PROMISE.test(text))return false;
+  const clean=text.replace(/[\p{P}\p{S}\s]/gu," ").replace(/\s+/gu," ").trim();
+  const zh=/^(?:(?:亲爱的|親愛的|您好|你好|是的|对的|對的|可以的|我们|我們|的)\s*)*(?:1\s*对\s*1|1\s*對\s*1|一对一|一對一)\s*(?:的\s*)?(?:体态评估|體態評估)\s*(?:加|和|及|与|與)?\s*(?:体验|體驗)\s*(?:是|都是|属于|屬於)?\s*(?:免费|免費|不收费|不收費)\s*(?:的|哦|呀|呢|啦|谢谢|謝謝)*$/u;
+  const en=/^(?:(?:hi|hello|yes|of course|our|the|it is)\s+)*(?:1 on 1|one on one|1 to 1|one to one)\s+posture assessment\s+(?:and|plus|with)\s+(?:an?\s+)?(?:introductory\s+)?experience\s+(?:is|are)\s+(?:free|complimentary|at no cost|at no charge)(?:\s+(?:thank you|thanks))?$/iu;
+  const ms=/^(?:(?:hai|ya|betul|kami|penilaian)\s+)*(?:penilaian postur\s+)?(?:1 ke 1|1 dengan 1|satu dengan satu)\s+(?:bersama|dan|dengan)\s+(?:sesi\s+)?(?:pengalaman\s+)?pengenalan\s+(?:adalah\s+)?(?:percuma|tanpa caj)(?:\s+ya)?$/iu;
+  return (String(language).startsWith("en")?en:String(language).startsWith("ms")?ms:zh).test(clean);
+}
+// An accepted neutral reply need not repeat all approved prices before the
+// already-authorized artwork can be selected. Never bypass mismatch for
+// an actual monetary, free, offer or unconfirmed-delivery claim.
+function allowsApprovedPromotionWithoutTextQuote({reply,decision}={}){
+  return decision?.source==="model_led_customer_context" &&
+    ["price","package_options"].includes(decision.type) &&
+    Array.isArray(decision.prices) && decision.prices.length>0 &&
+    isSafeUnquotedReply(reply);
 }
 function nonPriceExplanation(reply) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
@@ -491,7 +518,7 @@ function ensureVerifiedPriceReply({
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
   allowContinuedPriceContext = false, preserveNaturalReply = false,
-  verifiedTwoTreatmentQuote = null,
+  verifiedTwoTreatmentQuote = null, aiFirstReplyAuthority = false,
 } = {}) {
   const original = String(reply || "").trim();
   // The clinic explicitly offers the introductory assessment + experience
@@ -503,6 +530,10 @@ function ensureVerifiedPriceReply({
     conversationHistory
   )) {
     const verifiedFee = complimentaryAssessmentFeeReply(language);
+    // Only preserve a bounded affirmative assessment-only statement: no
+    // extra claims about paid treatment, sessions, offers or booking.
+    if(aiFirstReplyAuthority && verifiedComplimentaryAssessmentDraft(original,language))
+      return {reply:original,restored:false};
     return { reply: verifiedFee, restored: !preserveNaturalReply || original !== verifiedFee };
   }
   if(preserveNaturalReply && verifiedTwoTreatmentQuote?.source==="verified_two_separate_treatments"){
@@ -535,10 +566,15 @@ function ensureVerifiedPriceReply({
     // never pass the provider's separate delivery checks.
     const mediaPromise = MEDIA_SEND_PROMISE.test(original);
     const unsolicitedAmount = hasTreatmentPriceContent(original);
-    if (!priceRequested && !mediaPromise && !unsolicitedAmount) {
+    const unverifiedFree = aiFirstReplyAuthority && hasComplimentaryPriceClaim(original);
+    if (!priceRequested && !mediaPromise && !unsolicitedAmount && !unverifiedFree) {
       return { reply: original, restored: false };
     }
-    const safeText = safeNonPriceExplanation(customerText, original, language);
+    const needsFactualCorrection = Boolean(recoveryPeriodGuidance(customerText,language)) ||
+      SESSION_OR_DURATION_QUESTION.test(String(customerText||"")) ||
+      hasClinicalMediaRisk(customerText) || hasClinicalMediaRisk(original);
+    // Do not retain unsupported complimentary claims in the fallback prose.
+    const safeText = unverifiedFree ? "" : safeNonPriceExplanation(customerText, original, language);
     const locale = String(language || "").toLowerCase();
     if (!priceRequested) {
       const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
@@ -551,7 +587,11 @@ function ensureVerifiedPriceReply({
       : locale.startsWith("en")
         ? "Which treatment would you like the price for? I can help check 😊"
         : "请问你想了解哪项疗程的价格呢？我帮你确认 😊";
-    return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true };
+    return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true,
+      // Mark only a genuinely optional clarification. The caller cannot
+      // restore a draft after a factual/safety correction.
+      optionalClarification: !needsFactualCorrection && !unverifiedFree &&
+        !mediaPromise && !unsolicitedAmount && isSafeUnquotedReply(original) };
   }
   // A verified customer-selected pelvic treatment remains the pricing
   // anchor through a short postpartum *concern* answer. The generic
@@ -861,4 +901,4 @@ function guardUnfulfilledPriceQuote(reply,language="zh",{validateMediaPromise=fa
   return {...quote,mediaChanged:media.changed,afterMediaReply};
 }
 
-module.exports = { isSafeUnquotedReply, configuredDurationAnswer, preserveVerifiedTwoTreatmentDraft, containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
+module.exports = { hasComplimentaryPriceClaim, verifiedComplimentaryAssessmentDraft, allowsApprovedPromotionWithoutTextQuote, isSafeUnquotedReply, configuredDurationAnswer, preserveVerifiedTwoTreatmentDraft, containsApprovedPriceAmount, hasSeparateNonPriceEnquiry, staffQuoteMatchesConfiguredPrice, preserveVerifiedModelQuote, configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
