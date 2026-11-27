@@ -192,3 +192,21 @@ test("runtime only suppresses optional wording and optional combo media, not ver
  assert.match(routes,/aiReplyAuthorityMode: \(v\) => \["legacy", "observe", "enabled"\]\.includes\(v\)/u);
  assert.match(settings,/value=\{form\.aiReplyAuthorityMode\}/u);
 });
+
+test("assessment-first text rewrite is deferred only when the mandatory verified price formatter will run",()=>{
+ const {deferAssessmentPricingRewrite}=require("../src/utils/neutroAiReplyAuthority");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",
+  aiReplyAuthorityMode:"enabled",automatedFollowUp:{assessmentFirstPricingEnabled:true}};
+ const args={config,pricingAuthorityRequired:true,formatterWillRun:true};
+ assert.equal(deferAssessmentPricingRewrite(args),true);
+ for(const changes of [{formatterWillRun:false},{pricingAuthorityRequired:false},{marketingStopQuestion:"stop"},
+  {config:{...config,aiReplyAuthorityMode:"legacy"}},{config:{...config,automatedFollowUp:{}}}]){
+  assert.equal(deferAssessmentPricingRewrite({...args,...changes}),false);
+ }
+ const {ensureVerifiedPriceReply}=require("../src/utils/verifiedPriceReply");
+ for(const reply of ["骨盆调理 RM999","Price RM999","RM999"]){
+  const verified=ensureVerifiedPriceReply({customerText:"价格怎么算",reply,pricingDecision:null,
+    priceRequested:true,preserveNaturalReply:true});
+  assert.doesNotMatch(verified.reply,/RM999/u);
+ }
+});
