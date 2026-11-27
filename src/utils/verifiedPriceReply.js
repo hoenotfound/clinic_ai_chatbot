@@ -620,6 +620,12 @@ function ensureVerifiedPriceReply({
     // not an unrelated booking invitation salvaged from the AI draft.
     const standalonePrice = priceRequested && isStandalonePriceQuestion(customerText) &&
       hasExplicitPriceRequest(customerText);
+    // Preserve a bounded, already relevant clarification in AI-first mode.
+    // Do not classify a booking invitation or a mixed sales pitch as optional.
+    const focusedClarification = standalonePrice && /^(?:请问|請問|想问|想問|想了解|你想|您想|which|what|harga|rawatan|pakej)[^\n。！？!?]{0,100}[?？](?:\s*(?:我(?:可以)?帮你确认|我(?:可以)?幫你確認|I can help (?:you )?check|Saya boleh bantu semak))?[\s😊☺️。.!！]*$/iu.test(original) &&
+      /(?:哪(?:一)?(?:项|項|种|種|个|個)?|什么|什麼|which|what|mana|apa)/iu.test(original) &&
+      /(?:护理|護理|疗程|療程|配套|套餐|treatment|package|rawatan|pakej)/iu.test(original) &&
+      !/(?:预约|預約|周末|週末|平时|平時|过来|過來|几时|幾時|booking|appointment|weekdays?|weekends?|book|temujanji|hujung minggu|tempah)/iu.test(original);
     const safeText = safeNonPriceExplanation(customerText, standalonePrice ? "" : original, language,null,[],aiFirstReplyAuthority);
     // Only independently generated recovery/session guidance may survive a
     // later rejected-price fallback. Never reinsert arbitrary model prose.
@@ -644,7 +650,7 @@ function ensureVerifiedPriceReply({
     return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true, verifiedNonPriceGuidance,
       // Mark only a genuinely optional clarification. The caller cannot
       // restore a draft after a factual/safety correction.
-      optionalClarification: !standalonePrice && !needsFactualCorrection && !unverifiedFree &&
+      optionalClarification: (!standalonePrice || focusedClarification) && !needsFactualCorrection && !unverifiedFree &&
         !mediaPromise && !unsolicitedAmount && isSafeUnquotedReply(original) };
   }
   // A verified customer-selected pelvic treatment remains the pricing
