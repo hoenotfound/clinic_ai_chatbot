@@ -23,7 +23,7 @@ function acceptedFollowUpSql(channel, alias = "") {
 const eligibleSql = () => `
 WITH eligible AS (
  SELECT
-   c.id AS contact_id, c.channel, c.whatsapp_number, c.channel_user_id, anchor.id AS anchor_id,
+   c.id AS contact_id, c.channel, c.whatsapp_number, c.channel_user_id, c.reply_language_preference, anchor.id AS anchor_id,
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, third.id AS third_id,
    third.third_accepted_at, lead.treatment_interest, attribution.ad_name,

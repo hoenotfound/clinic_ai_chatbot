@@ -273,6 +273,7 @@ async function findCandidates({
      ), conversation_state AS (
        SELECT
          c.id AS contact_id,
+         c.reply_language_preference,
          c.channel,
          c.whatsapp_number,
          c.channel_user_id,
@@ -493,6 +494,7 @@ async function findCandidates({
        channel_user_id,
        trigger_message_id,
        trigger_message_content,
+       reply_language_preference,
        recent_inbound_messages,
        recent_inbound_times,
        recent_service_messages,

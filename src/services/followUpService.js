@@ -1399,7 +1399,7 @@ async function sendCandidate(candidate) {
   // another language. Use that anchor only when customer history provides no
   // meaningful language evidence.
   const language = detectConversationLanguage(
-    candidate.recent_inbound_messages || [], null
+    candidate.recent_inbound_messages || [], null, candidate.reply_language_preference
   ) || detectConversationLanguage([candidate.trigger_message_content], "en");
   const fallbackSelection = messageForCandidate(
     step,

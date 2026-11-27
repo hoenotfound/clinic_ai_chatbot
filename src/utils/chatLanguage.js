@@ -121,7 +121,7 @@ function detectExplicitLanguagePreference(input) {
   const info = "(?:info(?:rmation)?|details?|explanation|version|translation|penerangan|maklumat)";
   const normalized = single.replace(/\s+/gu, " ");
   const directInfo = normalized.match(new RegExp("^(?:" + polite + " )?" + target + " " + info + "(?: (?:for|about|on|regarding|of) [^.!?]{1,100}?)?(?:[, ]+" + polite + ")?$", "iu"));
-  if (directInfo) return locale(directInfo[1]);
+  if (directInfo && !/^(?:english|malay|bahasa(?: malaysia| melayu)?|bm|chinese|mandarin) version of\b/iu.test(normalized)) return locale(directInfo[1]);
   const explainIn = normalized.match(new RegExp("^(?:(?:can|could|would) (?:you |u )?|please |pls |plz |(?:i |we )(?:want|need) (?:to )?)?(?:explain|translate|repeat|send|share|provide|give|tell|describe|write|say|info(?:rmation)?|details?|explanation)\\b[^.!?\\n]{0,160}?\\bin " + target + "(?:[, ]+" + polite + ")?$", "iu"));
   if (explainIn) return locale(explainIn[1]);
   const infoIn = normalized.match(new RegExp("^(?:(?:the|more|some) )?" + info + "(?: (?:for|about|on|of) [^.!?]{1,100}?)? (?:in|dalam) " + target + "(?:[, ]+" + polite + ")?$", "iu"));

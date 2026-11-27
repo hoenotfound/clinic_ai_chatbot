@@ -22,7 +22,7 @@ WITH latest_inbound AS (
   WHERE m.role='user' AND m.created_at > NOW()-INTERVAL '25 hours'
   ORDER BY m.contact_id,m.created_at DESC,m.id DESC
 )
-SELECT c.id AS contact_id,c.channel,c.whatsapp_number,
+SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.reply_language_preference,
        c.whatsapp_sender_id,sa.sender_key AS whatsapp_sender_key,
        inbound.id AS inbound_id,inbound.created_at AS inbound_at,
        inbound.source_at,lead.id AS lead_id,lead.treatment_interest,

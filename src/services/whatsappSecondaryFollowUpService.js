@@ -553,7 +553,7 @@ function bookingQuestionNudgeSql(nowSql,env=process.env) {
 }
 
 const CANDIDATES_SQL=`
- SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
+ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,c.reply_language_preference,
    sa.sender_key AS whatsapp_sender_key,
    sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
    sa.meta_account_id AS whatsapp_sender_account_id,
@@ -1004,7 +1004,7 @@ async function runOnce({
       ...(resetDecision ? {recovery_topic_reset:true} : {}),
       staff_discussed_followup_topic:staffTopic?.treatment||null,
       unsafe_followup_topic:unsafeTopic};
-    const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
+    const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null,candidate.reply_language_preference);
     const commercialCustomerTexts=resetDecision ? (candidate.customer_texts||[]).slice(0,(candidate.customer_texts||[]).findIndex(value=>String(value||"").normalize("NFKC").trim()==="其他护理")+1) : candidate.customer_texts;
     // A generic "PM" provides no language evidence; fall back to the already
     // delivered first reply, not the internal ad name or CRM treatment.

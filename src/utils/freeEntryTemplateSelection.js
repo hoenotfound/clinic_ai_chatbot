@@ -62,7 +62,7 @@ function validateTemplateRules(rules, slots, services = []) {
 
 function selectTemplateSpec(candidate, slotHours, settings) {
   const locale = settings.language === "auto"
-    ? LANGUAGE_MAP[detectConversationLanguage(candidate.recent_inbound_messages || [], "zh")] || "zh_CN"
+    ? LANGUAGE_MAP[detectConversationLanguage(candidate.recent_inbound_messages || [], "zh", candidate.reply_language_preference)] || "zh_CN"
     : settings.language;
   if (!SUPPORTED_LANGUAGES.has(locale) || locale === "auto") return null;
   // User's explicit treatment messages in THIS ad enquiry override the ad name.

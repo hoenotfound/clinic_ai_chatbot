@@ -26,7 +26,7 @@ function socialActivationCutoff(settings) {
 }
 
 function evaluateOffer(candidate, settings = null) {
-  const language = detectConversationLanguage(candidate.recent_customer_messages || []);
+  const language = detectConversationLanguage(candidate.recent_customer_messages || [], "en", candidate.reply_language_preference);
   return evaluatePricingReminder({
     promotions: getActivePromotions(clinicConfig.promotions || []),
     candidate,

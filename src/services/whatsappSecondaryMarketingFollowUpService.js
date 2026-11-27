@@ -30,8 +30,8 @@ const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler,
 
 // Select a locale only from actual sender-owned customer text. Do not infer
 // Malay from Latin characters or silently send English to an unknown speaker.
-function customerTemplateLocale(messages){
- const detected=detectConversationLanguage(Array.isArray(messages)?messages:[],null);
+function customerTemplateLocale(messages, preference=null){
+ const detected=detectConversationLanguage(Array.isArray(messages)?messages:[],null,preference);
  return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms":null;
 }
 
@@ -117,7 +117,7 @@ function ordinaryMarketingDueSql(slotAlias){
 const ORDINARY_MARKETING_DUE_SQL=ordinaryMarketingDueSql("rule");
 const ORDINARY_NEWER_DUE_SQL=ordinaryMarketingDueSql("newer");
 const CANDIDATES_SQL=`
- SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
+ SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,c.reply_language_preference,
    sa.sender_key AS whatsapp_sender_key,
    sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
    sa.meta_account_id AS whatsapp_sender_account_id,
@@ -769,7 +769,7 @@ async function runOnce({
        !Number.isSafeInteger(Number(candidate.consent_id)) ||
        Number(candidate.consent_id)<=0)) ||
      (!isGeneral &&
-       (customerTemplateLocale(candidate.customer_messages)!==candidate.language_code ||
+       (customerTemplateLocale(candidate.customer_messages,candidate.reply_language_preference)!==candidate.language_code ||
         !intentMatches(candidate))))continue;
   const expectedSignature=isGeneral?approvedGeneral.signature:candidate.template_signature;
   const claimed=await database.query(
@@ -840,7 +840,7 @@ async function runOnce({
         Number(x.consent_id)===Number(candidate.consent_id) &&
         pinnedGeneralTemplate(slot,x.language_code)?.signature===expectedSignature
       : x.template_signature===expectedSignature &&
-        customerTemplateLocale(x.customer_messages)===candidate.language_code &&
+        customerTemplateLocale(x.customer_messages,x.reply_language_preference)===candidate.language_code &&
         intentMatches(x)) &&
     x.template_name===candidate.template_name &&
     x.language_code===candidate.language_code)===true;
