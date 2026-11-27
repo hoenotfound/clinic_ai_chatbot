@@ -405,6 +405,13 @@ test("secondary full AI allows separately authorized staff sending while protect
   WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
  };
  assert.doesNotThrow(()=>assertSenderIngressSafety(marketing));
+ const direct={...marketing,WHATSAPP_SECONDARY_DELIVERY_ONLY:"true",
+   WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"false",WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"false",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false",WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"false",
+   WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"false",WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"false"};
+ assert.doesNotThrow(()=>assertSenderIngressSafety(direct));
+ assert.throws(()=>assertSenderIngressSafety({...direct,WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"}),/Unsafe WhatsApp secondary/);
+ assert.throws(()=>assertSenderIngressSafety({...direct,WHATSAPP_COEXISTENCE_ENABLED:"false"}),/Unsafe WhatsApp secondary/);
 
  // A manual image-header MARKETING template must be able to coexist with
  // sender-scoped secondary full AI without enabling generic staff attachments
