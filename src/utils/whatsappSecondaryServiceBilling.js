@@ -61,7 +61,9 @@ function detachableServiceGateSql(gateAlias,env=process.env){
      AND independent.contact_id=${gateAlias}.owner_contact_id
      AND independent.message_id=${gateAlias}.message_id
      AND independent.state=${gateAlias}.state
-     AND independent.state IN ('unknown','awaiting_pricing')
+     AND (independent.state IN ('unknown','awaiting_pricing') OR (
+       independent.state='reserved' AND independent.updated_at<=NOW()-INTERVAL '30 minutes'
+       AND ${gateAlias}.updated_at<=NOW()-INTERVAL '30 minutes'))
      AND ${authorizedServiceAttemptSql("independent")})`;
 }
 module.exports={serviceBillingRecordOnlyEnabled,authorizedServiceAttemptSql,
