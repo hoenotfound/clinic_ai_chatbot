@@ -743,3 +743,54 @@ test("Nov 27 production replay uses actual follow-up metadata, prices and locali
    language==="zh"?p.caption:p.mediaTranslations[language].caption));
  }
 });
+
+
+test("directly asking the price after a delivered single-treatment explanation establishes its topic",async()=>{
+ const name="脉冲波调理";
+ const draft="请问你平时还是周末过来比较方便呢？";
+ for(const current of ["价钱？","Price?","How much?","Harga?"]){
+  const a=args(current,name,{
+    services:[...services,{name}],
+    promotions:[...promotions,promo(name,388)],
+    conversationHistory:[
+      turn("user","可以改善全身线条吗？",2000),
+      {...turn("assistant","脉冲波调理属于全身护理疗程，并非只针对单一部位哦。中医师会根据你的身体状况和需求，加强护理。",1000),pricingDeliveredBotMessage:true},
+      turn("user",current,0),
+    ],
+  });
+  for(const metadata of [{treatment:name,priceQuery:true},{treatment:null,priceQuery:true},{treatment:null,priceQuery:false}]){
+   const input={...a,modelIntent:{...a.modelIntent,...metadata}};
+   const d=resolveModelLedPricingDecision(input);
+   assert.equal(d?.treatment,name,current+JSON.stringify(metadata));
+   assert.equal(d?.directDeliveredPriceReference,true);
+   assert.deepEqual(d?.prices.map(p=>p.price),["RM388"]);
+   const approval=resolveApprovedPricingAssessment({...input,mode:"enabled",aiDecision:d});
+   assert.equal(approval.reason,"approved");
+   const reply=ensureVerifiedPriceReply({...input,reply:draft,treatment:name,pricingDecision:approval.decision,priceRequested:true,language:"zh"});
+   assert.match(reply.reply,/RM388/u);
+   assert.doesNotMatch(reply.reply,/平时还是周末|哪项疗程/u);
+   const media=await resolvePricePromotionForReply({...input,aiPricingEnabled:true,pricingDecision:approval.decision,treatment:name,verifiedServiceFromText:name,textSendSucceeded:true,contactId:1,wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,now:new Date(now)});
+   assert.equal(media?.packages?.length,1);
+   assert.equal(resolveApprovedPricingAssessment({...input,mode:"shadow",aiDecision:d}).decision,null);
+  }
+  for(const kind of ["unverified","staff","media","competing","greeting","stale","wrongModel","nonprice","clinical","laterSession","noPromo"]){
+   const b={...a,modelIntent:{...a.modelIntent},conversationHistory:a.conversationHistory.map(t=>({...t}))};
+   if(kind==="unverified")b.conversationHistory[1].pricingDeliveredBotMessage=false;
+   if(kind==="staff")b.conversationHistory[1].pricingStaffAuthored=true;
+   if(kind==="media")b.conversationHistory[1].verifiedOutboundImageUrl="https://example.test/picture";
+   if(kind==="competing")b.conversationHistory[1].content+="也可以选择3D 小颜术。";
+   if(kind==="greeting")b.conversationHistory[0].content="Hi";
+   if(kind==="stale")b.conversationHistory[0].pricingCreatedAtMs-=25*3600000;
+   if(kind==="wrongModel")b.modelIntent.treatment="3D 小颜术";
+   if(kind==="nonprice"){b.customerText="多久？";b.conversationHistory[2].content=b.customerText;}
+   if(kind==="clinical")b.conversationHistory[0].content="我怀孕了";
+   if(kind==="laterSession")b.modelIntent.pricingStage="subsequent_session";
+   if(kind==="noPromo")b.promotions=[];
+   assert.equal(resolveModelLedPricingDecision(b),null,kind);
+  }
+ }
+ const rejected=ensureVerifiedPriceReply({customerText:"价钱？",reply:draft,pricingDecision:null,priceRequested:true,language:"zh",services});
+ assert.doesNotMatch(rejected.reply,/平时还是周末/u);
+ assert.match(rejected.reply,/价格/u);
+ assert.equal(rejected.optionalClarification,false);
+});
