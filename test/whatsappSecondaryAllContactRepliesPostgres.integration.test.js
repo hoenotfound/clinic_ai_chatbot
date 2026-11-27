@@ -5,7 +5,7 @@ const {Client} = require("pg");
 const {runMigrations} = require("../src/db/migrationRunner");
 const {
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
-  eligibleSecondaryAiReplyContactIds, isSecondaryAdsOnlyEligible,
+  eligibleSecondaryAiReplyContactIds, isSecondaryAdsOnlyEligible, isSecondaryAutomationEligible,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 
 const cs = process.env.TEST_DATABASE_URL;
@@ -85,6 +85,27 @@ test("secondary all-contact AI replies accept only post-switch inbound on the co
     assert.equal(await isSecondaryAiReplyEligible(historical.id,{database:db,env}),true);
     assert.deepEqual([...await eligibleSecondaryAiReplyContactIds([historical.id,0,-1],{
       database:db,env})],[historical.id]);
+
+    // Production regression: delivery-only SQL omits the old billing-gate
+    // placeholder. A real PostgreSQL query with an outbound ID must still bind.
+    const directEnv={...env,WHATSAPP_SECONDARY_DELIVERY_ONLY:"true",
+      WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"all_contacts",
+      WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT:cutoff};
+    const draft=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','Reply draft') RETURNING id",
+      [historical.id])).rows[0].id;
+    await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[draft,historical.conv]);
+    for(const outboundMessageId of [null,draft]){
+      const args={database:db,env:directEnv,inboundMessageId:newMessage,outboundMessageId};
+      assert.equal(await isSecondaryAiReplyEligible(historical.id,args),true,"delivery-only text can bind with or without outbound ID");
+      assert.equal(await isSecondaryAutomationEligible(historical.id,args),true,"delivery-only media and follow-up eligibility can bind");
+      assert.equal(await isSecondaryAiReplyEligible(historical.id,{...args,inboundMessageId:old}),false);
+      assert.equal(await isSecondaryAutomationEligible(historical.id,{...args,inboundMessageId:old}),false);
+      await db.query("UPDATE contacts SET whatsapp_opt_out_at=NOW() WHERE id=$1",[historical.id]);
+      assert.equal(await isSecondaryAiReplyEligible(historical.id,args),false);
+      assert.equal(await isSecondaryAutomationEligible(historical.id,args),false);
+      await db.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=$1",[historical.id]);
+    }
 
     // #8946: an informational Meta 131060 placeholder must not silence the
     // customer's next readable message. The review remains pending for staff.

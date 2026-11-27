@@ -424,6 +424,9 @@ async function isSecondaryAiReplyEligible(contactId, {
       (outbound != null && (mid == null || !Number.isSafeInteger(outbound) || outbound <= 0)) ||
       !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID)
     return false;
+  // Delivery-only attention checks do not reference the optional legacy
+  // reservation parameter. Bind it only when that SQL is actually present.
+  const legacyOutbound = outbound != null && !deliveryOnlyEnabled(env);
   try {
     const legacyAudience=secondaryLegacyStaffAudienceSql("c",mid==null?null:"inbound",env);
     const proof = mid == null ? "" : `
@@ -454,7 +457,7 @@ async function isSecondaryAiReplyEligible(contactId, {
              allowReviewContinuation: allowReviewContinuation === true && mid != null,
               allowAutomaticFreshReply: allowAutomaticFreshReply === true && mid != null,
               inboundMessageSql: mid != null ? "$5" : null, env,
-              outboundMessageSql: outbound != null ? "$6" : null,
+              outboundMessageSql: legacyOutbound ? "$6" : null,
            })}
            AND c.whatsapp_opt_out_at IS NULL
            ${mid==null ? "AND "+legacyAudience : ""}
@@ -463,7 +466,7 @@ async function isSecondaryAiReplyEligible(contactId, {
       mid == null ? [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID] :
         [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-          env.WHATSAPP_SECONDARY_WABA_ID,cutoff,mid,...(outbound != null ? [outbound] : [])]
+          env.WHATSAPP_SECONDARY_WABA_ID,cutoff,mid,...(legacyOutbound ? [outbound] : [])]
     );
     return result.rows?.[0]?.eligible === true;
   } catch (err) {
@@ -588,15 +591,16 @@ async function isSecondaryAutomationEligible(contactId, {
       env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
       env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
+  const legacyOutbound = outbound != null && !deliveryOnlyEnabled(env);
   try {
     const out = await database.query(
       `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5",env)} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
-        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:outbound!=null?"$6":null,env,allowMediaQueueWait:allowMediaQueueWait===true})}
+        WHERE c.id=$1 AND c.mode='ai' AND ${secondaryAutomationAttentionAllowedSql("c","inbound",{outboundMessageSql:legacyOutbound?"$6":null,env,allowMediaQueueWait:allowMediaQueueWait===true})}
           AND c.whatsapp_opt_out_at IS NULL`,
       [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
-        originalAdsOnlyCutoff(env),...(outbound!=null?[outbound]:[])]
+        originalAdsOnlyCutoff(env),...(legacyOutbound?[outbound]:[])]
     );
     return out.rows?.length === 1 && out.rows[0].eligible === true;
   } catch (error) {
