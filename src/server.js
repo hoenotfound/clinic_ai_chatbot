@@ -1374,8 +1374,14 @@ async function processIncomingMessage(
           index === modelContextHistory.length - 1 && entry?.role === "user"
             ? { ...entry, content: marketingStopQuestion } : entry)
       : modelContextHistory;
-    const isFirstMessage = forceFirstMessage || history.length === 1 ||
-      verifiedFirstReadableAd;
+    // Filtered/bounded model history is not proof that this is a new lead.
+    // Preserve genuine first-ad and suppressed-first-reply recovery, but do
+    // not reintroduce the clinic for an existing lead requesting a language.
+    const continuingLanguageRequest = Boolean(detectExplicitLanguagePreference(text)) &&
+      !verifiedFirstReadableAd && (history.some(message => message?.role === "assistant") ||
+        (!wasFirstMessage && !forceFirstMessage));
+    const isFirstMessage = !continuingLanguageRequest &&
+      (forceFirstMessage || history.length === 1 || verifiedFirstReadableAd);
     const customerMessages = readableRecoveryHistory.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
