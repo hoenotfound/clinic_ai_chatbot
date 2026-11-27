@@ -89,6 +89,7 @@ test("publishes an updated inbound row so the Inbox does not need a refresh", as
         messageId: 42,
         message: updated,
         reason: "message_updated",
+        staffWaitingStateUnchanged: true,
       },
     },
   ]);
