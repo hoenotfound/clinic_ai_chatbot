@@ -30,6 +30,18 @@ function suppressConversationalRewrite(config,audit,reason) {
   if(mode==="observe") audit?.suppressed?.(reason);
   return true;
 }
+// The assessment-first price guard is redundant only when the exact same
+// turn will pass the independently approved price formatter immediately
+// afterward. This is a transfer of factual validation, not a bypass.
+function deferAssessmentPricingRewrite({config,audit,pricingAuthorityRequired,
+  formatterWillRun,marketingStopQuestion}={}) {
+  const mode=resolveAiReplyAuthorityMode(config);
+  if(mode==="legacy" || pricingAuthorityRequired!==true ||
+      formatterWillRun!==true || marketingStopQuestion ||
+      config?.automatedFollowUp?.assessmentFirstPricingEnabled!==true)return false;
+  if(mode==="observe")audit?.suppressed?.("assessmentFirstPriceRewriteDeferred");
+  return true;
+}
 // Use only after a new review has actually been persisted.
 function recordedReviewAcknowledgement(category, language="zh") {
   const lang=String(language).toLowerCase().slice(0,2);
@@ -187,4 +199,4 @@ async function persistSalesFollowUpIntent({contactId,inboundId,customerText,inte
     throw error;
   }finally{client.release();}
 }
-module.exports={resolveAiReplyAuthorityMode,suppressConversationalRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
+module.exports={resolveAiReplyAuthorityMode,suppressConversationalRewrite,deferAssessmentPricingRewrite,salesFollowUpIntent,persistSalesFollowUpIntent,SALES_STATE_INSERT_SQL,routineReviewTextOnlyState,routineReviewRecoveryEligible,usesNaturalReplyAuthority,recordedReviewAcknowledgement,canHonorNoReply,createReplyOverrideAudit,createClinicalReviewEvidenceReader};
