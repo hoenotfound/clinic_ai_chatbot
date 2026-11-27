@@ -274,6 +274,9 @@ const MEDIA_SEND_PROMISE = /(?:我|我们|我們).{0,15}(?:发|發|传|傳|分�
 function hasComplimentaryPriceClaim(reply) {
   return /(?:免费|免費|免收费|免收費|不收(?:取)?(?:费用|費用|费|費|钱|錢)|(?:无|無|无需|無需|不用|不必|不需要|不需|免)(?:任何)?(?:付费|付費|付款|费用|費用|收费|收費|钱|錢)|(?:收费|收費|费用|費用|价钱|價錢|价格|價格)(?:为|為|是|等于|等於|:|：)?\s*(?:零|0)(?!\d)|零(?:费用|費用|收费|收費)|\b(?:free|complimentary|gratis|no\s+(?:additional\s+)?(?:charge|cost|fee|payment)s?|at\s+no\s+cost|zero\s+(?:charge|cost|fee)s?|without\s+(?:any\s+)?(?:charge|cost|fee|payment)|(?:do not|don't|does not|doesn't|need not|no need to)\s+(?:need to\s+|have to\s+)?pay|percuma|tanpa\s+(?:sebarang\s+)?(?:caj|bayaran|kos)|(?:tidak|tak)\s+(?:perlu\s+)?(?:bayar|dikenakan\s+caj)|(?:caj|bayaran|kos)\s*(?:sifar|kosong|0))\b)/iu.test(normalizeMoneyText(reply));
 }
+function hasUnsupportedOutcomePromise(reply) {
+  return /(?:保证|保證|一定.{0,12}(?:见效|見效|有效|治好)|包治|零恢复期|零恢復期|无需恢复|無需恢復|\b(?:guarantee[ds]?|cure[ds]?|zero downtime|no downtime|guaranteed results?|pasti sembuh|dijamin|tiada masa pemulihan)\b)/iu.test(String(reply||""));
+}
 function isSafeUnquotedReply(reply) {
   const text=String(reply||"").trim();
   if(!text || hasTreatmentPriceContent(text) || scanMyrAmounts(text).length ||
@@ -286,7 +289,7 @@ function isSafeUnquotedReply(reply) {
   if(priceTerms.test(text) && /(?:\p{N}|[零一二三四五六七八九十两兩百千万萬亿億]{2,}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|lapan|sembilan|sepuluh|puluh|ratus|ribu)\b)/iu.test(text))return false;
   // Do not use this eligibility check to release an unsupported clinical
   // promise or an unverified payment/booking claim.
-  if (hasClinicalMediaRisk(text) || /(?:保证|保證|一定.{0,12}(?:见效|見效|有效|治好)|包治|零恢复期|零恢復期|无需恢复|無需恢復|\b(?:guarantee[ds]?|cure[ds]?|zero downtime|no downtime|guaranteed results?|pasti sembuh|dijamin|tiada masa pemulihan)\b)/iu.test(text)) return false;
+  if (hasClinicalMediaRisk(text) || hasUnsupportedOutcomePromise(text)) return false;
   const neutral=text.replace(/(?:[价價][钱錢格位]|收[费費]|[费費]用|\b(?:price|pricing|costs?|fees?|charges?|rates?|harga|bayaran|caj|kos)\b)/giu," ");
   if(hasCommercialReplyContent(neutral))return false;
   return !require("./unconfirmedMediaPromiseGuard").guardUnconfirmedMediaPromise(text).changed;
@@ -299,7 +302,7 @@ function verifiedComplimentaryAssessmentDraft(reply,language="zh"){
   const clean=text.replace(/[\p{P}\p{S}\s]/gu," ").replace(/\s+/gu," ").trim();
   const zh=/^(?:(?:亲爱的|親愛的|您好|你好|是的|对的|對的|可以的|我们|我們|的)\s*)*(?:1\s*对\s*1|1\s*對\s*1|一对一|一對一)\s*(?:的\s*)?(?:体态评估|體態評估)\s*(?:加|和|及|与|與)?\s*(?:体验|體驗)\s*(?:是|都是|属于|屬於)?\s*(?:免费|免費|不收费|不收費)\s*(?:的|哦|呀|呢|啦|谢谢|謝謝)*$/u;
   const en=/^(?:(?:hi|hello|yes|of course|our|the|it is)\s+)*(?:1 on 1|one on one|1 to 1|one to one)\s+posture assessment\s+(?:and|plus|with)\s+(?:an?\s+)?(?:introductory\s+)?experience\s+(?:is|are)\s+(?:free|complimentary|at no cost|at no charge)(?:\s+(?:thank you|thanks))?$/iu;
-  const ms=/^(?:(?:hai|ya|betul|kami|penilaian)\s+)*(?:penilaian postur\s+)?(?:1 ke 1|1 dengan 1|satu dengan satu)\s+(?:bersama|dan|dengan)\s+(?:sesi\s+)?(?:pengalaman\s+)?pengenalan\s+(?:adalah\s+)?(?:percuma|tanpa caj)(?:\s+ya)?$/iu;
+  const ms=/^(?:(?:hai|ya|betul|kami)\s+)*penilaian postur\s+(?:1 ke 1|1 dengan 1|satu dengan satu)\s+(?:bersama|dan|dengan)\s+(?:sesi\s+)?(?:pengalaman\s+)?pengenalan\s+(?:adalah\s+)?(?:percuma|tanpa caj)(?:\s+ya)?$/iu;
   return (String(language).startsWith("en")?en:String(language).startsWith("ms")?ms:zh).test(clean);
 }
 // An accepted neutral reply need not repeat all approved prices before the
@@ -311,10 +314,11 @@ function allowsApprovedPromotionWithoutTextQuote({reply,decision}={}){
     Array.isArray(decision.prices) && decision.prices.length>0 &&
     isSafeUnquotedReply(reply);
 }
-function nonPriceExplanation(reply) {
+function nonPriceExplanation(reply,{strictClaims=false}={}) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
   const kept = clauses.map((line) => line.trim()).filter((line) =>
     line && !MEDIA_SEND_PROMISE.test(line) &&
+    (!strictClaims || (!hasComplimentaryPriceClaim(line) && !hasUnsupportedOutcomePromise(line) && !hasClinicalMediaRisk(line))) &&
     !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
     !/(?:[价價][钱錢格位]|收费|收費|费用|費用|原价|原價|优惠|優惠|折扣|voucher|discount|\b(?:price|pricing|cost|harga|promosi)\b)/iu.test(line)
   );
@@ -390,13 +394,13 @@ function configuredDurationAnswer(customerText,service,language,prices){
   ms?[hr?hr+" jam":"",min?(end!==null?min+"–"+end:min)+" minit":""].filter(Boolean).join(" "):raw;
  return en?"The configured treatment duration is "+(m[1]?"about ":"")+amount+".":ms?"Tempoh rawatan "+(m[1]?"kira-kira ":"ialah ")+amount+".":"这项护理的时间"+amount+"。";
 }
-function safeNonPriceExplanation(customerText, original, language, service=null,prices=[]) {
+function safeNonPriceExplanation(customerText, original, language, service=null,prices=[],strictClaims=false) {
   const recovery = recoveryPeriodGuidance(customerText, language);
   if (recovery) return recovery;
   const duration=configuredDurationAnswer(customerText,service,language,prices);
   if(duration)return duration;
   if (!SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))) {
-    return nonPriceExplanation(original);
+    return nonPriceExplanation(original,{strictClaims});
   }
   const locale = String(language || "zh").toLowerCase();
   if (locale.startsWith("ms")) {
@@ -572,9 +576,9 @@ function ensureVerifiedPriceReply({
     }
     const needsFactualCorrection = Boolean(recoveryPeriodGuidance(customerText,language)) ||
       SESSION_OR_DURATION_QUESTION.test(String(customerText||"")) ||
-      hasClinicalMediaRisk(customerText) || hasClinicalMediaRisk(original);
+      hasClinicalMediaRisk(customerText) || hasClinicalMediaRisk(original) || hasUnsupportedOutcomePromise(original);
     // Do not retain unsupported complimentary claims in the fallback prose.
-    const safeText = unverifiedFree ? "" : safeNonPriceExplanation(customerText, original, language);
+    const safeText = safeNonPriceExplanation(customerText, original, language,null,[],aiFirstReplyAuthority);
     const locale = String(language || "").toLowerCase();
     if (!priceRequested) {
       const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
@@ -646,11 +650,11 @@ function ensureVerifiedPriceReply({
       if(preserved) return {reply:preserved,restored:false,verifiedQuote:true};
       const otherAnswer=preserveNaturalReply && !hasClinicalMediaRisk(customerText) &&
         (hasSeparateNonPriceEnquiry(customerText)||SESSION_OR_DURATION_QUESTION.test(String(customerText||"")))
-        ? safeNonPriceExplanation(customerText,original,language,services.find(s=>s.name===treatment),[]) : "";
+        ? safeNonPriceExplanation(customerText,original,language,services.find(s=>s.name===treatment),[],aiFirstReplyAuthority) : "";
       return { reply: [text, recovery||otherAnswer].filter(Boolean).join("\n\n"), restored: true };
     }
     const safeInfo = recoveryPeriodGuidance(customerText, language) ||
-      (hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language));
+      (hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language,null,[],aiFirstReplyAuthority));
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
       : locale.startsWith("en")
@@ -771,7 +775,7 @@ function ensureVerifiedPriceReply({
     (hasClinicalMediaRisk(customerText) ||
       ((priceOnlyResponse === true ||
         (aiLed && ["meta_ad", "customer_current_offer"].includes(pricingDecision.source))) && !independentServiceQuestion)
-      ? "" : safeNonPriceExplanation(customerText, original, language,preserveNaturalReply?services.find(s=>s.name===treatment):null,prices));
+      ? "" : safeNonPriceExplanation(customerText, original, language,preserveNaturalReply?services.find(s=>s.name===treatment):null,prices,aiFirstReplyAuthority));
   const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
     ? (locale.startsWith("ms")
       ? "Saya boleh sahkan harga rawatan ini dahulu. Bila sebut kedua-dua, adakah anda maksudkan dua rawatan berbeza atau dua bahagian yang ingin diperbaiki?"
