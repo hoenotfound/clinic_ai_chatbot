@@ -4,8 +4,8 @@ const {
   isUrgentSafetyMessage,
 } = require("./attentionTriggers");
 
-function fallbackHandoffReply(messageText, configuredEnglish, { urgent = false } = {}) {
-  const language = detectMessageLanguage(messageText);
+function fallbackHandoffReply(messageText, configuredEnglish, { urgent = false, language: preferredLanguage = null } = {}) {
+  const language = ["en","ms","zh"].includes(preferredLanguage) ? preferredLanguage : detectMessageLanguage(messageText);
 
   if (urgent || isUrgentSafetyMessage(messageText)) {
     if (language === "zh") {

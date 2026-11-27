@@ -185,3 +185,18 @@ test("contextual language information requests are substantive and select the re
   assert.equal(isGreetingOrLanguageOnly("English please"), true);
   assert.equal(shouldGenerateLocalizedIntro("English Info pls", "你好，欢迎来到 Neutro Sense"), true);
 });
+
+test("contextual language requests tolerate emoji and named treatment", () => {
+  for (const text of ["English info pls 😊","English info for pelvis pls","可以用英文介绍骨盆吗？","Information in English please","English details about pelvic adjustment"]) {
+    assert.equal(detectExplicitLanguagePreference(text),"en",text);
+    assert.equal(isGreetingOrLanguageOnly(text),false,text);
+  }
+  assert.equal(detectExplicitLanguagePreference("My English teacher"),null);
+  assert.equal(detectExplicitLanguagePreference("English price list"),null);
+});
+test("saved preference survives the history limit and newer explicit requests win", () => {
+  const old=Array(25).fill("price?");
+  assert.equal(detectReplyConversationLanguage(old,"zh","en"),"en");
+  assert.equal(detectConversationLanguage(old,"zh","ms"),"ms");
+  assert.equal(detectConversationLanguage(["中文资料",...old],"en","ms"),"zh");
+});

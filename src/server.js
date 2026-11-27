@@ -104,7 +104,7 @@ const { campaignContextReply, guardCampaignPriceConflicts, screeningAcknowledgem
   require("./utils/neutroBreastRm68Campaign");
 const firstAdProofRepo = require("./db/whatsapp131060FirstAdRepo");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const { correctReplyLanguage, clearReplyLanguageMismatch } = require("./utils/replyLanguageGuard");
+const { correctReplyLanguage, clearReplyLanguageMismatch, finalReplyLanguageFallback } = require("./utils/replyLanguageGuard");
 const { priceCheckingReply } = require("./utils/priceCheckingReply");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -1353,12 +1353,20 @@ async function processIncomingMessage(
         console.warn("[Meta 131060 recovery] Review resolution unavailable:",err?.message);
       }
     }
-    const mediaLanguage = detectReplyConversationLanguage(
+    const explicitReplyLanguage = detectExplicitLanguagePreference(text);
+    if (explicitReplyLanguage && typeof contactsRepo.saveReplyLanguagePreference === "function") {
+      try {
+        await contactsRepo.saveReplyLanguagePreference(contact.id, savedInbound.id, explicitReplyLanguage);
+      } catch (error) {
+        console.warn("[Reply language] preference persistence unavailable contact=" + contact.id, error?.code || "unknown");
+      }
+    }
+    const mediaLanguage = explicitReplyLanguage || detectReplyConversationLanguage(
       readableRecoveryHistory
         .slice()
         .reverse()
         .filter((message) => message?.role === "user")
-        .map((message) => message.content)
+        .map((message) => message.content), "en", contact.reply_language_preference
     );
     const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
     const commercialHistory = secondaryAiConversation ? scopeRecoveryCommercialHistory(history) : history;
@@ -1447,12 +1455,12 @@ async function processIncomingMessage(
       aiReply = fallbackHandoffReply(
         text,
         clinicConfig.escalation.handoffMessage,
-        { urgent: true }
+        { urgent: true, language: mediaLanguage }
       );
     } else if (isExplicitStaffRequest(text)) {
       flagged = true;
       replyOverrideAudit.note("explicitStaffHandoff");
-      aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
+      aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage, { language: mediaLanguage });
     } else {
       try {
         // This is a local Postgres lookup only. Meta enrichment stays
@@ -1547,7 +1555,8 @@ async function processIncomingMessage(
         details = { treatment: fixedAdFirstReply.treatment };
         console.info("[Fixed ad first reply] contact=" + contact.id +
           " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
-      } else if (isGreetingOrLanguageOnly(text) && detectExplicitLanguagePreference(text)) {
+      } else if (isGreetingOrLanguageOnly(text) && detectExplicitLanguagePreference(text) &&
+          !replyHistory.some(message => message?.role === "assistant")) {
         // A language-only request is an administrative preference, not a
         // clinical question or a reason to send images or transfer to staff.
         // Keep existing urgent safety and explicit staff-request guards above.
@@ -1726,7 +1735,7 @@ async function processIncomingMessage(
         reviewType = null;
         bookingReady = false;
         replyOverrideAudit.note("keywordStaffHandoff");
-        aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
+        aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage, { language: mediaLanguage });
       }
       // Resolve exact TCM treatment names using verified current config, the
       // recent conversation, and durable unresolved clinical reviews. Do not
@@ -3102,6 +3111,11 @@ async function processIncomingMessage(
       replyOverrideAudit.flush({contactId:contact.id,inboundId:savedInbound.id,
         original:originalModelReply,final:clinicalAcknowledgement||undefined,outcome:"review_required"});
       if (clinicalAcknowledgement) {
+        if (clearReplyLanguageMismatch(clinicalAcknowledgement,mediaLanguage)) {
+          clinicalAcknowledgement = urgentSafety
+            ? fallbackHandoffReply(text, null, {urgent:true,language:mediaLanguage})
+            : recordedReviewAcknowledgement(category,mediaLanguage);
+        }
         // A narrow, non-diagnostic acknowledgement can be sent without
         // resolving the clinical review. Re-check staff ownership after the
         // review write, then use the same guarded provider send as normal.
@@ -3449,6 +3463,38 @@ async function processIncomingMessage(
           mediaLanguage==="zh" ? "这项资料需要由门店确认哦 😊" : "The clinic needs to confirm this first 😊");
       replyOverrideAudit.change("finalLanguageFallback",beforeFinalLanguage,reply);
     }
+    // Final append-only recovery: a later verified price formatter may have
+    // discarded an earlier address or hours answer. Do not alter commercial
+    // authorization, clinical review, exact campaign openings or bookings.
+    if(naturalReplyAuthority&&approvedPricingDecision&&containsApprovedPriceAmount(reply,approvedPricingDecision)&&
+      !flagged&&!bookingReady&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
+      !isActiveSafetyConcern(text)&&!hasClinicalMediaRisk(text)&&!isExplicitStaffRequest(text)&&
+      !staffPriceConflict&&!rejectedModelPricing&&!rm68CampaignContinuationTextOnly&&!reviewContinuationTextOnly&&!fixedAdFirstReply){
+      const beforeFacts=reply;
+      reply=appendRequestedBusinessFacts({customerText:text,reply,language:mediaLanguage,branches:clinicConfig.branches,hours:clinicConfig.hours});
+      replyOverrideAudit.change("finalRequestedBusinessFacts",beforeFacts,reply);
+    }
+    // Check the text after all transformations. An earlier draft may contain
+    // rejected commercial or clinical claims, so never restore it wholesale.
+    if (clearReplyLanguageMismatch(reply, mediaLanguage)) {
+      const beforeFinalLanguage = reply;
+      if (flagged) {
+        reply = fallbackHandoffReply(text, null, {urgent:urgentSafety || isActiveSafetyConcern(text),language:mediaLanguage});
+      } else {
+        reply = finalReplyLanguageFallback(mediaLanguage, {bookingReady});
+        if (!bookingReady) {
+          try {
+            await contactsRepo.setAiReviewAttention(contact.id,savedInbound.id,
+              String(text || "Reply language mismatch").slice(0,350),"information");
+          } catch (error) {
+            console.warn("[Reply language] final mismatch review unavailable contact=" + contact.id,error?.code || "unknown");
+          }
+        }
+      }
+      priceQuery=false;packageQuery=false;serviceQuery=false;serviceQuerySource=null;
+      reviewContinuationTextOnly=true;
+      replyOverrideAudit.change("finalOutgoingLanguageMismatch",beforeFinalLanguage,reply);
+    }
     // Reopening sales is a positive action: use the independently approved
     // pricing decision or an explicit customer-named current service enquiry.
     // Never reopen on an unverified model service/price flag, or on review.
@@ -3464,17 +3510,6 @@ async function processIncomingMessage(
         try{await persistSalesFollowUpIntent({contactId:contact.id,inboundId:savedInbound.id,customerText:text,intent:"reopened"});}
         catch(error){console.warn("[Sales follow-up] unable to reopen customer preference contact="+contact.id,error?.code||"unknown");}
       }
-    }
-    // Final append-only recovery: a later verified price formatter may have
-    // discarded an earlier address or hours answer. Do not alter commercial
-    // authorization, clinical review, exact campaign openings or bookings.
-    if(naturalReplyAuthority&&approvedPricingDecision&&containsApprovedPriceAmount(reply,approvedPricingDecision)&&
-      !flagged&&!bookingReady&&!keywordReason&&!urgentSafety&&!marketingStopQuestion&&
-      !isActiveSafetyConcern(text)&&!hasClinicalMediaRisk(text)&&!isExplicitStaffRequest(text)&&
-      !staffPriceConflict&&!rejectedModelPricing&&!rm68CampaignContinuationTextOnly&&!reviewContinuationTextOnly&&!fixedAdFirstReply){
-      const beforeFacts=reply;
-      reply=appendRequestedBusinessFacts({customerText:text,reply,language:mediaLanguage,branches:clinicConfig.branches,hours:clinicConfig.hours});
-      replyOverrideAudit.change("finalRequestedBusinessFacts",beforeFacts,reply);
     }
     replyOverrideAudit.flush({contactId:contact.id,inboundId:savedInbound.id,
       original:originalModelReply,final:reply,outcome:flagged?"needs_human":bookingReady?"booking_ready":"normal"});

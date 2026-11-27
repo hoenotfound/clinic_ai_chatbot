@@ -1892,7 +1892,20 @@ async function setFollowUp(id, needsFollowUp) {
   return updated;
 }
 
+// Only explicit customer text can update the preference. Inbound IDs prevent stale writes.
+async function saveReplyLanguagePreference(contactId, inboundId, language) {
+  if (!["en","ms","zh"].includes(language)) return false;
+  const result = await pool.query(
+    `UPDATE contacts c SET reply_language_preference=$3, reply_language_message_id=$2
+       WHERE c.id=$1 AND (c.reply_language_message_id IS NULL OR c.reply_language_message_id<$2)
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.id=$2 AND m.contact_id=c.id
+           AND m.role='user' AND m.whatsapp_customer_mutation IS NULL)
+       RETURNING c.id`, [contactId,inboundId,language]);
+  return result.rows.length > 0;
+}
+
 module.exports = {
+  saveReplyLanguagePreference,
   getOrCreateContact,
   getOrCreateChannelContact,
   getContactById,

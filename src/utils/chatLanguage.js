@@ -93,7 +93,8 @@ const ENGLISH_WORDS = new Set([
 // An explicit language request takes priority over the script used to name a
 // treatment (for example "English please, 骨盆调理").
 function detectExplicitLanguagePreference(input) {
-  const text = String(input || "").trim().replace(/[.!！。?？]+$/u, "").trim();
+  const text = String(input || "").normalize("NFKC").trim()
+    .replace(/[\s.!！。?？,，\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]+$/gu, "").trim();
   if (!text) return null;
   const withoutGreeting = text.replace(/^(?:hi|hello|hey|hai|你好|您好|嗨|salam)[!！,.，。\s]+/iu, "").trim();
   const single = (withoutGreeting || text).toLowerCase();
@@ -119,12 +120,17 @@ function detectExplicitLanguagePreference(input) {
   const polite = "(?:please|pls|plz|tq|thanks|thank you|tolong)";
   const info = "(?:info(?:rmation)?|details?|explanation|version|translation|penerangan|maklumat)";
   const normalized = single.replace(/\s+/gu, " ");
-  const directInfo = normalized.match(new RegExp("^(?:" + polite + " )?" + target + " " + info + "(?:[, ]+" + polite + ")?$", "iu"));
+  const directInfo = normalized.match(new RegExp("^(?:" + polite + " )?" + target + " " + info + "(?: (?:for|about|on|regarding|of) [^.!?]{1,100}?)?(?:[, ]+" + polite + ")?$", "iu"));
   if (directInfo) return locale(directInfo[1]);
   const explainIn = normalized.match(new RegExp("^(?:(?:can|could|would) (?:you |u )?|please |pls |plz |(?:i |we )(?:want|need) (?:to )?)?(?:explain|translate|repeat|send|share|provide|give|tell|describe|write|say|info(?:rmation)?|details?|explanation)\\b[^.!?\\n]{0,160}?\\bin " + target + "(?:[, ]+" + polite + ")?$", "iu"));
   if (explainIn) return locale(explainIn[1]);
+  const infoIn = normalized.match(new RegExp("^(?:(?:the|more|some) )?" + info + "(?: (?:for|about|on|of) [^.!?]{1,100}?)? (?:in|dalam) " + target + "(?:[, ]+" + polite + ")?$", "iu"));
+  if (infoIn) return locale(infoIn[1]);
   const malayInfo = normalized.match(new RegExp("^(?:(?:boleh|tolong|sila|nak|mahu) )?(?:terangkan|jelaskan|hantar|beri|berikan|kongsi|maklumat|penerangan|info)\\b[^.!?\\n]{0,160}?\\bdalam " + target + "(?:[, ]+" + polite + ")?$", "iu"));
   if (malayInfo) return locale(malayInfo[1]);
+  const chineseRequest = normalized.match(/^(?:请|請|麻烦|麻煩|可以|能不能|能|想要|我想要|我想看)?(?:用|发|發|给|給)?(?:我)?(英文|英语|英語|中文|华语|華語|马来文|馬來文|马来语|馬來語)(?:的)?(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:[^。！？!?]{0,60})$/u);
+  if (chineseRequest) return /^(?:英文|英语|英語)$/u.test(chineseRequest[1]) ? "en"
+    : /^(?:中文|华语|華語)$/u.test(chineseRequest[1]) ? "zh" : "ms";
   if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:英文|英语|英語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "en";
   if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:中文|华语|華語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "zh";
   if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:马来文|馬來文|马来语|馬來語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "ms";
@@ -210,7 +216,15 @@ const ENGLISH_ADMIN_SHORTHAND =
 // locale. Earlier customer messages decide when the latest message is only a
 // service name or a short sales term. The old Chinese fallback for ambiguous
 // Chinese-name shorthand remains when no prior language evidence exists.
-function detectConversationLanguage(recentMessages, fallback = "en") {
+function detectConversationLanguage(recentMessages, fallback = "en", savedPreference = null) {
+  // Explicit preferences survive bounded history. A newer explicit request wins.
+  if (["en", "ms", "zh"].includes(savedPreference)) {
+    for (const message of recentMessages || []) {
+      const explicit = detectExplicitLanguagePreference(message);
+      if (explicit) return explicit;
+    }
+    return savedPreference;
+  }
   let ambiguousChinese = false;
   for (const message of recentMessages || []) {
     const text = String(message || "").trim();
@@ -226,8 +240,8 @@ function detectConversationLanguage(recentMessages, fallback = "en") {
 
 // Keep the named entry point for the live reply path, but share exactly the
 // same customer-language rules with follow-up template selection.
-function detectReplyConversationLanguage(recentMessages, fallback = "en") {
-  return detectConversationLanguage(recentMessages, fallback);
+function detectReplyConversationLanguage(recentMessages, fallback = "en", savedPreference = null) {
+  return detectConversationLanguage(recentMessages, fallback, savedPreference);
 }
 
 module.exports = {

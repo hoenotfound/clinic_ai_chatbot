@@ -350,3 +350,14 @@ test("configured business and branch labels do not masquerade as a language swit
     assert.equal(clearReplyLanguageMismatch("Saya akan semak harga untuk anda. "+config.businessName,"en",names),true);
   } finally {Object.assign(config,old);}
 });
+
+test("final language fallback preserves booking uncertainty and does not invent prices", () => {
+  const {finalReplyLanguageFallback,clearReplyLanguageMismatch}=require("../src/utils/replyLanguageGuard");
+  for(const language of ["en","ms","zh"]) {
+    for(const bookingReady of [false,true]) {
+      const result=finalReplyLanguageFallback(language,{bookingReady});
+      assert.equal(clearReplyLanguageMismatch(result,language),false);
+      assert.doesNotMatch(result,/\bRM\s*\d|appointment confirmed|预约成功|tempahan telah disahkan/iu);
+    }
+  }
+});
