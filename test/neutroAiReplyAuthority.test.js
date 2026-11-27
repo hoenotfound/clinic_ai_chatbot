@@ -264,3 +264,26 @@ test("neutral wording cannot veto independently approved promotion artwork",()=>
   assert.equal(allowsApprovedPromotionWithoutTextQuote({decision,reply}),false,reply);
  }
 });
+
+test("verified administrative and campaign drafts can retain courtesy without changing facts or review state",()=>{
+ const {selectVerifiedRoutineReply,routineReviewTextOnlyState}=require("../src/utils/neutroAiReplyAuthority");
+ const {confirmedBusinessHoursAnswer,verifyBusinessHoursDraft}=require("../src/utils/verifiedPricingBusinessFacts");
+ const config={businessType:"tcm_clinic",businessName:"Neutro Sense TCM",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"enabled"};
+ const answer=confirmedBusinessHoursAnswer({customerText:"Opening hours?",language:"en",hours:{weekly:{
+  monday:null,tuesday:{open:"10:00",close:"20:00"},wednesday:{open:"10:00",close:"20:00"},thursday:{open:"10:00",close:"20:00"},friday:{open:"10:00",close:"20:00"},saturday:{open:"10:00",close:"18:00"},sunday:{open:"10:00",close:"18:00"}
+ }}});
+ assert.ok(answer);
+ const draft="Hello 😊 "+answer.reply+" Thank you.";
+ assert.equal(verifyBusinessHoursDraft(draft,answer,{allowNeutralCourtesy:true}),true);
+ assert.equal(selectVerifiedRoutineReply({config,answer,draft,language:"en"}),draft);
+ for(const bad of [draft+" Monday appointments available.",draft.replace("20:00","22:00"),draft+" RM68",draft+" Booked."]){
+  assert.equal(verifyBusinessHoursDraft(bad,answer,{allowNeutralCourtesy:true}),false);
+  assert.equal(selectVerifiedRoutineReply({config,answer,draft:bad,language:"en"}),answer.reply);
+ }
+ const campaign={kind:"verified_rm68_campaign",reply:"The centre needs to confirm availability."};
+ const campaignDraft="Of course! "+campaign.reply+" Thanks!";
+ assert.equal(selectVerifiedRoutineReply({config,answer:campaign,draft:campaignDraft,language:"en"}),campaignDraft);
+ assert.equal(selectVerifiedRoutineReply({config,answer:campaign,draft:campaignDraft+" You're booked.",language:"en"}),campaign.reply);
+ assert.equal(selectVerifiedRoutineReply({config:{...config,aiReplyAuthorityMode:"legacy"},answer:campaign,draft:campaignDraft,language:"en"}),campaign.reply);
+ assert.equal(routineReviewTextOnlyState({pendingClinicalReview:true},campaignDraft),null);
+});
