@@ -321,6 +321,8 @@ async function sendSecondaryStaffText({
     billableAuthorized: Boolean(templateRequest) ||
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
+        freshAiInboundMessageId: origin === "ai_reply" && !dispatchTransport && !templateRequest && !hasInteractive
+          ? anchorMessageId : null,
   }, { database, env });
   // A signed pricing receipt can arrive shortly after Meta accepts an
   // earlier message. In particular, AI text may be ready while the previous
@@ -355,6 +357,8 @@ async function sendSecondaryStaffText({
         billableAuthorized: Boolean(templateRequest) ||
           env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
         expectedTemplateSignature: templateRequest?.expectedSignature || null,
+        freshAiInboundMessageId: origin === "ai_reply" && !dispatchTransport && !templateRequest && !hasInteractive
+          ? anchorMessageId : null,
       }, { database, env });
       if (reserved.reserved || reserved.code !== "secondary_billing_previous_send_unresolved") break;
     }
