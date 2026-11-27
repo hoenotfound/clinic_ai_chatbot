@@ -801,14 +801,24 @@ test("Nov 27 Pulse Wave price replay resolves the delivered conversation in thre
   // Recovery bridges are not independent anchors; every intervening turn
   // must remain recent, delivered when outbound, and consistent in topic.
   const bridges=[
-    [bot("脉冲波调理顾客的 Before & After 参考图",20000,{verifiedOutboundImageUrl:"https://example.test/result"})],
+    [bot("📷 这是 Neutro Sense 脉冲波调理顾客的 Before & After 参考图 😊 图片仅供个别案例参考，是否适合调理及实际变化需由中医师评估。",20000,{verifiedOutboundImageUrl:"https://example.test/result"})],
     [bot("有空时可以再回复我们 😊",20000,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true})],
     [turn("user","这个疗程多久？",20000)],
-    [bot("先安排1对1体态评估+体验哦",20000,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true})],
   ];
   for(const bridge of bridges){
    const input={...a,conversationHistory:[...history,...bridge,a.conversationHistory.at(-1)]};
    assert.deepEqual(resolveModelLedPricingDecision(input)?.prices.map(p=>p.price),["RM388"]);
+  }
+  const {unresolvedIntroAssessmentPriceReference,introAssessmentPriceClarification}=require("../src/utils/complimentaryAssessmentExperience");
+  for(const intro of [
+    bot("先安排1对1体态评估+体验哦",20000,{pricingDeliveredBotMessage:false,pricingDeliveredAssessmentFollowUp:true}),
+    bot("我们可以先为您安排1对1体态评估+体验，之后再决定正式护理疗程。",20000),
+  ]){
+    const input={...a,conversationHistory:[...history,intro,a.conversationHistory.at(-1)]};
+    assert.equal(unresolvedIntroAssessmentPriceReference({...input,enabled:true}),true);
+    assert.equal(resolveModelLedPricingDecision(input),null);
+    assert.doesNotMatch(introAssessmentPriceClarification(language),/RM388/u);
+    assert.match(introAssessmentPriceClarification(language),language==="zh"?/免费/u:language==="en"?/free/u:/percuma/u);
   }
   // Keep each rejection isolated so older conversation cannot establish an
   // independent valid anchor in these deliberately ambiguous cases.
@@ -838,4 +848,14 @@ test("Nov 27 Pulse Wave price replay resolves the delivered conversation in thre
  assert.doesNotMatch(rejected.reply,/平时还是周末/u);
  assert.match(rejected.reply,/价格/u);
  assert.equal(rejected.optionalClarification,false);
+ for(const [language,customerText,reply] of [
+   ["zh","价钱？","请问你想了解哪项护理呢？"],
+   ["en","Price?","Which treatment would you like the price for?"],
+   ["ms","Harga?","Harga untuk rawatan yang mana satu ya?"],
+ ]){
+   const input={language,customerText,reply,pricingDecision:null,priceRequested:true,preserveNaturalReply:true,aiFirstReplyAuthority:true};
+   assert.equal(ensureVerifiedPriceReply(input).optionalClarification,true,language);
+   const mixed=ensureVerifiedPriceReply({...input,reply:reply+"\n"+(language==="zh"?"周末方便过来吗？":language==="en"?"Would weekends work?":"Hujung minggu sesuai?")});
+   assert.equal(mixed.optionalClarification,false,language);
+ }
 });
