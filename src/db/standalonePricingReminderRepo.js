@@ -1,4 +1,5 @@
 "use strict";
+const {deliveryOnlySql,deliveryOnlyAttentionSql}=require("../utils/whatsappSecondaryDeliveryOnly");
 // Standalone Neutro pricing reminder. Never depends on Follow-up 3 or
 // changes the existing follow-up scheduler's customer/marketing eligibility.
 const { pool } = require("./db");
@@ -405,7 +406,7 @@ async function claimAdditional(candidate,offer,database=pool){
         AND (
           EXISTS(SELECT 1 FROM whatsapp_sender_accounts own
                  WHERE own.id=$7 AND own.sender_key<>'neutro_secondary')
-          OR EXISTS (
+          OR ${deliveryOnlySql()} OR EXISTS (
             SELECT 1 FROM whatsapp_sender_billing_attempts att
             JOIN whatsapp_sender_status_receipts receipt
               ON receipt.sender_id=att.sender_id
@@ -421,7 +422,7 @@ async function claimAdditional(candidate,offer,database=pool){
         WHERE c.id=$1 AND c.mode='ai' AND c.takeover_by IS NULL
           AND c.whatsapp_sender_id=$7
           AND (
-            sa.sender_key<>'neutro_secondary' OR EXISTS(
+            sa.sender_key<>'neutro_secondary' OR ${deliveryOnlySql()} OR EXISTS(
               SELECT 1 FROM whatsapp_sender_billing_gates gate
               WHERE gate.sender_id=sa.id AND gate.owner_contact_id=c.id
                 -- Final reservation enforces idle/strict new-send override.
