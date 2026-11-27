@@ -8,6 +8,7 @@ const templateTools = require("./whatsappTemplateService");
 const senderRepo = require("../db/whatsappSenderConversationRepo");
 const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
+const {serviceBillingRecordOnlyEnabled}=require("../utils/whatsappSecondaryServiceBilling");
 const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
@@ -400,11 +401,12 @@ async function sendSecondaryStaffText({
     await markUnknown();
     return { ...block(code), unknown: true, ambiguous: true };
   };
+  const recordOnlyService=serviceBillingRecordOnlyEnabled(env) && !templateRequest;
   let providerBoundaryReached=false;
   try {
     const fresh = await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || recordOnlyService) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_after_reservation");
       }
       await markUnknown();
@@ -412,7 +414,7 @@ async function sendSecondaryStaffText({
         unknown: true, ambiguous: true };
     }
     if (fresh.policyAllowed !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || recordOnlyService) {
         return cancelProvenMarketingBeforeProvider(fresh.code || "secondary_staff_policy_changed");
       }
       await markUnknown();
@@ -425,12 +427,12 @@ async function sendSecondaryStaffText({
       reserved.reservationId, cid, mid,
     ]);
     if (state.rows?.length !== 1) {
-      if (queuedOrigin) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
+      if (queuedOrigin || recordOnlyService) return cancelProvenMarketingBeforeProvider("secondary_staff_reservation_unverified");
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
     if (!await stillEligible()) {
-      if (queuedOrigin) {
+      if (queuedOrigin || recordOnlyService) {
         return cancelProvenMarketingBeforeProvider("secondary_ads_only_contact_ineligible");
       }
       await markUnknown();
@@ -441,7 +443,7 @@ async function sendSecondaryStaffText({
     // possible point before calling Meta. The consumed billing hold stays
     // unknown even when cancellation prevents the provider call.
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
-      if (queuedOrigin) {
+      if (queuedOrigin || recordOnlyService) {
         return cancelProvenMarketingBeforeProvider("secondary_send_cancelled_before_provider");
       }
       await markUnknown();
@@ -529,7 +531,7 @@ async function sendSecondaryStaffText({
       code: "secondary_staff_provider_outcome_unverified",
       error: "Delivery needs staff review; do not resend." };
   } catch {
-    if (queuedOrigin && !providerBoundaryReached) return cancelProvenMarketingBeforeProvider("secondary_pre_provider_preflight_exception");
+    if ((queuedOrigin || recordOnlyService) && !providerBoundaryReached) return cancelProvenMarketingBeforeProvider("secondary_pre_provider_preflight_exception");
     await markUnknown();
     return {
       success: false, wamid: null, unknown: true, ambiguous: true,
