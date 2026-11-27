@@ -287,3 +287,64 @@ test("verified administrative and campaign drafts can retain courtesy without ch
  assert.equal(selectVerifiedRoutineReply({config:{...config,aiReplyAuthorityMode:"legacy"},answer:campaign,draft:campaignDraft,language:"en"}),campaign.reply);
  assert.equal(routineReviewTextOnlyState({pendingClinicalReview:true},campaignDraft),null);
 });
+
+test("verified complimentary assessment invitations remain natural without authorizing free paid treatments",()=>{
+ const {ensureVerifiedPriceReply,verifiedComplimentaryAssessmentInvitation}=require("../src/utils/verifiedPriceReply");
+ const config=require("../src/config/clinicConfig"),previous=config.automatedFollowUp;
+ try {
+  const good=[
+   ["zh","我们可以先帮您安排免费的1对1体态评估及体验哦 😊"],
+   ["en","We can arrange a complimentary 1-on-1 posture assessment and introductory experience."],
+   ["ms","Kami boleh aturkan penilaian postur 1-ke-1 dan sesi pengenalan percuma."]
+  ];
+  for(const enabled of [true,false]){
+   config.automatedFollowUp={...previous,complimentaryAssessmentExperienceEnabled:enabled};
+   for(const [language,reply] of good){
+    assert.equal(verifiedComplimentaryAssessmentInvitation(reply,language),true,reply);
+    const input={customerText:"I want to know about pelvic care",reply,language,pricingDecision:null,
+      aiFirstReplyAuthority:true,preserveNaturalReply:true,priceRequested:false};
+    const result=ensureVerifiedPriceReply(input);
+    assert.equal(result.reply===reply,enabled,reply);
+   }
+  }
+  config.automatedFollowUp={...previous,complimentaryAssessmentExperienceEnabled:true};
+  const correct=good[0][1];
+  const combined="我们会先了解您的体态情况。"+correct;
+  assert.equal(ensureVerifiedPriceReply({customerText:"想了解骨盆调理",reply:combined,pricingDecision:null,aiFirstReplyAuthority:true}).reply,combined);
+  for(const reply of [correct+"，正式疗程也免费",correct+"。骨盆调理不收费",correct+"。已预约成功，免费",correct+"。保证三次见效",correct+"。RM999"]){
+   const result=ensureVerifiedPriceReply({customerText:"想了解骨盆调理",reply,pricingDecision:null,aiFirstReplyAuthority:true});
+   assert.notEqual(result.reply,reply,reply);
+  }
+ }finally{config.automatedFollowUp=previous;}
+});
+test("actual rejected-price boundary retains independently verified guidance and never reauthorizes media",()=>{
+ const fs=require("node:fs"),vm=require("node:vm");
+ const {ensureVerifiedPriceReply,isSafeUnquotedReply}=require("../src/utils/verifiedPriceReply");
+ const {suppressConversationalRewrite,createReplyOverrideAudit}=require("../src/utils/neutroAiReplyAuthority");
+ const source=fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+ const start=source.indexOf("    if ((staffPriceConflict || rejectedModelPricing) && !flagged");
+ const end=source.indexOf("    // A generic recovery choice",start);
+ assert.ok(start>0&&end>start);
+ for(const [text,draft,language] of [
+  ["多少钱？恢复期多久？","保证没有恢复期","zh"],
+  ["How much and how many sessions?","Guaranteed cure after three sessions","en"],
+  ["Berapa harga? Berapa kali?","Tiga sesi dijamin.","ms"]
+ ]){
+  const result=ensureVerifiedPriceReply({customerText:text,reply:draft,language,pricingDecision:null,priceRequested:true,aiFirstReplyAuthority:true});
+  assert.ok(result.verifiedNonPriceGuidance,text);
+  for(const staffPriceConflict of [true,false]){
+   const ctx={text,reply:result.reply,verifiedPricingNonPriceGuidance:result.verifiedNonPriceGuidance,
+    staffPriceConflict,rejectedModelPricing:!staffPriceConflict,flagged:false,bookingReady:false,
+    rm68CampaignContinuationTextOnly:false,repeatVisitPriceReply:null,marketingStopQuestion:false,
+    reviewContinuationTextOnly:false,naturalReplyAuthority:true,mediaLanguage:language,
+    clinicConfig:{businessType:"tcm_clinic",businessName:"Neutro Sense",aiPricingIntentMode:"enabled",aiReplyAuthorityMode:"enabled"},
+    replyOverrideAudit:createReplyOverrideAudit(()=>{}),isSafeUnquotedReply,suppressConversationalRewrite,
+    shouldRewriteRejectedPricingReply:()=>true};
+   const final=vm.runInNewContext(source.slice(start,end)+"\n({reply,reviewContinuationTextOnly})",ctx);
+   assert.ok(final.reply.includes(result.verifiedNonPriceGuidance),final.reply);
+   assert.equal(final.reply.split(result.verifiedNonPriceGuidance).length,2);
+   assert.equal(final.reviewContinuationTextOnly,true);
+   assert.ok(!final.reply.includes(draft));
+  }
+ }
+});
