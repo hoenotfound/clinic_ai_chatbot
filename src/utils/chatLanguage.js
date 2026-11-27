@@ -110,6 +110,24 @@ function detectExplicitLanguagePreference(input) {
   if (/^(?:please |can (?:you|u) |could (?:you|u) )?(?:reply|speak|respond|answer)(?: to me)? in english\b/iu.test(single)) return "en";
   if (/^(?:please |can (?:you|u) |could (?:you|u) )?(?:reply|speak|respond|answer)(?: to me)? in (?:malay|bahasa malaysia|bahasa melayu)\b/iu.test(single)) return "ms";
   if (/^(?:please |can (?:you|u) |could (?:you|u) )?(?:reply|speak|respond|answer)(?: to me)? in (?:chinese|mandarin)\b/iu.test(single)) return "zh";
+  // Information requests are not language-only acknowledgements. Recognize
+  // a language target plus an information/translation action, including common
+  // Malaysian shorthand, without interpreting an arbitrary mention as a switch.
+  const target = "(english|malay|bahasa(?: malaysia| melayu)?|bm|chinese|mandarin)";
+  const locale = value => /^(?:english)$/iu.test(value) ? "en"
+    : /^(?:chinese|mandarin)$/iu.test(value) ? "zh" : "ms";
+  const polite = "(?:please|pls|plz|tq|thanks|thank you|tolong)";
+  const info = "(?:info(?:rmation)?|details?|explanation|version|translation|penerangan|maklumat)";
+  const normalized = single.replace(/\s+/gu, " ");
+  const directInfo = normalized.match(new RegExp("^(?:" + polite + " )?" + target + " " + info + "(?:[, ]+" + polite + ")?$", "iu"));
+  if (directInfo) return locale(directInfo[1]);
+  const explainIn = normalized.match(new RegExp("^(?:(?:can|could|would) (?:you |u )?|please |pls |plz |(?:i |we )(?:want|need) (?:to )?)?(?:explain|translate|repeat|send|share|provide|give|tell|describe|write|say|info(?:rmation)?|details?|explanation)\\b[^.!?\\n]{0,160}?\\bin " + target + "(?:[, ]+" + polite + ")?$", "iu"));
+  if (explainIn) return locale(explainIn[1]);
+  const malayInfo = normalized.match(new RegExp("^(?:(?:boleh|tolong|sila|nak|mahu) )?(?:terangkan|jelaskan|hantar|beri|berikan|kongsi|maklumat|penerangan|info)\\b[^.!?\\n]{0,160}?\\bdalam " + target + "(?:[, ]+" + polite + ")?$", "iu"));
+  if (malayInfo) return locale(malayInfo[1]);
+  if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:英文|英语|英語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "en";
+  if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:中文|华语|華語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "zh";
+  if (/^(?:请|請|麻烦|麻煩|可以)?(?:用)?(?:马来文|馬來文|马来语|馬來語|国语|國語)(?:介绍|介紹|解释|解釋|说明|說明|资料|資料|版本|翻译|翻譯|发给我|發給我)(?:一下|给我|給我|吗|嗎|谢谢|謝謝|好吗|好嗎)*$/u.test(normalized)) return "ms";
   return null;
 }
 
