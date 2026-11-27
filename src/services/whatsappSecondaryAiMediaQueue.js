@@ -1,4 +1,6 @@
 "use strict";
+const { alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
+
 
 // One-shot sender-owned picture queue. Never use Neutro's strict-RM0 media
 // worker, media ID, provider token, retry API or billing reservations.
@@ -846,7 +848,7 @@ function nextMediaRecoveryDelay(state,nowMs=Date.now()){
    throw Error("Media recovery deadline unavailable; retry shortly");
  // Keep minute-level quarantine and billing reconciliation for claimed sends.
  if(state.has_claimed)return MEDIA_ACTIVE_CHECK_MS;
- if(!state.has_pending)return MEDIA_IDLE_CHECK_MS;
+ if(!state.has_pending)return alignedIdleRecoveryDelay(MEDIA_IDLE_CHECK_MS,nowMs,process.env,"Secondary WhatsApp AI media recovery");
  const nextAt=new Date(state.next_pending_at).getTime();
  if(state.next_pending_at==null || !Number.isFinite(nextAt))
    throw Error("Pending media retry deadline unavailable; retry shortly");

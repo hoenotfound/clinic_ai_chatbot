@@ -1,3 +1,4 @@
+const { alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
 const clinicConfig = require("../config/clinicConfig");
 const { guardAssessmentFirstPricingReply } = require("../utils/initialOfferReplyGuard");
 const { correctUnsupportedBranchReply } = require("../utils/verifiedPricingBusinessFacts");
@@ -42,7 +43,7 @@ const RECOVERY_INTERVAL_MS = 60 * 1000;
 const IDLE_RECOVERY_SAFETY_MS = 60 * 60 * 1000;
 
 function recoveryDelayForResult(result, nowMs = Date.now()) {
-  if (!result?.nextRecoverableAt) return IDLE_RECOVERY_SAFETY_MS;
+  if (!result?.nextRecoverableAt) return alignedIdleRecoveryDelay(IDLE_RECOVERY_SAFETY_MS, nowMs, process.env, "Meta comment recovery worker");
   const dueAt = new Date(result.nextRecoverableAt).getTime();
   if (!Number.isFinite(dueAt)) return RECOVERY_INTERVAL_MS;
   return Math.max(1000, dueAt - nowMs);

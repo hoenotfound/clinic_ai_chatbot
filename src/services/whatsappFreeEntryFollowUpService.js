@@ -1,3 +1,4 @@
+const { alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
 const { pool } = require("../db/db");
 const { sessionLateralSql } = require("../db/whatsappFreeEntrySessionSql");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
@@ -1089,12 +1090,12 @@ async function nextPotentialDueAt(active, database = pool) {
 function nextPollDelay(due, nowMs = Date.now()) {
   const nextDueAt = due && typeof due === "object" && "nextDueAt" in due
     ? due.nextDueAt : due;
-  if (!nextDueAt) return IDLE_CHECK_INTERVAL_MS;
+  if (!nextDueAt) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs, process.env, "WhatsApp extended follow-up scheduler");
   const dueMs = new Date(nextDueAt).getTime();
   if (!Number.isFinite(dueMs)) return CHECK_INTERVAL_MS;
   // Already-due work is retried promptly only when the actual candidate
   // sweep found actionable work. An obsolete hint cannot force 5m polling.
-  if (dueMs <= nowMs) return IDLE_CHECK_INTERVAL_MS;
+  if (dueMs <= nowMs) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, nowMs, process.env, "WhatsApp extended follow-up scheduler");
   return Math.max(1000, Math.min(IDLE_CHECK_INTERVAL_MS, dueMs - nowMs));
 }
 
@@ -1109,15 +1110,28 @@ function followUpDelayForResult(result, hint, nowMs = Date.now()) {
   return nextPollDelay(hint, nowMs);
 }
 
-async function runAndSchedule() {
-  const result = await run();
+// Use the very same in-memory clinic quiet-hours policy as the existing
+// final send guard. Config-change events wake this worker immediately.
+// No provider requests, candidate scans or claims are necessary while all
+// extended sends are prohibited. Keep direct run() and send guards intact.
+function freeEntryQuietDelay(nowMs = Date.now(), quiet = clinicConfig.automatedFollowUp?.quietHours, env = process.env) {
+  if (env.NEUTRO_IDLE_MAINTENANCE_ALIGN_ENABLED !== "true") return null;
+  const status = quietHoursStatus(new Date(nowMs), quiet, { timeZone: env.CLINIC_TIMEZONE || undefined });
+  const end = status.endsAt ? Date.parse(status.endsAt) : NaN;
+  return status.active && Number.isFinite(end) && end > nowMs ? end - nowMs : null;
+}
+
+async function runAndSchedule({ clock = Date.now, sweep = run, readSettings = settings, readHint = nextPotentialDueAt } = {}) {
+  const quietDelay = freeEntryQuietDelay(clock());
+  if (quietDelay !== null) return quietDelay;
+  const result = await sweep();
   if (result?.skipped === true || result?.reason === "template_catalog_unavailable") {
     return CHECK_INTERVAL_MS;
   }
-  const configured = settings();
-  if (!configured) return IDLE_CHECK_INTERVAL_MS;
-  const hint = await nextPotentialDueAt(configured);
-  return followUpDelayForResult(result, hint);
+  const configured = readSettings();
+  if (!configured) return alignedIdleRecoveryDelay(IDLE_CHECK_INTERVAL_MS, clock(), process.env, "WhatsApp extended follow-up scheduler");
+  const hint = await readHint(configured);
+  return followUpDelayForResult(result, hint, clock());
 }
 
 function wake(delayMs = CHECK_INTERVAL_MS) {
@@ -1192,7 +1206,7 @@ function start({
 module.exports = {
   settings, alignedSettings, selectedSlot, listCandidates, claim,
   processCandidate, run, start, stop, wake, nextPotentialDueAt, nextPollDelay,
-  runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
+  runAndSchedule, freeEntryQuietDelay, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
   freeEntryDueEventRequiresWake,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,

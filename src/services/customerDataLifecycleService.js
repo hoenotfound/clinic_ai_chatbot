@@ -5,7 +5,7 @@ const revokedMediaCleanup = require("./whatsappCustomerRevokedMediaCleanup");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
-const { createMaintenanceSchedule } = require("../utils/maintenanceWindow");
+const { createMaintenanceSchedule, alignedIdleRecoveryDelay } = require("../utils/maintenanceWindow");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 // Preserve immediate manual-deletion cleanup and exact due-job wake-ups.
@@ -17,8 +17,8 @@ function wakeCustomerMediaCleanup(delayMs = 0) {
   return activeCleanupWorker?.wake(delayMs) || false;
 }
 
-function mediaCleanupDelay(nextDueAt, nowMs = Date.now()) {
-  if (!nextDueAt) return IDLE_MEDIA_CLEANUP_INTERVAL_MS;
+function mediaCleanupDelay(nextDueAt, nowMs = Date.now(), env = process.env) {
+  if (!nextDueAt) return alignedIdleRecoveryDelay(IDLE_MEDIA_CLEANUP_INTERVAL_MS, nowMs, env, "Customer media cleanup recovery");
   const dueAtMs = new Date(nextDueAt).getTime();
   if (!Number.isFinite(dueAtMs)) return MEDIA_CLEANUP_INTERVAL_MS;
   return Math.max(1000, dueAtMs - nowMs);
@@ -271,7 +271,7 @@ function startCustomerDataLifecycle({
   // immediately; durable recovery begins on the normal cleanup interval.
   const cleanupTimer = createWorkerTimer({
     run: runCleanup,
-    delayForResult: (dueAt) => mediaCleanupDelay(dueAt),
+    delayForResult: (dueAt) => mediaCleanupDelay(dueAt, now(), env),
     errorRetryDelayMs: MEDIA_CLEANUP_INTERVAL_MS,
     label: "Customer media cleanup recovery",
   });
@@ -280,7 +280,7 @@ function startCustomerDataLifecycle({
   // still cleans media immediately and can wake recovery after a failure.
   cleanupTimer.start(MEDIA_CLEANUP_INTERVAL_MS);
   function periodicMaintenance(run, intervalMs, label) {
-    const nextDelay = createMaintenanceSchedule(intervalMs, now());
+    const nextDelay = createMaintenanceSchedule(intervalMs, now(), { env, label });
     const worker = createWorkerTimer({
       run, label, now,
       delayForResult: () => nextDelay(now()),

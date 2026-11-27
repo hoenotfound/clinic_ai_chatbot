@@ -1,6 +1,7 @@
 "use strict";
 
 const { createAdaptiveWorkerTimer } = require("./adaptiveWorkerTimer");
+const { alignedIdleRecoveryDelay } = require("./maintenanceWindow");
 
 // Keep the original 60-second recovery cadence while jobs exist. When the
 // sender-owned queue is empty, stop waking Neon every minute. A new durable
@@ -32,7 +33,7 @@ function createIdleAwareRecoveryWorker({
       return { pending: await hasPendingWork() };
     },
     delayForResult: result =>
-      result.pending ? activeIntervalMs : emptyIntervalMs,
+      result.pending ? activeIntervalMs : alignedIdleRecoveryDelay(emptyIntervalMs, (clock.now || Date.now)(), process.env, label),
   });
 }
 

@@ -354,7 +354,7 @@ function createMetaAdsInsightsSyncService({
         const clock = new Date(now()).getTime();
         if (maintenanceInterval !== syncIntervalMs()) {
           maintenanceInterval = syncIntervalMs();
-          nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, clock);
+          nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, clock, { label: "Meta Ads Insights sync" });
         }
         schedule(nextMaintenanceDelay(clock));
       }
@@ -372,7 +372,7 @@ function createMetaAdsInsightsSyncService({
     if (!stopped) return { stop };
     stopped = false;
     maintenanceInterval = syncIntervalMs();
-    nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, new Date(now()).getTime());
+    nextMaintenanceDelay = createMaintenanceSchedule(maintenanceInterval, new Date(now()).getTime(), { label: "Meta Ads Insights sync" });
     schedule(0);
     logger.log?.("Meta Ads Insights sync worker started.");
     return { stop };
